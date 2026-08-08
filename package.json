@@ -1,0 +1,30 @@
+{
+  "name": "djobi",
+  "version": "1.0.0",
+  "description": "Chrome extension that autofills job applications with an AI-tailored resume and drafted answers.",
+  "private": true,
+  "scripts": {
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:extension": "pnpm --filter extension dev",
+    "build:extension": "pnpm --filter extension build",
+    "db:generate": "pnpm --filter backend db:generate",
+    "db:migrate": "pnpm --filter backend db:migrate",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --if-present run test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.20.0",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}
