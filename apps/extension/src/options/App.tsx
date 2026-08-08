@@ -1,3 +1,4 @@
+/** Options page root — placeholder; will hold the profile onboarding form (`PROGRESS.md` Phase 5). */
 export function App() {
   return (
     <main>

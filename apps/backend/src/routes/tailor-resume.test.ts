@@ -1,10 +1,17 @@
-import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
+import type { Application, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockTailorResume } = vi.hoisted(() => ({ mockTailorResume: vi.fn() }));
+const { mockTailorResume, mockListApplicationsByCompany } = vi.hoisted(() => ({
+  mockTailorResume: vi.fn(),
+  mockListApplicationsByCompany: vi.fn(),
+}));
 
 vi.mock('../llm/tailorResume.js', () => ({
   tailorResume: mockTailorResume,
+}));
+
+vi.mock('../db/applicationsRepository.js', () => ({
+  listApplicationsByCompany: mockListApplicationsByCompany,
 }));
 
 const { app } = await import('../app.js');
@@ -38,12 +45,26 @@ const sampleTailoredResume: TailoredResume = {
   workExperience: [],
 };
 
+const priorApplication: Application = {
+  id: 'application-1',
+  company: 'Acme',
+  roleTitle: 'Backend Engineer',
+  jobUrl: 'https://acme.com/jobs/1',
+  jobInfo: sampleJobInfo,
+  tailoredResume: sampleTailoredResume,
+  answers: [],
+  status: 'submitted',
+  createdAt: '2026-07-01T00:00:00.000Z',
+};
+
 describe('POST /tailor-resume', () => {
   beforeEach(() => {
     mockTailorResume.mockReset();
+    mockListApplicationsByCompany.mockReset();
   });
 
   it('returns the tailored resume for a valid request', async () => {
+    mockListApplicationsByCompany.mockResolvedValue([]);
     mockTailorResume.mockResolvedValue(sampleTailoredResume);
 
     const res = await app.request('/tailor-resume', {
@@ -54,7 +75,26 @@ describe('POST /tailor-resume', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleTailoredResume);
+    expect(mockListApplicationsByCompany).toHaveBeenCalledWith('Acme');
     expect(mockTailorResume).toHaveBeenCalledWith(sampleProfile, sampleJobInfo, undefined);
+  });
+
+  it('passes a summary of prior applications to the same company', async () => {
+    mockListApplicationsByCompany.mockResolvedValue([priorApplication]);
+    mockTailorResume.mockResolvedValue(sampleTailoredResume);
+
+    const res = await app.request('/tailor-resume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: sampleProfile, jobInfo: sampleJobInfo }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockTailorResume).toHaveBeenCalledWith(
+      sampleProfile,
+      sampleJobInfo,
+      'Backend Engineer (2026-07-01): Backend engineer with a focus on TypeScript.',
+    );
   });
 
   it('returns 400 and does not call tailorResume when the body fails validation', async () => {

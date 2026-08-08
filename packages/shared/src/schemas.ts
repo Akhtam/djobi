@@ -178,3 +178,33 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
 export const ApplicationStatusSchema = z.enum(['draft', 'submitted']);
 /** Inferred type of {@link ApplicationStatusSchema}. */
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
+
+/**
+ * One persisted `applications` row: a completed (or in-progress) autofill, keyed to the job
+ * posting, so past applications can be referenced later (e.g. by `tailorResume`'s
+ * `priorApplicationsSummary`).
+ */
+export const ApplicationSchema = z.object({
+  id: z.string(),
+  company: z.string(),
+  roleTitle: z.string(),
+  jobUrl: z.string(),
+  jobInfo: JobInfoSchema,
+  tailoredResume: TailoredResumeSchema,
+  answers: z.array(QuestionAnswerSchema),
+  status: ApplicationStatusSchema,
+  createdAt: z.string(),
+});
+/** Inferred type of {@link ApplicationSchema}. */
+export type Application = z.infer<typeof ApplicationSchema>;
+
+/**
+ * Body shape for `POST /applications` — an {@link ApplicationSchema} minus the fields the database
+ * assigns (`id`, `createdAt`); `status` defaults to `draft` when omitted, matching a fill that
+ * hasn't been submitted yet.
+ */
+export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
+  status: ApplicationStatusSchema.default('draft'),
+});
+/** Inferred type of {@link NewApplicationSchema}. */
+export type NewApplication = z.infer<typeof NewApplicationSchema>;

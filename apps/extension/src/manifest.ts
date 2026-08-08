@@ -1,6 +1,11 @@
+/**
+ * MV3 manifest (built by `@crxjs/vite-plugin`, consumed by `vite.config.ts`). Declares the popup,
+ * options page, background service worker, and the ATS-host content-script matches.
+ */
 import { defineManifest } from '@crxjs/vite-plugin';
 import pkg from '../package.json' with { type: 'json' };
 
+/** Host patterns the content script runs on — see `docs/architecture-plan.md`'s ATS allowlist. */
 const ATS_HOST_PATTERNS = [
   '*://*.greenhouse.io/*',
   '*://*.ashbyhq.com/*',

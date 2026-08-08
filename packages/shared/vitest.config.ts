@@ -1,3 +1,4 @@
+/** Vitest config for `packages/shared` — plain Node environment, no injected test globals. */
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({

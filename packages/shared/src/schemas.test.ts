@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ApplicationSchema,
   ApplicationStatusSchema,
   DetectedFieldSchema,
   EducationSchema,
   FieldCategorySchema,
   JobInfoSchema,
+  NewApplicationSchema,
   ProfileSchema,
   QuestionAnswerSchema,
   StorySchema,
@@ -64,6 +66,25 @@ const validTailoredResume = {
   summary: 'Backend engineer with a track record of zero-downtime migrations.',
   skills: ['TypeScript', 'PostgreSQL'],
   workExperience: [validWorkExperience],
+};
+
+const validQuestionAnswer = {
+  fieldId: 'field-2',
+  question: 'Why this company?',
+  answer: 'Because of the mission.',
+  sourceStoryIds: [],
+};
+
+const validApplication = {
+  id: 'application-1',
+  company: 'Acme',
+  roleTitle: 'Senior Software Engineer',
+  jobUrl: 'https://acme.com/jobs/123',
+  jobInfo: validJobInfo,
+  tailoredResume: validTailoredResume,
+  answers: [validQuestionAnswer],
+  status: 'draft' as const,
+  createdAt: '2026-08-07T00:00:00.000Z',
 };
 
 describe('WorkExperienceSchema', () => {
@@ -242,5 +263,44 @@ describe('ApplicationStatusSchema', () => {
 
   it('rejects an arbitrary status', () => {
     expect(ApplicationStatusSchema.safeParse('archived').success).toBe(false);
+  });
+});
+
+describe('ApplicationSchema', () => {
+  it('accepts a full application row', () => {
+    expect(ApplicationSchema.safeParse(validApplication).success).toBe(true);
+  });
+
+  it('rejects a missing jobInfo', () => {
+    const { jobInfo: _jobInfo, ...withoutJobInfo } = validApplication;
+    expect(ApplicationSchema.safeParse(withoutJobInfo).success).toBe(false);
+  });
+
+  it('rejects an invalid status', () => {
+    expect(
+      ApplicationSchema.safeParse({ ...validApplication, status: 'archived' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('NewApplicationSchema', () => {
+  const { id: _id, createdAt: _createdAt, ...validNewApplication } = validApplication;
+
+  it('accepts an application without id/createdAt', () => {
+    expect(NewApplicationSchema.safeParse(validNewApplication).success).toBe(true);
+  });
+
+  it('defaults status to draft when omitted', () => {
+    const { status: _status, ...withoutStatus } = validNewApplication;
+    const result = NewApplicationSchema.safeParse(withoutStatus);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe('draft');
+    }
+  });
+
+  it('rejects a missing company', () => {
+    const { company: _company, ...withoutCompany } = validNewApplication;
+    expect(NewApplicationSchema.safeParse(withoutCompany).success).toBe(false);
   });
 });

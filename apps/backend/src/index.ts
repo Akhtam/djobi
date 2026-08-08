@@ -1,3 +1,8 @@
+/**
+ * Backend entrypoint — loads `.env`, then binds the Hono `app` to a real port via
+ * `@hono/node-server`. Kept separate from `app.ts` so tests can import the app without starting a
+ * server.
+ */
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { app } from './app.js';

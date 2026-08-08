@@ -1,3 +1,4 @@
+/** Mounts the popup `App` (see `popup/index.html`) into `#root`. */
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';

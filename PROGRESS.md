@@ -20,7 +20,7 @@ as work happens — check items off, add new ones, don't let it go stale.
   — see the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
 - **Repo:** pnpm workspace, `packages/shared` (zod schemas) + `apps/backend` (Hono) +
   `apps/extension` (MV3, Vite + `@crxjs/vite-plugin` + React). GitHub remote: `Akhtam/djobi`.
-  Current branch: `setup_routes`.
+  Current branch: `phase_4`.
 
 ## Checklist
 
@@ -65,13 +65,23 @@ as work happens — check items off, add new ones, don't let it go stale.
   'react'` for `React.createElement` to resolve at runtime; switch to the automatic runtime once a
   tsconfig exists.
 
-### Phase 4 — Profile + applications persistence
+### Phase 4 — Profile + applications persistence ✅ done
 
 - [x] `GET /profile` / `POST /profile` — tested (4 tests), backed by `db/profileRepository.ts`
-- [ ] `GET /applications`, `GET /applications/:id` — not built
-- [ ] Writing an `applications` row after a fill completes — not built
-- [ ] `tailorResume`'s `priorApplicationsSummary` param exists but nothing calls it yet (needs a
-      query for past applications to the same company)
+- [x] `GET /applications`, `GET /applications/:id` — tested (4 tests), backed by
+      `db/applicationsRepository.ts` (`listApplications`, `getApplicationById`)
+- [x] `POST /applications` — tested (3 tests), zod-validates against `NewApplicationSchema`
+      (`@djobi/shared` — `ApplicationSchema` minus `id`/`createdAt`, `status` defaults to `draft`),
+      writes via `applicationsRepository.saveApplication`
+- [x] `tailorResume`'s `priorApplicationsSummary` is now populated automatically: the
+      `/tailor-resume` route calls `applicationsRepository.listApplicationsByCompany(jobInfo.company)`
+      and builds a one-line-per-application summary before calling `tailorResume` — tested (3 tests,
+      up from 2); the route no longer accepts a client-supplied `priorApplicationsSummary` in the
+      body, since nothing sent one and the plan always intended this to be server-computed
+- Fixed a pre-existing bug found while starting this phase: `app.ts` only mounted
+  `extractJobRoute`/`profileRoute` — `tailor-resume`, `answer-questions`, and `render-resume-pdf`
+  were never wired in despite having passing unit-level logic, so their route tests were 404ing (6
+  failing tests). Wired all five routes in `app.ts`; full suite was green before phase 4 work began.
 
 ### Phase 5 — Chrome extension
 
