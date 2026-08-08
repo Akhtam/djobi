@@ -23,7 +23,7 @@ as work happens — check items off, add new ones, don't let it go stale.
 - **Repo:** pnpm workspace, `packages/shared` (zod schemas) + `apps/backend` (Hono) +
   `apps/extension` (MV3, Vite + `@crxjs/vite-plugin` + React) + `apps/dashboard` (planned, Phase 8:
   separate Vite + React web app, not part of the extension). GitHub remote: `Akhtam/djobi`.
-  Current branch: `phase_4`.
+  Current branch: `phase_6`.
 - **Application tracking (Phase 7-8):** `status` (draft/submitted) and `stage` (applied →
   phone_screen → interviewing → offer/rejected/withdrawn) are separate fields. Notes are a
   timestamped, categorized log (`technical_questions` / `behavioral_questions` / `general`) you
@@ -129,10 +129,63 @@ as work happens — check items off, add new ones, don't let it go stale.
   scope the popup down to profile-status/page-support plumbing now and build the actual review UI
   in Phase 6 once there's real data to review, rather than build it against an imagined contract.
 
-### Phase 6 — Content scripts
+### Phase 6 — Content scripts ✅ done, end-to-end
 
-- [ ] Not started: ATS host detection, page scraping, generic field-classifier, DataTransfer-based
-      resume file upload, form fill
+- [x] `src/content/detect.ts` — `isJobApplicationPage(doc)`: page-shape heuristic (does a form on
+      the page have a resume file-upload input?) layered on top of the host-level allowlist that
+      already gates content-script injection via `manifest.ts`. Tested (3 tests)
+- [x] `src/content/scrapeJob.ts` — `scrapePageText(doc)`: readability heuristic for `/extract-job`
+      input — `<main>`, then `[role="main"]`, falling back to `document.body`. Tested (3 tests)
+- [x] `src/content/detectFields.ts` — `detectFields(doc)`: classifies every candidate-fillable
+      `input`/`textarea`/`select` into a `DetectedField` (`@djobi/shared`'s `FieldCategory` enum)
+      via keyword-matching a `<label for>`/aria-label/placeholder/name/id signal string; file
+      inputs classified by upload type, unmatched question-shaped textareas classified as
+      `question`, hidden/submit/button/reset/image inputs skipped. Tested (6 tests). Elements
+      without a native `id` are tagged with a `data-djobi-id` attribute so `selector` reliably
+      resolves back to the element — the initial `nth-of-type`-based selector was wrong (index was
+      global across all fields, not per-parent-per-tag) and a test caught it before it shipped
+- [x] `src/content/fillForm.ts` — `fillForm(doc, fields, values)` sets each field's value (keyed by
+      `DetectedField.id`) and dispatches `input`/`change`, skipping fields with no supplied value
+      or an unresolvable selector; `attachResumeFile(input, file)` attaches a resume file. Tested
+      (3 tests)
+- Deviation from `docs/architecture-plan.md`'s literal `DataTransfer` snippet for resume upload:
+  jsdom (this project's test environment) doesn't implement `DataTransfer` at all, and there's no
+  public `FileList` constructor to hand back from a polyfilled one either way — so the documented
+  snippet can't be exercised by a real test. `attachResumeFile` instead uses
+  `Object.defineProperty(input, 'files', { value: fileListLike, configurable: true })`, which
+  shadows the inherited (read-only) `files` accessor with an own data property. This works
+  identically in real Chrome (`files` is a configurable, non-`[Unforgeable]` IDL attribute) and is
+  the same technique DOM testing/automation libraries use for this exact browser-API gap
+- **End-to-end wiring** (content script → background → popup review UI → fill-on-confirm →
+  `/applications`), completing the note deferred above and in Phase 5:
+  - [x] `src/background/jobPageStore.ts` — per-tab `Map`-backed store (`setJobPageData`/
+        `getJobPageData`), pure and tested without mocking `chrome` (2 tests)
+  - [x] `src/background/index.ts` — the legacy untyped `{ path, body, method? }` backend relay is
+        unchanged; new messages route via a `type` discriminator: `REPORT_JOB_PAGE` (content
+        script → background, stores by `sender.tab.id`), `GET_JOB_PAGE_DATA` (popup → background,
+        `{ tabId }` → stored data or `null`), `FILL_FORM` (popup → background →
+        `chrome.tabs.sendMessage(tabId, ...)` → that tab's content script, response relayed back).
+        Tested (3 new tests, 6 total)
+  - [x] `src/content/index.ts` — no longer a stub: on load, if `isJobApplicationPage`, scrapes +
+        detects fields and sends `REPORT_JOB_PAGE`; always listens for `FILL_FORM` and calls
+        `fillForm`/`attachResumeFile` (reconstructing a `File` from the message's `{ name, type,
+        bytes }`, since binary data crossing the message boundary can't carry a real `File`).
+        Tested (4 tests)
+  - [x] `src/popup/App.tsx` — the `ready` state now polls `GET_JOB_PAGE_DATA` for the active tab;
+        once present, runs `/extract-job` → `/tailor-resume` + `/answer-questions` in parallel,
+        then shows an editable review (job title/company, one textarea per drafted answer). "Fill
+        form" builds a `values` map (profile scalars for name/email/phone/location/links fields,
+        edited answers for `question` fields), fetches the resume PDF, sends `FILL_FORM`, then
+        saves a `draft` application via `POST /applications`. Tested (2 new tests, 5 total)
+  - [x] `src/lib/fetchResumePdf.ts` — fetches `/render-resume-pdf` **directly** (not via
+        `callBackend`/`sendToBackground`): those always call `res.json()`, which can't parse a
+        binary PDF response. Tested (2 tests)
+  - Deviation, documented here since it's a real design choice: cover-letter fields
+    (`cover_letter_text`/`cover_letter_upload`) are detected but not yet filled — `answerQuestions`
+    is only wired to `question`-category fields, matching `docs/architecture-plan.md`'s original
+    scope. Extending it to cover letters is future work, not an oversight.
+  - Not done: no loading/error UI for a failed extract/tailor/answer/fill call (the popup just
+    hangs) — worth hardening before this is used against a real ATS site
 
 ### Phase 7 — Application tracking data model (planned 2026-08-07, not started)
 

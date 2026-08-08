@@ -10,15 +10,12 @@ export function sendToBackground<T>(
   method?: 'GET' | 'POST',
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      { path, body, method },
-      (response: { data?: T; error?: string }) => {
-        if (response?.error) {
-          reject(new Error(response.error));
-        } else {
-          resolve(response.data as T);
-        }
-      },
-    );
+    chrome.runtime.sendMessage({ path, body, method }, (response: { data?: T; error?: string }) => {
+      if (response?.error) {
+        reject(new Error(response.error));
+      } else {
+        resolve(response.data as T);
+      }
+    });
   });
 }
