@@ -34,4 +34,18 @@ describe('callBackend', () => {
 
     await expect(callBackend('/extract-job', {})).rejects.toThrow('pageText is required');
   });
+
+  it('sends a bodyless GET request when method is "GET"', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ fullName: 'Jane Doe' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const result = await callBackend('/profile', undefined, 'GET');
+
+    expect(result).toEqual({ fullName: 'Jane Doe' });
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', { method: 'GET' });
+  });
 });
