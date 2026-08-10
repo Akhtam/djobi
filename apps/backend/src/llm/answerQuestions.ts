@@ -13,31 +13,6 @@ const AnswerQuestionsOutputSchema = z.object({
   answers: z.array(QuestionAnswerSchema),
 });
 
-/** JSON Schema mirror of {@link AnswerQuestionsOutputSchema} (see `structuredCall.ts`). */
-const answerQuestionsInputSchema = {
-  type: 'object',
-  properties: {
-    answers: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          fieldId: { type: 'string', description: 'Matches DetectedField.id' },
-          question: { type: 'string' },
-          answer: { type: 'string' },
-          sourceStoryIds: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Story.id values this answer drew on, if any',
-          },
-        },
-        required: ['fieldId', 'question', 'answer', 'sourceStoryIds'],
-      },
-    },
-  },
-  required: ['answers'],
-} as const;
-
 /** One detected freeform field to draft an answer for — a trimmed-down {@link DetectedField}. */
 export interface QuestionToAnswer {
   fieldId: string;
@@ -67,7 +42,6 @@ export async function answerQuestions(
     maxTokens: 4096,
     toolName: 'report_answers',
     toolDescription: 'Report the drafted answers for the given application questions.',
-    inputSchema: answerQuestionsInputSchema,
     schema: AnswerQuestionsOutputSchema,
     userContent: `Draft answers to the following job application questions, written in the candidate's voice as implied by their profile. Ground every answer in the candidate's actual work experience and stories — pick the 1-3 most relevant stories per question by matching the question against each story's tags and content, and set sourceStoryIds accordingly (empty array if no story fits and you drew on general profile info instead). Do not fabricate experience not present in the profile. Keep answers concise and concrete — prefer specific outcomes over generic claims.
 

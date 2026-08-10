@@ -7,42 +7,6 @@ import {
 import { MODELS } from './client.js';
 import { callStructured } from './structuredCall.js';
 
-/** JSON Schema for one `TailoredResume.workExperience` entry — mirrors {@link TailoredResumeSchema}. */
-const workExperienceItemSchema = {
-  type: 'object',
-  properties: {
-    company: { type: 'string' },
-    title: { type: 'string' },
-    startDate: { type: 'string' },
-    endDate: { type: ['string', 'null'] },
-    bullets: {
-      type: 'array',
-      items: { type: 'string' },
-      description:
-        'Reworded/reordered bullets emphasizing relevance to the job; must not invent facts not present in the base profile',
-    },
-  },
-  required: ['company', 'title', 'startDate', 'endDate', 'bullets'],
-} as const;
-
-/** JSON Schema mirror of {@link TailoredResumeSchema}, hand-maintained (see `structuredCall.ts`). */
-const tailoredResumeInputSchema = {
-  type: 'object',
-  properties: {
-    summary: {
-      type: 'string',
-      description: '2-3 sentence summary tailored to this job, grounded only in the base profile',
-    },
-    skills: {
-      type: 'array',
-      items: { type: 'string' },
-      description: "Subset/reordering of the base profile's skills most relevant to this job",
-    },
-    workExperience: { type: 'array', items: workExperienceItemSchema },
-  },
-  required: ['summary', 'skills', 'workExperience'],
-} as const;
-
 /**
  * Tailors a resume's content to a specific job, using the writing model (`MODELS.writing`).
  * Reorders/rewords the profile's existing experience bullets to emphasize what's relevant to the
@@ -67,7 +31,6 @@ export async function tailorResume(
     maxTokens: 4096,
     toolName: 'report_tailored_resume',
     toolDescription: 'Report the resume content tailored to this specific job.',
-    inputSchema: tailoredResumeInputSchema,
     schema: TailoredResumeSchema,
     userContent: `You are tailoring a resume to a specific job posting. Reorder and reword the candidate's existing experience bullets to emphasize what's relevant to this job's requirements and keywords. Never invent experience, skills, or achievements that are not present in the base profile.
 

@@ -72,6 +72,19 @@ as work happens — check items off, add new ones, don't let it go stale.
   `renderResume.tsx` uses the classic transform by default — needed an explicit `import React from
   'react'` for `React.createElement` to resolve at runtime; switch to the automatic runtime once a
   tsconfig exists.
+- [x] **Derive LLM `input_schema` from zod** (2026-08-07, via
+      `/mattpocock-skills:improve-codebase-architecture` → grilling → `/tdd`): `callStructured`
+      (`structuredCall.ts`) now derives each tool's `input_schema` from `schema` via
+      `zod-to-json-schema@3.24.6` (pinned exact — its peer dep is `zod: ^3.24.1`, an exact match for
+      the installed zod; the newer `3.25.2` needs `zod ^3.25.28` and would've forced an unrelated
+      bump), with `$refStrategy: 'none'` so the schema stays flat/self-contained (Anthropic's tool
+      `input_schema` doesn't dereference `$ref`/`definitions`). Deleted the three hand-maintained
+      JSON Schema blocks (`jobInfoInputSchema`, `workExperienceItemSchema` +
+      `tailoredResumeInputSchema`, `answerQuestionsInputSchema`) along with the `inputSchema` field
+      on `StructuredToolCallOptions` — nothing passes one anymore. New `structuredCall.test.ts`
+      (didn't exist before; the module was only tested transitively and none of those tests looked
+      at `input_schema`) asserts the derivation against a sample schema (nested object, array,
+      nullable, `.describe()`) and that no `$ref` leaks through.
 
 ### Phase 4 — Profile + applications persistence ✅ done
 
@@ -186,6 +199,48 @@ as work happens — check items off, add new ones, don't let it go stale.
     scope. Extending it to cover letters is future work, not an oversight.
   - Not done: no loading/error UI for a failed extract/tailor/answer/fill call (the popup just
     hangs) — worth hardening before this is used against a real ATS site
+- [x] **Application pipeline extraction** (2026-08-07, via
+      `/mattpocock-skills:improve-codebase-architecture` → grilling → `/tdd`): pulled the
+      extract→tailor→answer→fill→save orchestration out of `popup/App.tsx` into
+      `popup/pipeline.ts` — `analyzeJobPage()` (the Analysis Step) and `fillAndSubmit()` (the Fill
+      Step), each taking a `PipelineDeps` object so they're testable with fake deps, no `chrome`/DOM
+      mocking. `App.tsx` is now a thin caller holding `Status`. Also fixes the "no loading/error
+      UI" gap noted above: both functions reject with typed errors (`AnalysisFailedError`,
+      `FillFailedError`); `Status` gained `'analyze-error'`/`'fill-error'`, each rendering a "Try
+      again" that re-invokes the same phase (idempotent — safe to redo, save is always last).
+      Tested (5 new tests in `pipeline.test.ts`); `App.test.tsx` now mocks the `pipeline` module
+      directly and only asserts status→render wiring (7 tests, down from 5 broader ones, replaced
+      not layered). Domain terms **Application Pipeline**/**Analysis Step**/**Fill Step** captured
+      in the repo's first `CONTEXT.md`.
+- [x] **Shared message protocol** (2026-08-07, via `/mattpocock-skills:improve-codebase-architecture`
+      → grilling → `/tdd`): new `lib/messages.ts` is the single source of truth for every
+      `chrome.runtime` message shape (`ReportJobPageMessage`, `GetJobPageDataMessage`,
+      `FillFormRequestMessage`/`FillFormCommandMessage` — split into two types because FILL_FORM
+      has different shapes popup→background (`tabId`) vs background→content, sharing a
+      `FillFormPayload` base) plus a typed `sendMessage<TReq, TRes>()` helper, replacing three
+      independently hand-rolled `new Promise((resolve) => chrome.runtime.sendMessage(...))`
+      wrappers. Also caught and fixed a second instance of the same duplication:
+      `JobPageData` was independently redeclared in `jobPageStore.ts`, `pipeline.ts`, and
+      `App.tsx` — now defined once in `messages.ts`. `background/index.ts`, `content/index.ts`,
+      `pipeline.ts`, and `App.tsx` all import from it instead of redeclaring locally.
+      `sendMessage` tested (1 test, mirrors `sendToBackground.test.ts`'s pattern); the five
+      call-site migrations are type-safety-only with no behavior change, verified by the existing
+      suites staying green untouched.
+- [x] **Split `background/index.ts`'s dispatcher** (2026-08-07, via grilling → `/tdd`):
+      `background/relay.ts` (`handleRelayMessage` — the untyped `{path,body,method}` relay,
+      unchanged behavior) and `background/router.ts` (`handleTypedMessage` — the
+      `REPORT_JOB_PAGE`/`GET_JOB_PAGE_DATA`/`FILL_FORM` switch) replace the single dispatcher that
+      used to share one `onMessage` listener for both; `background/index.ts` is now ~10 lines
+      composing the two. `background/index.test.ts`'s six cases moved to `relay.test.ts`
+      (3 tests, calling `handleRelayMessage` directly, no `chrome` mocking) and `router.test.ts`
+      (3 tests, calling `handleTypedMessage` directly) — replaced, not layered. `index.ts` itself
+      has no dedicated test, same as `manifest.ts`.
+- [x] **Selector resolution deduped into `fillForm.ts`** (2026-08-07, via grilling → `/tdd`):
+      `content/fillForm.ts` exports `resolveField<T extends Element = HTMLElement>(doc, field)`,
+      used internally by `fillForm()` and by `content/index.ts`'s resume-attach path (which
+      previously re-implemented the same `querySelector` lookup independently). Tested directly
+      (2 new tests in `fillForm.test.ts`); `fillForm()`'s and `content/index.ts`'s existing tests
+      stayed green unmodified, confirming the refactor didn't change behavior.
 
 ### Phase 7 — Application tracking data model (planned 2026-08-07, not started)
 
@@ -222,15 +277,47 @@ job, and track/update interview stage + notes. Depends on Phase 7's stage/notes 
       by category), stage selector, add-note form
 - [ ] No LLM calls from the dashboard itself — pure read/write against existing + Phase 7 endpoints
 
+### Phase 9 — Company-culture-aware answers (planned 2026-08-07, not started)
+
+New scope: before drafting Question Answers, optionally research the company's own site (about/
+careers/values pages) and feed that into the answer-drafting prompt so freeform answers (e.g. "why
+do you want to work here") reflect the company's actual stated culture instead of generic
+tailoring. Runs as an extra step inside the existing Analysis Step, not a new always-on background
+process — decided with the user:
+
+- Source is the **company's own website only** (about/careers/values pages), not third-party
+  review sites (Glassdoor/LinkedIn) — cheaper, no scraping-ToS gray area, and matches this
+  project's existing pattern of only using first-party sources (the job posting itself).
+- **User confirmation required before it runs** — this step does an extra site fetch + LLM call
+  the user might not want on every job page, so the popup must ask (e.g. a "Research company
+  culture?" prompt/button) before kicking it off, rather than running it silently every time like
+  the rest of the Analysis Step.
+- Drafted answers stay subject to the existing rule: **always reviewed/edited by the user before
+  the Fill Step** — this phase does not introduce any new auto-fill/auto-submit path.
+
+- [ ] `packages/shared`: add `CompanyCultureSchema` — structured culture signals (e.g. values,
+      mission, work-style keywords) extracted from a company's site, plus the raw source URL(s)
+      used
+- [ ] `apps/backend/src/llm/researchCompanyCulture.ts` — scrapes the company's about/careers/values
+      page(s) and extracts `CompanyCulture` via an LLM call (Haiku, same cost class as
+      `extractJob`); tested like the other LLM-layer modules (Phase 3 pattern)
+- [ ] `POST /research-culture` route — body `{ companyUrl }` (or company name, if a lookup step is
+      needed to find the site first), zod-validated, returns `CompanyCulture`
+- [ ] `answerQuestions` gains an optional `companyCulture` param; when present, the prompt
+      incorporates it so drafted answers align with the company's stated culture — never fabricates
+      alignment the Profile doesn't support, same non-fabrication rule as `tailorResume`
+- [ ] Popup: add a confirmation prompt ("Research company culture?") before this step runs; on
+      confirm, calls `/research-culture` then re-runs answer drafting with the result; drafted
+      answers still land in the existing editable review UI before the Fill Step, unchanged
+- [ ] Extend `CONTEXT.md`'s Language section with **Company Culture** once the shape is settled
+- Build test-first per the established process, same as Phases 3/4/7
+
 ## Open architecture-review recommendations
 
-From the `/mattpocock-skills:improve-codebase-architecture` review run 2026-08-07
-(report was a temp HTML file, not saved — rerun the skill if you want it again). Not yet decided/
-actioned:
+From two `/mattpocock-skills:improve-codebase-architecture` runs — 2026-08-07 (backend-focused,
+report not saved) and a second 2026-08-07 pass (extension-focused, after Phase 6 landed). Not yet
+decided/actioned:
 
-- [ ] **Strong:** derive the LLM tool `input_schema` from the zod `schema` inside `callStructured`
-      itself, instead of hand-maintaining a parallel JSON Schema in `extractJob.ts` /
-      `tailorResume.ts` / `answerQuestions.ts` (currently duplicated 3×, drifts silently)
 - [ ] **Worth exploring:** `profileRepository.saveProfile`'s upsert logic has zero test coverage
       (the route test mocks the whole repository away) — test it directly
 - [ ] **Worth exploring:** unify request-body validation across routes — `profile.ts` uses zod,
@@ -238,6 +325,18 @@ actioned:
 - [ ] **Speculative:** `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
       `<base_profile>`/`<job_info>` prompt scaffold — extract a shared helper if a third
       writing-model call site appears
+
+**Done:** all three **Strong** candidates from both runs are actioned — extracting
+`popup/App.tsx`'s orchestration into `popup/pipeline.ts` and giving the message protocol a shared
+module (`lib/messages.ts`), both under Phase 6 above; and deriving the LLM `input_schema` from
+zod, under Phase 3 above. Both **Worth exploring** extension candidates are also actioned (2026-08-07,
+via grilling → `/tdd`), under Phase 6 above: `background/index.ts` split into `relay.ts`
+(`handleRelayMessage`, thin, unchanged) + `router.ts` (`handleTypedMessage`, owns
+`REPORT_JOB_PAGE`/`GET_JOB_PAGE_DATA`/`FILL_FORM`), with `index.ts` reduced to composing the two —
+`background/index.test.ts` replaced by `relay.test.ts`/`router.test.ts` testing each function
+directly; and `content/fillForm.ts` gained `resolveField<T>(doc, field)`, used by both `fillForm()`
+and `content/index.ts`'s resume-attach path (which previously re-implemented the same lookup).
+What's left below is all backend, all lower-conviction (**Worth exploring**/**Speculative**).
 
 ## Known loose ends / notes
 

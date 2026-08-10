@@ -1,5 +1,13 @@
 import type { DetectedField } from '@djobi/shared';
 
+/** Resolves a `DetectedField`'s `selector` to its matching DOM element, or `null` if unresolvable. */
+export function resolveField<T extends Element = HTMLElement>(
+  doc: Document,
+  field: DetectedField,
+): T | null {
+  return doc.querySelector<T>(field.selector);
+}
+
 /**
  * Fills every field in `fields` that has a value in `values` (keyed by `DetectedField.id`),
  * locating each element via its `selector` and dispatching an `input` event so the page's own
@@ -14,7 +22,7 @@ export function fillForm(
     const value = values[field.id];
     if (value === undefined) continue;
 
-    const el = doc.querySelector<HTMLInputElement | HTMLTextAreaElement>(field.selector);
+    const el = resolveField<HTMLInputElement | HTMLTextAreaElement>(doc, field);
     if (!el) continue;
 
     el.value = value;

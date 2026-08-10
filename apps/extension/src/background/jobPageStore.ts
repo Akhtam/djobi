@@ -1,10 +1,4 @@
-import type { DetectedField } from '@djobi/shared';
-
-/** What the content script reports once it's detected and scraped an ATS job application page. */
-export interface JobPageData {
-  pageText: string;
-  fields: DetectedField[];
-}
+import type { JobPageData } from '../lib/messages';
 
 /**
  * Per-tab store for the most recently reported {@link JobPageData}. The content script reports

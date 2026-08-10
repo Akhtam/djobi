@@ -3,10 +3,10 @@
  * a detected job application page to the background service worker; always listens for a
  * `FILL_FORM` command back from the popup (via background) to fill the page.
  */
-import type { DetectedField } from '@djobi/shared';
+import type { FillFormCommandMessage } from '../lib/messages';
 import { detectFields } from './detectFields';
 import { isJobApplicationPage } from './detect';
-import { attachResumeFile, fillForm } from './fillForm';
+import { attachResumeFile, fillForm, resolveField } from './fillForm';
 import { scrapePageText } from './scrapeJob';
 
 if (isJobApplicationPage(document)) {
@@ -17,24 +17,15 @@ if (isJobApplicationPage(document)) {
   });
 }
 
-interface FillFormMessage {
-  type: 'FILL_FORM';
-  fields: DetectedField[];
-  values: Record<string, string>;
-  resumeFile?: { name: string; type: string; bytes: number[] };
-}
-
 chrome.runtime.onMessage.addListener(
-  (message: FillFormMessage, _sender, sendResponse: (response: unknown) => void) => {
+  (message: FillFormCommandMessage, _sender, sendResponse: (response: unknown) => void) => {
     if (message.type !== 'FILL_FORM') return;
 
     fillForm(document, message.fields, message.values);
 
     if (message.resumeFile) {
       const uploadField = message.fields.find((field) => field.category === 'resume_upload');
-      const input = uploadField
-        ? document.querySelector<HTMLInputElement>(uploadField.selector)
-        : null;
+      const input = uploadField ? resolveField<HTMLInputElement>(document, uploadField) : null;
 
       if (input) {
         const file = new File([new Uint8Array(message.resumeFile.bytes)], message.resumeFile.name, {

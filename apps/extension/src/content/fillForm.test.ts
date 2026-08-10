@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DetectedField } from '@djobi/shared';
-import { attachResumeFile, fillForm } from './fillForm';
+import { attachResumeFile, fillForm, resolveField } from './fillForm';
 
 function field(overrides: Partial<DetectedField>): DetectedField {
   return {
@@ -49,6 +49,28 @@ describe('fillForm', () => {
 
     expect(document.querySelector<HTMLInputElement>('#f1')!.value).toBe('original');
     expect(document.querySelector<HTMLInputElement>('#f2')!.value).toBe('filled');
+  });
+});
+
+describe('resolveField', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it("resolves a field's selector to its matching DOM element", () => {
+    document.body.innerHTML = `<input id="f1" type="text" />`;
+
+    const el = resolveField(document, field({ id: 'f1', selector: '#f1' }));
+
+    expect(el).toBe(document.querySelector('#f1'));
+  });
+
+  it('returns null when the selector matches nothing', () => {
+    document.body.innerHTML = '';
+
+    const el = resolveField(document, field({ id: 'f1', selector: '#does-not-exist' }));
+
+    expect(el).toBeNull();
   });
 });
 

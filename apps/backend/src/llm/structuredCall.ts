@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import { anthropic } from './client.js';
 
 /** Options for {@link callStructured}. */
@@ -13,9 +14,7 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
   toolName: string;
   /** Description shown to the model for the forced tool. */
   toolDescription: string;
-  /** JSON Schema for the tool's `input` — hand-maintained to mirror `schema`. */
-  inputSchema: Record<string, unknown>;
-  /** Zod schema used to validate the tool call's `input` before returning it. */
+  /** Zod schema used both to build the tool's `input_schema` and to validate its `input`. */
   schema: Schema;
 }
 
@@ -38,7 +37,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
       {
         name: options.toolName,
         description: options.toolDescription,
-        input_schema: options.inputSchema as never,
+        input_schema: zodToJsonSchema(options.schema, { $refStrategy: 'none' }) as never,
       },
     ],
     tool_choice: { type: 'tool', name: options.toolName },

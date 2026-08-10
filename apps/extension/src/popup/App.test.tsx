@@ -1,13 +1,18 @@
-import type {
-  DetectedField,
-  JobInfo,
-  Profile,
-  QuestionAnswer,
-  TailoredResume,
-} from '@djobi/shared';
+import type { DetectedField, JobInfo, Profile, QuestionAnswer, TailoredResume } from '@djobi/shared';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { AnalysisFailedError, FillFailedError } from './pipeline';
+
+const { analyzeJobPage, fillAndSubmit } = vi.hoisted(() => ({
+  analyzeJobPage: vi.fn(),
+  fillAndSubmit: vi.fn(),
+}));
+
+vi.mock('./pipeline', async () => {
+  const actual = await vi.importActual<typeof import('./pipeline')>('./pipeline');
+  return { ...actual, analyzeJobPage, fillAndSubmit };
+});
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -55,19 +60,20 @@ const answers: QuestionAnswer[] = [
   },
 ];
 
+const jobPageData = { pageText: 'Senior Engineer at Acme...', fields: [questionField] };
+
 interface StubOptions {
   tabUrl: string;
   tabId?: number;
   profile: Profile | null;
   jobPageData?: { pageText: string; fields: DetectedField[] } | null;
-  responses?: Record<string, unknown>;
 }
 
 /**
- * Stubs `chrome.tabs.query` (active tab) and `chrome.runtime.sendMessage`, routing responses by
- * message shape: `{ type: 'GET_JOB_PAGE_DATA' }` -> `jobPageData`, `{ path: '/profile' }` ->
- * `profile`, any other `{ path }` -> `responses[path]`, `{ type: 'FILL_FORM' }` ->
- * `responses.FILL_FORM`.
+ * Stubs `chrome.tabs.query` (active tab) and `chrome.runtime.sendMessage` for the two things
+ * `App.tsx` still talks to directly: `GET /profile` and `GET_JOB_PAGE_DATA`. The application
+ * pipeline itself (`analyzeJobPage`/`fillAndSubmit`) is mocked at the module level above, so
+ * these tests only assert on status -> render wiring, not on how analysis/filling happens.
  */
 function stubChrome(options: StubOptions) {
   const openOptionsPage = vi.fn();
@@ -77,15 +83,11 @@ function stubChrome(options: StubOptions) {
         callback({ data: options.jobPageData ?? null });
         return;
       }
-      if (message.type === 'FILL_FORM') {
-        callback(options.responses?.FILL_FORM ?? { ok: true });
-        return;
-      }
       if (message.path === '/profile') {
         callback({ data: options.profile });
         return;
       }
-      callback({ data: options.responses?.[message.path as string] });
+      callback({ data: undefined });
     },
   );
   vi.stubGlobal('chrome', {
@@ -102,6 +104,8 @@ function stubChrome(options: StubOptions) {
 describe('popup App', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    analyzeJobPage.mockReset();
+    fillAndSubmit.mockReset();
   });
 
   it('prompts to set up a profile when none exists yet', async () => {
@@ -137,47 +141,41 @@ describe('popup App', () => {
     await screen.findByText('djobi is ready on this page.');
   });
 
-  it('analyzes a detected job page and shows an editable review with drafted answers', async () => {
-    stubChrome({
-      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-      profile,
-      jobPageData: { pageText: 'Senior Engineer at Acme...', fields: [questionField] },
-      responses: {
-        '/extract-job': jobInfo,
-        '/tailor-resume': tailoredResume,
-        '/answer-questions': answers,
-      },
-    });
+  it('shows an editable review once analysis succeeds', async () => {
+    analyzeJobPage.mockResolvedValue({ jobInfo, tailoredResume, answers });
+    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
 
     await screen.findByText('Senior Engineer at Acme');
     expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Fill form' })).toBeInTheDocument();
+    expect(analyzeJobPage).toHaveBeenCalledWith(jobPageData, profile, expect.anything());
+  });
+
+  it('shows an error and retries analysis when the user clicks "Try again"', async () => {
+    analyzeJobPage
+      .mockRejectedValueOnce(new AnalysisFailedError(new Error('backend unreachable')))
+      .mockResolvedValueOnce({ jobInfo, tailoredResume, answers });
+    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<App />);
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Senior Engineer at Acme');
+    expect(analyzeJobPage).toHaveBeenCalledTimes(2);
   });
 
   it('fills the form and saves the application when "Fill form" is clicked', async () => {
-    const pdfBytes = new Uint8Array([37, 80, 68, 70]);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response(pdfBytes.buffer, { status: 200 })),
-    );
-    const resumeField: DetectedField = {
-      id: 'f-resume',
-      label: 'Resume',
-      inputType: 'file',
-      selector: '#resume-field',
-      category: 'resume_upload',
-    };
-    const { sendMessage } = stubChrome({
+    analyzeJobPage.mockResolvedValue({ jobInfo, tailoredResume, answers });
+    fillAndSubmit.mockResolvedValue(undefined);
+    stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
-      jobPageData: { pageText: 'Senior Engineer at Acme...', fields: [questionField, resumeField] },
-      responses: {
-        '/extract-job': jobInfo,
-        '/tailor-resume': tailoredResume,
-        '/answer-questions': answers,
-      },
+      jobPageData,
+      tabId: 1,
     });
 
     render(<App />);
@@ -185,21 +183,54 @@ describe('popup App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
     await screen.findByText('Filled and application saved.');
+    expect(fillAndSubmit).toHaveBeenCalledWith(
+      jobPageData,
+      profile,
+      jobInfo,
+      tailoredResume,
+      answers,
+      1,
+      'https://boards.greenhouse.io/acme/jobs/1',
+      expect.anything(),
+    );
+  });
 
-    const fillCall = sendMessage.mock.calls.find(
-      ([message]) => (message as { type?: string }).type === 'FILL_FORM',
-    )?.[0] as {
-      tabId: number;
-      values: Record<string, string>;
-      resumeFile: { name: string; type: string; bytes: number[] };
-    };
-    expect(fillCall.tabId).toBe(1);
-    expect(fillCall.values).toMatchObject({ 'f-why': 'Draft answer.' });
-    expect(fillCall.resumeFile).toMatchObject({ name: 'resume.pdf', type: 'application/pdf' });
+  it('ignores extra clicks on "Fill form" while a fill is already in flight', async () => {
+    analyzeJobPage.mockResolvedValue({ jobInfo, tailoredResume, answers });
+    let resolveFill: () => void;
+    fillAndSubmit.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveFill = resolve;
+      }),
+    );
+    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
-    const saveCall = sendMessage.mock.calls.find(
-      ([message]) => (message as { path?: string }).path === '/applications',
-    )?.[0] as { body: { company: string; roleTitle: string } };
-    expect(saveCall.body).toMatchObject({ company: 'Acme', roleTitle: 'Senior Engineer' });
+    render(<App />);
+    const fillButton = await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(fillButton);
+    fireEvent.click(fillButton);
+
+    expect(fillAndSubmit).toHaveBeenCalledTimes(1);
+
+    resolveFill!();
+    await screen.findByText('Filled and application saved.');
+  });
+
+  it('shows an error and retries filling when the user clicks "Try again"', async () => {
+    analyzeJobPage.mockResolvedValue({ jobInfo, tailoredResume, answers });
+    fillAndSubmit
+      .mockRejectedValueOnce(new FillFailedError(new Error('backend unreachable')))
+      .mockResolvedValueOnce(undefined);
+    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText('Something went wrong filling the form and saving the application.');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Filled and application saved.');
+    expect(fillAndSubmit).toHaveBeenCalledTimes(2);
   });
 });
