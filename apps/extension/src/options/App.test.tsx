@@ -169,9 +169,11 @@ describe('options App', () => {
     fireEvent.change(screen.getByLabelText('Title 1'), { target: { value: 'Senior Engineer' } });
     fireEvent.change(screen.getByLabelText('Start date 1'), { target: { value: '2022-01' } });
     fireEvent.change(screen.getByLabelText('End date 1'), { target: { value: '2023-06' } });
-    fireEvent.change(screen.getByLabelText('Bullets 1'), {
-      target: { value: 'Shipped X\nLed Y' },
-    });
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add bullet' }));
+    fireEvent.change(screen.getByLabelText('Bullet 1.1'), { target: { value: 'Shipped X' } });
+    fireEvent.click(screen.getByRole('button', { name: '+ Add bullet' }));
+    fireEvent.change(screen.getByLabelText('Bullet 1.2'), { target: { value: 'Led Y' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
@@ -188,6 +190,48 @@ describe('options App', () => {
               startDate: '2022-01',
               endDate: '2023-06',
               bullets: ['Shipped X', 'Led Y'],
+            },
+          ],
+        },
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('removes a bullet from a work experience entry and drops blank bullets on save', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', workExperience: [] };
+    const sendMessage = stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add work experience' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add bullet' }));
+    fireEvent.change(screen.getByLabelText('Bullet 1.1'), { target: { value: 'Shipped X' } });
+    fireEvent.click(screen.getByRole('button', { name: '+ Add bullet' }));
+    fireEvent.change(screen.getByLabelText('Bullet 1.2'), { target: { value: 'Led Y' } });
+    fireEvent.click(screen.getByRole('button', { name: '+ Add bullet' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove bullet 1.2' }));
+
+    expect(screen.queryByLabelText('Bullet 1.2')).not.toHaveValue('Led Y');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      {
+        path: '/profile',
+        body: {
+          ...loaded,
+          workExperience: [
+            {
+              company: '',
+              title: '',
+              startDate: '',
+              endDate: null,
+              bullets: ['Shipped X'],
             },
           ],
         },

@@ -9,6 +9,7 @@ import manifest from './src/manifest.ts';
 
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
+  build: { sourcemap: true },
   server: {
     port: 5173,
     strictPort: true,
