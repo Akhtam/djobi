@@ -17,6 +17,7 @@ type Status =
   | 'no-profile'
   | 'unsupported-page'
   | 'ready'
+  | 'not-detected'
   | 'analyzing'
   | 'analyze-error'
   | 'review'
@@ -71,7 +72,10 @@ export function App() {
     if (status !== 'ready' || tabId === null) return;
 
     getJobPageData(tabId).then((data) => {
-      if (!data) return;
+      if (!data) {
+        setStatus('not-detected');
+        return;
+      }
       setJobPageData(data);
       setStatus('analyzing');
     });
@@ -79,7 +83,7 @@ export function App() {
 
   useEffect(() => {
     if (status !== 'analyzing' || !jobPageData || !profile) return;
-
+    alert(`jpd- ${jobPageData},,, profile -${profile}`)
     analyzeJobPage(jobPageData, profile, defaultDeps)
       .then(({ jobInfo: analyzedJobInfo, tailoredResume: resume, answers: draftedAnswers }) => {
         setJobInfo(analyzedJobInfo);
@@ -128,6 +132,14 @@ export function App() {
         <p>Navigate to a supported job application page to get started.</p>
       )}
       {status === 'ready' && <p>djobi is ready on this page.</p>}
+      {status === 'not-detected' && (
+        <>
+          <p>Couldn't find an application form on this page yet.</p>
+          <button type="button" onClick={() => setStatus('ready')}>
+            Try again
+          </button>
+        </>
+      )}
       {status === 'analyzing' && <p>Analyzing job posting…</p>}
       {status === 'analyze-error' && (
         <>

@@ -129,7 +129,7 @@ describe('popup App', () => {
     await screen.findByText('Navigate to a supported job application page to get started.');
   });
 
-  it('shows a ready state when the profile exists, the tab is supported, but no job page has been detected yet', async () => {
+  it('shows a not-detected state with a retry button when no job page has been found', async () => {
     stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
@@ -138,7 +138,44 @@ describe('popup App', () => {
 
     render(<App />);
 
-    await screen.findByText('djobi is ready on this page.');
+    await screen.findByText("Couldn't find an application form on this page yet.");
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('retries detection and proceeds once "Try again" finds a job page', async () => {
+    analyzeJobPage.mockResolvedValue({ jobInfo, tailoredResume, answers });
+
+    let jobPageDataCalls = 0;
+    const sendMessage = vi.fn(
+      (message: Record<string, unknown>, callback: (response: unknown) => void) => {
+        if (message.type === 'GET_JOB_PAGE_DATA') {
+          jobPageDataCalls += 1;
+          callback({ data: jobPageDataCalls === 1 ? null : jobPageData });
+          return;
+        }
+        if (message.path === '/profile') {
+          callback({ data: profile });
+          return;
+        }
+        callback({ data: undefined });
+      },
+    );
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: vi.fn((_query: unknown, callback: (tabs: { id: number; url: string }[]) => void) =>
+          callback([{ id: 1, url: 'https://boards.greenhouse.io/acme/jobs/1' }]),
+        ),
+      },
+      runtime: { sendMessage, openOptionsPage: vi.fn() },
+    });
+
+    render(<App />);
+
+    await screen.findByText("Couldn't find an application form on this page yet.");
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Senior Engineer at Acme');
+    expect(jobPageDataCalls).toBe(2);
   });
 
   it('shows an editable review once analysis succeeds', async () => {
