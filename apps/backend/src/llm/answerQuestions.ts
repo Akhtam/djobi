@@ -17,6 +17,32 @@ const AnswerQuestionsOutputSchema = z.object({
 export interface QuestionToAnswer {
   fieldId: string;
   question: string;
+  /** Valid choices for a select/combobox/radiogroup/checkboxgroup question, if any. */
+  options?: string[];
+}
+
+const normalize = (text: string) => text.trim().toLowerCase();
+
+/**
+ * Enforces that a choice-question's answer is one of its `options` verbatim: corrects
+ * case/whitespace-only mismatches to the exact option text, and drops answers that match no
+ * option at all (rather than letting a bad LLM answer get force-fit into `fillForm`'s
+ * option-matching logic later) — the prompt asks for this, but the model isn't guaranteed to
+ * comply, so it's enforced here too.
+ */
+function constrainToOptions(
+  answers: QuestionAnswer[],
+  questions: QuestionToAnswer[],
+): QuestionAnswer[] {
+  const optionsByFieldId = new Map(questions.map((q) => [q.fieldId, q.options]));
+
+  return answers.flatMap((answer) => {
+    const options = optionsByFieldId.get(answer.fieldId);
+    if (!options) return [answer];
+
+    const match = options.find((option) => normalize(option) === normalize(answer.answer));
+    return match ? [{ ...answer, answer: match }] : [];
+  });
 }
 
 /**
@@ -57,8 +83,10 @@ ${JSON.stringify(jobInfo, null, 2)}
 ${JSON.stringify(questions, null, 2)}
 </questions>
 
+If a question includes an "options" array, your answer MUST be copied verbatim from one of the provided options — do not invent or rephrase.
+
 Return one answer per question, in the same order, with fieldId copied from the input question.`,
   });
 
-  return result.answers;
+  return constrainToOptions(result.answers, questions);
 }

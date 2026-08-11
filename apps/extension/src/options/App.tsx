@@ -2,6 +2,7 @@
 import type { Profile } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import './App.css';
+import icon48 from '../assets/icons/icon48.png';
 import { sendToBackground } from '../lib/sendToBackground';
 
 const EMPTY_PROFILE: Profile = {
@@ -61,9 +62,7 @@ export function App() {
     <main className="page">
       <header className="page-header">
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            dj
-          </div>
+          <img src={icon48} alt="" className="brand-mark" />
           <div>
             <h1>djobi</h1>
             <p className="subtitle">Profile</p>

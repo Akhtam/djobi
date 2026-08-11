@@ -1,8 +1,12 @@
-import type { DetectedField, JobInfo, NewApplication, Profile, QuestionAnswer, TailoredResume } from '@djobi/shared';
-import { fetchResumePdf } from '../lib/fetchResumePdf';
+import type {
+  DetectedField,
+  JobInfo,
+  NewApplication,
+  Profile,
+  QuestionAnswer,
+  TailoredResume,
+} from '@djobi/shared';
 import type { JobPageData } from '../lib/messages';
-import { sendMessage } from '../lib/messages';
-import { sendToBackground } from '../lib/sendToBackground';
 
 export interface PipelineDeps {
   extractJob: (pageText: string) => Promise<JobInfo>;
@@ -10,7 +14,7 @@ export interface PipelineDeps {
   answerQuestions: (
     profile: Profile,
     jobInfo: JobInfo,
-    questions: { fieldId: string; question: string }[],
+    questions: { fieldId: string; question: string; options?: string[] }[],
   ) => Promise<QuestionAnswer[]>;
   fetchResumePdf: (profile: Profile, tailoredResume: TailoredResume) => Promise<ArrayBuffer>;
   sendFillFormMessage: (message: unknown) => Promise<unknown>;
@@ -32,7 +36,10 @@ export class FillFailedError extends Error {
 }
 
 /** Maps a scalar (non-question, non-upload) field category to the base profile value that fills it. */
-function valueForCategory(category: DetectedField['category'], profile: Profile): string | undefined {
+function valueForCategory(
+  category: DetectedField['category'],
+  profile: Profile,
+): string | undefined {
   switch (category) {
     case 'first_name':
       return profile.fullName.split(' ')[0];
@@ -67,7 +74,7 @@ export async function analyzeJobPage(
 
     const questions = jobPageData.fields
       .filter((field) => field.category === 'question')
-      .map((field) => ({ fieldId: field.id, question: field.label }));
+      .map((field) => ({ fieldId: field.id, question: field.label, options: field.options }));
 
     const [tailoredResume, answers] = await Promise.all([
       deps.tailorResume(profile, jobInfo),
@@ -89,7 +96,7 @@ export async function fillAndSubmit(
   tabId: number,
   tabUrl: string | null,
   deps: PipelineDeps,
-): Promise<void> {
+): Promise<{ unresolvedRequiredFields: DetectedField[] }> {
   try {
     const values: Record<string, string> = {};
     for (const field of jobPageData.fields) {
@@ -102,7 +109,12 @@ export async function fillAndSubmit(
       if (value !== undefined) values[field.id] = value;
     }
 
-    const resumeUploadField = jobPageData.fields.find((field) => field.category === 'resume_upload');
+    // Some ATS platforms (e.g. Ashby) render more than one `resume_upload`-classified file input —
+    // an unlabeled/decoy one alongside the real, required one. Prefer the required field so the
+    // resume doesn't end up attached to the wrong (non-required, likely inert) input.
+    const resumeUploadField =
+      jobPageData.fields.find((field) => field.category === 'resume_upload' && field.required) ??
+      jobPageData.fields.find((field) => field.category === 'resume_upload');
     let resumeFile: { name: string; type: string; bytes: number[] } | undefined;
     if (resumeUploadField) {
       const pdfBytes = await deps.fetchResumePdf(profile, tailoredResume);
@@ -130,17 +142,16 @@ export async function fillAndSubmit(
       answers,
       status: 'draft',
     });
+
+    const unresolvedRequiredFields = jobPageData.fields.filter(
+      (field) =>
+        field.required &&
+        values[field.id] === undefined &&
+        !(field.category === 'resume_upload' && resumeFile),
+    );
+
+    return { unresolvedRequiredFields };
   } catch (error) {
     throw new FillFailedError(error);
   }
 }
-
-export const defaultDeps: PipelineDeps = {
-  extractJob: (pageText) => sendToBackground('/extract-job', { pageText }),
-  tailorResume: (profile, jobInfo) => sendToBackground('/tailor-resume', { profile, jobInfo }),
-  answerQuestions: (profile, jobInfo, questions) =>
-    sendToBackground('/answer-questions', { profile, jobInfo, questions }),
-  fetchResumePdf,
-  sendFillFormMessage: (message) => sendMessage(message),
-  saveApplication: (payload) => sendToBackground('/applications', payload),
-};

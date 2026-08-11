@@ -1,7 +1,7 @@
 /**
  * Sends `{ path, body }` to the background service worker (`background/service-worker.ts`'s
  * `chrome.runtime.onMessage` relay) and resolves with the relayed backend response, or rejects
- * with the relayed error message. Used by extension pages (popup/options) that can't call
+ * with the relayed error message. Used by extension pages (panel/options) that can't call
  * `callBackend` directly.
  */
 export function sendToBackground<T>(

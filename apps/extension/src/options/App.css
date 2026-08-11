@@ -1,20 +1,23 @@
 :root {
   color-scheme: light dark;
+  /* Palette anchored to the extension icon's blue-violet gradient (assets/icons), sampled
+     directly from the PNG: top-left #425BD8 -> bottom-right #8450D8, ~135deg. */
   --bg: #f6f7fb;
   --surface: #ffffff;
   --surface-muted: #f1f2f8;
   --border: #e3e5ef;
   --text: #14151f;
   --text-muted: #6b6f80;
-  --primary: #5b5bf6;
-  --primary-hover: #4747e0;
+  --primary: #6356d8;
+  --primary-hover: #5245c4;
   --primary-contrast: #ffffff;
+  --primary-gradient: linear-gradient(135deg, #425bd8, #8450d8);
   --danger: #e0435c;
   --danger-hover: #c92e48;
   --danger-bg: #fdeced;
   --success: #1a9d6c;
   --success-bg: #e7f7f0;
-  --ring: rgb(91 91 246 / 35%);
+  --ring: rgb(99 86 216 / 32%);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -30,15 +33,16 @@
     --border: #2c2e3a;
     --text: #f0f1f6;
     --text-muted: #9396a8;
-    --primary: #7d7dff;
-    --primary-hover: #9494ff;
+    --primary: #8f83f2;
+    --primary-hover: #a79cff;
     --primary-contrast: #101117;
+    --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
     --danger: #ff6b83;
     --danger-hover: #ff8598;
     --danger-bg: rgb(255 107 131 / 12%);
     --success: #3ddb9b;
     --success-bg: rgb(61 219 155 / 12%);
-    --ring: rgb(125 125 255 / 35%);
+    --ring: rgb(143 131 242 / 35%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
     --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
   }
@@ -116,15 +120,11 @@ body {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 32px;
   height: 32px;
+  flex: 0 0 auto;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--primary), #9d7bf7);
-  color: #fff;
-  font-weight: 700;
-  font-size: 15px;
 }
 
 .page-header h1 {
@@ -267,7 +267,7 @@ button:active {
 }
 
 .btn-primary {
-  background: var(--primary);
+  background: var(--primary-gradient);
   color: var(--primary-contrast);
   border-color: var(--primary);
 }

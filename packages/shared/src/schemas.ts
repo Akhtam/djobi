@@ -148,6 +148,15 @@ export const FieldCategorySchema = z.enum([
 /** Inferred type of {@link FieldCategorySchema}. */
 export type FieldCategory = z.infer<typeof FieldCategorySchema>;
 
+/**
+ * How `fillForm.ts` should interact with a field, independent of its semantic `category` —
+ * `'native'` covers plain input/textarea/select; the others are ARIA-widget patterns that need
+ * click-based interaction instead of setting `.value`.
+ */
+export const ElementRoleSchema = z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup']);
+/** Inferred type of {@link ElementRoleSchema}. */
+export type ElementRole = z.infer<typeof ElementRoleSchema>;
+
 /** One form field found on an ATS application page, classified by the content script. */
 export const DetectedFieldSchema = z.object({
   id: z.string().describe('Stable id assigned by the content script for round-tripping'),
@@ -157,6 +166,15 @@ export const DetectedFieldSchema = z.object({
     .string()
     .describe('CSS selector or content-script-internal handle used to locate the element'),
   category: FieldCategorySchema,
+  required: z
+    .boolean()
+    .default(false)
+    .describe('Whether the field is marked required (native `required` or `aria-required`)'),
+  options: z
+    .array(z.string())
+    .optional()
+    .describe('Available choices for a select/combobox/radiogroup/checkboxgroup field'),
+  elementRole: ElementRoleSchema.default('native'),
 });
 /** Inferred type of {@link DetectedFieldSchema}. */
 export type DetectedField = z.infer<typeof DetectedFieldSchema>;

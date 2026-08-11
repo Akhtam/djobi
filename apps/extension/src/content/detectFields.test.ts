@@ -27,6 +27,22 @@ describe('detectFields', () => {
     });
   });
 
+  it("builds a resolvable selector even when the element's id contains CSS-special characters (e.g. Greenhouse's `question_123[]` multi-value ids)", () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="question_68209436[]">Referral source</label>
+        <input id="question_68209436[]" type="text" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(() => document.querySelector(fields[0].selector)).not.toThrow();
+    expect(document.querySelector(fields[0].selector)).toBe(
+      document.getElementById('question_68209436[]'),
+    );
+  });
+
   it('assigns each field a selector that actually resolves back to that element, even without a native id', () => {
     document.body.innerHTML = `
       <form>
@@ -123,5 +139,147 @@ describe('detectFields', () => {
 
     expect(fields).toHaveLength(1);
     expect(fields[0]).toMatchObject({ category: 'email' });
+  });
+
+  it('flags a field required via the native attribute, aria-required, or a nearby required-styled marker', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="native-required">Email</label>
+        <input id="native-required" type="text" required />
+        <label for="aria-required-field">Phone</label>
+        <input id="aria-required-field" type="text" aria-required="true" />
+        <label for="marked-field">Full Name<span class="required">*</span></label>
+        <input id="marked-field" type="text" />
+        <label for="optional-field">Referral code</label>
+        <input id="optional-field" type="text" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields.map((field) => field.required)).toEqual([true, true, true, false]);
+  });
+
+  it('resolves a label that wraps its input with no `for` attribute', () => {
+    document.body.innerHTML = `
+      <form>
+        <label><div class="application-label">Full name</div><input type="text" name="name" /></label>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0]).toMatchObject({ label: 'Full name', category: 'full_name' });
+  });
+
+  it('resolves a label referenced via aria-labelledby', () => {
+    document.body.innerHTML = `
+      <form>
+        <div id="email-label">Email</div>
+        <input type="text" aria-labelledby="email-label" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0]).toMatchObject({ label: 'Email', category: 'email' });
+  });
+
+  it('detects a role=combobox widget, resolving its options from an in-DOM (possibly hidden) listbox via aria-controls', () => {
+    document.body.innerHTML = `
+      <form>
+        <div id="work-auth-label">Are you authorized to work in the US?</div>
+        <input role="combobox" aria-labelledby="work-auth-label" aria-controls="work-auth-listbox" aria-required="true" />
+        <ul id="work-auth-listbox" role="listbox" hidden>
+          <li role="option">Yes</li>
+          <li role="option">No</li>
+        </ul>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Are you authorized to work in the US?',
+      category: 'question',
+      elementRole: 'combobox',
+      required: true,
+      options: ['Yes', 'No'],
+    });
+  });
+
+  it('still detects a role=combobox widget whose aria-controls target is not in the DOM yet, without options', () => {
+    document.body.innerHTML = `
+      <form>
+        <div id="sponsor-label">Will you require sponsorship?</div>
+        <input role="combobox" aria-labelledby="sponsor-label" aria-controls="portal-listbox-1" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Will you require sponsorship?',
+      category: 'question',
+      elementRole: 'combobox',
+    });
+    expect(fields[0].options).toBeUndefined();
+  });
+
+  it("resolves each radio/checkbox option's real label text via `for=id` even when the label doesn't wrap the input (e.g. Ashby's markup), instead of falling back to the input's default \"on\" value", () => {
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>Are you willing to come into the office?</legend>
+          <span><input type="radio" id="opt-a" name="office" /></span>
+          <label for="opt-a">Yes, I am local</label>
+          <span><input type="radio" id="opt-b" name="office" /></span>
+          <label for="opt-b">No, I am not willing</label>
+        </fieldset>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0].options).toEqual(['Yes, I am local', 'No, I am not willing']);
+  });
+
+  it('classifies "Legal Name" (a common full-name synonym) as full_name, not unknown', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="legal-name">Legal Name</label>
+        <input id="legal-name" type="text" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0]).toMatchObject({ category: 'full_name' });
+  });
+
+  it('groups a fieldset of checkboxes into one field instead of reporting each checkbox separately', () => {
+    document.body.innerHTML = `
+      <form>
+        <fieldset aria-required="true">
+          <legend>Which languages do you know?<span class="required">*</span></legend>
+          <label><input type="checkbox" value="ts" />TypeScript</label>
+          <label><input type="checkbox" value="py" />Python</label>
+          <label><input type="checkbox" value="go" />Go</label>
+        </fieldset>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Which languages do you know?*',
+      category: 'question',
+      elementRole: 'checkboxgroup',
+      required: true,
+      options: ['TypeScript', 'Python', 'Go'],
+    });
   });
 });

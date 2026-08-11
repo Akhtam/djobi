@@ -6,6 +6,7 @@ import { answerQuestions } from '../llm/answerQuestions.js';
 const QuestionToAnswerSchema = z.object({
   fieldId: z.string(),
   question: z.string(),
+  options: z.array(z.string()).optional(),
 });
 
 const AnswerQuestionsBodySchema = z.object({

@@ -96,4 +96,67 @@ describe('answerQuestions', () => {
       answerQuestions(profile, jobInfo, [{ fieldId: 'field-3', question: 'Why this role?' }]),
     ).rejects.toThrow('report_answers did not produce a tool call.');
   });
+
+  it('includes a question\'s options in the prompt when present', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', answer: 'Yes', sourceStoryIds: [] },
+        ],
+      }),
+    );
+
+    await answerQuestions(profile, jobInfo, [
+      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+    ]);
+
+    const request = mockCreate.mock.calls[0][0];
+    expect(request.messages[0].content).toContain('"options"');
+    expect(request.messages[0].content).toContain('"Yes"');
+    expect(request.messages[0].content).toContain('"No"');
+  });
+
+  it('corrects a returned answer to the matching option when it differs only in case/whitespace', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'field-auth',
+            question: 'Are you authorized to work in the US?',
+            answer: ' yes ',
+            sourceStoryIds: [],
+          },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+    ]);
+
+    expect(result).toEqual([
+      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', answer: 'Yes', sourceStoryIds: [] },
+    ]);
+  });
+
+  it('drops an answer that matches none of the given options', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'field-auth',
+            question: 'Are you authorized to work in the US?',
+            answer: 'Not sure',
+            sourceStoryIds: [],
+          },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+    ]);
+
+    expect(result).toEqual([]);
+  });
 });

@@ -66,6 +66,30 @@ describe('POST /answer-questions', () => {
     expect(mockAnswerQuestions).toHaveBeenCalledWith(sampleProfile, sampleJobInfo, sampleQuestions);
   });
 
+  it('accepts a question with options and passes it through unchanged', async () => {
+    mockAnswerQuestions.mockResolvedValue(sampleAnswers);
+    const questionsWithOptions = [
+      { fieldId: 'q1', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+    ];
+
+    const res = await app.request('/answer-questions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        profile: sampleProfile,
+        jobInfo: sampleJobInfo,
+        questions: questionsWithOptions,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockAnswerQuestions).toHaveBeenCalledWith(
+      sampleProfile,
+      sampleJobInfo,
+      questionsWithOptions,
+    );
+  });
+
   it('returns 400 and does not call answerQuestions when the body fails validation', async () => {
     const res = await app.request('/answer-questions', {
       method: 'POST',

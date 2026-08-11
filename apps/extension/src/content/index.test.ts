@@ -45,6 +45,23 @@ describe('content script', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it("reports the job page once an ATS embed widget (e.g. Ashby on a company's own domain) renders its form in asynchronously", async () => {
+    document.body.innerHTML = `<main><h1>Careers at Acme</h1><div id="ashby_embed"></div></main>`;
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
+
+    await import('./index');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    document.querySelector('#ashby_embed')!.innerHTML = `<input type="file" name="resume" />`;
+
+    await vi.waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'REPORT_JOB_PAGE' }),
+      ),
+    );
+  });
+
   it('fills the form when it receives a FILL_FORM message', async () => {
     document.body.innerHTML = `<main><input id="email-field" type="text" /></main>`;
     let listener: (
@@ -71,6 +88,8 @@ describe('content script', () => {
             inputType: 'text',
             selector: '#email-field',
             category: 'email',
+            required: false,
+            elementRole: 'native',
           },
         ],
         values: { f1: 'jane@example.com' },
@@ -78,6 +97,8 @@ describe('content script', () => {
       {},
       sendResponse,
     );
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(document.querySelector<HTMLInputElement>('#email-field')!.value).toBe(
       'jane@example.com',
@@ -110,6 +131,8 @@ describe('content script', () => {
             inputType: 'file',
             selector: '#resume-field',
             category: 'resume_upload',
+            required: false,
+            elementRole: 'native',
           },
         ],
         values: {},
@@ -118,9 +141,67 @@ describe('content script', () => {
       {},
       vi.fn(),
     );
+    await Promise.resolve();
+    await Promise.resolve();
 
     const input = document.querySelector<HTMLInputElement>('#resume-field')!;
     expect(input.files).toHaveLength(1);
     expect(input.files?.[0].name).toBe('resume.pdf');
+  });
+
+  it("attaches the resume to the required resume_upload field when more than one is detected (e.g. Ashby's extra unlabeled, non-required file input)", async () => {
+    document.body.innerHTML = `
+      <main>
+        <input id="decoy-field" type="file" />
+        <input id="resume-field" type="file" />
+      </main>
+    `;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await import('./index');
+    listener(
+      {
+        type: 'FILL_FORM',
+        fields: [
+          {
+            id: 'f-decoy',
+            label: '',
+            inputType: 'file',
+            selector: '#decoy-field',
+            category: 'resume_upload',
+            required: false,
+            elementRole: 'native',
+          },
+          {
+            id: 'f-resume',
+            label: 'Resume',
+            inputType: 'file',
+            selector: '#resume-field',
+            category: 'resume_upload',
+            required: true,
+            elementRole: 'native',
+          },
+        ],
+        values: {},
+        resumeFile: { name: 'resume.pdf', type: 'application/pdf', bytes: [37, 80, 68, 70] },
+      },
+      {},
+      vi.fn(),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.querySelector<HTMLInputElement>('#resume-field')!.files).toHaveLength(1);
+    expect(document.querySelector<HTMLInputElement>('#decoy-field')!.files).toHaveLength(0);
   });
 });

@@ -1,4 +1,10 @@
-import type { DetectedField, JobInfo, Profile, QuestionAnswer, TailoredResume } from '@djobi/shared';
+import type {
+  DetectedField,
+  JobInfo,
+  Profile,
+  QuestionAnswer,
+  TailoredResume,
+} from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
   AnalysisFailedError,
@@ -43,10 +49,17 @@ const questionField: DetectedField = {
   inputType: 'textarea',
   selector: '#why-field',
   category: 'question',
+  required: false,
+  elementRole: 'native',
 };
 
 const answers: QuestionAnswer[] = [
-  { fieldId: 'f-why', question: 'Why do you want to work here?', answer: 'Draft answer.', sourceStoryIds: [] },
+  {
+    fieldId: 'f-why',
+    question: 'Why do you want to work here?',
+    answer: 'Draft answer.',
+    sourceStoryIds: [],
+  },
 ];
 
 function makeDeps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
@@ -76,6 +89,31 @@ describe('analyzeJobPage', () => {
     expect(result).toEqual({ jobInfo, tailoredResume, answers });
   });
 
+  it("passes a question field's options through to answerQuestions, so choice-type questions get constrained answers", async () => {
+    const deps = makeDeps();
+    const comboboxField: DetectedField = {
+      id: 'f-auth',
+      label: 'Are you authorized to work in the US?',
+      inputType: 'combobox',
+      selector: '#auth-field',
+      category: 'question',
+      required: true,
+      elementRole: 'combobox',
+      options: ['Yes', 'No'],
+    };
+    const jobPageData = { pageText: 'Senior Engineer at Acme...', fields: [comboboxField] };
+
+    await analyzeJobPage(jobPageData, profile, deps);
+
+    expect(deps.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
+      {
+        fieldId: 'f-auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['Yes', 'No'],
+      },
+    ]);
+  });
+
   it('wraps an underlying failure in AnalysisFailedError, preserving the cause', async () => {
     const underlying = new Error('backend unreachable');
     const deps = makeDeps({ extractJob: vi.fn().mockRejectedValue(underlying) });
@@ -95,6 +133,8 @@ describe('fillAndSubmit', () => {
     inputType: 'email',
     selector: '#email-field',
     category: 'email',
+    required: false,
+    elementRole: 'native',
   };
 
   it('fills scalar and question fields, then saves the application, without touching the resume', async () => {
@@ -131,6 +171,95 @@ describe('fillAndSubmit', () => {
     });
   });
 
+  it('surfaces required fields that end up with no resolved value, instead of silently dropping them', async () => {
+    const unresolvedField: DetectedField = {
+      id: 'f-mystery',
+      label: 'Referral code',
+      inputType: 'text',
+      selector: '#mystery-field',
+      category: 'unknown',
+      required: true,
+      elementRole: 'native',
+    };
+    const deps = makeDeps();
+    const jobPageData = { pageText: '...', fields: [emailField, unresolvedField] };
+
+    const result = await fillAndSubmit(
+      jobPageData,
+      profile,
+      jobInfo,
+      tailoredResume,
+      answers,
+      1,
+      null,
+      deps,
+    );
+
+    expect(result.unresolvedRequiredFields).toEqual([unresolvedField]);
+  });
+
+  it('does not surface a required field once it does resolve a value', async () => {
+    const deps = makeDeps();
+    const requiredEmailField: DetectedField = { ...emailField, required: true };
+    const jobPageData = { pageText: '...', fields: [requiredEmailField] };
+
+    const result = await fillAndSubmit(
+      jobPageData,
+      profile,
+      jobInfo,
+      tailoredResume,
+      answers,
+      1,
+      null,
+      deps,
+    );
+
+    expect(result.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it('attaches the resume to the required resume_upload field when more than one is detected (e.g. Ashby renders an extra unlabeled, non-required file input)', async () => {
+    const decoyField: DetectedField = {
+      id: 'f-decoy',
+      label: '',
+      inputType: 'file',
+      selector: '#decoy-field',
+      category: 'resume_upload',
+      required: false,
+      elementRole: 'native',
+    };
+    const requiredResumeField: DetectedField = {
+      id: 'f-resume',
+      label: 'Resume',
+      inputType: 'file',
+      selector: '#resume-field',
+      category: 'resume_upload',
+      required: true,
+      elementRole: 'native',
+    };
+    const pdfBytes = new Uint8Array([37, 80, 68, 70]).buffer;
+    const deps = makeDeps({ fetchResumePdf: vi.fn().mockResolvedValue(pdfBytes) });
+    // Decoy field appears first in DOM/array order, same as observed on the real Ashby posting.
+    const jobPageData = { pageText: '...', fields: [decoyField, requiredResumeField] };
+
+    const result = await fillAndSubmit(
+      jobPageData,
+      profile,
+      jobInfo,
+      tailoredResume,
+      answers,
+      1,
+      null,
+      deps,
+    );
+
+    expect(deps.sendFillFormMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeFile: { name: 'resume.pdf', type: 'application/pdf', bytes: [37, 80, 68, 70] },
+      }),
+    );
+    expect(result.unresolvedRequiredFields).toEqual([]);
+  });
+
   it('fetches and attaches the tailored resume PDF when a resume_upload field is present', async () => {
     const resumeField: DetectedField = {
       id: 'f-resume',
@@ -138,6 +267,8 @@ describe('fillAndSubmit', () => {
       inputType: 'file',
       selector: '#resume-field',
       category: 'resume_upload',
+      required: false,
+      elementRole: 'native',
     };
     const pdfBytes = new Uint8Array([37, 80, 68, 70]).buffer;
     const deps = makeDeps({ fetchResumePdf: vi.fn().mockResolvedValue(pdfBytes) });

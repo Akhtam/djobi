@@ -241,6 +241,42 @@ as work happens — check items off, add new ones, don't let it go stale.
       previously re-implemented the same `querySelector` lookup independently). Tested directly
       (2 new tests in `fillForm.test.ts`); `fillForm()`'s and `content/index.ts`'s existing tests
       stayed green unmodified, confirming the refactor didn't change behavior.
+- [x] **Job-description paste fallback** (2026-08-10, via `/tdd`): some ATS embeds split a posting
+      into Overview/Application tabs, and it's unconfirmed whether the Overview tab's DOM content
+      survives a client-side tab switch (may be unmounted, not just hidden) — if it doesn't,
+      `scrapePageText`'s single DOM snapshot at detection time can miss the job description
+      entirely, since detection fires once the Application tab's form is visible. Rather than guess
+      at ATS-specific tab markup, `popup/App.tsx`'s review screen gained an "Edit job description"
+      toggle revealing a textarea (pre-filled with the scraped `pageText`) and a "Re-analyze"
+      button; re-analysis re-runs `analyzeJobPage` with the edited text substituted in, everything
+      else (fields, tabId, etc.) unchanged. Manual/universal fallback — works regardless of which
+      platform or failure mode caused a bad scrape, not just the tabbed-Ashby case that prompted it.
+      Tested (2 new tests in `App.test.tsx`, 11 total).
+- [x] **Paste fallback moved before first analysis, not just after** (2026-08-10, via `/tdd`):
+      `status: 'ready'` no longer auto-transitions straight to `'analyzing'` once a job page is
+      detected — it now shows a "Ready to analyze" screen with the scraped `pageText` in an
+      always-visible (not toggled) textarea and an explicit "Analyze" button, so a bad scrape can
+      be corrected before the first LLM call, not only after seeing a bad result. The `'review'`
+      screen's toggled "Edit job description"/"Re-analyze" editor (previous entry) is unchanged and
+      still there for after-the-fact correction. Both share the same `pageTextOverride` state.
+      Existing tests updated (a `clickAnalyze()` helper added, since analysis no longer starts on
+      its own); 2 new tests. `App.test.tsx`: 13 total (up from 11).
+- [x] **Paste + Analyze decoupled from job-page detection entirely** (2026-08-10, via `/tdd`):
+      the `'ready'` screen now always shows the paste box + "Analyze" button immediately, whether
+      or not a job page has been auto-detected yet — the `'not-detected'` status/dead-end and its
+      "Try again" retry are gone; detection is now purely a background pre-fill (populates the
+      textarea + `fields` when it succeeds) rather than something that gates the UI. Clicking
+      "Analyze" with no job page ever detected synthesizes `{ pageText, fields: [] }` so analysis
+      (job info + tailored resume + drafted answers) still works standalone from pasted text alone
+      — "Fill form" just has nothing to act on until a real form is detected, which is an accepted
+      trade-off of the manual-first flow. "Analyze"/"Re-analyze" are disabled whenever there's no
+      text to send (pasted or scraped) — needed a `??` vs `||` fix along the way: the effective
+      text used for the textarea's *display* value, the disabled check, and the analyze payload
+      must all read from the exact same `pageTextOverride ?? jobPageData?.pageText ?? ''`
+      expression, or clearing the box either fights the user's typing (silently reverts) or lets a
+      blank submission slip through depending on which operator is used where. `App.test.tsx`: 14
+      total (up from 13) — replaced the not-detected/retry tests, added paste-without-detection and
+      the disabled-on-empty cases for both editors.
 
 ### Phase 7 — Application tracking data model (planned 2026-08-07, not started)
 
@@ -311,6 +347,44 @@ process — decided with the user:
       answers still land in the existing editable review UI before the Fill Step, unchanged
 - [ ] Extend `CONTEXT.md`'s Language section with **Company Culture** once the shape is settled
 - Build test-first per the established process, same as Phases 3/4/7
+
+### Phase 10 — Live chat to refine drafted answers (planned 2026-08-10, not started)
+
+New scope: in the popup's review UI, let the user open a chat with the AI *about a specific
+drafted answer* and iterate on it conversationally ("make this shorter", "lead with the
+migration story instead", "sound less formal") instead of only hand-editing the textarea. Scoped
+to `question`-category fields only (the freeform drafted answers already in the review UI) — not
+select/combobox/radiogroup fields, which are constrained-choice and not a good fit for freeform
+rewriting. Manual textarea editing stays as-is; this is an additive alternative, not a replacement.
+
+Note on numbering: **Phase 9 is already taken** (company-culture-aware answers, planned
+2026-08-07, not started) — this is filed as Phase 10 rather than renumbering existing phases.
+Reorder if this should actually take priority over Phase 9.
+
+Open design question, not yet decided with the user: Chrome extension **popups are destroyed and
+rebuilt from scratch every time they close** (unlike a persistent surface), so any in-progress chat
+history kept only in the popup's React state is lost if the user clicks away mid-conversation. Two
+ways to handle this, needing a decision before implementation starts:
+- Accept the limitation for v1 (chat is scoped to a single popup-open session; closing the popup
+  resets it) — simplest, no architecture change.
+- Move the review UI (or just the chat) into a `chrome.sidePanel` (MV3 API), which stays open
+  independent of navigation/clicks — bigger change, but matches what "live chat" implies.
+
+- [ ] `packages/shared`: add `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`) and a
+      request/response shape for one chat turn (profile, jobInfo, question, current answer, prior
+      `messages: ChatMessage[]` → assistant reply, plus an optional `revisedAnswer` string when the
+      assistant's reply represents a concrete new draft rather than just conversation)
+- [ ] `apps/backend/src/llm/chatAboutAnswer.ts` — one turn of the conversation; same model tier as
+      `answerQuestions` (`MODELS.writing`, Sonnet), grounded in `profile`/`jobInfo` with the same
+      non-fabrication rule as the rest of the answer-drafting prompts. Tested like the other
+      LLM-layer modules (Phase 3 pattern)
+- [ ] `POST /chat-answer` route — zod-validated body, returns `{ reply, revisedAnswer? }`
+- [ ] Popup: a "Refine with AI" affordance per question card opening a small message-thread UI
+      (history + input); when a reply includes `revisedAnswer`, a "Use this" action applies it to
+      the existing answer textarea (still editable by hand afterward, same as today)
+- [ ] Decide + document the popup-teardown question above before writing the chat-history state
+      management
+- Build test-first per the established process, same as Phases 3/4/7/9
 
 ## Open architecture-review recommendations
 

@@ -222,6 +222,36 @@ describe('DetectedFieldSchema', () => {
       DetectedFieldSchema.safeParse({ ...validField, category: 'not_a_category' }).success,
     ).toBe(false);
   });
+
+  it('defaults required to false and elementRole to native when omitted', () => {
+    const result = DetectedFieldSchema.safeParse(validField);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.required).toBe(false);
+      expect(result.data.elementRole).toBe('native');
+      expect(result.data.options).toBeUndefined();
+    }
+  });
+
+  it('accepts a required combobox field with options', () => {
+    const result = DetectedFieldSchema.safeParse({
+      ...validField,
+      category: 'question',
+      required: true,
+      elementRole: 'combobox',
+      options: ['Yes', 'No'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.options).toEqual(['Yes', 'No']);
+    }
+  });
+
+  it('rejects an invalid elementRole', () => {
+    expect(
+      DetectedFieldSchema.safeParse({ ...validField, elementRole: 'dropdown' }).success,
+    ).toBe(false);
+  });
 });
 
 describe('QuestionAnswerSchema', () => {
