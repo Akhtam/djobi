@@ -1,7 +1,13 @@
 import type { Profile } from '@djobi/shared';
 import { fetchResumePdf } from '../lib/fetchResumePdf';
 import type { FillFormCommandMessage, JobPageData } from '../lib/messages';
-import { getPipelineRun, patchPipelineRun, setPipelineRun } from '../lib/pipelineRunStore';
+import {
+  asAnalyzedRun,
+  getDetectedPage,
+  getPipelineRun,
+  patchPipelineRun,
+  setPipelineRun,
+} from '../lib/tabStore';
 import {
   AnalysisFailedError,
   analyzeJobPage,
@@ -10,7 +16,6 @@ import {
   type PipelineDeps,
 } from '../panel/pipeline';
 import { callBackend } from './callBackend';
-import { getJobPageData } from './jobPageStore';
 
 /**
  * Runs the Application Pipeline (`panel/pipeline.ts`'s `analyzeJobPage`/`fillAndSubmit`, unchanged)
@@ -18,7 +23,7 @@ import { getJobPageData } from './jobPageStore';
  * survives the panel that requested it closing mid-run — a panel-driven version would drop the
  * result on the floor in that case, because closing the panel tears down the
  * `chrome.runtime.sendMessage` port a direct `sendToBackground` call would be waiting on. Progress
- * is checkpointed into `lib/pipelineRunStore.ts` as it happens; callers (`panel/App.tsx`) observe
+ * is checkpointed into `lib/tabStore.ts` as it happens; callers (`panel/App.tsx`) observe
  * it via `chrome.storage.onChanged` rather than a message response.
  */
 const backgroundDeps: PipelineDeps = {
@@ -38,13 +43,25 @@ const backgroundDeps: PipelineDeps = {
   saveApplication: (payload) => callBackend('/applications', payload),
 };
 
+/**
+ * Unwraps the message from an {@link AnalysisFailedError}/{@link FillFailedError}'s `cause` — the
+ * layer that actually knows what went wrong (usually a `BackendError` naming the path and status).
+ * The wrapper's own message is a fixed string, so reporting it alone tells the user nothing.
+ */
+function causeMessage(error: { cause?: unknown }): string {
+  const { cause } = error;
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === 'string') return cause;
+  return String(cause ?? 'unknown cause');
+}
+
 export async function runAnalysis(
   tabId: number,
   tabUrl: string | null,
   profile: Profile,
   pageTextOverride: string | null,
 ): Promise<void> {
-  const detected = getJobPageData(tabId);
+  const detected = await getDetectedPage(tabId);
   const pageText = pageTextOverride ?? detected?.pageText ?? '';
   if (!pageText) return; // nothing to analyze — mirrors the panel's own guard before sending this
 
@@ -59,6 +76,8 @@ export async function runAnalysis(
     tailoredResume: null,
     answers: [],
     unresolvedRequiredFields: [],
+    filledFieldCount: 0,
+    failure: null,
   });
 
   try {
@@ -70,30 +89,32 @@ export async function runAnalysis(
     await patchPipelineRun(tabId, { status: 'review', jobInfo, tailoredResume, answers });
   } catch (error) {
     if (!(error instanceof AnalysisFailedError)) throw error;
-    await patchPipelineRun(tabId, { status: 'analyze-error' });
+    await patchPipelineRun(tabId, {
+      status: 'analyze-error',
+      failure: { step: 'analysis', message: causeMessage(error) },
+    });
   }
 }
 
 export async function runFill(tabId: number, profile: Profile): Promise<void> {
-  const run = await getPipelineRun(tabId);
-  if (!run || !run.jobInfo || !run.tailoredResume) return;
+  const run = asAnalyzedRun(await getPipelineRun(tabId));
+  if (!run) return;
 
-  await patchPipelineRun(tabId, { status: 'filling' });
+  await patchPipelineRun(tabId, { status: 'filling', failure: null });
 
   try {
-    const { unresolvedRequiredFields } = await fillAndSubmit(
-      run.jobPageData,
+    const { unresolvedRequiredFields, filledFieldCount } = await fillAndSubmit(
+      run,
       profile,
-      run.jobInfo,
-      run.tailoredResume,
-      run.answers,
       tabId,
-      run.tabUrl,
       backgroundDeps,
     );
-    await patchPipelineRun(tabId, { status: 'filled', unresolvedRequiredFields });
+    await patchPipelineRun(tabId, { status: 'filled', unresolvedRequiredFields, filledFieldCount });
   } catch (error) {
     if (!(error instanceof FillFailedError)) throw error;
-    await patchPipelineRun(tabId, { status: 'fill-error' });
+    await patchPipelineRun(tabId, {
+      status: 'fill-error',
+      failure: { step: 'fill', message: causeMessage(error) },
+    });
   }
 }

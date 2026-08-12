@@ -35,6 +35,41 @@ describe('callBackend', () => {
     await expect(callBackend('/extract-job', {})).rejects.toThrow('pageText is required');
   });
 
+  it('surfaces a non-JSON error body verbatim instead of failing to parse it — a plain-text 500 used to throw an unrelated SyntaxError, destroying the real cause', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('Internal Server Error', {
+        status: 500,
+        headers: { 'content-type': 'text/plain' },
+      }),
+    );
+
+    await expect(callBackend('/answer-questions', {})).rejects.toThrow(
+      'POST /answer-questions failed (500): Internal Server Error',
+    );
+  });
+
+  it('carries the status and path on the thrown BackendError, so callers can report which step failed', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'report_answers did not produce a tool call.' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await expect(callBackend('/answer-questions', {})).rejects.toMatchObject({
+      name: 'BackendError',
+      status: 500,
+      path: '/answer-questions',
+      message: expect.stringContaining('report_answers did not produce a tool call.'),
+    });
+  });
+
+  it('reports an empty error body rather than throwing on the empty string', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('', { status: 502 }));
+
+    await expect(callBackend('/extract-job', {})).rejects.toThrow('empty response body');
+  });
+
   it('sends a bodyless GET request when method is "GET"', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ fullName: 'Jane Doe' }), {

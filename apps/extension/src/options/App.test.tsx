@@ -9,7 +9,6 @@ const emptyProfile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -93,9 +92,6 @@ describe('options App', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'jane@new.com' } });
     fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '555-1234' } });
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Remote' } });
-    fireEvent.change(screen.getByLabelText('Summary'), {
-      target: { value: 'Experienced engineer.' },
-    });
     fireEvent.change(screen.getByLabelText('LinkedIn'), {
       target: { value: 'https://linkedin.com/in/jane' },
     });
@@ -117,7 +113,6 @@ describe('options App', () => {
           email: 'jane@new.com',
           phone: '555-1234',
           location: 'Remote',
-          summary: 'Experienced engineer.',
           links: {
             linkedin: 'https://linkedin.com/in/jane',
             portfolio: 'https://jane.dev',

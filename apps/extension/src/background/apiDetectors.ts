@@ -1,4 +1,4 @@
-import type { DetectedField } from '@djobi/shared';
+import type { DetectedField, FieldOption } from '@djobi/shared';
 
 export interface GreenhouseUrlInfo {
   boardToken: string;
@@ -50,6 +50,25 @@ interface GreenhouseJobResponse {
 const normalize = (text: string) => text.trim().toLowerCase();
 
 /**
+ * Overlays an ATS API's authoritative choice labels onto the ones `detectFields.ts` scraped,
+ * **keeping the DOM selector** recorded for any choice we already saw. Replacing the scraped
+ * options outright would trade a choice the Fill Step can click for a label string it can only try
+ * to text-match — and the API's wording doesn't always match what the page renders, so that trade
+ * can silently make a field unfillable. Choices the API knows about but the DOM didn't (a listbox
+ * that only mounts when opened) get `selector: null` and fall back to label matching.
+ */
+function mergeOptions(existing: FieldOption[] | undefined, apiLabels: string[]): FieldOption[] {
+  const selectorByLabel = new Map(
+    (existing ?? []).map((option) => [normalize(option.label), option.selector]),
+  );
+
+  return apiLabels.map((label) => ({
+    label,
+    selector: selectorByLabel.get(normalize(label)) ?? null,
+  }));
+}
+
+/**
  * Merges Greenhouse's Job Board API question schema onto matching `DetectedField`s, by normalized
  * label text (not DOM id — a react-select combobox's own DOM id is an internal, generated one,
  * not the API's stable field name, but its accessible label text is the same string a candidate
@@ -68,7 +87,12 @@ export function mergeGreenhouseQuestions(
     if (!question) return field;
 
     const selectField = question.fields.find((f) => f.values.length > 0);
-    const options = selectField ? selectField.values.map((v) => v.label) : field.options;
+    const options = selectField
+      ? mergeOptions(
+          field.options,
+          selectField.values.map((v) => v.label),
+        )
+      : field.options;
 
     return { ...field, required: question.required, options };
   });
@@ -155,7 +179,10 @@ export function mergeAshbyQuestions(
     if (!match) return field;
 
     const options = match.selectableValues?.length
-      ? match.selectableValues.map((v) => v.label)
+      ? mergeOptions(
+          field.options,
+          match.selectableValues.map((v) => v.label),
+        )
       : field.options;
 
     return { ...field, required: match.isRequired, options };
@@ -253,7 +280,12 @@ export function mergeSmartRecruitersQuestions(
 
     const selectField = question.fields.find((f) => (f.values?.length ?? 0) > 0);
     const required = question.fields.some((f) => f.required);
-    const options = selectField ? selectField.values!.map((v) => v.label) : field.options;
+    const options = selectField
+      ? mergeOptions(
+          field.options,
+          selectField.values!.map((v) => v.label),
+        )
+      : field.options;
 
     return { ...field, required, options };
   });
@@ -340,7 +372,9 @@ export function mergeWorkableQuestions(
     const question = byLabel.get(normalize(field.label));
     if (!question) return field;
 
-    const options = question.choices?.length ? question.choices : field.options;
+    const options = question.choices?.length
+      ? mergeOptions(field.options, question.choices)
+      : field.options;
     return { ...field, required: question.required, options };
   });
 }

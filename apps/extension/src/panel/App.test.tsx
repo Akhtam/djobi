@@ -8,7 +8,13 @@ import type {
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchResumePdf } from '../lib/fetchResumePdf';
-import { patchPipelineRun, setPipelineRun, type PipelineStatus } from '../lib/pipelineRunStore';
+import {
+  patchPipelineRun,
+  setPipelineRun,
+  storageKey as tabStorageKey,
+  type PipelineFailure,
+  type PipelineStatus,
+} from '../lib/tabStore';
 import { App } from './App';
 
 vi.mock('../lib/fetchResumePdf', () => ({ fetchResumePdf: vi.fn() }));
@@ -19,7 +25,6 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -37,7 +42,6 @@ const jobInfo: JobInfo = {
 };
 
 const tailoredResume: TailoredResume = {
-  summary: 'Tailored summary.',
   skills: [],
   workExperience: [],
 };
@@ -65,7 +69,7 @@ const jobPageData = { pageText: 'Senior Engineer at Acme...', fields: [questionF
 
 /**
  * In-memory stand-in for `chrome.storage.session`, close enough to the real callback/Promise API
- * for `pipelineRunStore.ts`. Auto-fires `onChanged` on `set`/`remove`, like real Chrome does
+ * for `tabStore.ts`. Auto-fires `onChanged` on `set`/`remove`, like real Chrome does
  * (including back to the same context that wrote the change) — this is what exercises `App.tsx`'s
  * own-write echo guard, not just the hydrate-on-mount path.
  */
@@ -111,11 +115,16 @@ interface AnalysisOutcome {
   jobInfo?: JobInfo;
   tailoredResume?: TailoredResume;
   answers?: QuestionAnswer[];
+  /** The cause `background/pipelineRunner.ts` would checkpoint alongside an `analyze-error`. */
+  failure?: PipelineFailure;
 }
 
 interface FillOutcome {
   status: Extract<PipelineStatus, 'filled' | 'fill-error'>;
   unresolvedRequiredFields?: DetectedField[];
+  /** How many fields the Fill Step wrote. Defaults to a nonzero count — the ordinary case. */
+  filledFieldCount?: number;
+  failure?: PipelineFailure;
 }
 
 interface StubOptions {
@@ -129,7 +138,7 @@ interface StubOptions {
   sessionStorage?: ReturnType<typeof createSessionStorageStub>;
   /** Outcomes for successive `START_ANALYSIS` messages, consumed in order (repeats the last entry
    *  once exhausted) — simulates `background/pipelineRunner.ts` completing the Analysis Step and
-   *  checkpointing the result into `pipelineRunStore`. Defaults to one successful analysis. */
+   *  checkpointing the result into `tabStore`. Defaults to one successful analysis. */
   analysisOutcomes?: AnalysisOutcome[];
   /** Same idea as `analysisOutcomes`, for `START_FILL`. Defaults to one successful fill. */
   fillOutcomes?: FillOutcome[];
@@ -139,10 +148,10 @@ interface StubOptions {
 }
 
 /**
- * Stubs `chrome.tabs.query` (active tab) and `chrome.runtime.sendMessage`. `GET_JOB_PAGE_DATA` and
+ * Stubs `chrome.tabs.query` (active tab) and `chrome.runtime.sendMessage`. The detected job page is seeded into session storage; `/profile` and
  * `/profile` are answered directly; `START_ANALYSIS`/`START_FILL` are acknowledged (no response
  * payload, matching the real fire-and-forget handler) and, like `background/pipelineRunner.ts`
- * would, checkpoint an outcome into `pipelineRunStore` — these tests assert on that store ->
+ * would, checkpoint an outcome into `tabStore` — these tests assert on that store ->
  * render wiring, not on how analysis/filling itself happens (that's `pipeline.test.ts`'s job).
  */
 function stubChrome(options: StubOptions) {
@@ -153,10 +162,6 @@ function stubChrome(options: StubOptions) {
 
   const sendMessage = vi.fn(
     (message: Record<string, unknown>, callback: (response: unknown) => void) => {
-      if (message.type === 'GET_JOB_PAGE_DATA') {
-        callback({ data: options.jobPageData ?? null });
-        return;
-      }
       if (message.path === '/profile') {
         callback({ data: options.profile });
         return;
@@ -181,6 +186,8 @@ function stubChrome(options: StubOptions) {
           tailoredResume: outcome.tailoredResume ?? null,
           answers: outcome.answers ?? [],
           unresolvedRequiredFields: [],
+          filledFieldCount: 0,
+          failure: outcome.failure ?? null,
         });
         callback({ data: undefined });
         return;
@@ -194,6 +201,8 @@ function stubChrome(options: StubOptions) {
           void patchPipelineRun(tabId, {
             status: outcome.status,
             unresolvedRequiredFields: outcome.unresolvedRequiredFields ?? [],
+            filledFieldCount: outcome.filledFieldCount ?? 3,
+            failure: outcome.failure ?? null,
           });
         if (options.holdFill) resolveFillFn = apply;
         else apply();
@@ -206,6 +215,16 @@ function stubChrome(options: StubOptions) {
   const onActivated = { addListener: vi.fn(), removeListener: vi.fn() };
   const onUpdated = { addListener: vi.fn(), removeListener: vi.fn() };
   const storage = options.sessionStorage ?? createSessionStorageStub();
+  // The panel reads the content script's detection straight out of session storage — seed it the
+  // way `reportDetectedPage` would, rather than answering a message that no longer exists.
+  if (options.jobPageData) {
+    void storage.session.set({
+      [tabStorageKey(options.tabId ?? 1)]: {
+        frames: { 0: { data: options.jobPageData, revision: 1 } },
+        run: null,
+      },
+    });
+  }
   vi.stubGlobal('chrome', {
     tabs: {
       query: vi.fn((_query: unknown, callback: (tabs: { id: number; url: string }[]) => void) =>
@@ -439,6 +458,55 @@ describe('panel App', () => {
     await screen.findByText('Senior Engineer at Acme');
   });
 
+  it('shows the underlying cause of a failed analysis, not just a generic message', async () => {
+    stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      analysisOutcomes: [
+        {
+          status: 'analyze-error',
+          failure: {
+            step: 'analysis',
+            message:
+              'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+          },
+        },
+      ],
+    });
+
+    render(<App />);
+    await clickAnalyze();
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(
+      screen.getByText(
+        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the underlying cause of a failed fill', async () => {
+    stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      fillOutcomes: [
+        {
+          status: 'fill-error',
+          failure: { step: 'fill', message: 'POST /applications failed (500): db unreachable' },
+        },
+      ],
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText('POST /applications failed (500): db unreachable');
+  });
+
   it('fills the form and saves the application when "Fill form" is clicked', async () => {
     const { sendMessage } = stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
@@ -452,11 +520,65 @@ describe('panel App', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText('Filled and application saved.');
+    await screen.findByText('Filled 3 fields and saved the application.');
     expect(sendMessage).toHaveBeenCalledWith(
       { type: 'START_FILL', tabId: 1, profile },
       expect.any(Function),
     );
+  });
+
+  it('keeps the drafted answers, resume preview and job-description editor available after a successful fill', async () => {
+    // Filling is rarely the end of the task — the page's own validation can reject a value, or an
+    // answer can simply read badly once it's sitting in the form. Tearing the review down on
+    // success stranded the user with a green check and no route back to the content short of
+    // re-running the whole Analysis Step.
+    stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    await screen.findByText('Filled 3 fields and saved the application.');
+
+    expect(screen.getByText('Why do you want to work here?')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Preview tailored resume' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit job description' })).toBeInTheDocument();
+  });
+
+  it('lets the user edit an answer after filling and fill again, sending the edit to the Fill Step', async () => {
+    const { sendMessage } = stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    await screen.findByText('Filled 3 fields and saved the application.');
+
+    fireEvent.change(screen.getByDisplayValue('Draft answer.'), {
+      target: { value: 'Revised answer.' },
+    });
+
+    const refill = await screen.findByRole('button', { name: 'Fill form again' });
+    fireEvent.click(refill);
+
+    await screen.findByText('Filled 3 fields and saved the application.');
+    expect(screen.getByDisplayValue('Revised answer.')).toBeInTheDocument();
+    expect(
+      sendMessage.mock.calls.filter(([message]) => message.type === 'START_FILL'),
+    ).toHaveLength(2);
   });
 
   it("warns about required fields that couldn't be resolved, instead of reporting a plain success when the fill is actually incomplete", async () => {
@@ -483,7 +605,29 @@ describe('panel App', () => {
 
     await screen.findByText(/couldn't be resolved/);
     expect(screen.getByText('Referral code')).toBeInTheDocument();
-    expect(screen.queryByText('Filled and application saved.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Filled 3 fields/)).not.toBeInTheDocument();
+  });
+
+  it('reports a fill that wrote nothing as a failure, not as a success with an empty warning list', async () => {
+    // The pasted-job-description path can reach the Fill Step with no detected fields at all. Every
+    // step then "succeeds" having done nothing, `unresolvedRequiredFields` filters an empty array
+    // to an empty array, and the panel used to render an unqualified green check over an untouched
+    // form — the reason this failure mode went unreported for so long.
+    stubChrome({
+      tabUrl: 'https://jobs.ashbyhq.com/outset/55d672a5/application',
+      profile,
+      jobPageData,
+      fillOutcomes: [{ status: 'filled', filledFieldCount: 0 }],
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/Nothing was filled/);
+    expect(screen.getByText('Nothing filled')).toBeInTheDocument();
+    expect(screen.queryByText(/saved the application\./)).not.toBeInTheDocument();
   });
 
   it('ignores extra clicks on "Fill form" while a fill is already in flight', async () => {
@@ -503,7 +647,7 @@ describe('panel App', () => {
     expect(callsOfType(sendMessage, 'START_FILL')).toHaveLength(1);
 
     resolveFill();
-    await screen.findByText('Filled and application saved.');
+    await screen.findByText('Filled 3 fields and saved the application.');
   });
 
   it('shows an error and retries filling when the user clicks "Try again"', async () => {
@@ -522,7 +666,7 @@ describe('panel App', () => {
     await screen.findByText('Something went wrong filling the form and saving the application.');
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    await screen.findByText('Filled and application saved.');
+    await screen.findByText('Filled 3 fields and saved the application.');
   });
 
   it('resets to the bootstrap screen when the active tab changes, so the panel (which survives tab switches) never shows a stale review for the previous tab', async () => {

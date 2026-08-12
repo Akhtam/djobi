@@ -8,7 +8,6 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -16,7 +15,6 @@ const profile: Profile = {
 };
 
 const tailoredResume: TailoredResume = {
-  summary: 'Tailored summary.',
   skills: [],
   workExperience: [],
 };

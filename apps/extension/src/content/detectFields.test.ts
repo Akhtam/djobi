@@ -205,8 +205,12 @@ describe('detectFields', () => {
       category: 'question',
       elementRole: 'combobox',
       required: true,
-      options: ['Yes', 'No'],
     });
+    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    // Each choice keeps a selector back to its own element, so the Fill Step never re-derives text.
+    expect(
+      fields[0].options?.map((option) => document.querySelector(option.selector!)?.textContent),
+    ).toEqual(['Yes', 'No']);
   });
 
   it('still detects a role=combobox widget whose aria-controls target is not in the DOM yet, without options', () => {
@@ -243,7 +247,13 @@ describe('detectFields', () => {
 
     const fields = detectFields(document);
 
-    expect(fields[0].options).toEqual(['Yes, I am local', 'No, I am not willing']);
+    expect(fields[0].options?.map((option) => option.label)).toEqual([
+      'Yes, I am local',
+      'No, I am not willing',
+    ]);
+    expect(
+      fields[0].options?.map((option) => document.querySelector(option.selector!)?.id),
+    ).toEqual(['opt-a', 'opt-b']);
   });
 
   it('classifies "Legal Name" (a common full-name synonym) as full_name, not unknown', () => {
@@ -257,6 +267,34 @@ describe('detectFields', () => {
     const fields = detectFields(document);
 
     expect(fields[0]).toMatchObject({ category: 'full_name' });
+  });
+
+  it('classifies a bare "Name" as full_name — Ashby labels its single required name field exactly that', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="name">Name <span class="required">*</span></label>
+        <input id="name" type="text" required />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0]).toMatchObject({ category: 'full_name', required: true });
+  });
+
+  it('does not mistake a label that merely contains "name" for the candidate\'s own name', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="employer">Name of your current employer</label>
+        <input id="employer" type="text" />
+        <label for="preferred">Preferred name</label>
+        <input id="preferred" type="text" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields.map((f) => f.category)).toEqual(['unknown', 'unknown']);
   });
 
   it('groups a fieldset of checkboxes into one field instead of reporting each checkbox separately', () => {
@@ -279,7 +317,41 @@ describe('detectFields', () => {
       category: 'question',
       elementRole: 'checkboxgroup',
       required: true,
-      options: ['TypeScript', 'Python', 'Go'],
     });
+    expect(fields[0].options?.map((option) => option.label)).toEqual([
+      'TypeScript',
+      'Python',
+      'Go',
+    ]);
+    expect(
+      fields[0].options?.map(
+        (option) => document.querySelector<HTMLInputElement>(option.selector!)?.value,
+      ),
+    ).toEqual(['ts', 'py', 'go']);
+  });
+
+  it("reports a native select's choices, which previously went undetected entirely — leaving a select-backed question with nothing to choose from", () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="tz">What time zone are you in?</label>
+        <select id="tz">
+          <option value="">Select…</option>
+          <option value="pt">Pacific Time</option>
+          <option value="et">Eastern Time</option>
+        </select>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0].options?.map((option) => option.label)).toEqual([
+      'Pacific Time',
+      'Eastern Time',
+    ]);
+    expect(
+      fields[0].options?.map(
+        (option) => document.querySelector<HTMLOptionElement>(option.selector!)?.value,
+      ),
+    ).toEqual(['pt', 'et']);
   });
 });

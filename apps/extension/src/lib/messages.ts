@@ -11,16 +11,10 @@ export interface ReportJobPageMessage extends JobPageData {
   type: 'REPORT_JOB_PAGE';
 }
 
-/** Panel -> background: reads back the job page reported for a tab. Response: `{ data: JobPageData | null }`. */
-export interface GetJobPageDataMessage {
-  type: 'GET_JOB_PAGE_DATA';
-  tabId: number;
-}
-
 /**
  * Panel -> background: start the Analysis Step for `tabId` (`background/pipelineRunner.ts` runs
  * it), so it keeps running even if the panel that requested it closes before it finishes. No
- * response payload — progress is observed via `lib/pipelineRunStore.ts` + `chrome.storage.onChanged`,
+ * response payload — progress is observed via `lib/tabStore.ts` + `chrome.storage.onChanged`,
  * not the message response, precisely so the caller doesn't need to stay around to receive one.
  */
 export interface StartAnalysisMessage {
@@ -31,7 +25,7 @@ export interface StartAnalysisMessage {
   pageTextOverride: string | null;
 }
 
-/** Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of `pipelineRunStore`. */
+/** Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of `tabStore`. */
 export interface StartFillMessage {
   type: 'START_FILL';
   tabId: number;
@@ -49,8 +43,7 @@ export interface FillFormCommandMessage extends FillFormPayload {
   type: 'FILL_FORM';
 }
 
-export type TypedMessage =
-  ReportJobPageMessage | GetJobPageDataMessage | StartAnalysisMessage | StartFillMessage;
+export type TypedMessage = ReportJobPageMessage | StartAnalysisMessage | StartFillMessage;
 
 /** Sends `message` via `chrome.runtime.sendMessage` and resolves with whatever the callback receives. */
 export function sendMessage<TReq, TRes>(message: TReq): Promise<TRes> {

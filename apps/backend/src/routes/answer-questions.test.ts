@@ -15,7 +15,6 @@ const sampleProfile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: ['TypeScript'],
@@ -88,6 +87,28 @@ describe('POST /answer-questions', () => {
       sampleJobInfo,
       questionsWithOptions,
     );
+  });
+
+  it("returns a JSON body carrying the real reason when answerQuestions throws, rather than a plain-text 500 the extension can't parse", async () => {
+    mockAnswerQuestions.mockRejectedValueOnce(
+      new Error('report_answers did not produce a tool call.'),
+    );
+
+    const res = await app.request('/answer-questions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        profile: sampleProfile,
+        jobInfo: sampleJobInfo,
+        questions: [{ fieldId: 'f1', question: 'Why us?' }],
+      }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    await expect(res.json()).resolves.toEqual({
+      error: 'report_answers did not produce a tool call.',
+    });
   });
 
   it('returns 400 and does not call answerQuestions when the body fails validation', async () => {

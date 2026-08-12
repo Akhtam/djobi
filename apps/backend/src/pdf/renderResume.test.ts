@@ -8,7 +8,6 @@ const sampleProfile: Profile = {
   phone: '555-0100',
   location: 'Remote',
   links: { linkedin: 'linkedin.com/in/janedoe', portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [
     { school: 'State University', degree: 'B.S. Computer Science', field: null, graduationYear: '2018' },
@@ -18,7 +17,6 @@ const sampleProfile: Profile = {
 };
 
 const sampleTailoredResume: TailoredResume = {
-  summary: 'Backend engineer with a focus on TypeScript.',
   skills: ['TypeScript', 'Postgres'],
   workExperience: [
     {

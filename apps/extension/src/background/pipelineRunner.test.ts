@@ -6,8 +6,7 @@ import type {
   TailoredResume,
 } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getPipelineRun } from '../lib/pipelineRunStore';
-import { setJobPageData } from './jobPageStore';
+import { getPipelineRun, reportDetectedPage } from '../lib/tabStore';
 import { runAnalysis, runFill } from './pipelineRunner';
 
 const { mockCallBackend, mockFetchResumePdf } = vi.hoisted(() => ({
@@ -24,7 +23,6 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -42,7 +40,6 @@ const jobInfo: JobInfo = {
 };
 
 const tailoredResume: TailoredResume = {
-  summary: 'Tailored summary.',
   skills: [],
   workExperience: [],
 };
@@ -66,7 +63,7 @@ const answers: QuestionAnswer[] = [
   },
 ];
 
-/** Same in-memory `chrome.storage.session` stand-in as `pipelineRunStore.test.ts`. */
+/** Same in-memory `chrome.storage.session` stand-in as `tabStore.test.ts`. */
 function stubChrome() {
   const data = new Map<string, unknown>();
   const tabsSendMessage = vi.fn(
@@ -101,9 +98,12 @@ describe('pipelineRunner', () => {
   });
 
   describe('runAnalysis', () => {
-    it('checkpoints an "analyzing" run, then the completed Analysis Step results, into pipelineRunStore', async () => {
+    it('checkpoints an "analyzing" run, then the completed Analysis Step results, into tabStore', async () => {
       stubChrome();
-      setJobPageData(7, { pageText: 'Senior Engineer at Acme...', fields: [questionField] });
+      await reportDetectedPage(7, 0, {
+        pageText: 'Senior Engineer at Acme...',
+        fields: [questionField],
+      });
       mockCallBackend.mockImplementation((path: string) => {
         if (path === '/extract-job') return Promise.resolve(jobInfo);
         if (path === '/tailor-resume') return Promise.resolve(tailoredResume);
@@ -122,17 +122,59 @@ describe('pipelineRunner', () => {
         tailoredResume,
         answers,
         unresolvedRequiredFields: [],
+        filledFieldCount: 0,
+        failure: null,
       });
     });
 
     it('checkpoints "analyze-error" when the backend call fails, instead of throwing to a caller that may no longer be listening', async () => {
       stubChrome();
-      setJobPageData(7, { pageText: 'Senior Engineer at Acme...', fields: [] });
+      await reportDetectedPage(7, 0, { pageText: 'Senior Engineer at Acme...', fields: [] });
       mockCallBackend.mockRejectedValue(new Error('backend unreachable'));
 
       await runAnalysis(7, null, profile, null);
 
       expect(await getPipelineRun(7)).toMatchObject({ status: 'analyze-error' });
+    });
+
+    it("checkpoints the underlying cause alongside 'analyze-error', so the panel can report which call failed instead of a generic message", async () => {
+      stubChrome();
+      await reportDetectedPage(7, 0, { pageText: 'Senior Engineer at Acme...', fields: [] });
+      mockCallBackend.mockRejectedValue(
+        new Error(
+          'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+        ),
+      );
+
+      await runAnalysis(7, null, profile, null);
+
+      expect(await getPipelineRun(7)).toMatchObject({
+        status: 'analyze-error',
+        failure: {
+          step: 'analysis',
+          message:
+            'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+        },
+      });
+    });
+
+    it('clears a previous failure when a fresh analysis starts, so a stale reason never outlives the run that produced it', async () => {
+      stubChrome();
+      await reportDetectedPage(7, 0, { pageText: 'Senior Engineer at Acme...', fields: [] });
+      mockCallBackend.mockRejectedValue(new Error('backend unreachable'));
+      await runAnalysis(7, null, profile, null);
+      expect(await getPipelineRun(7)).toMatchObject({ failure: { step: 'analysis' } });
+
+      mockCallBackend.mockReset();
+      mockCallBackend.mockImplementation((path: string) => {
+        if (path === '/extract-job') return Promise.resolve(jobInfo);
+        if (path === '/tailor-resume') return Promise.resolve(tailoredResume);
+        if (path === '/answer-questions') return Promise.resolve(answers);
+        throw new Error(`unexpected callBackend path: ${path}`);
+      });
+      await runAnalysis(7, null, profile, null);
+
+      expect(await getPipelineRun(7)).toMatchObject({ status: 'review', failure: null });
     });
 
     it('analyzes pasted text with no fields when no job page was ever detected for the tab', async () => {
@@ -163,7 +205,10 @@ describe('pipelineRunner', () => {
 
   describe('runFill', () => {
     async function seedReviewRun(tabId: number) {
-      setJobPageData(tabId, { pageText: 'Senior Engineer at Acme...', fields: [questionField] });
+      await reportDetectedPage(tabId, 0, {
+        pageText: 'Senior Engineer at Acme...',
+        fields: [questionField],
+      });
       mockCallBackend.mockImplementation((path: string) => {
         if (path === '/extract-job') return Promise.resolve(jobInfo);
         if (path === '/tailor-resume') return Promise.resolve(tailoredResume);
@@ -203,11 +248,11 @@ describe('pipelineRunner', () => {
         required: true,
         elementRole: 'native',
       };
-      setJobPageData(7, {
+      stubChrome();
+      await reportDetectedPage(7, 0, {
         pageText: 'Senior Engineer at Acme...',
         fields: [questionField, requiredMysteryField],
       });
-      stubChrome();
       mockCallBackend.mockImplementation((path: string) => {
         if (path === '/extract-job') return Promise.resolve(jobInfo);
         if (path === '/tailor-resume') return Promise.resolve(tailoredResume);
@@ -233,7 +278,10 @@ describe('pipelineRunner', () => {
 
       await runFill(7, profile);
 
-      expect(await getPipelineRun(7)).toMatchObject({ status: 'fill-error' });
+      expect(await getPipelineRun(7)).toMatchObject({
+        status: 'fill-error',
+        failure: { step: 'fill', message: 'backend unreachable' },
+      });
     });
 
     it('does nothing when there is no completed Analysis Step to fill from', async () => {

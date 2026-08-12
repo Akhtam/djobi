@@ -7,7 +7,6 @@ const styles = StyleSheet.create({
   name: { fontSize: 18, marginBottom: 2 },
   contactLine: { fontSize: 9, color: '#444444', marginBottom: 12 },
   sectionTitle: { fontSize: 12, marginTop: 12, marginBottom: 4, borderBottom: 1 },
-  summary: { marginBottom: 8 },
   jobHeader: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   jobTitle: { fontWeight: 'bold' },
   jobDates: { color: '#444444' },
@@ -32,7 +31,7 @@ function contactLine(profile: Profile): string {
 
 /**
  * The resume PDF layout: contact info + education from {@link Profile} (these don't vary per
- * job), summary/skills/work-experience from {@link TailoredResume} (these do).
+ * job), skills/work-experience from {@link TailoredResume} (these do).
  */
 function ResumeDocument({ profile, tailoredResume }: { profile: Profile; tailoredResume: TailoredResume }) {
   return (
@@ -40,8 +39,6 @@ function ResumeDocument({ profile, tailoredResume }: { profile: Profile; tailore
       <Page size="A4" style={styles.page}>
         <Text style={styles.name}>{profile.fullName}</Text>
         <Text style={styles.contactLine}>{contactLine(profile)}</Text>
-
-        <Text style={styles.summary}>{tailoredResume.summary}</Text>
 
         <Text style={styles.sectionTitle}>Skills</Text>
         <Text style={styles.skillsLine}>{tailoredResume.skills.join(', ')}</Text>
@@ -84,7 +81,7 @@ function ResumeDocument({ profile, tailoredResume }: { profile: Profile; tailore
 
 /**
  * Renders a resume PDF: contact info and education come from the base `profile` (they don't need
- * per-job tailoring), summary/skills/work-experience come from `tailoredResume`.
+ * per-job tailoring), skills/work-experience come from `tailoredResume`.
  *
  * @returns The rendered PDF as a `Buffer`.
  */

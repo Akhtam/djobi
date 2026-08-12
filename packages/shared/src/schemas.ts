@@ -63,7 +63,6 @@ export const ProfileSchema = z.object({
     portfolio: z.string().nullable(),
     github: z.string().nullable(),
   }),
-  summary: z.string().nullable().describe('Optional base professional summary'),
   workExperience: z.array(WorkExperienceSchema),
   education: z.array(EducationSchema),
   skills: z.array(z.string()),
@@ -102,9 +101,6 @@ export type JobInfo = z.infer<typeof JobInfoSchema>;
  * no `education`/`links`, since those don't need per-job tailoring.
  */
 export const TailoredResumeSchema = z.object({
-  summary: z
-    .string()
-    .describe('2-3 sentence summary tailored to this job, grounded only in the base profile'),
   skills: z
     .array(z.string())
     .describe("Subset/reordering of the base profile's skills most relevant to this job"),
@@ -158,6 +154,29 @@ export const ElementRoleSchema = z.enum(['native', 'combobox', 'radiogroup', 'ch
 export type ElementRole = z.infer<typeof ElementRoleSchema>;
 
 /** One form field found on an ATS application page, classified by the content script. */
+/**
+ * One choice on a select/combobox/radiogroup/checkboxgroup {@link DetectedFieldSchema}.
+ *
+ * `label` is what a candidate reads — it's what the answer-drafting model is shown and constrained
+ * to. `selector` is how the Fill Step finds that choice's element again. Keeping the two apart is
+ * the whole point: re-deriving a choice's label from the DOM at fill time and hoping it matches the
+ * text drafted against is fragile, because every ATS associates option labels differently (a
+ * wrapping `<label>`, a `for=`-linked sibling, an `aria-labelledby` reference) and the same element
+ * yields different text depending on how you ask.
+ */
+export const FieldOptionSchema = z.object({
+  label: z.string().describe('The choice text a candidate reads — used for prompting and display'),
+  selector: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      "CSS selector for this choice's element, when one existed at detection time. Null for choices known only from an ATS API schema, or from a listbox that only mounts once opened — those fall back to label matching at fill time.",
+    ),
+});
+/** Inferred type of {@link FieldOptionSchema}. */
+export type FieldOption = z.infer<typeof FieldOptionSchema>;
+
 export const DetectedFieldSchema = z.object({
   id: z.string().describe('Stable id assigned by the content script for round-tripping'),
   label: z.string().describe('Best-effort human label text for the field'),
@@ -171,7 +190,7 @@ export const DetectedFieldSchema = z.object({
     .default(false)
     .describe('Whether the field is marked required (native `required` or `aria-required`)'),
   options: z
-    .array(z.string())
+    .array(FieldOptionSchema)
     .optional()
     .describe('Available choices for a select/combobox/radiogroup/checkboxgroup field'),
   elementRole: ElementRoleSchema.default('native'),

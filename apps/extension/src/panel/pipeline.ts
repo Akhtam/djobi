@@ -1,3 +1,4 @@
+import { resumeFileName } from '@djobi/shared';
 import type {
   DetectedField,
   JobInfo,
@@ -7,8 +8,10 @@ import type {
   TailoredResume,
 } from '@djobi/shared';
 import type { JobPageData } from '../lib/messages';
+import type { AnalyzedRun } from '../lib/tabStore';
 
-export interface PipelineDeps {
+/** What the Analysis Step needs — and nothing else, so a test for it stubs only these three. */
+export interface AnalysisDeps {
   extractJob: (pageText: string) => Promise<JobInfo>;
   tailorResume: (profile: Profile, jobInfo: JobInfo) => Promise<TailoredResume>;
   answerQuestions: (
@@ -16,10 +19,17 @@ export interface PipelineDeps {
     jobInfo: JobInfo,
     questions: { fieldId: string; question: string; options?: string[] }[],
   ) => Promise<QuestionAnswer[]>;
+}
+
+/** What the Fill Step needs — likewise only these three. */
+export interface FillDeps {
   fetchResumePdf: (profile: Profile, tailoredResume: TailoredResume) => Promise<ArrayBuffer>;
   sendFillFormMessage: (message: unknown) => Promise<unknown>;
   saveApplication: (payload: NewApplication) => Promise<unknown>;
 }
+
+/** The whole Application Pipeline's dependencies — what the single background adapter supplies. */
+export type PipelineDeps = AnalysisDeps & FillDeps;
 
 export class AnalysisFailedError extends Error {
   constructor(cause: unknown) {
@@ -67,14 +77,21 @@ function valueForCategory(
 export async function analyzeJobPage(
   jobPageData: JobPageData,
   profile: Profile,
-  deps: PipelineDeps,
+  deps: AnalysisDeps,
 ): Promise<{ jobInfo: JobInfo; tailoredResume: TailoredResume; answers: QuestionAnswer[] }> {
   try {
     const jobInfo = await deps.extractJob(jobPageData.pageText);
 
     const questions = jobPageData.fields
       .filter((field) => field.category === 'question')
-      .map((field) => ({ fieldId: field.id, question: field.label, options: field.options }));
+      // Only the labels cross to the backend — a choice's DOM selector is meaningless there, and
+      // the drafted answer comes back as one of these label strings, which `fillForm.ts` matches
+      // against this same `field.options` array to recover the element.
+      .map((field) => ({
+        fieldId: field.id,
+        question: field.label,
+        options: field.options?.map((option) => option.label),
+      }));
 
     const [tailoredResume, answers] = await Promise.all([
       deps.tailorResume(profile, jobInfo),
@@ -87,16 +104,23 @@ export async function analyzeJobPage(
   }
 }
 
+/**
+ * Runs the Fill Step for an already-analyzed run.
+ *
+ * Takes the run whole rather than five of its fields spread across positional parameters: the run
+ * is the unit that crosses this seam anyway, its caller reads it from `lib/tabStore.ts` as one
+ * object, and several of those fields shared a type — so a transposed pair type-checked cleanly.
+ * {@link AnalyzedRun} carries the precondition (Analysis Step finished) in the type, so it can't be
+ * skipped here.
+ */
 export async function fillAndSubmit(
-  jobPageData: JobPageData,
+  run: AnalyzedRun,
   profile: Profile,
-  jobInfo: JobInfo,
-  tailoredResume: TailoredResume,
-  answers: QuestionAnswer[],
   tabId: number,
-  tabUrl: string | null,
-  deps: PipelineDeps,
-): Promise<{ unresolvedRequiredFields: DetectedField[] }> {
+  deps: FillDeps,
+): Promise<{ unresolvedRequiredFields: DetectedField[]; filledFieldCount: number }> {
+  const { jobPageData, jobInfo, tailoredResume, answers, tabUrl } = run;
+
   try {
     const values: Record<string, string> = {};
     for (const field of jobPageData.fields) {
@@ -119,7 +143,7 @@ export async function fillAndSubmit(
     if (resumeUploadField) {
       const pdfBytes = await deps.fetchResumePdf(profile, tailoredResume);
       resumeFile = {
-        name: 'resume.pdf',
+        name: resumeFileName(profile.fullName),
         type: 'application/pdf',
         bytes: Array.from(new Uint8Array(pdfBytes)),
       };
@@ -150,7 +174,14 @@ export async function fillAndSubmit(
         !(field.category === 'resume_upload' && resumeFile),
     );
 
-    return { unresolvedRequiredFields };
+    // How much this run actually wrote. `unresolvedRequiredFields` can't answer that on its own:
+    // it's derived by filtering `jobPageData.fields`, so a run that detected nothing at all
+    // produces an empty list — indistinguishable from a run that filled everything perfectly, and
+    // the panel rendered both as an unqualified success. The resume counts as a filled field
+    // because it's attached by `attachResumeFile` rather than through `values`.
+    const filledFieldCount = Object.keys(values).length + (resumeFile ? 1 : 0);
+
+    return { unresolvedRequiredFields, filledFieldCount };
   } catch (error) {
     throw new FillFailedError(error);
   }

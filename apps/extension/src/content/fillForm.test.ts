@@ -34,6 +34,40 @@ describe('fillForm', () => {
     expect(inputEventFired).toBe(true);
   });
 
+  it("writes through the prototype setter so React's value tracker sees a change and fires onChange", () => {
+    // React makes an input controlled by installing an *instance-level* `value` accessor whose
+    // setter moves its cached copy in lockstep. A plain `el.value = x` hits that accessor, the
+    // cache follows, React's change detector sees cached === current, and no `onChange` is
+    // dispatched — the text appears in the DOM but the component's state never learns of it, so
+    // the value is wiped on the next render and validation still sees an empty required field.
+    // This stands in for that tracker; jsdom alone cannot fail on the bug.
+    document.body.innerHTML = `<input id="f1" type="text" />`;
+    const input = document.querySelector<HTMLInputElement>('#f1')!;
+
+    let tracked = '';
+    const prototypeSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )!.set!;
+    Object.defineProperty(input, 'value', {
+      configurable: true,
+      get: () => tracked,
+      set(next: string) {
+        tracked = next;
+        prototypeSetter.call(input, next);
+      },
+    });
+
+    fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane@example.com' });
+
+    // The DOM took the value, but the instance tracker was bypassed — exactly the divergence
+    // React's `updateValueIfChanged` looks for before dispatching a change.
+    expect(tracked).toBe('');
+    expect(
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.get!.call(input),
+    ).toBe('jane@example.com');
+  });
+
   it('leaves fields with no supplied value untouched and skips selectors that resolve to nothing, without throwing', () => {
     document.body.innerHTML = `<input id="f1" type="text" value="original" /><input id="f2" type="text" />`;
 
@@ -86,28 +120,91 @@ describe('fillForm', () => {
     expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('opt_yes');
   });
 
-  it('checks the matching radio in a radiogroup and leaves siblings unchecked', () => {
+  it("checks the radio the option's recorded selector points at, without re-deriving any label text", () => {
     document.body.innerHTML = `
       <fieldset id="f1">
-        <label><input type="radio" name="auth" value="yes" />Yes</label>
-        <label><input type="radio" name="auth" value="no" />No</label>
+        <label><input type="radio" id="opt-yes" name="auth" value="yes" />Yes</label>
+        <label><input type="radio" id="opt-no" name="auth" value="no" />No</label>
       </fieldset>
     `;
 
     fillForm(
       document,
-      [field({ id: 'f1', selector: '#f1', elementRole: 'radiogroup', options: ['Yes', 'No'] })],
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          options: [
+            { label: 'Yes', selector: '#opt-yes' },
+            { label: 'No', selector: '#opt-no' },
+          ],
+        }),
+      ],
       { f1: 'Yes' },
     );
 
-    const [yes, no] = Array.from(
-      document.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
-    );
-    expect(yes.checked).toBe(true);
-    expect(no.checked).toBe(false);
+    expect(document.querySelector<HTMLInputElement>('#opt-yes')!.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#opt-no')!.checked).toBe(false);
   });
 
-  it("checks the matching radio when its label is a `for=id` sibling rather than a wrapper (e.g. Ashby's markup)", () => {
+  it("follows the recorded selector even when the option's label no longer matches the DOM text — an ATS API's wording can differ from what the page renders", () => {
+    document.body.innerHTML = `
+      <fieldset id="f1">
+        <label><input type="radio" id="opt-yes" name="auth" />Yes, authorized</label>
+        <label><input type="radio" id="opt-no" name="auth" />No, not authorized</label>
+      </fieldset>
+    `;
+
+    fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          // API wording; the DOM says "Yes, authorized". Text matching alone would find nothing.
+          options: [
+            { label: 'Authorized to work', selector: '#opt-yes' },
+            { label: 'Not authorized', selector: '#opt-no' },
+          ],
+        }),
+      ],
+      { f1: 'Authorized to work' },
+    );
+
+    expect(document.querySelector<HTMLInputElement>('#opt-yes')!.checked).toBe(true);
+  });
+
+  it('fills an option whose own label contains a comma — the value is one choice, never a delimited list', () => {
+    document.body.innerHTML = `
+      <fieldset id="f1">
+        <label><input type="radio" id="opt-sf" name="loc" />San Francisco, CA</label>
+        <label><input type="radio" id="opt-ny" name="loc" />New York, NY</label>
+      </fieldset>
+    `;
+
+    fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          options: [
+            { label: 'San Francisco, CA', selector: '#opt-sf' },
+            { label: 'New York, NY', selector: '#opt-ny' },
+          ],
+        }),
+      ],
+      { f1: 'San Francisco, CA' },
+    );
+
+    expect(document.querySelector<HTMLInputElement>('#opt-sf')!.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#opt-ny')!.checked).toBe(false);
+  });
+
+  it("falls back to matching label text for an option with no recorded selector, including a `for=id` sibling label (Ashby's markup)", () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <span><input type="radio" id="opt-a" name="office" /></span>
@@ -124,25 +221,24 @@ describe('fillForm', () => {
           id: 'f1',
           selector: '#f1',
           elementRole: 'radiogroup',
-          options: ['Yes and I am local', 'No and I am not willing'],
+          options: [
+            { label: 'Yes and I am local', selector: null },
+            { label: 'No and I am not willing', selector: null },
+          ],
         }),
       ],
       { f1: 'Yes and I am local' },
     );
 
-    const [yes, no] = Array.from(
-      document.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
-    );
-    expect(yes.checked).toBe(true);
-    expect(no.checked).toBe(false);
+    expect(document.querySelector<HTMLInputElement>('#opt-a')!.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#opt-b')!.checked).toBe(false);
   });
 
-  it('checks multiple checkboxes in a checkboxgroup for a comma-separated value', () => {
+  it('checks the matching checkbox in a checkboxgroup', () => {
     document.body.innerHTML = `
       <fieldset id="f1">
-        <label><input type="checkbox" value="ts" />TypeScript</label>
-        <label><input type="checkbox" value="py" />Python</label>
-        <label><input type="checkbox" value="go" />Go</label>
+        <label><input type="checkbox" id="opt-ts" value="ts" />TypeScript</label>
+        <label><input type="checkbox" id="opt-py" value="py" />Python</label>
       </fieldset>
     `;
 
@@ -153,18 +249,17 @@ describe('fillForm', () => {
           id: 'f1',
           selector: '#f1',
           elementRole: 'checkboxgroup',
-          options: ['TypeScript', 'Python', 'Go'],
+          options: [
+            { label: 'TypeScript', selector: '#opt-ts' },
+            { label: 'Python', selector: '#opt-py' },
+          ],
         }),
       ],
-      { f1: 'TypeScript, Go' },
+      { f1: 'TypeScript' },
     );
 
-    const [ts, py, go] = Array.from(
-      document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
-    );
-    expect(ts.checked).toBe(true);
-    expect(py.checked).toBe(false);
-    expect(go.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#opt-ts')!.checked).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('#opt-py')!.checked).toBe(false);
   });
 
   it('clicks a combobox trigger open, then clicks the matching option once it renders', async () => {
@@ -189,11 +284,56 @@ describe('fillForm', () => {
 
     await fillForm(
       document,
-      [field({ id: 'f1', selector: '#f1', elementRole: 'combobox', options: ['Yes', 'No'] })],
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'combobox',
+          // Portal-mounted: nothing existed to tag at detection time, so these carry no selector
+          // and the live listbox is matched by label — the one case text matching is unavoidable.
+          options: [
+            { label: 'Yes', selector: null },
+            { label: 'No', selector: null },
+          ],
+        }),
+      ],
       { f1: 'Yes' },
     );
 
     expect(clickedOption).toBe('Yes');
+  });
+
+  it('clicks the combobox option the recorded selector points at when the listbox was already in the DOM at detection time', async () => {
+    document.body.innerHTML = `
+      <input id="f1" role="combobox" />
+      <ul id="listbox" role="listbox" hidden>
+        <li role="option" id="opt-yes">Yes</li>
+        <li role="option" id="opt-no">No</li>
+      </ul>
+    `;
+    let clickedId: string | null = null;
+    document.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      if (target.getAttribute('role') === 'option') clickedId = target.id;
+    });
+
+    await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'combobox',
+          options: [
+            { label: 'Yes', selector: '#opt-yes' },
+            { label: 'No', selector: '#opt-no' },
+          ],
+        }),
+      ],
+      { f1: 'Yes' },
+    );
+
+    expect(clickedId).toBe('opt-yes');
   });
 
   it('does not throw when a combobox option never renders, and continues filling other fields', async () => {
@@ -206,7 +346,12 @@ describe('fillForm', () => {
       fillForm(
         document,
         [
-          field({ id: 'f1', selector: '#f1', elementRole: 'combobox', options: ['Yes'] }),
+          field({
+            id: 'f1',
+            selector: '#f1',
+            elementRole: 'combobox',
+            options: [{ label: 'Yes', selector: null }],
+          }),
           field({ id: 'f2', selector: '#f2' }),
         ],
         { f1: 'Yes', f2: 'filled' },
@@ -260,13 +405,11 @@ describe('attachResumeFile', () => {
     expect(changeEventFired).toBe(true);
   });
 
-  it('also dispatches a dragenter/dragover/drop sequence at the ancestor dropzone wrapper, plus change on the input itself', () => {
+  it('bubbles the drag/drop sequence up to an ancestor dropzone wrapper, for widgets that only listen there', () => {
     document.body.innerHTML = `<div class="dropzone"><input type="file" id="resume" /></div>`;
     const input = document.querySelector<HTMLInputElement>('#resume')!;
     const dropzone = document.querySelector('.dropzone')!;
-    const inputEvents: string[] = [];
     const dropzoneEvents: string[] = [];
-    input.addEventListener('change', () => inputEvents.push('change'));
     for (const type of ['dragenter', 'dragover', 'drop']) {
       dropzone.addEventListener(type, () => dropzoneEvents.push(type));
     }
@@ -275,10 +418,9 @@ describe('attachResumeFile', () => {
     attachResumeFile(input, file);
 
     expect(dropzoneEvents).toEqual(['dragenter', 'dragover', 'drop']);
-    expect(inputEvents).toEqual(['change']);
   });
 
-  it('dispatches the drag/drop sequence on the input itself when no dropzone-styled ancestor exists', () => {
+  it('fires change before the drag sequence, so a dropzone sees the real file first', () => {
     document.body.innerHTML = `<input type="file" id="resume" />`;
     const input = document.querySelector<HTMLInputElement>('#resume')!;
     const inputEvents: string[] = [];
@@ -289,6 +431,25 @@ describe('attachResumeFile', () => {
 
     attachResumeFile(input, file);
 
-    expect(inputEvents).toEqual(['dragenter', 'dragover', 'drop', 'change']);
+    expect(inputEvents).toEqual(['change', 'dragenter', 'dragover', 'drop']);
+  });
+
+  it("exposes the file through the drop event's `dataTransfer.items`, the list react-dropzone reads", () => {
+    // Regression: `items` used to be `{ add: () => {} }` — truthy, so react-dropzone's file-selector
+    // took its `items` branch, found no `length`, and extracted zero files while ignoring `files`
+    // entirely. Ashby's uploader is react-dropzone, so the resume silently never attached.
+    document.body.innerHTML = `<input type="file" id="resume" />`;
+    const input = document.querySelector<HTMLInputElement>('#resume')!;
+    const file = new File(['%PDF-1.4 ...'], 'resume.pdf', { type: 'application/pdf' });
+    let dropped: DataTransfer | null = null;
+    input.addEventListener('drop', (event) => {
+      dropped = (event as DragEvent).dataTransfer;
+    });
+
+    attachResumeFile(input, file);
+
+    const items = dropped!.items;
+    expect(items).toHaveLength(1);
+    expect(Array.from(items as unknown as ArrayLike<DataTransferItem>)[0]!.kind).toBe('file');
   });
 });

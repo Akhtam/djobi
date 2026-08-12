@@ -3,3 +3,4 @@
  * extension. See `schemas.ts` for the individual definitions.
  */
 export * from './schemas.js';
+export * from './resumeFileName.js';

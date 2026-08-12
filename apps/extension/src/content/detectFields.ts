@@ -1,4 +1,4 @@
-import type { DetectedField, ElementRole, FieldCategory } from '@djobi/shared';
+import type { DetectedField, ElementRole, FieldCategory, FieldOption } from '@djobi/shared';
 
 /** Field elements that carry data a candidate fills in, as opposed to buttons/hidden inputs. */
 type FieldElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -89,6 +89,14 @@ const KEYWORD_RULES: Array<[FieldCategory, RegExp]> = [
   ['phone', /phone|mobile/i],
   ['location', /location|city|address/i],
   ['cover_letter_text', /cover letter/i],
+  // A bare "Name" — Ashby labels its single required name field exactly that, and without this it
+  // classified as `unknown` and was never filled. Anchored, and deliberately last, so it only
+  // catches a signal that is *nothing but* the word: "First Name", "Name of your employer" and
+  // "Preferred name" all match an earlier rule or none at all rather than being mistaken for the
+  // candidate's own full name.
+  // The trailing group absorbs a required marker rendered inside the label text ("Name *",
+  // "Name (required)"), which `getSignal` returns verbatim as part of the label's `textContent`.
+  ['full_name', /^\s*name\s*(\*|\(required\))?\s*$/i],
 ];
 
 const FILE_KEYWORD_RULES: Array<[FieldCategory, RegExp]> = [
@@ -114,8 +122,22 @@ function classify(signal: string, inputType: string): FieldCategory {
   return 'unknown';
 }
 
-/** Resolves an ARIA-widget's option text: `aria-controls`/`aria-owns`'s `role="option"` children, if in the DOM. */
-function resolveComboboxOptions(doc: Document, el: Element): string[] | undefined {
+/**
+ * Builds a {@link FieldOption} for one choice, tagging its element so the Fill Step can find that
+ * exact element again instead of re-deriving its label from the DOM and hoping both derivations
+ * agree.
+ */
+function toOption(el: Element, label: string, counter: { n: number }): FieldOption {
+  const id = assignId(el, counter);
+  return { label, selector: selectorFor(el, id) };
+}
+
+/** Resolves an ARIA-widget's options: `aria-controls`/`aria-owns`'s `role="option"` children, if in the DOM. */
+function resolveComboboxOptions(
+  doc: Document,
+  el: Element,
+  counter: { n: number },
+): FieldOption[] | undefined {
   const controlsId = el.getAttribute('aria-controls') ?? el.getAttribute('aria-owns');
   if (!controlsId) return undefined;
 
@@ -123,8 +145,25 @@ function resolveComboboxOptions(doc: Document, el: Element): string[] | undefine
   if (!listbox) return undefined;
 
   const options = Array.from(listbox.querySelectorAll('[role="option"]'))
-    .map((opt) => opt.textContent?.trim() ?? '')
-    .filter(Boolean);
+    .map((opt) => ({ el: opt, label: opt.textContent?.trim() ?? '' }))
+    .filter((opt) => opt.label)
+    .map((opt) => toOption(opt.el, opt.label, counter));
+
+  return options.length > 0 ? options : undefined;
+}
+
+/**
+ * A native `<select>`'s selectable `<option>` elements. Selects previously reported no choices at
+ * all, so a select-backed question was drafted with nothing to choose from and could only be filled
+ * by matching option text at fill time — the exact fragility this module avoids everywhere else.
+ * The empty-valued leading placeholder ("Select…") is skipped: it isn't an answer.
+ */
+function resolveSelectOptions(el: Element, counter: { n: number }): FieldOption[] | undefined {
+  if (!(el instanceof HTMLSelectElement)) return undefined;
+
+  const options = Array.from(el.options)
+    .filter((opt) => opt.value !== '' && opt.text.trim())
+    .map((opt) => toOption(opt, opt.text.trim(), counter));
 
   return options.length > 0 ? options : undefined;
 }
@@ -152,7 +191,7 @@ function detectComboboxes(doc: Document, counter: { n: number }): DetectedField[
       category: match?.[0] ?? 'question',
       required: getRequired(doc, el),
       elementRole: 'combobox' as ElementRole,
-      options: resolveComboboxOptions(doc, el),
+      options: resolveComboboxOptions(doc, el, counter),
     };
   });
 }
@@ -184,11 +223,11 @@ function detectFieldsetGroups(
     const signal = legend?.textContent?.trim() ?? getSignal(doc, fieldset);
     // `closest('label')` alone misses ATS markup where each option's label is a `for=id` sibling
     // rather than a wrapper (e.g. Ashby's radio groups) — `getSignal` already covers that lookup,
-    // falling back to the input's own `value` only when no label can be found at all.
-    const options = inputs.map((input) => {
-      const optionSignal = getSignal(doc, input);
-      return optionSignal || input.value;
-    });
+    // falling back to the input's own `value` only when no label can be found at all. Each option
+    // keeps a selector to its own input, so the Fill Step never has to repeat this derivation.
+    const options = inputs.map((input) =>
+      toOption(input, getSignal(doc, input) || input.value, counter),
+    );
     const elementRole: ElementRole = inputs[0]?.type === 'radio' ? 'radiogroup' : 'checkboxgroup';
     const id = assignId(fieldset, counter);
 
@@ -239,6 +278,7 @@ export function detectFields(doc: Document): DetectedField[] {
       category: classify(signal, inputType),
       required: getRequired(doc, el),
       elementRole: 'native' as ElementRole,
+      options: resolveSelectOptions(el, counter),
     };
   });
 

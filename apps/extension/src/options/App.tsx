@@ -11,7 +11,6 @@ const EMPTY_PROFILE: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -108,14 +107,6 @@ export function App() {
               />
             </div>
 
-            <div className="field span-2">
-              <label htmlFor="summary">Summary</label>
-              <textarea
-                id="summary"
-                value={profile.summary ?? ''}
-                onChange={(e) => setProfile({ ...profile, summary: e.target.value })}
-              />
-            </div>
           </div>
         </div>
 

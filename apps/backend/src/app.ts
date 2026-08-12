@@ -12,6 +12,20 @@ import { tailorResumeRoute } from './routes/tailor-resume.js';
  */
 export const app = new Hono();
 
+/**
+ * The one place a thrown error becomes a response. No route has its own `try/catch`, so without
+ * this every throw from `llm/` — the model not returning a tool call, or its input failing schema
+ * validation (`structuredCall.ts`), or an SDK/network failure — fell through to Hono's default
+ * handler and became a *plain-text* `Internal Server Error`. That body isn't JSON, so the
+ * extension's `callBackend` blew up parsing it and the real cause was destroyed before anyone
+ * could read it. Failures now use the same `{ error }` shape the routes' validation errors
+ * already return, so one client-side branch handles both.
+ */
+app.onError((err, c) => {
+  console.error(`[djobi] ${c.req.method} ${c.req.path} failed:`, err);
+  return c.json({ error: err.message }, 500);
+});
+
 app.route('/', extractJobRoute);
 app.route('/', profileRoute);
 app.route('/', tailorResumeRoute);

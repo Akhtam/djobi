@@ -30,7 +30,6 @@ const sampleApplication: Application = {
     keywords: ['TypeScript', 'Postgres'],
   },
   tailoredResume: {
-    summary: 'Backend engineer with a focus on TypeScript.',
     skills: ['TypeScript'],
     workExperience: [],
   },

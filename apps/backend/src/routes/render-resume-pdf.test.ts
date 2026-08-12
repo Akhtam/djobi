@@ -15,7 +15,6 @@ const sampleProfile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: ['TypeScript'],
@@ -23,7 +22,6 @@ const sampleProfile: Profile = {
 };
 
 const sampleTailoredResume: TailoredResume = {
-  summary: 'Backend engineer with a focus on TypeScript.',
   skills: ['TypeScript'],
   workExperience: [],
 };

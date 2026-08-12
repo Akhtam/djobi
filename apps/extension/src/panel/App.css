@@ -286,7 +286,30 @@ body {
 
 .inline-error p {
   margin: 0;
+}
+
+.inline-error-body {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The underlying cause (e.g. `POST /answer-questions failed (500): …`) — deliberately verbatim and
+   monospaced: it's diagnostic text, not prose, and truncating it would defeat the point. */
+.failure-detail {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .panel-footer {

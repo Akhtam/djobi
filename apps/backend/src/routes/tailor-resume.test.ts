@@ -22,7 +22,6 @@ const sampleProfile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: ['TypeScript'],
@@ -40,7 +39,6 @@ const sampleJobInfo: JobInfo = {
 };
 
 const sampleTailoredResume: TailoredResume = {
-  summary: 'Backend engineer with a focus on TypeScript.',
   skills: ['TypeScript'],
   workExperience: [],
 };
@@ -93,7 +91,7 @@ describe('POST /tailor-resume', () => {
     expect(mockTailorResume).toHaveBeenCalledWith(
       sampleProfile,
       sampleJobInfo,
-      'Backend Engineer (2026-07-01): Backend engineer with a focus on TypeScript.',
+      'Backend Engineer (2026-07-01)',
     );
   });
 

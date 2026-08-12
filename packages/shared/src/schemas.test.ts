@@ -45,7 +45,6 @@ const validProfile = {
   phone: '+1-555-0100',
   location: 'Remote',
   links: { linkedin: 'https://linkedin.com/in/janedoe', portfolio: null, github: null },
-  summary: 'Backend engineer focused on distributed systems.',
   workExperience: [validWorkExperience],
   education: [validEducation],
   skills: ['TypeScript', 'PostgreSQL'],
@@ -63,7 +62,6 @@ const validJobInfo = {
 };
 
 const validTailoredResume = {
-  summary: 'Backend engineer with a track record of zero-downtime migrations.',
   skills: ['TypeScript', 'PostgreSQL'],
   workExperience: [validWorkExperience],
 };
@@ -170,9 +168,9 @@ describe('TailoredResumeSchema', () => {
     expect(TailoredResumeSchema.safeParse(validTailoredResume).success).toBe(true);
   });
 
-  it('rejects a tailored resume missing summary', () => {
-    const { summary: _summary, ...withoutSummary } = validTailoredResume;
-    expect(TailoredResumeSchema.safeParse(withoutSummary).success).toBe(false);
+  it('rejects a tailored resume missing workExperience', () => {
+    const { workExperience: _workExperience, ...withoutExperience } = validTailoredResume;
+    expect(TailoredResumeSchema.safeParse(withoutExperience).success).toBe(false);
   });
 });
 
@@ -239,18 +237,43 @@ describe('DetectedFieldSchema', () => {
       category: 'question',
       required: true,
       elementRole: 'combobox',
-      options: ['Yes', 'No'],
+      options: [
+        { label: 'Yes', selector: '#opt-yes' },
+        { label: 'No', selector: '#opt-no' },
+      ],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.options).toEqual(['Yes', 'No']);
+      expect(result.data.options).toEqual([
+        { label: 'Yes', selector: '#opt-yes' },
+        { label: 'No', selector: '#opt-no' },
+      ]);
     }
   });
 
+  it("defaults an option's selector to null, for a choice known only from an ATS API schema", () => {
+    const result = DetectedFieldSchema.safeParse({
+      ...validField,
+      elementRole: 'combobox',
+      options: [{ label: 'Yes' }],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.options).toEqual([{ label: 'Yes', selector: null }]);
+    }
+  });
+
+  it('rejects a bare string option, so label text can never be mistaken for a locatable choice', () => {
+    expect(DetectedFieldSchema.safeParse({ ...validField, options: ['Yes', 'No'] }).success).toBe(
+      false,
+    );
+  });
+
   it('rejects an invalid elementRole', () => {
-    expect(
-      DetectedFieldSchema.safeParse({ ...validField, elementRole: 'dropdown' }).success,
-    ).toBe(false);
+    expect(DetectedFieldSchema.safeParse({ ...validField, elementRole: 'dropdown' }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -307,9 +330,9 @@ describe('ApplicationSchema', () => {
   });
 
   it('rejects an invalid status', () => {
-    expect(
-      ApplicationSchema.safeParse({ ...validApplication, status: 'archived' }).success,
-    ).toBe(false);
+    expect(ApplicationSchema.safeParse({ ...validApplication, status: 'archived' }).success).toBe(
+      false,
+    );
   });
 });
 

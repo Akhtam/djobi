@@ -19,7 +19,6 @@ const sampleProfile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: ['TypeScript'],

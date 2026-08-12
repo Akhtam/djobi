@@ -6,6 +6,7 @@ import type {
   TailoredResume,
 } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
+import type { AnalyzedRun } from '../lib/tabStore';
 import {
   AnalysisFailedError,
   analyzeJobPage,
@@ -20,7 +21,6 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [],
   education: [],
   skills: [],
@@ -38,7 +38,6 @@ const jobInfo: JobInfo = {
 };
 
 const tailoredResume: TailoredResume = {
-  summary: 'Tailored summary.',
   skills: [],
   workExperience: [],
 };
@@ -61,6 +60,25 @@ const answers: QuestionAnswer[] = [
     sourceStoryIds: [],
   },
 ];
+
+/** The analyzed run the Fill Step now takes whole, instead of five loose positional arguments. */
+function runFor(
+  jobPageData: { pageText: string; fields: DetectedField[] },
+  tabUrl: string | null,
+): AnalyzedRun {
+  return {
+    status: 'review',
+    tabUrl,
+    jobPageData,
+    pageTextOverride: null,
+    jobInfo,
+    tailoredResume,
+    answers,
+    failure: null,
+    unresolvedRequiredFields: [],
+    filledFieldCount: 0,
+  };
+}
 
 function makeDeps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
   return {
@@ -89,7 +107,7 @@ describe('analyzeJobPage', () => {
     expect(result).toEqual({ jobInfo, tailoredResume, answers });
   });
 
-  it("passes a question field's options through to answerQuestions, so choice-type questions get constrained answers", async () => {
+  it("passes only a question field's option labels to answerQuestions — the DOM selector that locates each choice is meaningless off-page and never crosses the seam", async () => {
     const deps = makeDeps();
     const comboboxField: DetectedField = {
       id: 'f-auth',
@@ -99,7 +117,10 @@ describe('analyzeJobPage', () => {
       category: 'question',
       required: true,
       elementRole: 'combobox',
-      options: ['Yes', 'No'],
+      options: [
+        { label: 'Yes', selector: '#opt-yes' },
+        { label: 'No', selector: '#opt-no' },
+      ],
     };
     const jobPageData = { pageText: 'Senior Engineer at Acme...', fields: [comboboxField] };
 
@@ -142,13 +163,9 @@ describe('fillAndSubmit', () => {
     const jobPageData = { pageText: '...', fields: [emailField, questionField] };
 
     await fillAndSubmit(
-      jobPageData,
+      runFor(jobPageData, 'https://boards.greenhouse.io/acme/jobs/1'),
       profile,
-      jobInfo,
-      tailoredResume,
-      answers,
       1,
-      'https://boards.greenhouse.io/acme/jobs/1',
       deps,
     );
 
@@ -184,16 +201,7 @@ describe('fillAndSubmit', () => {
     const deps = makeDeps();
     const jobPageData = { pageText: '...', fields: [emailField, unresolvedField] };
 
-    const result = await fillAndSubmit(
-      jobPageData,
-      profile,
-      jobInfo,
-      tailoredResume,
-      answers,
-      1,
-      null,
-      deps,
-    );
+    const result = await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
 
     expect(result.unresolvedRequiredFields).toEqual([unresolvedField]);
   });
@@ -203,17 +211,39 @@ describe('fillAndSubmit', () => {
     const requiredEmailField: DetectedField = { ...emailField, required: true };
     const jobPageData = { pageText: '...', fields: [requiredEmailField] };
 
-    const result = await fillAndSubmit(
-      jobPageData,
-      profile,
-      jobInfo,
-      tailoredResume,
-      answers,
-      1,
-      null,
-      deps,
-    );
+    const result = await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
 
+    expect(result.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it('reports how many fields it actually wrote, counting the resume', async () => {
+    const deps = makeDeps();
+    const resumeField: DetectedField = {
+      id: 'f-resume',
+      label: 'Resume',
+      inputType: 'file',
+      selector: '#resume-field',
+      category: 'resume_upload',
+      required: true,
+      elementRole: 'native',
+    };
+    const jobPageData = { pageText: '...', fields: [emailField, questionField, resumeField] };
+
+    const result = await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
+
+    expect(result.filledFieldCount).toBe(3);
+  });
+
+  it('reports zero filled fields when detection found nothing, so an empty run cannot pass for a success', async () => {
+    // `unresolvedRequiredFields` is derived by filtering `fields`, so it is empty here too — the
+    // panel used to read that as "everything resolved" and show a green check for a run that
+    // touched nothing at all.
+    const deps = makeDeps();
+    const jobPageData = { pageText: 'pasted job description', fields: [] };
+
+    const result = await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
+
+    expect(result.filledFieldCount).toBe(0);
     expect(result.unresolvedRequiredFields).toEqual([]);
   });
 
@@ -241,20 +271,15 @@ describe('fillAndSubmit', () => {
     // Decoy field appears first in DOM/array order, same as observed on the real Ashby posting.
     const jobPageData = { pageText: '...', fields: [decoyField, requiredResumeField] };
 
-    const result = await fillAndSubmit(
-      jobPageData,
-      profile,
-      jobInfo,
-      tailoredResume,
-      answers,
-      1,
-      null,
-      deps,
-    );
+    const result = await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
 
     expect(deps.sendFillFormMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        resumeFile: { name: 'resume.pdf', type: 'application/pdf', bytes: [37, 80, 68, 70] },
+        resumeFile: {
+          name: 'jane_doe_resume.pdf',
+          type: 'application/pdf',
+          bytes: [37, 80, 68, 70],
+        },
       }),
     );
     expect(result.unresolvedRequiredFields).toEqual([]);
@@ -274,12 +299,16 @@ describe('fillAndSubmit', () => {
     const deps = makeDeps({ fetchResumePdf: vi.fn().mockResolvedValue(pdfBytes) });
     const jobPageData = { pageText: '...', fields: [resumeField] };
 
-    await fillAndSubmit(jobPageData, profile, jobInfo, tailoredResume, answers, 1, null, deps);
+    await fillAndSubmit(runFor(jobPageData, null), profile, 1, deps);
 
     expect(deps.fetchResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
     expect(deps.sendFillFormMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        resumeFile: { name: 'resume.pdf', type: 'application/pdf', bytes: [37, 80, 68, 70] },
+        resumeFile: {
+          name: 'jane_doe_resume.pdf',
+          type: 'application/pdf',
+          bytes: [37, 80, 68, 70],
+        },
       }),
     );
   });
@@ -289,11 +318,11 @@ describe('fillAndSubmit', () => {
     const deps = makeDeps({ sendFillFormMessage: vi.fn().mockRejectedValue(underlying) });
     const jobPageData = { pageText: '...', fields: [emailField] };
 
-    await expect(
-      fillAndSubmit(jobPageData, profile, jobInfo, tailoredResume, answers, 1, null, deps),
-    ).rejects.toThrow(FillFailedError);
-    await expect(
-      fillAndSubmit(jobPageData, profile, jobInfo, tailoredResume, answers, 1, null, deps),
-    ).rejects.toMatchObject({ cause: underlying });
+    await expect(fillAndSubmit(runFor(jobPageData, null), profile, 1, deps)).rejects.toThrow(
+      FillFailedError,
+    );
+    await expect(fillAndSubmit(runFor(jobPageData, null), profile, 1, deps)).rejects.toMatchObject({
+      cause: underlying,
+    });
   });
 });

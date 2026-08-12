@@ -64,7 +64,7 @@ as work happens — check items off, add new ones, don't let it go stale.
       questions }` (`questions` via an inline schema — `QuestionToAnswer` isn't in `@djobi/shared`)
 - [x] `renderResumePdf(profile, tailoredResume)` — `apps/backend/src/pdf/renderResume.tsx`, a
       single `@react-pdf/renderer` template; contact info + education come from `profile` (not
-      job-specific), summary/skills/work-experience from `tailoredResume`. Tested (1 test, asserts
+      job-specific), skills/work-experience from `tailoredResume`. Tested (1 test, asserts
       real `%PDF-` output — no mocking, since there's no LLM/network involved)
 - [x] `POST /render-resume-pdf` route — tested (2 tests), zod-validates `{ profile,
       tailoredResume }`, returns raw PDF bytes with `content-type: application/pdf`
@@ -122,7 +122,7 @@ as work happens — check items off, add new ones, don't let it go stale.
       devDependencies, switched `vitest.config.ts` to the `jsdom` environment (was `node`), added
       `vitest.setup.ts` (jest-dom matchers + RTL `cleanup` after each test)
 - [x] Options page (`src/options/App.tsx`) — full profile onboarding form covering every
-      `ProfileSchema` field: scalar fields (name/email/phone/location/summary/links), plus
+      `ProfileSchema` field: scalar fields (name/email/phone/location/links), plus
       add/edit/remove list UIs for skills, work experience, education, and stories. Loads the
       existing profile via `GET /profile` on mount (empty form if none saved yet), saves via
       `POST /profile`, shows a saved/error message. Tested (11 tests)

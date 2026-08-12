@@ -17,10 +17,7 @@ const TailorResumeBodySchema = z.object({
 function buildPriorApplicationsSummary(pastApplications: Application[]): string | undefined {
   if (pastApplications.length === 0) return undefined;
   return pastApplications
-    .map(
-      (application) =>
-        `${application.roleTitle} (${application.createdAt.slice(0, 10)}): ${application.tailoredResume.summary}`,
-    )
+    .map((application) => `${application.roleTitle} (${application.createdAt.slice(0, 10)})`)
     .join('\n');
 }
 

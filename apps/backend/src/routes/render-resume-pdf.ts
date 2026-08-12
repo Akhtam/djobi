@@ -1,4 +1,4 @@
-import { ProfileSchema, TailoredResumeSchema } from '@djobi/shared';
+import { ProfileSchema, TailoredResumeSchema, resumeFileName } from '@djobi/shared';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { renderResumePdf } from '../pdf/renderResume.js';
@@ -20,5 +20,11 @@ renderResumePdfRoute.post('/render-resume-pdf', async (c) => {
 
   const { profile, tailoredResume } = parsed.data;
   const pdfBuffer = await renderResumePdf(profile, tailoredResume);
-  return new Response(pdfBuffer, { headers: { 'content-type': 'application/pdf' } });
+  return new Response(pdfBuffer, {
+    headers: {
+      'content-type': 'application/pdf',
+      // Named after the profile so a saved/previewed copy matches the file the extension attaches.
+      'content-disposition': `inline; filename="${resumeFileName(profile.fullName)}"`,
+    },
+  });
 });

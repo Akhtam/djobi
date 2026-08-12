@@ -2,12 +2,12 @@
  * Review UI root, mounted by `panel/main.tsx` as the side panel's sole content (see
  * `manifest.ts`'s `side_panel.default_path` — there's no popup). Once a profile exists, polls the
  * background service worker for the job page the content script reported for the active tab
- * (`background/jobPageStore.ts`) — the content script itself runs on every page and decides
+ * (`lib/tabStore.ts`) — the content script itself runs on every page and decides
  * whether it's a job application form (see `detect.ts`), not a fixed ATS-host allowlist, since
  * ATS platforms let companies white-label their job board onto their own domain. Once a job page
  * is found, kicks off the extract → tailor/answer pipeline — actually run by
  * `background/pipelineRunner.ts`, not here, so it survives this component unmounting mid-run —
- * and shows an editable review, hydrated from and checkpointed to `lib/pipelineRunStore.ts`, once
+ * and shows an editable review, hydrated from and checkpointed to `lib/tabStore.ts`, once
  * results land.
  *
  * The panel survives switching tabs (unlike a popup, which is destroyed on any outside click) —
@@ -25,41 +25,33 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import { fetchResumePdf } from '../lib/fetchResumePdf';
-import type {
-  GetJobPageDataMessage,
-  JobPageData,
-  StartAnalysisMessage,
-  StartFillMessage,
-} from '../lib/messages';
+import type { JobPageData, StartAnalysisMessage, StartFillMessage } from '../lib/messages';
 import { sendMessage } from '../lib/messages';
 import {
+  getDetectedPage,
   getPipelineRun,
-  setPipelineRun,
-  storageKey as pipelineRunStorageKey,
+  patchPipelineRun,
+  storageKey as tabStorageKey,
+  type PipelineFailure,
   type PipelineRunState,
   type PipelineStatus,
-} from '../lib/pipelineRunStore';
+  type TabState,
+} from '../lib/tabStore';
 import { sendToBackground } from '../lib/sendToBackground';
 
 // 'loading'/'no-profile'/'ready' are bootstrap-only, local to this component; the rest is
-// `PipelineRunState`'s `PipelineStatus`, checkpointed to `pipelineRunStore` as it progresses.
+// `PipelineRunState`'s `PipelineStatus`, checkpointed to `tabStore` as it progresses.
 type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus;
 
 function isPipelineStatus(status: Status): status is PipelineStatus {
   return status !== 'loading' && status !== 'no-profile' && status !== 'ready';
 }
 
-function getJobPageData(tabId: number): Promise<JobPageData | null> {
-  return sendMessage<GetJobPageDataMessage, { data: JobPageData | null }>({
-    type: 'GET_JOB_PAGE_DATA',
-    tabId,
-  }).then((response) => response?.data ?? null);
-}
-
 /** Header status-pill label/tone for a given {@link Status}, or `null` when no pill should show. */
 function statusPill(
   status: Status,
   unresolvedRequiredFieldCount: number,
+  filledFieldCount: number,
 ): { label: string; tone: 'busy' | 'success' | 'error' } | null {
   switch (status) {
     case 'analyzing':
@@ -70,6 +62,9 @@ function statusPill(
     case 'fill-error':
       return { label: 'Error', tone: 'error' };
     case 'filled':
+      // A run that wrote nothing is a failure wearing a success status — it reaches 'filled'
+      // because every step "succeeded", having been handed no fields to fill.
+      if (filledFieldCount === 0) return { label: 'Nothing filled', tone: 'error' };
       return unresolvedRequiredFieldCount > 0
         ? { label: 'Incomplete', tone: 'error' }
         : { label: 'Done', tone: 'success' };
@@ -90,6 +85,8 @@ export function App() {
   const [tailoredResume, setTailoredResume] = useState<TailoredResume | null>(null);
   const [answers, setAnswers] = useState<QuestionAnswer[]>([]);
   const [unresolvedRequiredFields, setUnresolvedRequiredFields] = useState<DetectedField[]>([]);
+  const [filledFieldCount, setFilledFieldCount] = useState(0);
+  const [failure, setFailure] = useState<PipelineFailure | null>(null);
   const [pageTextOverride, setPageTextOverride] = useState<string | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
 
@@ -97,22 +94,16 @@ export function App() {
   // an iframe from a blob: URL). Kept out of the persisted `PipelineRunState` — it's a
   // display-only, expensive-to-recompute blob URL that shouldn't survive a panel reopen.
   const [resumePreview, setResumePreview] = useState<
-    | { kind: 'idle' }
-    | { kind: 'loading' }
-    | { kind: 'ready'; url: string }
-    | { kind: 'error' }
+    { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'error' }
   >({ kind: 'idle' });
   const resumeUrlRef = useRef<string | null>(null);
 
-  // Tracks the last `PipelineRunState` this component either wrote to or read from
-  // `pipelineRunStore`, serialized. Lets the write-through effect skip re-persisting a run that
-  // only changed by reference (not content) after being applied from a remote update, and lets
-  // the storage-subscribe effect skip re-applying a change that's just the echo of this
-  // component's own write — without this, the two effects would trigger each other forever.
-  const lastSyncedRunRef = useRef<string | null>(null);
+  // The last edits this component persisted, serialized. Without it, applying an incoming run
+  // would re-trigger the write-through effect, which would write it straight back out again.
+  const lastSyncedEditsRef = useRef<string | null>(null);
 
   /**
-   * Restores whatever `pipelineRunStore` has for `newTabId` (a completed/in-progress Analysis
+   * Restores whatever `tabStore` has for `newTabId` (a completed/in-progress Analysis
    * Step, edited answers, etc.), or falls back to the bootstrap 'ready' state plus an
    * opportunistic `jobPageData` fetch when nothing's been analyzed for that tab yet. Used both at
    * mount and whenever the tracked tab changes (see the effect below).
@@ -125,7 +116,10 @@ export function App() {
 
     const run = await getPipelineRun(newTabId);
     if (run) {
-      lastSyncedRunRef.current = JSON.stringify(run);
+      lastSyncedEditsRef.current = JSON.stringify({
+        answers: run.answers,
+        pageTextOverride: run.pageTextOverride,
+      });
       setStatus(run.status);
       setJobPageData(run.jobPageData);
       setPageTextOverride(run.pageTextOverride);
@@ -133,23 +127,27 @@ export function App() {
       setTailoredResume(run.tailoredResume);
       setAnswers(run.answers);
       setUnresolvedRequiredFields(run.unresolvedRequiredFields);
+      setFilledFieldCount(run.filledFieldCount);
+      setFailure(run.failure);
       return;
     }
 
-    lastSyncedRunRef.current = null;
+    lastSyncedEditsRef.current = null;
     setStatus('ready');
     setJobPageData(null);
     setJobInfo(null);
     setTailoredResume(null);
     setAnswers([]);
     setUnresolvedRequiredFields([]);
+    setFilledFieldCount(0);
+    setFailure(null);
     setPageTextOverride(null);
 
     // Opportunistic background pre-fill only — the paste + Analyze screen below is shown
     // immediately regardless of whether this ever finds anything, so a page where detection
     // fails (or hasn't finished yet) never blocks the user from pasting the job description
     // themselves and analyzing.
-    const data = await getJobPageData(newTabId);
+    const data = await getDetectedPage(newTabId);
     if (data) setJobPageData(data);
   }
 
@@ -202,38 +200,24 @@ export function App() {
     };
   }, [status, tabId]);
 
-  // Write-through: checkpoints Application Pipeline progress into `pipelineRunStore` as it
-  // happens, so a closed-and-reopened panel, or one that switched away and back, rehydrates
-  // instead of resetting. Only active once a run has actually started (`isPipelineStatus`) — the
-  // 'ready' bootstrap state (nothing analyzed yet) isn't durable-worthy.
+  // Write-through for the two pieces of the run this panel owns: the answers the user edits and
+  // the job description they paste. Everything else — status, Analysis Step results, failure — is
+  // written by `background/pipelineRunner.ts`, the authority on the run's progress. Persisting
+  // those from here too would let this component's optimistic status land *after* the background's
+  // real result and overwrite it, losing a completed analysis.
   useEffect(() => {
-    if (!isPipelineStatus(status) || tabId === null || !jobPageData) return;
+    // `lastSyncedEditsRef` is only non-null once a run has actually been read in (hydrate) or
+    // arrived (subscribe). Until then this component's `answers` is an empty placeholder rather
+    // than anything the user typed, and writing it would erase the answers the Analysis Step just
+    // produced.
+    if (!isPipelineStatus(status) || tabId === null || lastSyncedEditsRef.current === null) return;
 
-    const run: PipelineRunState = {
-      status,
-      tabUrl,
-      jobPageData,
-      pageTextOverride,
-      jobInfo,
-      tailoredResume,
-      answers,
-      unresolvedRequiredFields,
-    };
-    const serialized = JSON.stringify(run);
-    if (serialized === lastSyncedRunRef.current) return;
-    lastSyncedRunRef.current = serialized;
-    void setPipelineRun(tabId, run);
-  }, [
-    status,
-    tabId,
-    tabUrl,
-    jobPageData,
-    pageTextOverride,
-    jobInfo,
-    tailoredResume,
-    answers,
-    unresolvedRequiredFields,
-  ]);
+    const edits = { answers, pageTextOverride };
+    const serialized = JSON.stringify(edits);
+    if (serialized === lastSyncedEditsRef.current) return;
+    lastSyncedEditsRef.current = serialized;
+    void patchPipelineRun(tabId, edits);
+  }, [status, tabId, answers, pageTextOverride]);
 
   // Keeps this view live as the background service worker (`background/pipelineRunner.ts`)
   // checkpoints Analysis/Fill Step progress into the store. Guarded by the same ref the
@@ -241,16 +225,17 @@ export function App() {
   // as a redundant write.
   useEffect(() => {
     if (tabId === null) return;
-    const key = pipelineRunStorageKey(tabId);
+    const key = tabStorageKey(tabId);
 
     function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
       if (areaName !== 'session' || !(key in changes)) return;
-      const newRun = changes[key].newValue as PipelineRunState | undefined;
-      if (!newRun) return; // tab's run was cleared (e.g. the tab closed) — nothing to reflect here
+      const newRun = (changes[key].newValue as TabState | undefined)?.run;
+      if (!newRun) return; // no run yet, or the tab's entry was cleared — nothing to reflect here
 
-      const serialized = JSON.stringify(newRun);
-      if (serialized === lastSyncedRunRef.current) return;
-      lastSyncedRunRef.current = serialized;
+      lastSyncedEditsRef.current = JSON.stringify({
+        answers: newRun.answers,
+        pageTextOverride: newRun.pageTextOverride,
+      });
       setStatus(newRun.status);
       setJobPageData(newRun.jobPageData);
       setPageTextOverride(newRun.pageTextOverride);
@@ -258,6 +243,8 @@ export function App() {
       setTailoredResume(newRun.tailoredResume);
       setAnswers(newRun.answers);
       setUnresolvedRequiredFields(newRun.unresolvedRequiredFields);
+      setFilledFieldCount(newRun.filledFieldCount);
+      setFailure(newRun.failure);
     }
 
     chrome.storage.onChanged.addListener(onChanged);
@@ -334,8 +321,18 @@ export function App() {
       .catch(() => setResumePreview({ kind: 'error' }));
   }
 
-  const pill = statusPill(status, unresolvedRequiredFields.length);
-  const canReview = status === 'review' || status === 'filling' || status === 'fill-error';
+  const pill = statusPill(status, unresolvedRequiredFields.length, filledFieldCount);
+  // 'filled' is included deliberately: filling a form is rarely the end of the task. The page's own
+  // validation may reject a value, a required field may have gone unresolved, or an answer may just
+  // read badly once it's sitting in the form — and in every one of those cases the user needs the
+  // drafted answers, the job-description editor and the resume preview still in front of them to
+  // edit and re-fill. Tearing the review down on success left them with a green check and no way
+  // back to the content except re-running the whole Analysis Step.
+  const canReview =
+    status === 'review' ||
+    status === 'filling' ||
+    status === 'fill-error' ||
+    status === 'filled';
 
   return (
     <main className="panel">
@@ -408,9 +405,49 @@ export function App() {
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>Something went wrong analyzing this job posting.</p>
+            {failure && <p className="failure-detail">{failure.message}</p>}
             <button type="button" className="btn-secondary" onClick={handleAnalyze}>
               Try again
             </button>
+          </div>
+        )}
+
+        {/* The Fill Step's outcome sits above the review, not below it: the review is long, and a
+            result the user has to scroll past it to find is a result they won't see. */}
+        {status === 'filled' && filledFieldCount === 0 && (
+          <div className="state error">
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Nothing was filled — no form fields were detected on this page. The application was
+              saved, but you'll need to fill the form yourself. If the form is there, it may have
+              finished rendering after the page was scanned; reload the page and try again.
+            </p>
+          </div>
+        )}
+
+        {status === 'filled' && filledFieldCount > 0 && unresolvedRequiredFields.length === 0 && (
+          <div className="state success">
+            <span className="state-icon success">✅</span>
+            <p>
+              Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'} and saved the
+              application.
+            </p>
+          </div>
+        )}
+
+        {status === 'filled' && filledFieldCount > 0 && unresolvedRequiredFields.length > 0 && (
+          <div className="state error">
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Filled and application saved, but {unresolvedRequiredFields.length} required field
+              {unresolvedRequiredFields.length === 1 ? '' : 's'} couldn't be resolved — check before
+              submitting:
+            </p>
+            <ul className="unresolved-fields">
+              {unresolvedRequiredFields.map((field) => (
+                <li key={field.id}>{field.label || field.category}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -463,9 +500,7 @@ export function App() {
                   onClick={handlePreviewResume}
                   disabled={resumePreview.kind === 'loading'}
                 >
-                  {resumePreview.kind === 'loading'
-                    ? 'Rendering…'
-                    : 'Preview tailored resume'}
+                  {resumePreview.kind === 'loading' ? 'Rendering…' : 'Preview tailored resume'}
                 </button>
               </div>
               {resumePreview.kind === 'error' && (
@@ -496,7 +531,10 @@ export function App() {
 
             {status === 'fill-error' && (
               <div className="inline-error">
-                <p>Something went wrong filling the form and saving the application.</p>
+                <div className="inline-error-body">
+                  <p>Something went wrong filling the form and saving the application.</p>
+                  {failure && <p className="failure-detail">{failure.message}</p>}
+                </div>
                 <button type="button" className="btn-secondary" onClick={handleFill}>
                   Try again
                 </button>
@@ -505,28 +543,6 @@ export function App() {
           </div>
         )}
 
-        {status === 'filled' && unresolvedRequiredFields.length === 0 && (
-          <div className="state success">
-            <span className="state-icon success">✅</span>
-            <p>Filled and application saved.</p>
-          </div>
-        )}
-
-        {status === 'filled' && unresolvedRequiredFields.length > 0 && (
-          <div className="state error">
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Filled and application saved, but {unresolvedRequiredFields.length} required field
-              {unresolvedRequiredFields.length === 1 ? '' : 's'} couldn't be resolved — check before
-              submitting:
-            </p>
-            <ul className="unresolved-fields">
-              {unresolvedRequiredFields.map((field) => (
-                <li key={field.id}>{field.label || field.category}</li>
-              ))}
-            </ul>
-          </div>
-        )}
       </div>
 
       {canReview && jobInfo && tailoredResume && (
@@ -538,7 +554,7 @@ export function App() {
             disabled={status === 'filling'}
           >
             {status === 'filling' && <span className="spinner" />}
-            Fill form
+            {status === 'filled' ? 'Fill form again' : 'Fill form'}
           </button>
         </footer>
       )}

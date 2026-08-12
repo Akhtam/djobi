@@ -16,7 +16,6 @@ const profile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
-  summary: null,
   workExperience: [
     {
       company: 'Acme Corp',
@@ -42,7 +41,6 @@ const jobInfo: JobInfo = {
 };
 
 const sampleTailoredResume = {
-  summary: 'Backend engineer with a track record of zero-downtime migrations.',
   skills: ['TypeScript', 'PostgreSQL'],
   workExperience: profile.workExperience,
 };
@@ -86,7 +84,7 @@ describe('tailorResume', () => {
   });
 
   it('throws when the tool input fails schema validation', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ summary: 'too little' }));
+    mockCreate.mockResolvedValue(toolUseResponse({ skills: 'not-an-array' }));
 
     await expect(tailorResume(profile, jobInfo)).rejects.toThrow(
       'report_tailored_resume produced input that failed validation',
