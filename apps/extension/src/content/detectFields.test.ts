@@ -354,4 +354,188 @@ describe('detectFields', () => {
       ),
     ).toEqual(['pt', 'et']);
   });
+  it('detects a button-based ARIA radiogroup as one question — the shape an Ashby "willing to work onsite?" prompt arrives in, which the native input scan cannot see at all', () => {
+    document.body.innerHTML = `
+      <form>
+        <label id="onsite-label">Are you willing to work onsite in San Francisco?</label>
+        <div role="radiogroup" aria-labelledby="onsite-label" aria-required="true">
+          <button type="button" role="radio" aria-checked="false" id="onsite-yes">Yes</button>
+          <button type="button" role="radio" aria-checked="false" id="onsite-no">No</button>
+        </div>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Are you willing to work onsite in San Francisco?',
+      category: 'question',
+      elementRole: 'radiogroup',
+      required: true,
+    });
+    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(
+      fields[0].options?.map((option) => document.querySelector(option.selector!)?.id),
+    ).toEqual(['onsite-yes', 'onsite-no']);
+  });
+
+  it("takes an ARIA group's question from the label rendered above it when nothing references it explicitly", () => {
+    document.body.innerHTML = `
+      <form>
+        <div>
+          <div>Do you have work authorization?</div>
+          <div role="group">
+            <div role="radio" id="auth-yes">Yes</div>
+            <div role="radio" id="auth-no">No</div>
+          </div>
+        </div>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Do you have work authorization?',
+      category: 'question',
+      elementRole: 'radiogroup',
+    });
+    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+  });
+
+  it('groups radios that share a name but sit in no group element, instead of reporting each choice as its own unknown field labelled "Yes"/"No"', () => {
+    document.body.innerHTML = `
+      <form>
+        <div>
+          <p>Are you willing to relocate?</p>
+          <label><input type="radio" name="relocate" value="yes" />Yes</label>
+          <label><input type="radio" name="relocate" value="no" />No</label>
+        </div>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      label: 'Are you willing to relocate?',
+      category: 'question',
+      elementRole: 'radiogroup',
+    });
+    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+  });
+
+  it('leaves a lone named checkbox alone — a consent toggle is not a question with choices', () => {
+    document.body.innerHTML = `
+      <form>
+        <label><input type="checkbox" name="consent" />I agree to the privacy policy</label>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ elementRole: 'native' });
+  });
+
+  it('reports a nested radiogroup once, not once per container it sits inside', () => {
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>Availability</legend>
+          <div role="radiogroup">
+            <input type="radio" id="a-now" name="start" /><label for="a-now">Immediately</label>
+            <input type="radio" id="a-later" name="start" /><label for="a-later">In a month</label>
+          </div>
+        </fieldset>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ label: 'Availability', elementRole: 'radiogroup' });
+    expect(fields[0].options?.map((option) => option.label)).toEqual(['Immediately', 'In a month']);
+  });
+
+  it("does not mistake ordinary page buttons for a question's choices", () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="why">Why do you want to work here?</label>
+        <textarea id="why"></textarea>
+        <button type="button">Add another</button>
+        <button type="submit">Submit application</button>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ label: 'Why do you want to work here?' });
+  });
+
+  it("uses the field wrapper's own <label> when the label's `for` names a field path rather than the input's id (Ashby), instead of falling through to the placeholder", () => {
+    // Ashby's real markup: the input carries no `id` at all, and `for` names the field path.
+    document.body.innerHTML = `
+      <div class="_fieldEntry" data-field-path="_systemfield_location">
+        <label for="_systemfield_location">Where are you currently located?</label>
+        <div class="_inputContainer">
+          <input placeholder="Start typing..." role="combobox" aria-haspopup="listbox" />
+          <button type="button"></button>
+        </div>
+      </div>
+    `;
+
+    const [field] = detectFields(document);
+
+    expect(field.label).toBe('Where are you currently located?');
+    // ...and with the real label recovered, it's a profile field rather than a drafted answer.
+    expect(field.category).toBe('location');
+  });
+
+  it("doesn't borrow a neighbouring field's label when a control has none of its own", () => {
+    document.body.innerHTML = `
+      <div class="section">
+        <div><label for="a">First question</label><input id="a" type="text" /></div>
+        <div><input name="orphan" type="text" /></div>
+      </div>
+    `;
+
+    const orphan = detectFields(document).find((field) => field.label !== 'First question');
+
+    expect(orphan?.label).toBe('orphan');
+  });
+
+  it('gives an element the same id on every scan, so answers drafted against one scan still name the same field in the next', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="why">Why do you want to work here?</label>
+        <textarea id="why"></textarea>
+        <input type="text" name="unlabeled-one" />
+      </form>
+    `;
+
+    const first = detectFields(document);
+    const second = detectFields(document);
+
+    expect(second.map((field) => field.id)).toEqual(first.map((field) => field.id));
+  });
+
+  it('keeps existing ids stable when a later scan finds new fields, rather than re-pointing them at whatever now sits in that position', () => {
+    document.body.innerHTML = `<form><input type="text" name="first" /></form>`;
+    const [before] = detectFields(document);
+
+    // A conditional question the ATS mounts *above* the field we already tagged.
+    document
+      .querySelector('form')!
+      .insertAdjacentHTML('afterbegin', `<input type="text" name="inserted" />`);
+    const after = detectFields(document);
+
+    const stillThere = after.find((field) => field.label === 'first');
+    expect(stillThere?.id).toBe(before.id);
+    // ...and the newcomer got an id of its own rather than inheriting the one it displaced.
+    expect(after.find((field) => field.label === 'inserted')?.id).not.toBe(before.id);
+    expect(new Set(after.map((field) => field.id)).size).toBe(after.length);
+  });
 });

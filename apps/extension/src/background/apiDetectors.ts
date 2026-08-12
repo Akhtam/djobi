@@ -1,422 +1,286 @@
-import type { DetectedField, FieldOption } from '@djobi/shared';
-
-export interface GreenhouseUrlInfo {
-  boardToken: string;
-  jobId: string;
-}
+import { normalizeLabel, type DetectedField, type FieldOption } from '@djobi/shared';
 
 /**
- * Parses a Greenhouse job posting URL (`job-boards.greenhouse.io/{boardToken}/jobs/{jobId}`, or
- * the legacy `boards.greenhouse.io/{boardToken}/jobs/{jobId}` shape) into its board token + job
- * id, or `null` if the URL isn't a Greenhouse job posting.
+ * Platform API oracles: given a job posting URL, fetch that ATS's own published schema for the form
+ * and use it to improve the fields `content/detectFields.ts` scraped from the DOM.
+ *
+ * The DOM pass is always the baseline. An oracle only ever adds confidence — chiefly `required`
+ * flags, and the choices for a combobox whose listbox isn't in the page at load time — and every
+ * failure path (unrecognized URL, network error, unexpected response shape) falls through to the
+ * scraped fields unchanged, so a wrong guess degrades rather than breaks.
+ *
+ * Each platform is an {@link AtsOracle} adapter answering three questions: is this URL mine, where
+ * is the schema, and what does that schema say about these questions. Everything else — the fetch,
+ * the error handling, matching questions to fields by label, and merging choices without discarding
+ * the DOM selectors that make them clickable — lives once, below.
  */
-export function parseGreenhouseUrl(url: string): GreenhouseUrlInfo | null {
-  let parsed: URL;
+
+/** What an ATS's schema says about one question, projected into a platform-independent shape. */
+interface QuestionPatch {
+  /** Left undefined when the schema doesn't say, so the DOM's own determination stands. */
+  required?: boolean;
+  /** Authoritative choice labels, if the schema lists any. */
+  optionLabels?: string[];
+}
+
+export interface AtsOracle {
+  /** Platform name, for diagnostics. */
+  readonly name: string;
+  /**
+   * The schema request for `url`, or `null` if this platform doesn't recognize it. Returning `null`
+   * is how URL parsing reports "not mine", so a posting only ever reaches one oracle.
+   */
+  request(url: string): { url: string; init?: RequestInit } | null;
+  /** Projects a parsed schema response into patches keyed by normalized question label. */
+  patches(response: unknown): Map<string, QuestionPatch>;
+}
+
+/** Parses `url`, returning `null` for anything malformed so each oracle needn't repeat the try/catch. */
+function parseUrl(url: string): URL | null {
   try {
-    parsed = new URL(url);
+    return new URL(url);
   } catch {
     return null;
   }
-
-  if (!/(^|\.)greenhouse\.io$/.test(parsed.hostname)) return null;
-
-  const match = parsed.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
-  if (!match) return null;
-
-  return { boardToken: match[1], jobId: match[2] };
 }
-
-/** The questions-enabled Greenhouse Job Board API URL for a parsed posting. */
-export function greenhouseJobBoardApiUrl(info: GreenhouseUrlInfo): string {
-  return `https://boards-api.greenhouse.io/v1/boards/${info.boardToken}/jobs/${info.jobId}?questions=true`;
-}
-
-interface GreenhouseQuestionField {
-  name: string;
-  type: string;
-  values: { value: string; label: string }[];
-}
-
-interface GreenhouseQuestion {
-  label: string;
-  required: boolean;
-  fields: GreenhouseQuestionField[];
-}
-
-interface GreenhouseJobResponse {
-  questions: GreenhouseQuestion[];
-}
-
-const normalize = (text: string) => text.trim().toLowerCase();
 
 /**
  * Overlays an ATS API's authoritative choice labels onto the ones `detectFields.ts` scraped,
- * **keeping the DOM selector** recorded for any choice we already saw. Replacing the scraped
- * options outright would trade a choice the Fill Step can click for a label string it can only try
- * to text-match — and the API's wording doesn't always match what the page renders, so that trade
- * can silently make a field unfillable. Choices the API knows about but the DOM didn't (a listbox
- * that only mounts when opened) get `selector: null` and fall back to label matching.
+ * **keeping the DOM selector** recorded for any choice we already saw. Replacing the scraped options
+ * outright would trade a choice the Fill Step can click for a label string it can only try to
+ * text-match — and the API's wording doesn't always match what the page renders, so that trade can
+ * silently make a field unfillable. Choices the API knows about but the DOM didn't (a listbox that
+ * only mounts when opened) get `selector: null` and fall back to label matching.
  */
 function mergeOptions(existing: FieldOption[] | undefined, apiLabels: string[]): FieldOption[] {
   const selectorByLabel = new Map(
-    (existing ?? []).map((option) => [normalize(option.label), option.selector]),
+    (existing ?? []).map((option) => [normalizeLabel(option.label), option.selector]),
   );
 
   return apiLabels.map((label) => ({
     label,
-    selector: selectorByLabel.get(normalize(label)) ?? null,
+    selector: selectorByLabel.get(normalizeLabel(label)) ?? null,
   }));
 }
 
 /**
- * Merges Greenhouse's Job Board API question schema onto matching `DetectedField`s, by normalized
- * label text (not DOM id — a react-select combobox's own DOM id is an internal, generated one,
- * not the API's stable field name, but its accessible label text is the same string a candidate
- * reads either way). Fills in `required` and `options` — the concrete fix for comboboxes whose
- * option list isn't in the DOM at page-load time (see `detectFields.ts`'s `resolveComboboxOptions`)
- * — without touching fields that have no matching API question.
+ * Applies `patches` to the fields whose label matches, by normalized label text — not by DOM id. A
+ * react-select combobox's id is an internal generated one, not the API's stable field name, but its
+ * accessible label is the same string a candidate reads either way. Fields with no matching question
+ * are returned untouched.
  */
-export function mergeGreenhouseQuestions(
+function applyPatches(
   fields: DetectedField[],
-  response: GreenhouseJobResponse,
+  patches: Map<string, QuestionPatch>,
 ): DetectedField[] {
-  const byLabel = new Map(response.questions.map((q) => [normalize(q.label), q]));
-
   return fields.map((field) => {
-    const question = byLabel.get(normalize(field.label));
-    if (!question) return field;
+    const patch = patches.get(normalizeLabel(field.label));
+    if (!patch) return field;
 
-    const selectField = question.fields.find((f) => f.values.length > 0);
-    const options = selectField
-      ? mergeOptions(
-          field.options,
-          selectField.values.map((v) => v.label),
-        )
-      : field.options;
-
-    return { ...field, required: question.required, options };
+    return {
+      ...field,
+      required: patch.required ?? field.required,
+      options: patch.optionLabels?.length
+        ? mergeOptions(field.options, patch.optionLabels)
+        : field.options,
+    };
   });
 }
 
-/**
- * Fetches Greenhouse's public Job Board API schema for `url` and merges it onto `fields`. Falls
- * through silently (returns `fields` unchanged) when `url` isn't a Greenhouse posting, the request
- * fails, or the response can't be parsed — the DOM-only pass already produced usable fields; this
- * only improves them when it can. Run from the background service worker (not the content script)
- * to avoid the page's own CSP/CORS restrictions.
- */
-export async function enrichWithGreenhouseApi(
-  url: string,
-  fields: DetectedField[],
-  fetchImpl: typeof fetch = fetch,
-): Promise<DetectedField[]> {
-  const info = parseGreenhouseUrl(url);
-  if (!info) return fields;
+// --- Greenhouse -------------------------------------------------------------------------------
+// The only platform whose request/response shape is confirmed against a live posting.
 
-  try {
-    const res = await fetchImpl(greenhouseJobBoardApiUrl(info));
-    if (!res.ok) return fields;
-
-    const data = (await res.json()) as GreenhouseJobResponse;
-    return mergeGreenhouseQuestions(fields, data);
-  } catch {
-    return fields;
-  }
+interface GreenhouseResponse {
+  questions: {
+    label: string;
+    required: boolean;
+    fields: { name: string; type: string; values: { value: string; label: string }[] }[];
+  }[];
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ashby, SmartRecruiters, and Workable below follow the same parse/merge/enrich shape as
-// Greenhouse above, but with lower confidence: research (`docs/ats-platform-detection.md`) could
-// only reach an SPA shell for all three (no live-rendered DOM), and the exact API request/response
-// shapes come from fetched documentation pages, not a confirmed live call. Each is built to fail
-// safely — a wrong URL or unexpected response shape just falls through to the DOM-only fields
-// already produced by `detectFields.ts`, never breaking the baseline. Verify each against a real
-// posting before leaning on it.
-// ---------------------------------------------------------------------------------------------
+const greenhouse: AtsOracle = {
+  name: 'Greenhouse',
 
-export interface AshbyUrlInfo {
-  orgName: string;
-  jobId: string;
+  request(url) {
+    const parsed = parseUrl(url);
+    if (!parsed || !/(^|\.)greenhouse\.io$/.test(parsed.hostname)) return null;
+
+    // Covers both `job-boards.greenhouse.io/{board}/jobs/{id}` and the legacy `boards.` host.
+    const match = parsed.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
+    if (!match) return null;
+
+    return {
+      url: `https://boards-api.greenhouse.io/v1/boards/${match[1]}/jobs/${match[2]}?questions=true`,
+    };
+  },
+
+  patches(response) {
+    return new Map(
+      (response as GreenhouseResponse).questions.map((question) => [
+        normalizeLabel(question.label),
+        {
+          required: question.required,
+          optionLabels: question.fields
+            .find((field) => field.values.length > 0)
+            ?.values.map((value) => value.label),
+        },
+      ]),
+    );
+  },
+};
+
+// ----------------------------------------------------------------------------------------------
+// Ashby, SmartRecruiters and Workable below are UNVERIFIED: research
+// (`docs/ats-platform-detection.md`) could only reach an SPA shell for all three, so their request
+// and response shapes come from documentation rather than a confirmed live call. Each still fails
+// safely — a wrong URL or unexpected shape falls through to the DOM-scraped fields — but confirm
+// one against a real posting before relying on it.
+// ----------------------------------------------------------------------------------------------
+
+interface AshbyResponse {
+  applicationFormDefinition: {
+    sections: {
+      fields: { title: string; isRequired: boolean; selectableValues?: { label: string }[] }[];
+    }[];
+  };
 }
 
-/** Parses `jobs.ashbyhq.com/{orgName}/{jobId}`. Returns `null` for the job-board root (no job id). */
-export function parseAshbyUrl(url: string): AshbyUrlInfo | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
+const ashby: AtsOracle = {
+  name: 'Ashby',
 
-  if (parsed.hostname !== 'jobs.ashbyhq.com') return null;
+  request(url) {
+    const parsed = parseUrl(url);
+    if (!parsed || parsed.hostname !== 'jobs.ashbyhq.com') return null;
 
-  const [orgName, jobId] = parsed.pathname.split('/').filter(Boolean);
-  if (!orgName || !jobId) return null;
+    const [orgName, jobId] = parsed.pathname.split('/').filter(Boolean);
+    if (!orgName || !jobId) return null; // the job-board root, not a specific posting
 
-  return { orgName, jobId };
+    // Follows Ashby's documented posting-api convention: POST to a resource-scoped path, no body.
+    return {
+      url: `https://api.ashbyhq.com/posting-api/job-posting/${jobId}`,
+      init: { method: 'POST' },
+    };
+  },
+
+  patches(response) {
+    const fields = (response as AshbyResponse).applicationFormDefinition.sections.flatMap(
+      (section) => section.fields,
+    );
+
+    return new Map(
+      fields.map((field) => [
+        normalizeLabel(field.title),
+        {
+          required: field.isRequired,
+          optionLabels: field.selectableValues?.map((value) => value.label),
+        },
+      ]),
+    );
+  },
+};
+
+interface SmartRecruitersResponse {
+  questions: {
+    label: string;
+    fields: { type: string; required: boolean; values?: { id: string; label: string }[] }[];
+  }[];
 }
 
-interface AshbyField {
-  title: string;
-  isRequired: boolean;
-  selectableValues?: { label: string; value: string }[];
+const smartRecruiters: AtsOracle = {
+  name: 'SmartRecruiters',
+
+  request(url) {
+    const parsed = parseUrl(url);
+    if (!parsed || !/(^|\.)smartrecruiters\.com$/.test(parsed.hostname)) return null;
+
+    // The commonly-seen `jobs.smartrecruiters.com/{Company}/{id}-{slug}` shape.
+    const match = parsed.pathname
+      .split('/')
+      .filter(Boolean)
+      .at(-1)
+      ?.match(/^(\d+|[0-9a-f-]{8,})-/);
+    if (!match) return null;
+
+    return { url: `https://api.smartrecruiters.com/v1/postings/${match[1]}/configuration` };
+  },
+
+  patches(response) {
+    return new Map(
+      (response as SmartRecruitersResponse).questions.map((question) => [
+        normalizeLabel(question.label),
+        {
+          // Undefined rather than `false` when a question carries no fields: `applyPatches` then
+          // keeps whatever the DOM determined, instead of overwriting a correct `required` with a
+          // guess derived from an empty list.
+          required: question.fields.length
+            ? question.fields.some((field) => field.required)
+            : undefined,
+          optionLabels: question.fields
+            .find((field) => (field.values?.length ?? 0) > 0)
+            ?.values?.map((value) => value.label),
+        },
+      ]),
+    );
+  },
+};
+
+interface WorkableResponse {
+  questions: { label: string; required: boolean; choices?: string[] }[];
 }
 
-interface AshbyJobResponse {
-  applicationFormDefinition: { sections: { fields: AshbyField[] }[] };
-}
+const workable: AtsOracle = {
+  name: 'Workable',
 
-/** Merges Ashby's `applicationFormDefinition` field schema onto matching fields, by normalized label/title text. */
-export function mergeAshbyQuestions(
-  fields: DetectedField[],
-  response: AshbyJobResponse,
-): DetectedField[] {
-  const allFields = response.applicationFormDefinition.sections.flatMap((s) => s.fields);
-  const byTitle = new Map(allFields.map((f) => [normalize(f.title), f]));
+  request(url) {
+    const parsed = parseUrl(url);
+    if (!parsed || !parsed.hostname.endsWith('.workable.com')) return null;
 
-  return fields.map((field) => {
-    const match = byTitle.get(normalize(field.label));
-    if (!match) return field;
+    // The API is scoped to a company subdomain, so the generic hosts can't be addressed at all.
+    const subdomain = parsed.hostname.replace('.workable.com', '');
+    if (['apply', 'jobs', 'www'].includes(subdomain)) return null;
 
-    const options = match.selectableValues?.length
-      ? mergeOptions(
-          field.options,
-          match.selectableValues.map((v) => v.label),
-        )
-      : field.options;
+    const match = parsed.pathname.match(/\/(?:j|jobs)\/([^/]+)/);
+    if (!match) return null;
 
-    return { ...field, required: match.isRequired, options };
-  });
-}
+    return { url: `https://${subdomain}.workable.com/spi/v3/jobs/${match[1]}/application_form` };
+  },
 
-/**
- * UNVERIFIED endpoint shape — `docs/ats-platform-detection.md`'s Ashby section cites
- * `developers.ashbyhq.com/reference/jobpostinginfo` (a `jobPosting.info`-named reference) without
- * confirming the exact request method/auth live; this follows Ashby's documented posting-api
- * convention of POST-ing to a resource-scoped path with no request body. Confirm against a real
- * job posting (and check whether an API key is actually required) before trusting this.
- */
-export function ashbyJobPostingApiUrl(info: AshbyUrlInfo): string {
-  return `https://api.ashbyhq.com/posting-api/job-posting/${info.jobId}`;
-}
+  patches(response) {
+    return new Map(
+      (response as WorkableResponse).questions.map((question) => [
+        normalizeLabel(question.label),
+        { required: question.required, optionLabels: question.choices },
+      ]),
+    );
+  },
+};
 
-/** Fetches Ashby's job posting API for `url` and merges it onto `fields`; falls through unchanged on any failure. See the UNVERIFIED note on {@link ashbyJobPostingApiUrl}. */
-export async function enrichWithAshbyApi(
-  url: string,
-  fields: DetectedField[],
-  fetchImpl: typeof fetch = fetch,
-): Promise<DetectedField[]> {
-  const info = parseAshbyUrl(url);
-  if (!info) return fields;
-
-  try {
-    const res = await fetchImpl(ashbyJobPostingApiUrl(info), { method: 'POST' });
-    if (!res.ok) return fields;
-
-    const data = (await res.json()) as AshbyJobResponse;
-    return mergeAshbyQuestions(fields, data);
-  } catch {
-    return fields;
-  }
-}
-
-export interface SmartRecruitersUrlInfo {
-  postingId: string;
-}
-
-/**
- * UNVERIFIED URL shape — research couldn't reach a live SmartRecruiters career-site posting page
- * (redirect-only), so this follows the commonly-seen `jobs.smartrecruiters.com/{Company}/{id}-{slug}`
- * pattern (a leading numeric/uuid posting id in the last path segment) without direct confirmation.
- */
-export function parseSmartRecruitersUrl(url: string): SmartRecruitersUrlInfo | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-
-  if (!/(^|\.)smartrecruiters\.com$/.test(parsed.hostname)) return null;
-
-  const lastSegment = parsed.pathname.split('/').filter(Boolean).at(-1);
-  const match = lastSegment?.match(/^(\d+|[0-9a-f-]{8,})-/);
-  if (!match) return null;
-
-  return { postingId: match[1] };
-}
-
-interface SmartRecruitersField {
-  type: string;
-  required: boolean;
-  values?: { id: string; label: string }[];
-}
-
-interface SmartRecruitersQuestion {
-  label: string;
-  fields: SmartRecruitersField[];
-}
-
-interface SmartRecruitersConfigurationResponse {
-  questions: SmartRecruitersQuestion[];
-}
-
-/**
- * Merges SmartRecruiters' `/configuration` question schema onto matching fields, by normalized
- * label text. UNVERIFIED: `docs/ats-platform-detection.md` confirms `questions[].fields[]`'s shape
- * from SmartRecruiters' own docs, but doesn't confirm a `questions[].label` exists at the question
- * level (only the `fields[]` shape was directly cited) — this assumes one, matching the
- * Greenhouse/Ashby convention. Confirm against a real response before trusting.
- */
-export function mergeSmartRecruitersQuestions(
-  fields: DetectedField[],
-  response: SmartRecruitersConfigurationResponse,
-): DetectedField[] {
-  const byLabel = new Map(response.questions.map((q) => [normalize(q.label), q]));
-
-  return fields.map((field) => {
-    const question = byLabel.get(normalize(field.label));
-    if (!question) return field;
-
-    const selectField = question.fields.find((f) => (f.values?.length ?? 0) > 0);
-    const required = question.fields.some((f) => f.required);
-    const options = selectField
-      ? mergeOptions(
-          field.options,
-          selectField.values!.map((v) => v.label),
-        )
-      : field.options;
-
-    return { ...field, required, options };
-  });
-}
-
-/** `docs/ats-platform-detection.md`-cited endpoint: `GET /postings/{uuid}/configuration` on `api.smartrecruiters.com`. */
-export function smartRecruitersConfigurationApiUrl(info: SmartRecruitersUrlInfo): string {
-  return `https://api.smartrecruiters.com/v1/postings/${info.postingId}/configuration`;
-}
-
-/** Fetches SmartRecruiters' configuration API for `url` and merges it onto `fields`; falls through unchanged on any failure. */
-export async function enrichWithSmartRecruitersApi(
-  url: string,
-  fields: DetectedField[],
-  fetchImpl: typeof fetch = fetch,
-): Promise<DetectedField[]> {
-  const info = parseSmartRecruitersUrl(url);
-  if (!info) return fields;
-
-  try {
-    const res = await fetchImpl(smartRecruitersConfigurationApiUrl(info));
-    if (!res.ok) return fields;
-
-    const data = (await res.json()) as SmartRecruitersConfigurationResponse;
-    return mergeSmartRecruitersQuestions(fields, data);
-  } catch {
-    return fields;
-  }
-}
-
-export interface WorkableUrlInfo {
-  subdomain: string;
-  shortcode: string;
-}
+/** Greenhouse first — the one confirmed live. A given URL only ever matches one of these. */
+const ORACLES: readonly AtsOracle[] = [greenhouse, ashby, smartRecruiters, workable];
 
 /**
- * Parses a company-subdomain Workable URL (`{subdomain}.workable.com/j/{shortcode}` or
- * `/jobs/{shortcode}`). Returns `null` for the generic `apply.workable.com`/`jobs.workable.com`
- * hosts, which carry no company subdomain — without it, `workableApplicationFormApiUrl` can't be
- * constructed at all (the API is scoped to `{subdomain}.workable.com`).
- */
-export function parseWorkableUrl(url: string): WorkableUrlInfo | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-
-  if (!parsed.hostname.endsWith('.workable.com')) return null;
-
-  const subdomain = parsed.hostname.replace('.workable.com', '');
-  if (['apply', 'jobs', 'www'].includes(subdomain)) return null;
-
-  const match = parsed.pathname.match(/\/(?:j|jobs)\/([^/]+)/);
-  if (!match) return null;
-
-  return { subdomain, shortcode: match[1] };
-}
-
-interface WorkableQuestion {
-  label: string;
-  required: boolean;
-  choices?: string[];
-}
-
-interface WorkableApplicationFormResponse {
-  questions: WorkableQuestion[];
-}
-
-/**
- * Merges Workable's application-form question schema onto matching fields, by normalized label
- * text. UNVERIFIED: `docs/ats-platform-detection.md` couldn't confirm the exact field/enum names
- * (the reference doc URL 404'd during research) — `choices: string[]` is a best guess at how
- * option-bearing questions are shaped; confirm against a real response before trusting.
- */
-export function mergeWorkableQuestions(
-  fields: DetectedField[],
-  response: WorkableApplicationFormResponse,
-): DetectedField[] {
-  const byLabel = new Map(response.questions.map((q) => [normalize(q.label), q]));
-
-  return fields.map((field) => {
-    const question = byLabel.get(normalize(field.label));
-    if (!question) return field;
-
-    const options = question.choices?.length
-      ? mergeOptions(field.options, question.choices)
-      : field.options;
-    return { ...field, required: question.required, options };
-  });
-}
-
-/** `docs/ats-platform-detection.md`-cited endpoint: `GET {subdomain}.workable.com/spi/v3/jobs/{shortcode}/application_form`. */
-export function workableApplicationFormApiUrl(info: WorkableUrlInfo): string {
-  return `https://${info.subdomain}.workable.com/spi/v3/jobs/${info.shortcode}/application_form`;
-}
-
-/** Fetches Workable's application-form API for `url` and merges it onto `fields`; falls through unchanged on any failure. */
-export async function enrichWithWorkableApi(
-  url: string,
-  fields: DetectedField[],
-  fetchImpl: typeof fetch = fetch,
-): Promise<DetectedField[]> {
-  const info = parseWorkableUrl(url);
-  if (!info) return fields;
-
-  try {
-    const res = await fetchImpl(workableApplicationFormApiUrl(info));
-    if (!res.ok) return fields;
-
-    const data = (await res.json()) as WorkableApplicationFormResponse;
-    return mergeWorkableQuestions(fields, data);
-  } catch {
-    return fields;
-  }
-}
-
-/**
- * Tries each platform's API oracle in turn (Greenhouse first — the only one with a confirmed-live
- * request/response shape), based on which one recognizes `url`. Returns `fields` unchanged if none
- * do, or if the matching one fails — see each `enrichWith*Api` for its own safe-fallback behavior.
+ * Improves `fields` using whichever platform recognizes `url`, or returns them unchanged when none
+ * does, or the fetch or parse fails. Run from the background service worker rather than the content
+ * script, so the page's own CSP and CORS rules don't apply.
  */
 export async function enrichWithApiOracle(
   url: string,
   fields: DetectedField[],
   fetchImpl: typeof fetch = fetch,
 ): Promise<DetectedField[]> {
-  if (parseGreenhouseUrl(url)) return enrichWithGreenhouseApi(url, fields, fetchImpl);
-  if (parseAshbyUrl(url)) return enrichWithAshbyApi(url, fields, fetchImpl);
-  if (parseSmartRecruitersUrl(url)) return enrichWithSmartRecruitersApi(url, fields, fetchImpl);
-  if (parseWorkableUrl(url)) return enrichWithWorkableApi(url, fields, fetchImpl);
+  for (const oracle of ORACLES) {
+    const request = oracle.request(url);
+    if (!request) continue;
+
+    try {
+      const res = await fetchImpl(request.url, request.init);
+      if (!res.ok) return fields;
+
+      return applyPatches(fields, oracle.patches(await res.json()));
+    } catch {
+      return fields;
+    }
+  }
+
   return fields;
 }

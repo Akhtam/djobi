@@ -1,9 +1,31 @@
 /** Options page root — profile onboarding form (`PROGRESS.md` Phase 5). */
-import type { Profile } from '@djobi/shared';
+import {
+  SCREENING_TOPICS,
+  type Profile,
+  type ScreeningAnswers,
+  type ScreeningTopic,
+} from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { sendToBackground } from '../lib/sendToBackground';
+import { callBackend } from '../lib/callBackend';
+
+/**
+ * Sets one screening topic's answer, dropping the key entirely when cleared. An empty string would
+ * otherwise read as "answered, with nothing" — and `preparedAnswerFor` would have to special-case
+ * it — where the absence of a key already means the unambiguous thing: not answered.
+ */
+function withScreeningAnswer(
+  answers: ScreeningAnswers,
+  topic: ScreeningTopic,
+  value: string,
+): ScreeningAnswers {
+  if (!value.trim()) {
+    const { [topic]: _removed, ...rest } = answers;
+    return rest;
+  }
+  return { ...answers, [topic]: value };
+}
 
 const EMPTY_PROFILE: Profile = {
   fullName: '',
@@ -15,6 +37,8 @@ const EMPTY_PROFILE: Profile = {
   education: [],
   skills: [],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 export function App() {
@@ -23,9 +47,14 @@ export function App() {
   const [newSkill, setNewSkill] = useState('');
 
   useEffect(() => {
-    sendToBackground<Profile | null>('/profile', undefined, 'GET')
+    callBackend<Profile | null>('/profile', undefined, 'GET')
       .then((loaded) => {
-        setProfile(loaded ?? EMPTY_PROFILE);
+        // Spread over the empty profile rather than using it as-is: a profile stored before a
+        // field was added to the schema comes back without that field, and the form binds directly
+        // to those keys (`profile.screeningAnswers[topic]`), so a missing one crashed the page on
+        // render. The backend fills defaults on read too — this is the same guarantee held locally,
+        // for a profile that was fetched and cached before that.
+        setProfile(loaded ? { ...EMPTY_PROFILE, ...loaded } : EMPTY_PROFILE);
       })
       .catch((error: Error) => {
         setProfile(EMPTY_PROFILE);
@@ -52,7 +81,7 @@ export function App() {
         bullets: we.bullets.filter((bullet) => bullet.trim() !== ''),
       })),
     };
-    sendToBackground<Profile>('/profile', toSave)
+    callBackend<Profile>('/profile', toSave)
       .then(() => setStatus({ kind: 'saved', message: 'Profile saved.' }))
       .catch((error: Error) => setStatus({ kind: 'error', message: error.message }));
   }
@@ -106,7 +135,6 @@ export function App() {
                 onChange={(e) => setProfile({ ...profile, location: e.target.value })}
               />
             </div>
-
           </div>
         </div>
 
@@ -186,6 +214,111 @@ export function App() {
               Add skill
             </button>
           </div>
+        </fieldset>
+
+        {/* Facts, not prose. Anything answered here is filled straight from the profile and never
+            reaches the answer-drafting model — see `@djobi/shared`'s `screeningAnswers.ts`. */}
+        <fieldset className="card">
+          <legend>Screening answers</legend>
+          <p className="hint">
+            The questions almost every application asks. Anything you answer here is filled in
+            directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as
+            usual.
+          </p>
+          {SCREENING_TOPICS.map((entry) => (
+            <div className="field" key={entry.topic}>
+              <label htmlFor={entry.topic}>{entry.label}</label>
+              <input
+                id={entry.topic}
+                list={`${entry.topic}-suggestions`}
+                value={profile.screeningAnswers[entry.topic] ?? ''}
+                onChange={(e) =>
+                  setProfile({
+                    ...profile,
+                    screeningAnswers: withScreeningAnswer(
+                      profile.screeningAnswers,
+                      entry.topic,
+                      e.target.value,
+                    ),
+                  })
+                }
+              />
+              <datalist id={`${entry.topic}-suggestions`}>
+                {entry.suggestions.map((suggestion) => (
+                  <option key={suggestion} value={suggestion} />
+                ))}
+              </datalist>
+            </div>
+          ))}
+        </fieldset>
+
+        <fieldset className="card">
+          <legend>Other prepared answers</legend>
+          <p className="hint">
+            Anything else you're asked repeatedly. The question is matched loosely against the
+            form's own wording, so it needn't be phrased identically.
+          </p>
+          {profile.customAnswers.map((entry, index) => (
+            <div className="entry" key={index}>
+              <div className="entry-header">
+                <h3>Prepared answer {index + 1}</h3>
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() =>
+                    setProfile({
+                      ...profile,
+                      customAnswers: profile.customAnswers.filter((_, i) => i !== index),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+              <div className="field">
+                <label htmlFor={`customQuestion-${index}`}>Question</label>
+                <input
+                  id={`customQuestion-${index}`}
+                  value={entry.question}
+                  onChange={(e) =>
+                    setProfile({
+                      ...profile,
+                      customAnswers: profile.customAnswers.map((a, i) =>
+                        i === index ? { ...a, question: e.target.value } : a,
+                      ),
+                    })
+                  }
+                />
+              </div>
+              <div className="field">
+                <label htmlFor={`customAnswer-${index}`}>Answer</label>
+                <textarea
+                  id={`customAnswer-${index}`}
+                  value={entry.answer}
+                  onChange={(e) =>
+                    setProfile({
+                      ...profile,
+                      customAnswers: profile.customAnswers.map((a, i) =>
+                        i === index ? { ...a, answer: e.target.value } : a,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() =>
+              setProfile({
+                ...profile,
+                customAnswers: [...profile.customAnswers, { question: '', answer: '' }],
+              })
+            }
+          >
+            Add prepared answer
+          </button>
         </fieldset>
 
         <fieldset className="card">

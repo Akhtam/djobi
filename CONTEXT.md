@@ -7,11 +7,15 @@ A Chrome extension that autofills job applications on ATS platforms with an AI-t
 ### Application pipeline
 
 **Application Pipeline**:
-The end-to-end flow that turns a detected job page into a filled, saved Application — the Analysis Step followed by the Fill Step.
+The end-to-end flow that turns a pasted Job Description plus a detected form into a filled, saved Application — the Analysis Step followed by the Fill Step.
 _Avoid_: autofill process, flow
 
+**Job Description**:
+The job posting text, as the candidate pastes it into the panel. The Analysis Step's only input — the page itself is read for its form, never for the posting.
+_Avoid_: page text, scraped text (both name a source that no longer exists)
+
 **Analysis Step**:
-Extracting structured Job Info from a scraped job page, then tailoring a Resume and drafting Question Answers from it.
+Extracting structured Job Info from the pasted Job Description, then tailoring a Resume and drafting Question Answers from it.
 _Avoid_: extraction (too narrow — covers only the first half)
 
 **Fill Step**:
@@ -37,8 +41,8 @@ A drafted answer to one freeform application question, generated from the Profil
 _Avoid_: response
 
 **Detected Field**:
-One fillable input, textarea, or select on a job application page, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic.
-_Avoid_: form field, input
+One thing on a job application page a candidate fills in, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic. Usually one input, textarea or select — but a whole group of choices answering a single question (a fieldset, a `role="radiogroup"`, or radios sharing a `name`) is _one_ Detected Field, with the choices as its options.
+_Avoid_: form field, input (both suggest a single element, which a choice group isn't)
 
 **Application**:
 One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a status (`draft`/`submitted`) and, once interview tracking lands, a stage.

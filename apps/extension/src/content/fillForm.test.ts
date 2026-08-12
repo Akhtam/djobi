@@ -68,6 +68,55 @@ describe('fillForm', () => {
     ).toBe('jane@example.com');
   });
 
+  it('blurs each field after writing it, for form libraries that only commit a value on blur', async () => {
+    // The reported failure this covers: an ATS submits, and every visibly-filled required field
+    // comes back "missing entry". Form libraries layered over React (react-hook-form's `onBlur`
+    // mode being the common one) hold the text in local component state and push it into the form
+    // model on blur, so a fill that writes and walks away leaves the DOM looking right and the
+    // model empty.
+    document.body.innerHTML = `<input id="f1" type="text" />`;
+    const input = document.querySelector<HTMLInputElement>('#f1')!;
+    const seen: string[] = [];
+    for (const type of ['focus', 'input', 'change', 'blur', 'focusout']) {
+      input.addEventListener(type, () => seen.push(type));
+    }
+
+    await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane@example.com' });
+
+    expect(seen).toEqual(['focus', 'input', 'change', 'blur', 'focusout']);
+  });
+
+  it('reports a field as filled only if the page still holds the value once it has re-rendered', async () => {
+    // A controlled React field whose `onChange` never fired keeps the text until the next render
+    // and is then reverted. Reading back immediately would call that a success, so the check is
+    // deferred — this stands in for the revert.
+    document.body.innerHTML = `<input id="f1" type="text" /><input id="f2" type="text" />`;
+    const reverting = document.querySelector<HTMLInputElement>('#f1')!;
+    reverting.addEventListener('input', () => {
+      setTimeout(() => {
+        reverting.value = '';
+      }, 0);
+    });
+
+    const filled = await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1' }), field({ id: 'f2', selector: '#f2' })],
+      { f1: 'jane@example.com', f2: 'jane@example.com' },
+    );
+
+    expect(filled).toEqual(['f2']);
+  });
+
+  it('reports nothing filled when the selectors no longer resolve, rather than reporting intent', async () => {
+    document.body.innerHTML = `<input id="other" type="text" />`;
+
+    // The stale-selector case: the form re-mounted between detection and fill, so `data-djobi-id`
+    // went with it. Nothing is written, and nothing is claimed.
+    expect(await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'x' })).toEqual(
+      [],
+    );
+  });
+
   it('leaves fields with no supplied value untouched and skips selectors that resolve to nothing, without throwing', () => {
     document.body.innerHTML = `<input id="f1" type="text" value="original" /><input id="f2" type="text" />`;
 
@@ -359,6 +408,68 @@ describe('fillForm', () => {
     ).resolves.not.toThrow();
 
     expect(document.querySelector<HTMLInputElement>('#f2')!.value).toBe('filled');
+  });
+
+  it("clicks the ARIA radio the option's recorded selector points at — an Ashby-style group whose choices are buttons, not inputs", () => {
+    document.body.innerHTML = `
+      <div id="f1" role="radiogroup">
+        <button type="button" role="radio" id="opt-yes" aria-checked="false">Yes</button>
+        <button type="button" role="radio" id="opt-no" aria-checked="false">No</button>
+      </div>
+    `;
+    const clicked: string[] = [];
+    for (const id of ['opt-yes', 'opt-no']) {
+      document.querySelector(`#${id}`)!.addEventListener('click', () => clicked.push(id));
+    }
+
+    fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          options: [
+            { label: 'Yes', selector: '#opt-yes' },
+            { label: 'No', selector: '#opt-no' },
+          ],
+        }),
+      ],
+      { f1: 'No' },
+    );
+
+    expect(clicked).toEqual(['opt-no']);
+  });
+
+  it('falls back to matching an ARIA choice by its visible text when the option carries no recorded selector (e.g. it came from the platform API, not the DOM)', () => {
+    document.body.innerHTML = `
+      <div id="f1" role="radiogroup">
+        <button type="button" role="radio" id="opt-yes">Yes</button>
+        <button type="button" role="radio" id="opt-no">No</button>
+      </div>
+    `;
+    const clicked: string[] = [];
+    for (const id of ['opt-yes', 'opt-no']) {
+      document.querySelector(`#${id}`)!.addEventListener('click', () => clicked.push(id));
+    }
+
+    fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          options: [
+            { label: 'Yes', selector: null },
+            { label: 'No', selector: null },
+          ],
+        }),
+      ],
+      { f1: 'yes' },
+    );
+
+    expect(clicked).toEqual(['opt-yes']);
   });
 });
 

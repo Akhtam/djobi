@@ -60,7 +60,7 @@ directly.**
 use proper `<label id="x-label" for="x">`. React-select comboboxes use `aria-labelledby="{id}-label"`
 pointing at that same label element (not a native `for`/`id` pair on the visible input, since the
 combobox's `id` belongs to the inner search `<input>`, not the answer). The résumé/cover-letter
-file group's *visible* label ("Resume/CV *") is a plain `<div id="upload-label-resume">` referenced
+file group's _visible_ label ("Resume/CV *") is a plain `<div id="upload-label-resume">` referenced
 via `aria-labelledby` on an enclosing `<div role="group">`, while the actual `<input type="file">`
 only has a separate `<label class="visually-hidden" for="resume">Attach</label>` — i.e. the
 required-asterisk text a human reads is **not** the label formally bound to the input. **Verified
@@ -79,6 +79,7 @@ Greenhouse markup).
 `GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?questions=true` — live
 `curl`-verified against job 8080711/board `greenhouse`, HTTP 200, returned an 18-entry `questions`
 array. Example entries:
+
 ```json
 {"label": "First Name", "required": true, "fields": [{"name":"first_name","type":"input_text","values":[]}]}
 {"label": "Resume/CV", "required": true, "fields": [
@@ -86,6 +87,7 @@ array. Example entries:
   {"name":"resume_text","type":"textarea","values":[]}
 ]}
 ```
+
 `type` values include `input_text`, `input_file`, `textarea`, and (per
 [developers.greenhouse.io/job-board.html](https://developers.greenhouse.io/job-board.html))
 `multi_value_single_select` / `multi_value_multi_select` with a `values: [{value, label}]` array for
@@ -119,8 +121,8 @@ directly** for select/radio.
 
 **3. Required-field signaling.** Native HTML5 `required` attribute is present on every required
 `<input>`/`<select>` (confirmed: `<input type="text" ... required>`, `<select ... required>`,
-`<input type="radio" ... required="required">`), *plus* a visible `<span class="required">✱</span>`
-sibling inside the label div, *plus* a `data-qa="SCL-question-required-asterisk"` marker for
+`<input type="radio" ... required="required">`), _plus_ a visible `<span class="required">✱</span>`
+sibling inside the label div, _plus_ a `data-qa="SCL-question-required-asterisk"` marker for
 custom questions. Triple-redundant like Greenhouse. **Verified directly.**
 
 **4. Label association.** **Label-wraps-input with no `for` attribute** — e.g.
@@ -134,7 +136,7 @@ directly.**
 **5. File upload mechanism.** Native `<input type="file" name="resume" class="application-file-input
 invisible-resume-upload" id="resume-upload-input">`, visually hidden, wrapped in a clickable
 `<a class="postings-btn ... visible-resume-upload">`. An `upload-dragging` CSS class exists in the
-page's stylesheet/markup, implying the wrapper *does* listen for `dragenter`/`dragleave` to toggle
+page's stylesheet/markup, implying the wrapper _does_ listen for `dragenter`/`dragleave` to toggle
 a hover style — but the underlying element is still a native file input, so the same
 `Object.defineProperty(.files, ...)` + `change` event technique used today should work; a
 `dragover`/`drop` simulation may additionally be needed if Lever's JS only reads
@@ -167,7 +169,7 @@ verification** — cannot be inspected without executing Workday's JS bundle (no
 tool available this session). Third-party technical write-ups (not primary source, used only to
 know where to look) describe Workday's underlying data layer as "CXS" (Candidate Experience
 System) — every career site is a SPA that calls a JSON endpoint at
-`https://{tenant}.wd{N}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs`. This is *not* an
+`https://{tenant}.wd{N}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs`. This is _not_ an
 officially documented public API — Workday's own developer docs live behind a login wall at
 `community.workday.com/api` (login-gated, could not access). Workday's apply flow is also known
 (from general product familiarity, unverified here) to require account creation and often
@@ -196,7 +198,7 @@ the specific job-search results are fetched client-side). Notably the page inclu
 fallback `<iframe src="https://careers-{company}.icims.com/jobs/search?ss=1&in_iframe=1"
 id="noscript_icims_content_iframe">`** for JS-disabled browsers — confirming iCIMS explicitly
 supports/expects an iframe-embedded mode as one of its delivery mechanisms (`in_iframe=1` query
-param), which matters for `all_frames`/host-permission planning even though the *default*
+param), which matters for `all_frames`/host-permission planning even though the _default_
 experience for this instance is not iframe-embedded. **Verified directly**, though this is one
 customer's iCIMS instance/theme (iCIMS supports multiple career-site "eras" — legacy vs. modern —
 so markup likely varies by customer/theme; **treat the exact widget markup as needs live
@@ -239,8 +241,8 @@ reference doc — containing `sections[].fields[]`, each with `type` (e.g. `"Str
 including required flags and every dropdown/multi-select's options — the richest of any platform
 checked. Ashby also documents submitting applications via
 `applicationForm.submit` with `multipart/form-data` (for résumé upload) — i.e. Ashby's API can
-plausibly be used for both *reading* the form schema and (if we ever go that route)
-*submitting* without touching the DOM at all. **This makes Ashby the strongest candidate for an
+plausibly be used for both _reading_ the form schema and (if we ever go that route)
+_submitting_ without touching the DOM at all. **This makes Ashby the strongest candidate for an
 API-first (non-DOM) detection+fill strategy** — see "Detection strategy" below.
 
 ---
@@ -305,7 +307,7 @@ verification** by fetching the endpoint directly against a real job before relyi
 (`bamboohr.com/careers/application`) returned a **client-rendered shell**: `<div
 class="job-application"></div>` empty, with `<script src="/scripts/scripts.js" type="module">` —
 zero `<input>`/`<form>` in the raw HTML. **Verified directly** for BambooHR's own site; since
-BambooHR ATS is typically embedded as a widget on *customer* career pages rather than visited
+BambooHR ATS is typically embedded as a widget on _customer_ career pages rather than visited
 directly, third-party customer instances may differ in host/embed details — **needs live
 verification** for a real customer-hosted BambooHR careers widget specifically (only BambooHR's
 own dogfooded page was checked here).
@@ -330,8 +332,8 @@ Concrete, incremental extensions to the actual files in this repo — not a rewr
 
 1. **Greenhouse** — highest priority: common, and we have concrete live-DOM evidence the current
    pipeline fails on it (react-select comboboxes + checkbox fieldsets invisible to `input,
-   textarea, select`). Also the platform with the cleanest public API (`?questions=true`).
-2. **Lever** — common, DOM-verified, and unlike Greenhouse, `<select>`/`<input type=radio>` *are*
+textarea, select`). Also the platform with the cleanest public API (`?questions=true`).
+2. **Lever** — common, DOM-verified, and unlike Greenhouse, `<select>`/`<input type=radio>` _are_
    already in-scope for `detectFields.ts`'s query — but `classify()`'s keyword list won't fire
    correctly on Lever's `application-label` div text since it's not `<label for>`-bound, so the
    `getSignal()` fallback chain currently returns `''` for wrapped/detached labels. Fixing label
@@ -341,7 +343,7 @@ Concrete, incremental extensions to the actual files in this repo — not a rewr
 4. **iCIMS** — common, confirmed Next.js SPA + iframe-capable; needs live verification of the
    actual apply-form DOM.
 5. **Ashby** — has the best public API (`applicationFormDefinition`), so it's cheap to support
-   *well* even though raw DOM is a SPA shell — API-first, not DOM-first.
+   _well_ even though raw DOM is a SPA shell — API-first, not DOM-first.
 6. **SmartRecruiters / Workable** — both API-first platforms with per-customer DOM variance; same
    playbook as Ashby (prefer API, DOM as fallback), lower priority since less commonly encountered.
 7. **BambooHR** — lowest priority of the eight: no public form-schema API, and it's an embedded
@@ -351,20 +353,25 @@ Concrete, incremental extensions to the actual files in this repo — not a rewr
 ### Concrete extension points
 
 **a) `DetectedFieldSchema` (`packages/shared/src/schemas.ts`)** — add:
-- `required: z.boolean()` — every platform checked so far signals required via *some* combination
+
+- `required: z.boolean()` — every platform checked so far signals required via _some_ combination
   of `required`/`aria-required="true"`/a visual asterisk/`data-required`; capturing it lets the
   backend prioritize which `question` fields absolutely need an answer vs. can be skipped, and
   lets the popup warn before submit.
 - Extend `FieldCategorySchema` with multi-choice-aware categories, or (simpler, less schema churn)
   add an `elementRole: z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup'])` so
-  `fillForm.ts` knows *how* to fill a field, independent of its semantic `category`.
+  `fillForm.ts` knows _how_ to fill a field, independent of its semantic `category`.
 
 **b) `detectFields.ts` element scan** — the current `doc.querySelectorAll('input, textarea,
 select')` misses every pattern seen on Greenhouse. Add a second pass:
+
 ```ts
-doc.querySelectorAll('[role="combobox"], [role="listbox"], fieldset[role], fieldset:has(input[type="radio"],input[type="checkbox"])')
+doc.querySelectorAll(
+  '[role="combobox"], [role="listbox"], fieldset[role], fieldset:has(input[type="radio"],input[type="checkbox"])',
+);
 ```
-For `role="combobox"` elements (react-select-style, confirmed on Greenhouse): the *displayed*
+
+For `role="combobox"` elements (react-select-style, confirmed on Greenhouse): the _displayed_
 value isn't in `.value` the way a native input is — react-select renders selected text into a
 sibling `select__single-value` div and keeps the actual answer in React state, submitted via a
 hidden hidden-input pattern (Greenhouse: a `remix-css-*-requiredInput`) or a same-`name` hidden
@@ -382,25 +389,29 @@ one field = one element, since one question maps to N radio/checkbox inputs.
 
 **c) `getSignal()` label resolution** — currently only checks `label[for={id}]` then
 aria-label/placeholder/name/id. Add, in order:
+
 1. Nearest ancestor `<label>` with no `for` (implicit wrap — confirmed pattern on Lever's
    `application-label` and Greenhouse's checkbox `<legend>`).
 2. `aria-labelledby` resolution (confirmed pattern on Greenhouse's comboboxes and file-upload
    group) — split on whitespace, concatenate each referenced element's `textContent`.
 3. A sibling/ancestor text node containing a `*`/`required`-styled span near the field, purely for
-   the *required* signal (not the label signal) — feeds the new `required` field in (a).
+   the _required_ signal (not the label signal) — feeds the new `required` field in (a).
 
 **d) Required-field signal extraction** — a small helper, checked in this priority order (all
 confirmed as real patterns across Greenhouse/Lever):
+
 ```ts
-el.required || el.getAttribute('aria-required') === 'true' ||
+el.required ||
+  el.getAttribute('aria-required') === 'true' ||
   el.closest('[aria-required="true"]') != null ||
-  !!nearestLabelOrLegend(el)?.querySelector('.required, [class*="required"]')
+  !!nearestLabelOrLegend(el)?.querySelector('.required, [class*="required"]');
 ```
 
 **e) Per-platform API-based detection as a preferred path** — add a small `apiDetectors` module
-keyed by hostname, tried *before* DOM scraping, falling back to DOM scraping if the API call fails
+keyed by hostname, tried _before_ DOM scraping, falling back to DOM scraping if the API call fails
 or the current page isn't identifiable as a specific job (e.g. board token / posting ID not
 extractable from the URL):
+
 - **Greenhouse**: `GET boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?questions=true`
   — board token is the first path segment after the host on `job-boards.greenhouse.io/{board_token}/jobs/{job_id}`
   (verified against the live URL used in this research).
@@ -412,17 +423,18 @@ extractable from the URL):
   the actual shape live before relying on it (this session's fetch of the reference page 404'd).
 - **Lever, Workday, iCIMS, BambooHR**: no confirmed public form-schema API — DOM-only.
 
-Even where an API exists, the API gives *schema*, not the *live DOM element* to fill — still need
+Even where an API exists, the API gives _schema_, not the _live DOM element_ to fill — still need
 to map each API `question`/`field` back to the actual rendered input (by `name`/`id`, confirmed to
 match 1:1 on Greenhouse) so `fillForm.ts` has something to target. Treat the API as an oracle for
-*classification/required/options*, DOM scraping as the *targeting* mechanism, for platforms where
+_classification/required/options_, DOM scraping as the _targeting_ mechanism, for platforms where
 both exist.
 
 **f) `fillForm.ts` — drag/drop fallback for file uploads.** Current `attachResumeFile` shadows
 `.files` and fires `change` only. Confirmed sufficient for Greenhouse's default embed (plain
 hidden `<input type="file">`, no drag listeners found). Lever's `upload-dragging` CSS class hints
-its widget *may* listen for `dragenter`/`dragleave`/`drop` rather than (or in addition to)
+its widget _may_ listen for `dragenter`/`dragleave`/`drop` rather than (or in addition to)
 `change` — needs live verification, but cheap to add defensively:
+
 ```ts
 const dt = new DataTransfer();
 dt.items.add(file);
@@ -430,7 +442,8 @@ for (const type of ['dragenter', 'dragover', 'drop']) {
   dropzone.dispatchEvent(new DragEvent(type, { bubbles: true, dataTransfer: dt }));
 }
 ```
-dispatched at the *dropzone wrapper* element (nearest ancestor with a class/attribute suggesting
+
+dispatched at the _dropzone wrapper_ element (nearest ancestor with a class/attribute suggesting
 drop-target styling, e.g. containing "drop"/"dragging" in its class list) in addition to the
 existing `change`-event technique on the native input, so both listener styles are covered without
 knowing in advance which one a given platform's JS actually reads.

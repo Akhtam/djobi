@@ -19,6 +19,8 @@ const sampleProfile: Profile = {
   education: [],
   skills: ['TypeScript'],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 const sampleJobInfo: JobInfo = {

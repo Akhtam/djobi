@@ -26,15 +26,15 @@ from a blog post.
 
 ## Summary of root causes, ranked
 
-| # | Cause | Confidence | Blocks fill? | Blocks upload? |
-|---|---|---|---|---|
-| 1 | `jobPageStore` is an in-memory `Map` in the MV3 service worker. Pasting a JD reliably idles the worker past its 30s termination timeout, so `runAnalysis` re-reads `null` and pins `fields: []` into the durable run state. The Fill Step then has literally nothing to fill and never even fetches the PDF — and reports success. | **High — code-proven** | Yes, totally | Yes, totally |
-| 2 | `fillForm` assigns `el.value = value` directly. Ashby's form is React-controlled; React's value tracker makes this a no-op for `onChange`, so even with correct fields the text never enters Ashby's state and is reverted on the next render. | **High — React source-proven** | Yes | No |
-| 3 | `attachResumeFile`'s fake `dataTransfer` sets `items: { add: () => {} }`. Ashby uses **react-dropzone**, whose `file-selector` takes the `items` branch whenever `items` is truthy and iterates `items.length` (`undefined`) → **zero files**. The `files` array is never read. | **High — bundle-proven** | No | Yes (drop path) |
-| 4 | Detection is one-shot and fires on the *first* `input[type="file"]` to appear. Ashby renders the entire form client-side after an async GraphQL fetch, so the snapshot can be partial, and there is no re-scan. | Medium-high | Partially | Partially |
-| 5 | `enrichWithAshbyApi` targets an endpoint that returns **401** and parses a response shape Ashby does not serve at that path. The Ashby oracle is dead code — it can never repair (4). | **High — live 401** | — | — |
-| 6 | This posting's first required field is titled exactly `"Name"`. `KEYWORD_RULES` has no rule for a bare "name", so it classifies as `unknown` and is never given a value. | **High — live API-proven** | Yes, for that field | No |
-| 7 | Failure is silent: `unresolvedRequiredFields` is computed by filtering the (empty) `fields` array, so a fill that did nothing renders "✅ Filled and application saved." | High | — | — |
+| #   | Cause                                                                                                                                                                                                                                                                                                                              | Confidence                     | Blocks fill?        | Blocks upload?  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------- | --------------- |
+| 1   | `jobPageStore` is an in-memory `Map` in the MV3 service worker. Pasting a JD reliably idles the worker past its 30s termination timeout, so `runAnalysis` re-reads `null` and pins `fields: []` into the durable run state. The Fill Step then has literally nothing to fill and never even fetches the PDF — and reports success. | **High — code-proven**         | Yes, totally        | Yes, totally    |
+| 2   | `fillForm` assigns `el.value = value` directly. Ashby's form is React-controlled; React's value tracker makes this a no-op for `onChange`, so even with correct fields the text never enters Ashby's state and is reverted on the next render.                                                                                     | **High — React source-proven** | Yes                 | No              |
+| 3   | `attachResumeFile`'s fake `dataTransfer` sets `items: { add: () => {} }`. Ashby uses **react-dropzone**, whose `file-selector` takes the `items` branch whenever `items` is truthy and iterates `items.length` (`undefined`) → **zero files**. The `files` array is never read.                                                    | **High — bundle-proven**       | No                  | Yes (drop path) |
+| 4   | Detection is one-shot and fires on the _first_ `input[type="file"]` to appear. Ashby renders the entire form client-side after an async GraphQL fetch, so the snapshot can be partial, and there is no re-scan.                                                                                                                    | Medium-high                    | Partially           | Partially       |
+| 5   | `enrichWithAshbyApi` targets an endpoint that returns **401** and parses a response shape Ashby does not serve at that path. The Ashby oracle is dead code — it can never repair (4).                                                                                                                                              | **High — live 401**            | —                   | —               |
+| 6   | This posting's first required field is titled exactly `"Name"`. `KEYWORD_RULES` has no rule for a bare "name", so it classifies as `unknown` and is never given a value.                                                                                                                                                           | **High — live API-proven**     | Yes, for that field | No              |
+| 7   | Failure is silent: `unresolvedRequiredFields` is computed by filtering the (empty) `fields` array, so a fill that did nothing renders "✅ Filled and application saved."                                                                                                                                                           | High                           | —                   | —               |
 
 Causes 1–3 are independent. Fixing only #1 exposes #2 and #3; fixing only #2/#3 still leaves #1
 producing an empty fill.
@@ -43,7 +43,7 @@ producing an empty fill.
 
 ## Evidence
 
-### 0. Ashby *is* reachable — the manifest is not the problem
+### 0. Ashby _is_ reachable — the manifest is not the problem
 
 `apps/extension/src/manifest.ts:36-47` matches `http://*/*` and `https://*/*` with
 `all_frames: true`, so the content script is injected on `jobs.ashbyhq.com`. This is deliberate
@@ -73,7 +73,7 @@ closing (which `jobPageStore.ts` was built for) but also the background service 
 evicted after ~30s idle". `jobPageStore` was simply never migrated.
 
 Reading a job description and pasting it into a textarea takes well over 30 seconds. The panel does
-not keep the worker alive — it only calls `chrome.storage.session` (a *trusted-context* API the
+not keep the worker alive — it only calls `chrome.storage.session` (a _trusted-context_ API the
 panel calls directly, `pipelineRunStore.ts:14-17`), never messaging the background. So by the time
 **Analyze** is clicked, the `Map` is empty.
 
@@ -86,7 +86,7 @@ The chain that follows:
    `setState` only; the background never sees it.
 3. `pipelineRunner.ts:59-63` — the background re-derives the data from the wiped `Map`:
    ```ts
-   const detected = getJobPageData(tabId);            // → null
+   const detected = getJobPageData(tabId); // → null
    const jobPageData = detected ? { ...detected, pageText } : { pageText, fields: [] };
    ```
 4. `pipelineRunner.ts:65-75` — that `fields: []` is written to `chrome.storage.session` as the
@@ -122,10 +122,15 @@ wrapping the native getter/setter and caching the last value:
 
 ```js
 const descriptor = Object.getOwnPropertyDescriptor(node.constructor.prototype, valueField);
-const {get, set} = descriptor;
+const { get, set } = descriptor;
 Object.defineProperty(node, valueField, {
-  get: function () { return get.call(this); },
-  set: function (value) { currentValue = '' + value; set.call(this, value); },
+  get: function () {
+    return get.call(this);
+  },
+  set: function (value) {
+    currentValue = '' + value;
+    set.call(this, value);
+  },
 });
 ```
 
@@ -137,7 +142,10 @@ export function updateValueIfChanged(node) {
   const tracker = getTracker(node);
   const lastValue = tracker.getValue();
   const nextValue = getValueFromNode(node);
-  if (nextValue !== lastValue) { tracker.setValue(nextValue); return true; }
+  if (nextValue !== lastValue) {
+    tracker.setValue(nextValue);
+    return true;
+  }
   return false;
 }
 ```
@@ -148,7 +156,9 @@ gates text-input `input`/`change` on exactly that boolean:
 ```js
 function getInstIfValueChanged(targetInst) {
   const targetNode = getNodeFromInstance(targetInst);
-  if (updateValueIfChanged(targetNode)) { return targetInst; }
+  if (updateValueIfChanged(targetNode)) {
+    return targetInst;
+  }
 }
 function getTargetInstForInputOrChangeEvent(domEventName, targetInst) {
   if (domEventName === 'input' || domEventName === 'change') {
@@ -160,12 +170,13 @@ function getTargetInstForInputOrChangeEvent(domEventName, targetInst) {
 No fiber returned → no synthetic `onChange` → Ashby's state never updates → the DOM value is
 reverted on the next render, and submission sends nothing.
 
-**The correct approach** is to bypass the instance accessor by invoking the *prototype's* setter
+**The correct approach** is to bypass the instance accessor by invoking the _prototype's_ setter
 with the element as receiver, leaving the tracker holding the stale value so the comparison
 succeeds:
 
 ```ts
-const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+const proto =
+  el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
 Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
 el.dispatchEvent(new Event('input', { bubbles: true }));
 ```
@@ -195,25 +206,24 @@ call to `POST https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting` wi
 `jobPosting(organizationHostedJobsPageName:"outset", jobPostingId:"55d672a5-…") { applicationForm { sections { title fieldEntries { field isRequired } } } }`
 returns:
 
-| Title | `type` | required | `path` |
-|---|---|---|---|
-| `Name` | String | true | `_systemfield_name` |
-| `Email` | Email | true | `_systemfield_email` |
-| `LinkedIn URL` | String | false | `098eec66-…` |
-| `Resume` | File | true | `_systemfield_resume` |
-| `Are you legally authorized to work in the United States?` | Boolean | true | `a50b6888-…` |
-| `Will you now or in the future require sponsorship…?` | Boolean | true | `4445bfff-…` |
-| `Are you willing to work onsite 4 days a week from our SF office?` | Boolean | true | `9ac10505-…` |
-| `In one sentence, what are you most proud of professionally?` | LongText | true | `8604655f-…` |
+| Title                                                              | `type`   | required | `path`                |
+| ------------------------------------------------------------------ | -------- | -------- | --------------------- |
+| `Name`                                                             | String   | true     | `_systemfield_name`   |
+| `Email`                                                            | Email    | true     | `_systemfield_email`  |
+| `LinkedIn URL`                                                     | String   | false    | `098eec66-…`          |
+| `Resume`                                                           | File     | true     | `_systemfield_resume` |
+| `Are you legally authorized to work in the United States?`         | Boolean  | true     | `a50b6888-…`          |
+| `Will you now or in the future require sponsorship…?`              | Boolean  | true     | `4445bfff-…`          |
+| `Are you willing to work onsite 4 days a week from our SF office?` | Boolean  | true     | `9ac10505-…`          |
+| `In one sentence, what are you most proud of professionally?`      | LongText | true     | `8604655f-…`          |
 
 Note the shape is `applicationForm.sections[].fieldEntries[].field` with `isRequired` on the
 **entry**, not `applicationFormDefinition.sections[].fields[]` with `isRequired` on the field.
 
 **The upload widget.** The entry bundle
 (`https://cdn.ashbyprd.com/frontend_non_user/<sha>/assets/index-BHgQsHyZ.js`, ~4 MB, located via
-the Vite manifest linked from `id="vite-preload"`) contains exactly one `type:` file` occurrence,
-inside an unmistakable **react-dropzone** `useDropzone` implementation — it returns
-`{getRootProps, getInputProps, rootRef, inputRef, open}` and `getInputProps` emits:
+the Vite manifest linked from `id="vite-preload"`) contains exactly one `type:` file`occurrence,
+inside an unmistakable **react-dropzone**`useDropzone`implementation — it returns`{getRootProps, getInputProps, rootRef, inputRef, open}`and`getInputProps` emits:
 
 ```js
 { accept: E, multiple: s, type: `file`, tabIndex: -1,
@@ -229,7 +239,7 @@ on the **root div**, not the input.
 
 Consequences for `detectFields.ts`:
 
-- `detect.ts:8` — the whole detection gate is `doc.querySelector('input[type="file"]')`. It *will*
+- `detect.ts:8` — the whole detection gate is `doc.querySelector('input[type="file"]')`. It _will_
   match, but only once React has mounted the dropzone.
 - `getSignal` (`detectFields.ts:19-42`) will return `''` for that input — no id, no wrapping
   `<label>`, no `aria-labelledby`, no `aria-label`, no `placeholder`, no `name`.
@@ -294,7 +304,7 @@ The **change path** (`fillForm.ts:169`) is more promising: React routes `input[t
 gate, and `file-selector` then takes the `isChangeEvt` branch reading `evt.target.files`, which the
 `Object.assign([file], …)` shim satisfies (it has a numeric `length`). But djobi fires the
 zero-file `drop` **first** (`fillForm.ts:163-167`), so Ashby's `onDrop` runs with an empty accepted
-*and* empty rejected list before the change arrives. Whether that leaves a sticky error/empty state
+_and_ empty rejected list before the change arrives. Whether that leaves a sticky error/empty state
 is not determinable statically — see "Unverified" below.
 
 ### 5. The Ashby API oracle is dead
@@ -314,7 +324,7 @@ The doc it was derived from,
 is the **employer** API: `POST https://api.ashbyhq.com/jobPosting.info`, `"security": [{"BasicAuth": []}]`,
 requiring the `jobsRead` permission. It is unusable from an extension.
 
-Separately, the *unauthenticated* public board API does exist but carries no form schema. Live:
+Separately, the _unauthenticated_ public board API does exist but carries no form schema. Live:
 `GET https://api.ashbyhq.com/posting-api/job-board/outset` → 200, with `jobs[]` keys
 `id, title, department, team, employmentType, location, secondaryLocations, publishedAt, isListed,
 isRemote, workplaceType, address, jobUrl, applyUrl, descriptionHtml, descriptionPlain`. **No
@@ -356,7 +366,7 @@ These require loading the page in a real Chrome with the extension installed; st
 cannot settle them.
 
 1. **Whether Ashby's mount finishes inside the 10s watch window** (`detect.ts:29,43`), and whether the
-   file input appears *before or after* the text inputs. If it appears first, `detectFields` snapshots
+   file input appears _before or after_ the text inputs. If it appears first, `detectFields` snapshots
    a partial form and never re-runs (`detect.ts:38-39` disconnects the observer on first hit).
 2. **Whether `data-djobi-id` attributes survive** to fill time. React does not strip unknown
    attributes it did not set, but if Ashby re-mounts the form subtree the tagged nodes are gone and
@@ -419,12 +429,12 @@ change `AshbyJobResponse` (`apiDetectors.ts:159-167`) to
 `https://jobs.ashbyhq.com/*` to `host_permissions` (`manifest.ts:48-54`) — the current list only
 covers `api.ashbyhq.com`. Note `parseAshbyUrl` (`apiDetectors.ts:143-157`) already yields
 `orgName: "outset"`, which the query needs as `organizationHostedJobsPageName`. Given §5,
-seriously consider whether the oracle should *supply* fields rather than merely enrich DOM-scraped
+seriously consider whether the oracle should _supply_ fields rather than merely enrich DOM-scraped
 ones — Ashby's schema is complete and authoritative, and `docs/ats-platform-detection.md` already
 argues for an API-first strategy here.
 
 **F7 — Add a bare-name rule.** `detectFields.ts:81-92`. Append `['full_name', /^\s*name\s*$/i]`
-*after* the existing first/last/full rules so it only catches an otherwise-unmatched bare "Name".
+_after_ the existing first/last/full rules so it only catches an otherwise-unmatched bare "Name".
 
 **F8 — Make empty fills loud.** `pipeline.ts:153-158`. If `jobPageData.fields.length === 0`, or if
 no value was written for any field, surface that as a distinct state rather than letting

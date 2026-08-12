@@ -1,8 +1,18 @@
 import type { DetectedField, Profile } from '@djobi/shared';
 
-/** What the content script reports once it's detected and scraped an ATS job application page. */
+/**
+ * What the content script reports once it's detected an ATS job application form: the fields it
+ * found, and nothing else.
+ *
+ * It used to carry a `pageText` scrape of the page alongside them, which was the Analysis Step's
+ * input. That never worked reliably enough to keep: an ATS application form is a different page
+ * from the posting, so the scrape routinely captured the form's own labels, a cookie banner and a
+ * nav bar instead of the job description — and on a client-rendered ATS it captured whatever
+ * happened to have mounted. The job description now comes from the candidate pasting it
+ * ({@link StartAnalysisMessage.jobDescription}), which is the one source that is always the actual
+ * posting. Detection remains, because the Fill Step still needs to know what to fill.
+ */
 export interface JobPageData {
-  pageText: string;
   fields: DetectedField[];
 }
 
@@ -12,7 +22,7 @@ export interface ReportJobPageMessage extends JobPageData {
 }
 
 /**
- * Panel -> background: start the Analysis Step for `tabId` (`background/pipelineRunner.ts` runs
+ * Panel -> background: start the Analysis Step for `tabId` (`background/applicationPipeline.ts` runs
  * it), so it keeps running even if the panel that requested it closes before it finishes. No
  * response payload — progress is observed via `lib/tabStore.ts` + `chrome.storage.onChanged`,
  * not the message response, precisely so the caller doesn't need to stay around to receive one.
@@ -22,7 +32,8 @@ export interface StartAnalysisMessage {
   tabId: number;
   tabUrl: string | null;
   profile: Profile;
-  pageTextOverride: string | null;
+  /** The posting the candidate pasted into the panel — the Analysis Step's only input. */
+  jobDescription: string;
 }
 
 /** Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of `tabStore`. */
@@ -38,10 +49,46 @@ export interface FillFormPayload {
   resumeFile?: { name: string; type: string; bytes: number[] };
 }
 
-/** Background -> content, sent directly by `pipelineRunner.ts` (not relayed via `TypedMessage`): fill this tab's form. Response: `{ ok: boolean }`. */
+/**
+ * What the content script reports back about a fill it just performed — the ids of the fields
+ * whose value was verifiably still on the page afterwards, and whether the resume was attached.
+ *
+ * The Fill Step used to derive "what got filled" from the values it *sent*, which can only ever
+ * describe intent. Nothing crossing back from the page meant a fill that wrote to a stale
+ * selector, or into a React field that discarded it, was indistinguishable from a perfect run, and
+ * the panel showed a green check over a form the ATS then rejected as empty. This is the page's
+ * own account of what happened; see `content/fillForm.ts` for how it's established.
+ */
+export interface FillFormResult {
+  ok: boolean;
+  filledFieldIds: string[];
+  resumeAttached: boolean;
+}
+
+/** Background -> content, sent directly by `applicationPipeline.ts` (not relayed via `TypedMessage`): fill this tab's form. Response: {@link FillFormResult}. */
 export interface FillFormCommandMessage extends FillFormPayload {
   type: 'FILL_FORM';
 }
+
+/**
+ * Background -> content: re-scan the page right now and answer with what's currently there.
+ * Response: {@link JobPageData}, or no response at all from a frame holding no form.
+ *
+ * The Fill Step asks for this instead of filling from the detection captured when the Analysis Step
+ * started. Those can be minutes apart — long enough for the candidate to have expanded a section,
+ * for the ATS to have mounted a conditional question, or for the whole form to have arrived after
+ * the analysis ran on a pasted job description — and filling from the stale copy writes to fields
+ * that may no longer exist while leaving the ones that do exist empty.
+ *
+ * Only frames that currently hold a form reply, so the response comes from the frame with the form
+ * rather than from whichever frame `chrome.tabs.sendMessage` happens to reach first.
+ */
+export interface ScanPageCommandMessage {
+  type: 'SCAN_PAGE';
+}
+
+/** Everything the background sends *to* a content script. */
+export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMessage;
 
 export type TypedMessage = ReportJobPageMessage | StartAnalysisMessage | StartFillMessage;
 

@@ -1,7 +1,13 @@
 import type { Profile } from '@djobi/shared';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { callBackend } from '../lib/callBackend';
 import { App } from './App';
+
+// The options page's one external seam. It used to reach the backend by messaging the service
+// worker, so these tests stubbed `chrome.runtime.sendMessage` and spoke the relay's `{ path, body }`
+// shape; the page calls `lib/callBackend.ts` directly now.
+vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn() }));
 
 const emptyProfile: Profile = {
   fullName: '',
@@ -13,21 +19,15 @@ const emptyProfile: Profile = {
   education: [],
   skills: [],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
-/** Stubs `chrome.runtime.sendMessage`, the external boundary the options page talks through. */
+/** Answers every call with `response`, or rejects when given `{ error }`. */
 function stubBackendResponse(response: { data?: unknown; error?: string }) {
-  const sendMessage = vi.fn(
-    (_message: unknown, callback: (response: unknown) => void) => callback(response),
+  vi.mocked(callBackend).mockImplementation(() =>
+    response.error ? Promise.reject(new Error(response.error)) : Promise.resolve(response.data),
   );
-  vi.stubGlobal('chrome', { runtime: { sendMessage } });
-  return sendMessage;
-}
-
-interface BackendMessage {
-  path: string;
-  body: unknown;
-  method?: 'GET' | 'POST';
 }
 
 /**
@@ -39,38 +39,28 @@ function stubBackend(handlers: {
   post?: (body: unknown) => unknown;
   postError?: string;
 }) {
-  const sendMessage = vi.fn(
-    (message: BackendMessage, callback: (response: { data?: unknown; error?: string }) => void) => {
-      if (message.method === 'GET') {
-        callback({ data: handlers.get() });
-      } else if (handlers.postError) {
-        callback({ error: handlers.postError });
-      } else {
-        callback({ data: (handlers.post ?? ((body: unknown) => body))(message.body) });
-      }
-    },
-  );
-  vi.stubGlobal('chrome', { runtime: { sendMessage } });
-  return sendMessage;
+  vi.mocked(callBackend).mockImplementation((_path, body, method) => {
+    if (method === 'GET') return Promise.resolve(handlers.get());
+    if (handlers.postError) return Promise.reject(new Error(handlers.postError));
+    return Promise.resolve((handlers.post ?? ((echoed: unknown) => echoed))(body));
+  });
 }
 
 describe('options App', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    vi.mocked(callBackend).mockReset();
   });
 
   it('fetches the stored profile via GET /profile and renders its full name', async () => {
-    const sendMessage = stubBackendResponse({
+    stubBackendResponse({
       data: { ...emptyProfile, fullName: 'Jane Doe', email: 'jane@example.com' },
     });
 
     render(<App />);
 
     expect(await screen.findByLabelText('Full name')).toHaveValue('Jane Doe');
-    expect(sendMessage).toHaveBeenCalledWith(
-      { path: '/profile', body: undefined, method: 'GET' },
-      expect.any(Function),
-    );
+    expect(callBackend).toHaveBeenCalledWith('/profile', undefined, 'GET');
   });
 
   it('renders an empty form when no profile has been saved yet', async () => {
@@ -83,7 +73,7 @@ describe('options App', () => {
 
   it('edits scalar profile fields and saves them via POST /profile', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', email: 'jane@old.com' };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
@@ -104,29 +94,23 @@ describe('options App', () => {
 
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      {
-        path: '/profile',
-        body: {
-          ...loaded,
-          fullName: 'Jane A. Doe',
-          email: 'jane@new.com',
-          phone: '555-1234',
-          location: 'Remote',
-          links: {
-            linkedin: 'https://linkedin.com/in/jane',
-            portfolio: 'https://jane.dev',
-            github: 'https://github.com/jane',
-          },
-        },
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      fullName: 'Jane A. Doe',
+      email: 'jane@new.com',
+      phone: '555-1234',
+      location: 'Remote',
+      links: {
+        linkedin: 'https://linkedin.com/in/jane',
+        portfolio: 'https://jane.dev',
+        github: 'https://github.com/jane',
       },
-      expect.any(Function),
-    );
+    });
   });
 
   it('adds and removes skills, and saves the resulting list', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', skills: ['TypeScript'] };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
@@ -145,15 +129,12 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      { path: '/profile', body: { ...loaded, skills: ['React'] } },
-      expect.any(Function),
-    );
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', { ...loaded, skills: ['React'] });
   });
 
   it('adds a work experience entry, edits its fields, and saves it', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', workExperience: [] };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
@@ -173,29 +154,23 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      {
-        path: '/profile',
-        body: {
-          ...loaded,
-          workExperience: [
-            {
-              company: 'Acme',
-              title: 'Senior Engineer',
-              startDate: '2022-01',
-              endDate: '2023-06',
-              bullets: ['Shipped X', 'Led Y'],
-            },
-          ],
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      workExperience: [
+        {
+          company: 'Acme',
+          title: 'Senior Engineer',
+          startDate: '2022-01',
+          endDate: '2023-06',
+          bullets: ['Shipped X', 'Led Y'],
         },
-      },
-      expect.any(Function),
-    );
+      ],
+    });
   });
 
   it('removes a bullet from a work experience entry and drops blank bullets on save', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', workExperience: [] };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
@@ -215,24 +190,18 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      {
-        path: '/profile',
-        body: {
-          ...loaded,
-          workExperience: [
-            {
-              company: '',
-              title: '',
-              startDate: '',
-              endDate: null,
-              bullets: ['Shipped X'],
-            },
-          ],
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      workExperience: [
+        {
+          company: '',
+          title: '',
+          startDate: '',
+          endDate: null,
+          bullets: ['Shipped X'],
         },
-      },
-      expect.any(Function),
-    );
+      ],
+    });
   });
 
   it('removes a work experience entry', async () => {
@@ -256,7 +225,7 @@ describe('options App', () => {
 
   it('adds an education entry, edits its fields, and saves it', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', education: [] };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
@@ -273,18 +242,12 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      {
-        path: '/profile',
-        body: {
-          ...loaded,
-          education: [
-            { school: 'State U', degree: 'BSc', field: 'Computer Science', graduationYear: '2020' },
-          ],
-        },
-      },
-      expect.any(Function),
-    );
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      education: [
+        { school: 'State U', degree: 'BSc', field: 'Computer Science', graduationYear: '2020' },
+      ],
+    });
   });
 
   it('removes an education entry', async () => {
@@ -306,14 +269,16 @@ describe('options App', () => {
 
   it('adds a story entry, edits its fields, and saves it', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', stories: [] };
-    const sendMessage = stubBackend({ get: () => loaded });
+    stubBackend({ get: () => loaded });
 
     render(<App />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add story' }));
 
-    fireEvent.change(screen.getByLabelText('Story id 1'), { target: { value: 'billing-migration' } });
+    fireEvent.change(screen.getByLabelText('Story id 1'), {
+      target: { value: 'billing-migration' },
+    });
     fireEvent.change(screen.getByLabelText('Story title 1'), {
       target: { value: 'Migrated the billing service under a hard deadline' },
     });
@@ -328,26 +293,20 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      {
-        path: '/profile',
-        body: {
-          ...loaded,
-          stories: [
-            {
-              id: 'billing-migration',
-              title: 'Migrated the billing service under a hard deadline',
-              tags: ['leadership', 'incident-response'],
-              situation: 'Legacy system.',
-              task: 'Migrate it.',
-              action: 'Led the rollout.',
-              result: 'Zero downtime.',
-            },
-          ],
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      stories: [
+        {
+          id: 'billing-migration',
+          title: 'Migrated the billing service under a hard deadline',
+          tags: ['leadership', 'incident-response'],
+          situation: 'Legacy system.',
+          task: 'Migrate it.',
+          action: 'Led the rollout.',
+          result: 'Zero downtime.',
         },
-      },
-      expect.any(Function),
-    );
+      ],
+    });
   });
 
   it('removes a story entry', async () => {
@@ -375,6 +334,83 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove story 1' }));
 
     expect(screen.queryByLabelText('Story id 1')).not.toBeInTheDocument();
+  });
+
+  it('renders a profile stored before prepared answers existed, rather than crashing on the missing keys', async () => {
+    // Exactly what the backend returns for a row written before these fields were added.
+    const legacy = { ...emptyProfile, fullName: 'Jane Doe' } as Partial<Profile>;
+    delete legacy.screeningAnswers;
+    delete legacy.customAnswers;
+    stubBackend({ get: () => legacy });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('Full name')).toHaveValue('Jane Doe');
+    expect(
+      screen.getByLabelText('Will you now or in the future require visa sponsorship?'),
+    ).toHaveValue('');
+  });
+
+  it('saves a screening answer under its topic', async () => {
+    const loaded = { ...emptyProfile, fullName: 'Jane Doe' };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.change(
+      screen.getByLabelText('Will you now or in the future require visa sponsorship?'),
+      { target: { value: 'No' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await screen.findByText('Profile saved.');
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      screeningAnswers: { sponsorship_required: 'No' },
+    });
+  });
+
+  it('drops a screening answer that is cleared, so a blank row reads as unanswered rather than answered with nothing', async () => {
+    const loaded = {
+      ...emptyProfile,
+      fullName: 'Jane Doe',
+      screeningAnswers: { sponsorship_required: 'No' },
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.change(
+      screen.getByLabelText('Will you now or in the future require visa sponsorship?'),
+      { target: { value: '' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await screen.findByText('Profile saved.');
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', { ...loaded, screeningAnswers: {} });
+  });
+
+  it('adds a custom prepared answer', async () => {
+    const loaded = { ...emptyProfile, fullName: 'Jane Doe' };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add prepared answer' }));
+    fireEvent.change(screen.getByLabelText('Question'), {
+      target: { value: 'How did you hear about us?' },
+    });
+    fireEvent.change(screen.getByLabelText('Answer'), { target: { value: 'LinkedIn' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await screen.findByText('Profile saved.');
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      customAnswers: [{ question: 'How did you hear about us?', answer: 'LinkedIn' }],
+    });
   });
 
   it('shows an error message when saving fails', async () => {

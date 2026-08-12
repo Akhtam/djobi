@@ -23,6 +23,8 @@ const sampleProfile: Profile = {
   education: [],
   skills: ['TypeScript'],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 describe('GET /profile', () => {

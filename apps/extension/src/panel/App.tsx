@@ -6,7 +6,7 @@
  * whether it's a job application form (see `detect.ts`), not a fixed ATS-host allowlist, since
  * ATS platforms let companies white-label their job board onto their own domain. Once a job page
  * is found, kicks off the extract → tailor/answer pipeline — actually run by
- * `background/pipelineRunner.ts`, not here, so it survives this component unmounting mid-run —
+ * `background/applicationPipeline.ts`, not here, so it survives this component unmounting mid-run —
  * and shows an editable review, hydrated from and checkpointed to `lib/tabStore.ts`, once
  * results land.
  *
@@ -24,20 +24,11 @@ import type {
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { fetchResumePdf } from '../lib/fetchResumePdf';
+import { callBackend, callBackendBinary } from '../lib/callBackend';
 import type { JobPageData, StartAnalysisMessage, StartFillMessage } from '../lib/messages';
 import { sendMessage } from '../lib/messages';
-import {
-  getDetectedPage,
-  getPipelineRun,
-  patchPipelineRun,
-  storageKey as tabStorageKey,
-  type PipelineFailure,
-  type PipelineRunState,
-  type PipelineStatus,
-  type TabState,
-} from '../lib/tabStore';
-import { sendToBackground } from '../lib/sendToBackground';
+import { getDetectedPage, type PipelineStatus } from '../lib/tabStore';
+import { usePipelineRun } from './usePipelineRun';
 
 // 'loading'/'no-profile'/'ready' are bootstrap-only, local to this component; the rest is
 // `PipelineRunState`'s `PipelineStatus`, checkpointed to `tabStore` as it progresses.
@@ -76,120 +67,98 @@ function statusPill(
 }
 
 export function App() {
-  const [status, setStatus] = useState<Status>('loading');
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tabId, setTabId] = useState<number | null>(null);
   const [tabUrl, setTabUrl] = useState<string | null>(null);
-  const [jobPageData, setJobPageData] = useState<JobPageData | null>(null);
-  const [jobInfo, setJobInfo] = useState<JobInfo | null>(null);
-  const [tailoredResume, setTailoredResume] = useState<TailoredResume | null>(null);
-  const [answers, setAnswers] = useState<QuestionAnswer[]>([]);
-  const [unresolvedRequiredFields, setUnresolvedRequiredFields] = useState<DetectedField[]>([]);
-  const [filledFieldCount, setFilledFieldCount] = useState(0);
-  const [failure, setFailure] = useState<PipelineFailure | null>(null);
-  const [pageTextOverride, setPageTextOverride] = useState<string | null>(null);
+  const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
+  // The pasted job description before any run exists — once one does, it lives on the run.
+  const [localPageText, setLocalPageText] = useState<string | null>(null);
 
-  // On-demand tailored-resume PDF preview (POST /render-resume-pdf via `fetchResumePdf`, shown in
-  // an iframe from a blob: URL). Kept out of the persisted `PipelineRunState` — it's a
+  // The stored run — hydration, the storage subscription and write-back all live in the hook.
+  const { run, syncedAt, edit } = usePipelineRun(tabId);
+
+  // A status shown between clicking and the background writing its own, so the UI responds at once
+  // and the action can't be double-fired. Never persisted — the background owns the run's progress
+  // — and stood down as soon as any store update arrives.
+  const [pendingStatus, setPendingStatus] = useState<PipelineStatus | null>(null);
+  useEffect(() => setPendingStatus(null), [syncedAt]);
+
+  const status: Status = !profileLoaded
+    ? 'loading'
+    : !profile
+      ? 'no-profile'
+      : (pendingStatus ?? run?.status ?? 'ready');
+
+  // The run's snapshot wins once analysis has started; before that, the live detection does.
+  const jobPageData = run?.jobPageData ?? detectedPage;
+  const jobInfo = run?.jobInfo ?? null;
+  const tailoredResume = run?.tailoredResume ?? null;
+  const answers = run?.answers ?? [];
+  const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
+  const filledFieldCount = run?.filledFieldCount ?? 0;
+  const failure = run?.failure ?? null;
+  // The pasted job description: the run's copy once analysis has started, the panel-local draft
+  // before that. It is the only input the Analysis Step has — nothing is read off the page.
+  const jobDescription = run ? run.jobDescription : (localPageText ?? '');
+
+  // On-demand tailored-resume PDF preview (POST /render-resume-pdf, shown in an iframe from a
+  // blob: URL). Kept out of the persisted `PipelineRunState` — it's a
   // display-only, expensive-to-recompute blob URL that shouldn't survive a panel reopen.
   const [resumePreview, setResumePreview] = useState<
     { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'error' }
   >({ kind: 'idle' });
   const resumeUrlRef = useRef<string | null>(null);
 
-  // The last edits this component persisted, serialized. Without it, applying an incoming run
-  // would re-trigger the write-through effect, which would write it straight back out again.
-  const lastSyncedEditsRef = useRef<string | null>(null);
-
-  /**
-   * Restores whatever `tabStore` has for `newTabId` (a completed/in-progress Analysis
-   * Step, edited answers, etc.), or falls back to the bootstrap 'ready' state plus an
-   * opportunistic `jobPageData` fetch when nothing's been analyzed for that tab yet. Used both at
-   * mount and whenever the tracked tab changes (see the effect below).
-   */
-  async function hydrateForTab(newTabId: number, newTabUrl: string | null) {
+  /** Points the panel at a tab and clears everything scoped to the previous one. The run itself
+   *  is re-read by `usePipelineRun` when `tabId` changes. */
+  function trackTab(newTabId: number, newTabUrl: string | null) {
     setTabId(newTabId);
     setTabUrl(newTabUrl);
     setShowPageTextEditor(false);
+    setLocalPageText(null);
+    setDetectedPage(null);
     clearResumePreview();
 
-    const run = await getPipelineRun(newTabId);
-    if (run) {
-      lastSyncedEditsRef.current = JSON.stringify({
-        answers: run.answers,
-        pageTextOverride: run.pageTextOverride,
-      });
-      setStatus(run.status);
-      setJobPageData(run.jobPageData);
-      setPageTextOverride(run.pageTextOverride);
-      setJobInfo(run.jobInfo);
-      setTailoredResume(run.tailoredResume);
-      setAnswers(run.answers);
-      setUnresolvedRequiredFields(run.unresolvedRequiredFields);
-      setFilledFieldCount(run.filledFieldCount);
-      setFailure(run.failure);
-      return;
-    }
-
-    lastSyncedEditsRef.current = null;
-    setStatus('ready');
-    setJobPageData(null);
-    setJobInfo(null);
-    setTailoredResume(null);
-    setAnswers([]);
-    setUnresolvedRequiredFields([]);
-    setFilledFieldCount(0);
-    setFailure(null);
-    setPageTextOverride(null);
-
-    // Opportunistic background pre-fill only — the paste + Analyze screen below is shown
-    // immediately regardless of whether this ever finds anything, so a page where detection
-    // fails (or hasn't finished yet) never blocks the user from pasting the job description
-    // themselves and analyzing.
-    const data = await getDetectedPage(newTabId);
-    if (data) setJobPageData(data);
+    // Opportunistic only — the paste + Analyze screen is shown regardless of whether this finds
+    // anything, so a page where detection fails (or hasn't finished) never blocks the user from
+    // pasting the job description themselves.
+    void getDetectedPage(newTabId).then((data) => {
+      if (data) setDetectedPage(data);
+    });
   }
 
   useEffect(() => {
     Promise.all([
-      sendToBackground<Profile | null>('/profile', undefined, 'GET'),
+      callBackend<Profile | null>('/profile', undefined, 'GET'),
       new Promise<chrome.tabs.Tab[]>((resolve) =>
         chrome.tabs.query({ active: true, currentWindow: true }, resolve),
       ),
     ]).then(([loadedProfile, tabs]) => {
-      if (!loadedProfile) {
-        setStatus('no-profile');
-        return;
-      }
       setProfile(loadedProfile);
+      setProfileLoaded(true);
+      if (!loadedProfile) return;
 
       const tab = tabs[0];
-      if (tab.id === undefined) {
-        setTabUrl(tab.url ?? null);
-        setStatus('ready');
-        return;
-      }
-      void hydrateForTab(tab.id, tab.url ?? null);
+      setTabUrl(tab.url ?? null);
+      if (tab.id !== undefined) trackTab(tab.id, tab.url ?? null);
     });
   }, []);
 
   // The panel survives a tab switch (unlike a popup, which is destroyed by one) — without this,
   // it would keep showing the previous tab's review after the user switches away.
   useEffect(() => {
-    if (status === 'loading' || status === 'no-profile') return;
+    if (!profile) return;
 
     function onActivated(activeInfo: chrome.tabs.OnActivatedInfo) {
       if (activeInfo.tabId === tabId) return;
-      chrome.tabs.get(
-        activeInfo.tabId,
-        (tab) => void hydrateForTab(activeInfo.tabId, tab.url ?? null),
-      );
+      chrome.tabs.get(activeInfo.tabId, (tab) => trackTab(activeInfo.tabId, tab.url ?? null));
     }
 
     function onUpdated(updatedTabId: number, changeInfo: chrome.tabs.OnUpdatedInfo) {
       if (updatedTabId !== tabId || !changeInfo.url) return;
-      void hydrateForTab(updatedTabId, changeInfo.url);
+      trackTab(updatedTabId, changeInfo.url);
     }
 
     chrome.tabs.onActivated.addListener(onActivated);
@@ -198,58 +167,7 @@ export function App() {
       chrome.tabs.onActivated.removeListener(onActivated);
       chrome.tabs.onUpdated.removeListener(onUpdated);
     };
-  }, [status, tabId]);
-
-  // Write-through for the two pieces of the run this panel owns: the answers the user edits and
-  // the job description they paste. Everything else — status, Analysis Step results, failure — is
-  // written by `background/pipelineRunner.ts`, the authority on the run's progress. Persisting
-  // those from here too would let this component's optimistic status land *after* the background's
-  // real result and overwrite it, losing a completed analysis.
-  useEffect(() => {
-    // `lastSyncedEditsRef` is only non-null once a run has actually been read in (hydrate) or
-    // arrived (subscribe). Until then this component's `answers` is an empty placeholder rather
-    // than anything the user typed, and writing it would erase the answers the Analysis Step just
-    // produced.
-    if (!isPipelineStatus(status) || tabId === null || lastSyncedEditsRef.current === null) return;
-
-    const edits = { answers, pageTextOverride };
-    const serialized = JSON.stringify(edits);
-    if (serialized === lastSyncedEditsRef.current) return;
-    lastSyncedEditsRef.current = serialized;
-    void patchPipelineRun(tabId, edits);
-  }, [status, tabId, answers, pageTextOverride]);
-
-  // Keeps this view live as the background service worker (`background/pipelineRunner.ts`)
-  // checkpoints Analysis/Fill Step progress into the store. Guarded by the same ref the
-  // write-through effect uses, so applying a remote change here doesn't bounce straight back out
-  // as a redundant write.
-  useEffect(() => {
-    if (tabId === null) return;
-    const key = tabStorageKey(tabId);
-
-    function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
-      if (areaName !== 'session' || !(key in changes)) return;
-      const newRun = (changes[key].newValue as TabState | undefined)?.run;
-      if (!newRun) return; // no run yet, or the tab's entry was cleared — nothing to reflect here
-
-      lastSyncedEditsRef.current = JSON.stringify({
-        answers: newRun.answers,
-        pageTextOverride: newRun.pageTextOverride,
-      });
-      setStatus(newRun.status);
-      setJobPageData(newRun.jobPageData);
-      setPageTextOverride(newRun.pageTextOverride);
-      setJobInfo(newRun.jobInfo);
-      setTailoredResume(newRun.tailoredResume);
-      setAnswers(newRun.answers);
-      setUnresolvedRequiredFields(newRun.unresolvedRequiredFields);
-      setFilledFieldCount(newRun.filledFieldCount);
-      setFailure(newRun.failure);
-    }
-
-    chrome.storage.onChanged.addListener(onChanged);
-    return () => chrome.storage.onChanged.removeListener(onChanged);
-  }, [tabId]);
+  }, [profile, tabId]);
 
   // Release the preview's blob: URL when the panel unmounts (the blob outlives the component's
   // state, so without this revoked here it'd leak until the browser reclaims it).
@@ -259,41 +177,44 @@ export function App() {
     };
   }, []);
 
-  // Analysis/Fill Step execution itself lives in `background/pipelineRunner.ts`, not here — the
-  // panel closing mid-request must not kill it. `START_ANALYSIS`/`START_FILL` fire-and-forget (the
-  // background handler doesn't hold the response channel open); progress arrives back via the
-  // `chrome.storage.onChanged` subscribe effect above, which is what actually drives `status` past
-  // 'analyzing'/'filling'. The optimistic `setStatus` calls below are just for instant UI feedback.
+  // Analysis/Fill Step execution lives in `background/applicationPipeline.ts`, not here — the panel
+  // closing mid-request must not kill it. `START_ANALYSIS`/`START_FILL` fire-and-forget (the
+  // background handler doesn't hold the response channel open); real progress arrives through
+  // `usePipelineRun`'s storage subscription. `pendingStatus` is only instant UI feedback until the
+  // background writes its own, and is never persisted — see the ownership note on the hook.
 
   function handleAnalyze() {
-    const pageText = pageTextOverride ?? jobPageData?.pageText ?? '';
-    if (!pageText || tabId === null || !profile) return;
+    if (!jobDescription.trim() || tabId === null || !profile) return;
 
-    // No job page was ever detected (e.g. detection hasn't finished, or failed) — analyze the
-    // pasted text standalone, with no fields to fill later (the user can still review answers;
-    // "Fill form" just won't have anything to act on until/unless a real form is detected).
-    if (!jobPageData) setJobPageData({ pageText, fields: [] });
-    setStatus('analyzing');
+    setPendingStatus('analyzing');
 
     void sendMessage<StartAnalysisMessage, void>({
       type: 'START_ANALYSIS',
       tabId,
       tabUrl,
       profile,
-      pageTextOverride,
+      jobDescription,
     });
   }
 
+  function editJobDescription(value: string) {
+    if (run) edit({ answers, jobDescription: value });
+    else setLocalPageText(value);
+  }
+
   function updateAnswer(fieldId: string, value: string) {
-    setAnswers((prev) =>
-      prev.map((answer) => (answer.fieldId === fieldId ? { ...answer, answer: value } : answer)),
-    );
+    edit({
+      answers: answers.map((answer) =>
+        answer.fieldId === fieldId ? { ...answer, answer: value } : answer,
+      ),
+      jobDescription,
+    });
   }
 
   function handleFill() {
     if (!jobPageData || !profile || !jobInfo || !tailoredResume || tabId === null) return;
 
-    setStatus('filling');
+    setPendingStatus('filling');
 
     void sendMessage<StartFillMessage, void>({ type: 'START_FILL', tabId, profile });
   }
@@ -312,7 +233,7 @@ export function App() {
     if (!profile || !tailoredResume || resumePreview.kind === 'loading') return;
     clearResumePreview();
     setResumePreview({ kind: 'loading' });
-    void fetchResumePdf(profile, tailoredResume)
+    void callBackendBinary('/render-resume-pdf', { profile, tailoredResume })
       .then((bytes) => {
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
         resumeUrlRef.current = url;
@@ -329,10 +250,7 @@ export function App() {
   // edit and re-fill. Tearing the review down on success left them with a green check and no way
   // back to the content except re-running the whole Analysis Step.
   const canReview =
-    status === 'review' ||
-    status === 'filling' ||
-    status === 'fill-error' ||
-    status === 'filled';
+    status === 'review' || status === 'filling' || status === 'fill-error' || status === 'filled';
 
   return (
     <main className="panel">
@@ -374,20 +292,20 @@ export function App() {
             </div>
             <p className="hint">
               {jobPageData
-                ? 'Review the scraped job description below — paste your own if the page didn\'t scrape cleanly (e.g. a separate "Overview" tab) — then analyze.'
-                : 'Paste the job description below to analyze it. You can still analyze even though no fillable form has been detected on this page yet — check back before filling.'}
+                ? 'Paste the job description below, then analyze. The form on this page has been detected and will be filled from what the description says about the role.'
+                : 'Paste the job description below to analyze it. You can analyze even though no fillable form has been detected on this page yet — check back before filling.'}
             </p>
             <textarea
               className="page-text-input"
               placeholder="Paste the job description here…"
-              value={pageTextOverride ?? jobPageData?.pageText ?? ''}
-              onChange={(e) => setPageTextOverride(e.target.value)}
+              value={jobDescription}
+              onChange={(e) => editJobDescription(e.target.value)}
             />
             <button
               type="button"
               className="btn-primary"
               onClick={handleAnalyze}
-              disabled={!(pageTextOverride ?? jobPageData?.pageText)}
+              disabled={!jobDescription.trim()}
             >
               Analyze
             </button>
@@ -418,9 +336,10 @@ export function App() {
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>
-              Nothing was filled — no form fields were detected on this page. The application was
-              saved, but you'll need to fill the form yourself. If the form is there, it may have
-              finished rendering after the page was scanned; reload the page and try again.
+              Nothing was filled — no form fields were found on this page, including in a fresh scan
+              taken just now. The application was saved, but you'll need to fill the form yourself.
+              If the form is visibly there, reload the page and try again: this extension can't
+              reach a page that was already open when it was last reloaded.
             </p>
           </div>
         )}
@@ -440,8 +359,8 @@ export function App() {
             <span className="state-icon error">⚠️</span>
             <p>
               Filled and application saved, but {unresolvedRequiredFields.length} required field
-              {unresolvedRequiredFields.length === 1 ? '' : 's'} couldn't be resolved — check before
-              submitting:
+              {unresolvedRequiredFields.length === 1 ? '' : 's'} didn't take a value — fill{' '}
+              {unresolvedRequiredFields.length === 1 ? 'it' : 'them'} in by hand before submitting:
             </p>
             <ul className="unresolved-fields">
               {unresolvedRequiredFields.map((field) => (
@@ -471,19 +390,19 @@ export function App() {
               {showPageTextEditor && (
                 <>
                   <p className="hint">
-                    Wrong job title, company, or missing context? Paste the job description here
-                    (e.g. from an "Overview" tab the form-scraper didn't see) and re-analyze.
+                    Wrong job title, company, or missing context? Edit the job description here and
+                    re-analyze.
                   </p>
                   <textarea
                     className="page-text-input"
-                    value={pageTextOverride ?? jobPageData.pageText}
-                    onChange={(e) => setPageTextOverride(e.target.value)}
+                    value={jobDescription}
+                    onChange={(e) => editJobDescription(e.target.value)}
                   />
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={handleAnalyze}
-                    disabled={!(pageTextOverride ?? jobPageData.pageText)}
+                    disabled={!jobDescription.trim()}
                   >
                     Re-analyze
                   </button>
@@ -542,7 +461,6 @@ export function App() {
             )}
           </div>
         )}
-
       </div>
 
       {canReview && jobInfo && tailoredResume && (

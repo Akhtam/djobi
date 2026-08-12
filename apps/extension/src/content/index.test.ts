@@ -1,16 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('content script', () => {
+  let loaded: { stopReporting: () => void } | null = null;
+
+  /**
+   * Imports the content script fresh, and remembers it so `afterEach` can stop it watching. The
+   * module is a singleton over the one shared jsdom `document`: an instance left running goes on
+   * observing that document and reporting into the *next* test's `chrome` stub.
+   */
+  async function loadContentScript() {
+    loaded = await import('./index');
+    return loaded;
+  }
+
   beforeEach(() => {
     vi.resetModules();
   });
 
   afterEach(() => {
+    loaded?.stopReporting();
+    loaded = null;
     document.body.innerHTML = '';
     vi.unstubAllGlobals();
   });
 
-  it('reports the scraped job page via REPORT_JOB_PAGE when the page is a job application page', async () => {
+  it('reports the detected fields via REPORT_JOB_PAGE when the page is a job application page', async () => {
     document.body.innerHTML = `
       <main>
         <h1>Senior Engineer at Acme</h1>
@@ -24,12 +38,11 @@ describe('content script', () => {
     const sendMessage = vi.fn();
     vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
 
-    await import('./index');
+    await loadContentScript();
 
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'REPORT_JOB_PAGE',
-        pageText: expect.stringContaining('Senior Engineer at Acme'),
         fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
       }),
     );
@@ -40,7 +53,7 @@ describe('content script', () => {
     const sendMessage = vi.fn();
     vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
 
-    await import('./index');
+    await loadContentScript();
 
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -50,7 +63,7 @@ describe('content script', () => {
     const sendMessage = vi.fn();
     vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
 
-    await import('./index');
+    await loadContentScript();
     expect(sendMessage).not.toHaveBeenCalled();
 
     document.querySelector('#ashby_embed')!.innerHTML = `<input type="file" name="resume" />`;
@@ -60,6 +73,148 @@ describe('content script', () => {
         expect.objectContaining({ type: 'REPORT_JOB_PAGE' }),
       ),
     );
+  });
+
+  it("re-reports when the form changes after the first detection, so a form that mounted in pieces isn't left half-detected", async () => {
+    document.body.innerHTML = `<main><form><input type="file" name="resume" /></form></main>`;
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
+
+    await loadContentScript();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    document.querySelector('form')!.innerHTML += `
+      <label for="email-field">Email</label>
+      <input id="email-field" type="text" />
+    `;
+
+    await vi.waitFor(
+      () =>
+        expect(sendMessage).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+          }),
+        ),
+      { timeout: 2000 },
+    );
+  });
+
+  it("doesn't re-report an unchanged page — every report invalidates that frame's in-flight API enrichment", async () => {
+    document.body.innerHTML = `<main><form><input type="file" name="resume" /></form></main>`;
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
+
+    await loadContentScript();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // A re-render that changes no field and no text — the shape of the DOM churn a React ATS form
+    // produces constantly while the candidate is looking at it.
+    document.querySelector('form')!.appendChild(document.createElement('span'));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops reporting when the extension has been reloaded out from under it, instead of failing silently forever', async () => {
+    document.body.innerHTML = `<main><form><input type="file" name="resume" /></form></main>`;
+    const sendMessage = vi.fn(() => {
+      throw new Error('Extension context invalidated.');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('chrome', { runtime: { sendMessage, onMessage: { addListener: vi.fn() } } });
+
+    await loadContentScript();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('orphaned'), expect.any(Error));
+
+    document.querySelector('form')!.innerHTML += `<input id="email-field" type="text" />`;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('answers SCAN_PAGE with a fresh scan of the page as it stands now', async () => {
+    document.body.innerHTML = `<main><form><input type="file" name="resume" /></form></main>`;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+    // Mounted *after* the page was first reported — exactly what the Fill Step would otherwise miss.
+    document.querySelector('form')!.innerHTML += `
+      <label for="email-field">Email</label>
+      <input id="email-field" type="text" />
+    `;
+
+    const sendResponse = vi.fn();
+    listener({ type: 'SCAN_PAGE' }, {}, sendResponse);
+
+    expect(sendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+      }),
+    );
+  });
+
+  it("answers SCAN_PAGE with the fields it can find even on a page the detection heuristic doesn't recognize, since the user picked this tab and asked it to fill", async () => {
+    // No file input and no resume/LinkedIn-labelled field: `isJobApplicationPage` says no.
+    document.body.innerHTML = `
+      <main><form>
+        <label for="email-field">Email</label>
+        <input id="email-field" type="text" />
+      </form></main>
+    `;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+    const sendResponse = vi.fn();
+    listener({ type: 'SCAN_PAGE' }, {}, sendResponse);
+
+    expect(sendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+      }),
+    );
+  });
+
+  it('stays silent on SCAN_PAGE in a frame with no fields, so the reply comes from the frame that has them', async () => {
+    document.body.innerHTML = `<main><h1>Careers at Acme</h1></main>`;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+    const sendResponse = vi.fn();
+
+    expect(listener({ type: 'SCAN_PAGE' }, {}, sendResponse)).toBe(false);
+    expect(sendResponse).not.toHaveBeenCalled();
   });
 
   it('fills the form when it receives a FILL_FORM message', async () => {
@@ -76,7 +231,7 @@ describe('content script', () => {
       },
     });
 
-    await import('./index');
+    await loadContentScript();
     const sendResponse = vi.fn();
     listener(
       {
@@ -97,13 +252,19 @@ describe('content script', () => {
       {},
       sendResponse,
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    // `fillForm` verifies what it wrote after letting the page settle, so the reply is a timer
+    // away rather than a microtask away — see `content/fillForm.ts`.
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled());
 
     expect(document.querySelector<HTMLInputElement>('#email-field')!.value).toBe(
       'jane@example.com',
     );
-    expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    // The field verified as still holding its value, so it's reported filled.
+    expect(sendResponse).toHaveBeenCalledWith({
+      ok: true,
+      filledFieldIds: ['f1'],
+      resumeAttached: false,
+    });
   });
 
   it('attaches the resume file to the resume_upload field when FILL_FORM includes one', async () => {
@@ -120,7 +281,7 @@ describe('content script', () => {
       },
     });
 
-    await import('./index');
+    await loadContentScript();
     listener(
       {
         type: 'FILL_FORM',
@@ -168,7 +329,7 @@ describe('content script', () => {
       },
     });
 
-    await import('./index');
+    await loadContentScript();
     listener(
       {
         type: 'FILL_FORM',

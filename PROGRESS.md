@@ -59,18 +59,18 @@ as work happens — check items off, add new ones, don't let it go stale.
 - [x] `extractJob` (Haiku), `tailorResume` (Sonnet), `answerQuestions` (Sonnet) — all tested (9 tests)
 - [x] `POST /extract-job` route — tested (3 tests)
 - [x] `POST /tailor-resume` route — tested (2 tests), zod-validates `{ profile, jobInfo,
-      priorApplicationsSummary? }` against `ProfileSchema`/`JobInfoSchema`
+priorApplicationsSummary? }` against `ProfileSchema`/`JobInfoSchema`
 - [x] `POST /answer-questions` route — tested (2 tests), zod-validates `{ profile, jobInfo,
-      questions }` (`questions` via an inline schema — `QuestionToAnswer` isn't in `@djobi/shared`)
+questions }` (`questions` via an inline schema — `QuestionToAnswer` isn't in `@djobi/shared`)
 - [x] `renderResumePdf(profile, tailoredResume)` — `apps/backend/src/pdf/renderResume.tsx`, a
       single `@react-pdf/renderer` template; contact info + education come from `profile` (not
       job-specific), skills/work-experience from `tailoredResume`. Tested (1 test, asserts
       real `%PDF-` output — no mocking, since there's no LLM/network involved)
 - [x] `POST /render-resume-pdf` route — tested (2 tests), zod-validates `{ profile,
-      tailoredResume }`, returns raw PDF bytes with `content-type: application/pdf`
+tailoredResume }`, returns raw PDF bytes with `content-type: application/pdf`
 - Note: no `tsconfig.json` in `apps/backend` (see Known loose ends) means JSX in
   `renderResume.tsx` uses the classic transform by default — needed an explicit `import React from
-  'react'` for `React.createElement` to resolve at runtime; switch to the automatic runtime once a
+'react'` for `React.createElement` to resolve at runtime; switch to the automatic runtime once a
   tsconfig exists.
 - [x] **Derive LLM `input_schema` from zod** (2026-08-07, via
       `/mattpocock-skills:improve-codebase-architecture` → grilling → `/tdd`): `callStructured`
@@ -109,7 +109,7 @@ as work happens — check items off, add new ones, don't let it go stale.
 - [x] `apps/extension` scaffold: `package.json`, `tsconfig.json`, `vite.config.ts`, MV3
       `src/manifest.ts` (host permissions for the local backend + ATS content-script matches,
       background service worker, popup/options pages), builds clean via `pnpm --filter extension
-      build` — infra, not TDD'd
+build` — infra, not TDD'd
 - [x] `src/background/callBackend.ts` — posts JSON to the local backend
       (`http://127.0.0.1:5391<path>`), resolves with the parsed response, rejects with the
       backend's `{ error }` message on a non-ok response; tested (3 tests, up from 2 — added an
@@ -182,7 +182,7 @@ as work happens — check items off, add new ones, don't let it go stale.
   - [x] `src/content/index.ts` — no longer a stub: on load, if `isJobApplicationPage`, scrapes +
         detects fields and sends `REPORT_JOB_PAGE`; always listens for `FILL_FORM` and calls
         `fillForm`/`attachResumeFile` (reconstructing a `File` from the message's `{ name, type,
-        bytes }`, since binary data crossing the message boundary can't carry a real `File`).
+bytes }`, since binary data crossing the message boundary can't carry a real `File`).
         Tested (4 tests)
   - [x] `src/popup/App.tsx` — the `ready` state now polls `GET_JOB_PAGE_DATA` for the active tab;
         once present, runs `/extract-job` → `/tailor-resume` + `/answer-questions` in parallel,
@@ -271,7 +271,7 @@ as work happens — check items off, add new ones, don't let it go stale.
       — "Fill form" just has nothing to act on until a real form is detected, which is an accepted
       trade-off of the manual-first flow. "Analyze"/"Re-analyze" are disabled whenever there's no
       text to send (pasted or scraped) — needed a `??` vs `||` fix along the way: the effective
-      text used for the textarea's *display* value, the disabled check, and the analyze payload
+      text used for the textarea's _display_ value, the disabled check, and the analyze payload
       must all read from the exact same `pageTextOverride ?? jobPageData?.pageText ?? ''`
       expression, or clearing the box either fights the user's typing (silently reverts) or lets a
       blank submission slip through depending on which operator is used where. `App.test.tsx`: 14
@@ -285,11 +285,11 @@ log (e.g. "what technical questions were asked", "what behavioral questions were
 interviews are useful reference material later.
 
 - [ ] `packages/shared`: add `ApplicationStageSchema` — `'applied' | 'phone_screen' |
-      'interviewing' | 'offer' | 'rejected' | 'withdrawn'`. Kept separate from the existing
+'interviewing' | 'offer' | 'rejected' | 'withdrawn'`. Kept separate from the existing
       `status: 'draft' | 'submitted'` (status = "was this actually sent"; stage = "where it is in
       the interview pipeline post-submission")
 - [ ] `packages/shared`: add `NoteSchema` — `{ id, category: 'technical_questions' |
-      'behavioral_questions' | 'general', text, createdAt }`; add `notes: Note[]` (defaults `[]`)
+'behavioral_questions' | 'general', text, createdAt }`; add `notes: Note[]` (defaults `[]`)
       and `stage: ApplicationStage` (defaults `'applied'`) to `ApplicationSchema`/`NewApplicationSchema`
 - [ ] `applicationsRepository.ts`: add `updateApplicationStage(id, stage)` and
       `addApplicationNote(id, note)`
@@ -350,8 +350,8 @@ process — decided with the user:
 
 ### Phase 10 — Live chat to refine drafted answers (planned 2026-08-10, not started)
 
-New scope: in the popup's review UI, let the user open a chat with the AI *about a specific
-drafted answer* and iterate on it conversationally ("make this shorter", "lead with the
+New scope: in the popup's review UI, let the user open a chat with the AI _about a specific
+drafted answer_ and iterate on it conversationally ("make this shorter", "lead with the
 migration story instead", "sound less formal") instead of only hand-editing the textarea. Scoped
 to `question`-category fields only (the freeform drafted answers already in the review UI) — not
 select/combobox/radiogroup fields, which are constrained-choice and not a good fit for freeform
@@ -365,6 +365,7 @@ Open design question, not yet decided with the user: Chrome extension **popups a
 rebuilt from scratch every time they close** (unlike a persistent surface), so any in-progress chat
 history kept only in the popup's React state is lost if the user clicks away mid-conversation. Two
 ways to handle this, needing a decision before implementation starts:
+
 - Accept the limitation for v1 (chat is scoped to a single popup-open session; closing the popup
   resets it) — simplest, no architecture change.
 - Move the review UI (or just the chat) into a `chrome.sidePanel` (MV3 API), which stays open
@@ -385,6 +386,60 @@ ways to handle this, needing a decision before implementation starts:
 - [ ] Decide + document the popup-teardown question above before writing the chat-history state
       management
 - Build test-first per the established process, same as Phases 3/4/7/9
+
+### Fill fidelity + dropping the page scrape (2026-08-12)
+
+- [x] `content/fillForm.ts` — a fill now drives the event sequence a real keystroke produces
+      (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), not just a value write plus
+      `input`. Form libraries layered over React commonly commit a field's value to the *form*
+      model on blur, so a fill that never blurred left the DOM looking right and the model empty —
+      which is what an ATS reports on submit as "missing entry for required field" over a visibly
+      filled form.
+- [x] `content/fillForm.ts` — `fillForm` returns the ids it can **verify** still hold their value,
+      checked after a 300ms settle (a controlled field whose `onChange` never fired reverts on the
+      *next* render, so an immediate re-read calls every failed fill a success). Per-widget checks:
+      `value` for text/select, `checked`/`aria-checked`/`aria-pressed` for groups, trigger text for
+      comboboxes.
+- [x] `FILL_FORM` now replies `{ ok, filledFieldIds, resumeAttached }`, and `applicationPipeline`'s
+      `unresolvedRequiredFields`/`filledFieldCount` come from that reply rather than from the values
+      it *sent*. A fill the page discarded is now reported instead of showing a green check. A
+      `null` reply (no content script — tab open across an extension reload) still falls back to the
+      drafted values, since "no account" isn't "nothing filled".
+- [x] **Page-text scraping removed entirely.** `content/scrapeJob.ts` is deleted, `JobPageData` is
+      `{ fields }`, and the pasted job description is the Analysis Step's only input
+      (`StartAnalysisMessage.jobDescription`, `PipelineRunState.jobDescription`). The application
+      form is a different page from the job ad, so the scrape routinely captured the form's own
+      labels and a nav bar instead of the posting — and on a client-rendered ATS, whatever happened
+      to have mounted. Detection stays: the Fill Step still needs to know what to fill.
+- [x] Backend renamed to match: `POST /extract-job` takes `{ jobDescription }` (was `{ pageText }`)
+      and `extractJob`'s prompt no longer tells the model it is reading scraped page text — told
+      that, it tolerates and mines the junk a scrape carries.
+
+### Resume PDF design pass (2026-08-12)
+
+- [x] `docs/resume-design-conventions.md` — research against primary sources (Butterick, Harvard OCS,
+      MIT CAPD, Stanford, Greenhouse/Workday/Taleo parsing docs) on margins, sizes, leading, line
+      length, type scale, section order, and what breaks ATS parsing. Names the conflicts rather
+      than smoothing them: Butterick's 45–90 cpl is unreachable single-column on A4, and the
+      "fill 85–90% of the page" heuristic is **folklore** — no primary source states it, and
+      Butterick argues the opposite ("uncomfortably dense with text").
+- [x] `pdf/renderResume.tsx` — restyled to those values. Hierarchy now comes from weight, case,
+      tracking and a hairline rule rather than size (section headings are 1.05× body, not 1.2×).
+      Fixed two sourced floors the file sat under: `padding: 32` (0.44") was below MIT's 0.5"
+      minimum, and no `lineHeight` left react-pdf's ~1.15 default under Butterick's 120%.
+- [x] `renderResume.test.ts` — reads the rendered text back with `unpdf` so a layout regression can
+      actually fail a test.
+- [x] `pdf/renderResume.tsx` — the render now **fits itself to one page**: it renders at the
+      researched density, counts pages (`pageCount`, read off the PDF's own page tree), and
+      re-renders one step tighter down a four-step ladder until it fits. Every step is inside a
+      sourced range, and no step touches `fontSize` — leading and whitespace are spendable,
+      legibility is not. Fits up to ~5 roles × 6 bullets; beyond that it returns two pages with all
+      content rather than truncating, since silently dropping the candidate's experience is the
+      worse failure. Common case still costs exactly one render.
+- Page fill went 65.5% → 86.3% on the current profile (14 bullets / 3 roles), inside every sourced
+  floor. **It is tuned to that content**: 1.4 lines of slack remain before it spills to page 2, and
+  the research's own budget says ~50 line-equivalents (3 roles × 7–8 bullets) is what honestly
+  fills a page. Real fix for a thin resume is upstream in `tailorResume.ts`, not in the stylesheet.
 
 ## Open architecture-review recommendations
 

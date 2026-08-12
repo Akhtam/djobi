@@ -29,7 +29,7 @@ describe('POST /extract-job', () => {
     const res = await app.request('/extract-job', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pageText: 'Senior Software Engineer at Acme...' }),
+      body: JSON.stringify({ jobDescription: 'Senior Software Engineer at Acme...' }),
     });
 
     expect(res.status).toBe(200);
@@ -37,7 +37,7 @@ describe('POST /extract-job', () => {
     expect(mockExtractJob).toHaveBeenCalledWith('Senior Software Engineer at Acme...');
   });
 
-  it('returns 400 when pageText is missing', async () => {
+  it('returns 400 when jobDescription is missing', async () => {
     const res = await app.request('/extract-job', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -48,11 +48,11 @@ describe('POST /extract-job', () => {
     expect(mockExtractJob).not.toHaveBeenCalled();
   });
 
-  it('returns 400 when pageText is empty', async () => {
+  it('returns 400 when jobDescription is empty', async () => {
     const res = await app.request('/extract-job', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pageText: '' }),
+      body: JSON.stringify({ jobDescription: '' }),
     });
 
     expect(res.status).toBe(400);

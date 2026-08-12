@@ -1,5 +1,6 @@
 import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeSessionStorage } from './fakeSessionStorage';
 import {
   asAnalyzedRun,
   clearTabState,
@@ -28,8 +29,8 @@ const tailoredResume: TailoredResume = { skills: [], workExperience: [] };
 const run: PipelineRunState = {
   status: 'review',
   tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-  jobPageData: { pageText: 'Senior Engineer at Acme...', fields: [] },
-  pageTextOverride: null,
+  jobPageData: { fields: [] },
+  jobDescription: 'Senior Engineer at Acme...',
   jobInfo,
   tailoredResume,
   answers: [],
@@ -50,25 +51,12 @@ function textField(id: string) {
   };
 }
 
-/** In-memory stand-in for `chrome.storage.session`, close enough to the real Promise API here. */
+/** The shared in-memory `chrome.storage.session`, plus the `chrome.tabs.onRemoved` cleanup hooks into. */
 function stubChrome() {
-  const data = new Map<string, unknown>();
   const onRemovedListeners: ((tabId: number) => void)[] = [];
 
   vi.stubGlobal('chrome', {
-    storage: {
-      session: {
-        get: vi.fn((key: string) => Promise.resolve(data.has(key) ? { [key]: data.get(key) } : {})),
-        set: vi.fn((items: Record<string, unknown>) => {
-          for (const [key, value] of Object.entries(items)) data.set(key, value);
-          return Promise.resolve();
-        }),
-        remove: vi.fn((key: string) => {
-          data.delete(key);
-          return Promise.resolve();
-        }),
-      },
-    },
+    storage: fakeSessionStorage(),
     tabs: {
       onRemoved: {
         addListener: vi.fn((listener: (tabId: number) => void) => {
@@ -96,40 +84,38 @@ describe('tabStore', () => {
     it('returns the reported page for a tab', async () => {
       stubChrome();
 
-      await reportDetectedPage(1, 0, { pageText: 'Senior Engineer at Acme', fields: [] });
+      await reportDetectedPage(1, 0, { fields: [] });
 
-      expect(await getDetectedPage(1)).toEqual({ pageText: 'Senior Engineer at Acme', fields: [] });
+      expect(await getDetectedPage(1)).toEqual({ fields: [] });
     });
 
     it("prefers the frame that detected the most fields, so an ATS iframe's real form isn't shadowed by a stray file input on the host page", async () => {
       stubChrome();
 
       // Host page (main frame) sees one stray input; the embedded ATS iframe holds the real form.
-      await reportDetectedPage(1, 0, { pageText: 'Careers at Acme', fields: [textField('stray')] });
+      await reportDetectedPage(1, 0, { fields: [textField('stray')] });
       await reportDetectedPage(1, 4, {
-        pageText: 'Senior Engineer at Acme',
         fields: [textField('first_name'), textField('email'), textField('phone')],
       });
 
-      expect(await getDetectedPage(1)).toMatchObject({ pageText: 'Senior Engineer at Acme' });
+      // The iframe's three fields beat the host page's one stray input.
+      expect((await getDetectedPage(1))?.fields).toHaveLength(3);
     });
 
     it('keeps frames independent, so a later report from one frame does not erase another', async () => {
       stubChrome();
 
       await reportDetectedPage(1, 4, {
-        pageText: 'the real form',
         fields: [textField('a'), textField('b')],
       });
-      await reportDetectedPage(1, 0, { pageText: 'host page', fields: [] });
+      await reportDetectedPage(1, 0, { fields: [] });
 
-      expect(await getDetectedPage(1)).toMatchObject({ pageText: 'the real form' });
+      expect((await getDetectedPage(1))?.fields).toHaveLength(2);
     });
 
     it('applies an API-oracle enrichment to the frame it was fetched for', async () => {
       stubChrome();
       const reportedAt = await reportDetectedPage(1, 0, {
-        pageText: 'Senior Engineer at Acme',
         fields: [textField('a')],
       });
 
@@ -141,14 +127,12 @@ describe('tabStore', () => {
     it('drops a stale enrichment whose frame has been re-reported since — a slow API response for a page we navigated away from must not overwrite fresher detection', async () => {
       stubChrome();
       const staleReportedAt = await reportDetectedPage(1, 0, {
-        pageText: 'the old posting',
         fields: [textField('old')],
       });
-      await reportDetectedPage(1, 0, { pageText: 'the new posting', fields: [textField('new')] });
+      await reportDetectedPage(1, 0, { fields: [textField('new')] });
 
       await enrichDetectedFields(1, 0, staleReportedAt, [textField('enriched-from-old-posting')]);
 
-      expect(await getDetectedPage(1)).toMatchObject({ pageText: 'the new posting' });
       expect((await getDetectedPage(1))?.fields.map((f) => f.id)).toEqual(['new']);
     });
   });
@@ -198,10 +182,10 @@ describe('tabStore', () => {
     it('stores a run and a detected page side by side, without either clobbering the other', async () => {
       stubChrome();
 
-      await reportDetectedPage(1, 0, { pageText: 'Senior Engineer at Acme', fields: [] });
+      await reportDetectedPage(1, 0, { fields: [textField('email')] });
       await setPipelineRun(1, run);
 
-      expect(await getDetectedPage(1)).toMatchObject({ pageText: 'Senior Engineer at Acme' });
+      expect((await getDetectedPage(1))?.fields).toHaveLength(1);
       expect(await getPipelineRun(1)).toEqual(run);
     });
   });
@@ -220,7 +204,7 @@ describe('tabStore', () => {
 
   it('clears everything for a tab at once', async () => {
     stubChrome();
-    await reportDetectedPage(1, 0, { pageText: 'Senior Engineer at Acme', fields: [] });
+    await reportDetectedPage(1, 0, { fields: [] });
     await setPipelineRun(1, run);
 
     await clearTabState(1);

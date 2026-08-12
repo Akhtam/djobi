@@ -10,7 +10,7 @@ const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill } = vi.hoisted(() 
 }));
 
 vi.mock('./apiDetectors', () => ({ enrichWithApiOracle: mockEnrichWithApiOracle }));
-vi.mock('./pipelineRunner', () => ({ runAnalysis: mockRunAnalysis, runFill: mockRunFill }));
+vi.mock('./applicationPipeline', () => ({ runAnalysis: mockRunAnalysis, runFill: mockRunFill }));
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -22,6 +22,8 @@ const profile: Profile = {
   education: [],
   skills: [],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 describe('handleTypedMessage', () => {
@@ -58,14 +60,13 @@ describe('handleTypedMessage', () => {
 
   it('stores a REPORT_JOB_PAGE message keyed by the sending tab', async () => {
     handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', pageText: 'Senior Engineer at Acme', fields: [] },
+      { type: 'REPORT_JOB_PAGE', fields: [] },
       { tab: { id: 7 } } as chrome.runtime.MessageSender,
       vi.fn(),
     );
 
     await vi.waitFor(async () =>
       expect(await getDetectedPage(7)).toEqual({
-        pageText: 'Senior Engineer at Acme',
         fields: [],
       }),
     );
@@ -88,24 +89,25 @@ describe('handleTypedMessage', () => {
 
     // The iframe holding the real form reports first, then the host page reports its stray input.
     handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', pageText: 'the real form', fields: formFields },
+      { type: 'REPORT_JOB_PAGE', fields: formFields },
       { tab: { id: 7 }, frameId: 4 } as chrome.runtime.MessageSender,
       vi.fn(),
     );
     handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', pageText: 'host page', fields: [hostField] },
+      { type: 'REPORT_JOB_PAGE', fields: [hostField] },
       { tab: { id: 7 }, frameId: 0 } as chrome.runtime.MessageSender,
       vi.fn(),
     );
 
     await vi.waitFor(async () =>
-      expect(await getDetectedPage(7)).toMatchObject({ pageText: 'the real form' }),
+      // The frame with the most fields wins — the iframe holding the real form.
+      expect((await getDetectedPage(7))?.fields).toHaveLength(2),
     );
   });
 
   it('stores REPORT_JOB_PAGE data even when the sending tab has no url (never invokes the API oracle)', () => {
     handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', pageText: 'Senior Engineer at Acme', fields: [] },
+      { type: 'REPORT_JOB_PAGE', fields: [] },
       { tab: { id: 9 } } as chrome.runtime.MessageSender,
       vi.fn(),
     );
@@ -132,7 +134,7 @@ describe('handleTypedMessage', () => {
     mockEnrichWithApiOracle.mockResolvedValue(enrichedFields);
 
     handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', pageText: 'Senior Engineer at Acme', fields: [] },
+      { type: 'REPORT_JOB_PAGE', fields: [] },
       {
         tab: { id: 7, url: 'https://job-boards.greenhouse.io/greenhouse/jobs/8080711' },
       } as chrome.runtime.MessageSender,
@@ -148,7 +150,6 @@ describe('handleTypedMessage', () => {
 
     await vi.waitFor(async () =>
       expect(await getDetectedPage(7)).toEqual({
-        pageText: 'Senior Engineer at Acme',
         fields: enrichedFields,
       }),
     );
@@ -163,7 +164,7 @@ describe('handleTypedMessage', () => {
         tabId: 7,
         tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
         profile,
-        pageTextOverride: null,
+        jobDescription: 'Senior Engineer at Acme...',
       },
       {} as chrome.runtime.MessageSender,
       sendResponse,
@@ -173,7 +174,7 @@ describe('handleTypedMessage', () => {
       7,
       'https://boards.greenhouse.io/acme/jobs/1',
       profile,
-      null,
+      'Senior Engineer at Acme...',
     );
     expect(keepsChannelOpen).toBe(false);
   });

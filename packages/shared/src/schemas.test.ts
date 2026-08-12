@@ -133,6 +133,16 @@ describe('ProfileSchema', () => {
     expect(ProfileSchema.safeParse({ ...validProfile, stories: [] }).success).toBe(true);
   });
 
+  it('upgrades a profile stored before prepared answers existed, filling both defaults', () => {
+    // `profiles.data` is jsonb, so a row written before these fields were added comes back without
+    // them. Parsing on read is what turns that back into a complete Profile — without it the
+    // missing keys reach the Analysis Step as `undefined` and abort it.
+    const result = ProfileSchema.safeParse(validProfile);
+
+    expect(result.success && result.data.screeningAnswers).toEqual({});
+    expect(result.success && result.data.customAnswers).toEqual([]);
+  });
+
   it('rejects a profile missing fullName', () => {
     const { fullName: _fullName, ...withoutName } = validProfile;
     expect(ProfileSchema.safeParse(withoutName).success).toBe(false);

@@ -1,4 +1,5 @@
 import {
+  matchOptionLabel,
   QuestionAnswerSchema,
   type JobInfo,
   type Profile,
@@ -19,9 +20,18 @@ export interface QuestionToAnswer {
   question: string;
   /** Valid choices for a select/combobox/radiogroup/checkboxgroup question, if any. */
   options?: string[];
+  /**
+   * A fact from the candidate's profile that this answer must honor.
+   *
+   * Set by `splitPreparedQuestions` for a question the profile answers but whose stored wording
+   * names none of this form's options unambiguously — "No" against options spelled "I do not
+   * require sponsorship now or in the future" / "I will require sponsorship". The decision is
+   * already made; only the mapping onto this form's wording is left, and getting that backwards on
+   * a work-authorization declaration is a misrepresentation, so the prompt treats it as binding
+   * rather than as context.
+   */
+  knownAnswer?: string;
 }
-
-const normalize = (text: string) => text.trim().toLowerCase();
 
 /**
  * Enforces that a choice-question's answer is one of its `options` verbatim: corrects
@@ -29,6 +39,9 @@ const normalize = (text: string) => text.trim().toLowerCase();
  * option at all (rather than letting a bad LLM answer get force-fit into `fillForm`'s
  * option-matching logic later) — the prompt asks for this, but the model isn't guaranteed to
  * comply, so it's enforced here too.
+ *
+ * `matchOptionLabel` is the same rule `content/fillForm.ts` uses to find the element for an answer;
+ * see `@djobi/shared`'s `optionLabel.ts` for why it has to be.
  */
 function constrainToOptions(
   answers: QuestionAnswer[],
@@ -40,7 +53,7 @@ function constrainToOptions(
     const options = optionsByFieldId.get(answer.fieldId);
     if (!options) return [answer];
 
-    const match = options.find((option) => normalize(option) === normalize(answer.answer));
+    const match = matchOptionLabel(options, answer.answer);
     return match ? [{ ...answer, answer: match }] : [];
   });
 }
@@ -84,6 +97,8 @@ ${JSON.stringify(questions, null, 2)}
 </questions>
 
 If a question includes an "options" array, your answer MUST be copied verbatim from one of the provided options — do not invent or rephrase.
+
+If a question includes a "knownAnswer", that is the candidate's own stated answer to this question, taken from their profile. It is a fact, not a suggestion: your answer MUST express the same thing. Your only job there is to say it in this form's words — pick the option that means what knownAnswer says, and never the opposite one. If no option means that, return no answer for that question rather than one that contradicts it. These are legal declarations about work authorization, sponsorship and similar; an answer that reverses the candidate's stated position is worse than no answer at all.
 
 Return one answer per question, in the same order, with fieldId copied from the input question.`,
   });

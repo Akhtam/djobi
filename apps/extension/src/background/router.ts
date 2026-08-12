@@ -1,7 +1,7 @@
 import type { TypedMessage } from '../lib/messages';
 import { enrichDetectedFields, reportDetectedPage } from '../lib/tabStore';
 import { enrichWithApiOracle } from './apiDetectors';
-import { runAnalysis, runFill } from './pipelineRunner';
+import { runAnalysis, runFill } from './applicationPipeline';
 
 /** Routes a typed content-script/panel coordination message, using `lib/tabStore.ts` as the hand-off point. */
 export function handleTypedMessage(
@@ -17,7 +17,7 @@ export function handleTypedMessage(
       const frameId = sender.frameId ?? 0;
       if (tabId === undefined) return false;
 
-      const data = { pageText: message.pageText, fields: message.fields };
+      const data = { fields: message.fields };
       const url = sender.tab?.url;
 
       void reportDetectedPage(tabId, frameId, data).then((reportedAt) => {
@@ -39,7 +39,7 @@ export function handleTypedMessage(
       // doesn't need this message's response — and must not, since holding the channel open until
       // the whole Analysis Step resolves is exactly the failure mode (an in-flight call dying with
       // the panel that started it) this message type replaces.
-      void runAnalysis(message.tabId, message.tabUrl, message.profile, message.pageTextOverride);
+      void runAnalysis(message.tabId, message.tabUrl, message.profile, message.jobDescription);
       return false;
 
     case 'START_FILL':

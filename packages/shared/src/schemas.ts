@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CustomAnswerSchema, ScreeningAnswersSchema } from './screeningAnswers.js';
 
 /** One job in a profile's work history. */
 export const WorkExperienceSchema = z.object({
@@ -71,6 +72,18 @@ export const ProfileSchema = z.object({
     .describe(
       'Reusable STAR-format behavioral/technical anecdotes, drawn on when drafting freeform question answers',
     ),
+  /**
+   * Answers to the screening questions every application asks. Matters of fact with one correct
+   * answer, so they're taken from here rather than drafted — see `screeningAnswers.ts`.
+   *
+   * Optional with an empty default: a profile saved before this field existed is still valid, and
+   * `profiles.data` is jsonb read back as-is, so there is no migration to make old rows conform.
+   */
+  screeningAnswers: ScreeningAnswersSchema.default({}),
+  customAnswers: z
+    .array(CustomAnswerSchema)
+    .default([])
+    .describe("Prepared answers to recurring questions the fixed screening topics don't cover"),
 });
 /** Inferred type of {@link ProfileSchema}. */
 export type Profile = z.infer<typeof ProfileSchema>;

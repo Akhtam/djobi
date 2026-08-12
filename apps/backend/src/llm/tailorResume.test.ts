@@ -28,6 +28,8 @@ const profile: Profile = {
   education: [],
   skills: ['TypeScript', 'PostgreSQL'],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 const jobInfo: JobInfo = {

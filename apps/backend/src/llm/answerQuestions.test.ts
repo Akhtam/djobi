@@ -19,6 +19,8 @@ const profile: Profile = {
   workExperience: [],
   education: [],
   skills: ['TypeScript'],
+  screeningAnswers: {},
+  customAnswers: [],
   stories: [
     {
       id: 'story-migration-deadline',
@@ -96,17 +98,26 @@ describe('answerQuestions', () => {
     ).rejects.toThrow('report_answers did not produce a tool call.');
   });
 
-  it('includes a question\'s options in the prompt when present', async () => {
+  it("includes a question's options in the prompt when present", async () => {
     mockCreate.mockResolvedValue(
       toolUseResponse({
         answers: [
-          { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', answer: 'Yes', sourceStoryIds: [] },
+          {
+            fieldId: 'field-auth',
+            question: 'Are you authorized to work in the US?',
+            answer: 'Yes',
+            sourceStoryIds: [],
+          },
         ],
       }),
     );
 
     await answerQuestions(profile, jobInfo, [
-      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+      {
+        fieldId: 'field-auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['Yes', 'No'],
+      },
     ]);
 
     const request = mockCreate.mock.calls[0][0];
@@ -130,11 +141,20 @@ describe('answerQuestions', () => {
     );
 
     const result = await answerQuestions(profile, jobInfo, [
-      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+      {
+        fieldId: 'field-auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['Yes', 'No'],
+      },
     ]);
 
     expect(result).toEqual([
-      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', answer: 'Yes', sourceStoryIds: [] },
+      {
+        fieldId: 'field-auth',
+        question: 'Are you authorized to work in the US?',
+        answer: 'Yes',
+        sourceStoryIds: [],
+      },
     ]);
   });
 
@@ -153,7 +173,11 @@ describe('answerQuestions', () => {
     );
 
     const result = await answerQuestions(profile, jobInfo, [
-      { fieldId: 'field-auth', question: 'Are you authorized to work in the US?', options: ['Yes', 'No'] },
+      {
+        fieldId: 'field-auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['Yes', 'No'],
+      },
     ]);
 
     expect(result).toEqual([]);

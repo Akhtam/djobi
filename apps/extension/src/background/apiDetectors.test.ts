@@ -1,18 +1,13 @@
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  enrichWithApiOracle,
-  enrichWithGreenhouseApi,
-  greenhouseJobBoardApiUrl,
-  mergeAshbyQuestions,
-  mergeGreenhouseQuestions,
-  mergeSmartRecruitersQuestions,
-  mergeWorkableQuestions,
-  parseAshbyUrl,
-  parseGreenhouseUrl,
-  parseSmartRecruitersUrl,
-  parseWorkableUrl,
-} from './apiDetectors';
+import { enrichWithApiOracle } from './apiDetectors';
+
+/**
+ * Every test drives the one exported function with a stubbed `fetch`. The per-platform URL parsers
+ * and merge helpers used to be exported purely so tests could reach them; asserting on the endpoint
+ * a URL produces and the fields a response yields covers the same ground through the interface the
+ * background actually calls.
+ */
 
 function field(overrides: Partial<DetectedField>): DetectedField {
   return {
@@ -27,51 +22,17 @@ function field(overrides: Partial<DetectedField>): DetectedField {
   };
 }
 
-describe('parseGreenhouseUrl', () => {
-  it('extracts the board token and job id from a job-boards.greenhouse.io URL', () => {
-    expect(
-      parseGreenhouseUrl('https://job-boards.greenhouse.io/greenhouse/jobs/8080711?gh_jid=8080711'),
-    ).toEqual({ boardToken: 'greenhouse', jobId: '8080711' });
-  });
+const question = (label: string, overrides: Partial<DetectedField> = {}) =>
+  field({ id: 'q1', label, category: 'question', elementRole: 'combobox', ...overrides });
 
-  it('extracts the board token and job id from the legacy boards.greenhouse.io URL shape', () => {
-    expect(parseGreenhouseUrl('https://boards.greenhouse.io/acme/jobs/12345')).toEqual({
-      boardToken: 'acme',
-      jobId: '12345',
-    });
-  });
+function stubFetch(body: unknown, init: { ok?: boolean } = {}) {
+  return vi.fn().mockResolvedValue({ ok: init.ok ?? true, json: async () => body });
+}
 
-  it('returns null for a non-Greenhouse URL', () => {
-    expect(parseGreenhouseUrl('https://jobs.lever.co/acme/12345')).toBeNull();
-  });
+describe('enrichWithApiOracle', () => {
+  beforeEach(() => vi.restoreAllMocks());
 
-  it('returns null for a Greenhouse URL that is not a job posting page', () => {
-    expect(parseGreenhouseUrl('https://job-boards.greenhouse.io/greenhouse')).toBeNull();
-  });
-
-  it('returns null for a malformed URL', () => {
-    expect(parseGreenhouseUrl('not a url')).toBeNull();
-  });
-});
-
-describe('greenhouseJobBoardApiUrl', () => {
-  it('builds the questions-enabled Job Board API URL for a board token/job id', () => {
-    expect(greenhouseJobBoardApiUrl({ boardToken: 'greenhouse', jobId: '8080711' })).toBe(
-      'https://boards-api.greenhouse.io/v1/boards/greenhouse/jobs/8080711?questions=true',
-    );
-  });
-});
-
-describe('mergeGreenhouseQuestions', () => {
-  it('fills in required/options on a field whose label matches an API question, by normalized label text', () => {
-    const fields = [
-      field({
-        id: 'combobox-1',
-        label: ' Are you authorized to work in the US? ',
-        elementRole: 'combobox',
-        category: 'question',
-      }),
-    ];
+  describe('Greenhouse', () => {
     const response = {
       questions: [
         {
@@ -91,382 +52,344 @@ describe('mergeGreenhouseQuestions', () => {
       ],
     };
 
-    const result = mergeGreenhouseQuestions(fields, response);
+    it('fetches the questions-enabled Job Board API for a posting URL', async () => {
+      const fetchImpl = stubFetch(response);
 
-    expect(result[0]).toMatchObject({
-      required: true,
-      options: [
-        { label: 'Yes', selector: null },
-        { label: 'No', selector: null },
-      ],
+      await enrichWithApiOracle(
+        'https://job-boards.greenhouse.io/greenhouse/jobs/8080711?gh_jid=8080711',
+        [],
+        fetchImpl,
+      );
+
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://boards-api.greenhouse.io/v1/boards/greenhouse/jobs/8080711?questions=true',
+        undefined,
+      );
     });
-  });
 
-  it('leaves a field unchanged when no API question matches its label', () => {
-    const fields = [field({ id: 'f1', label: 'Referral code' })];
-    const response = { questions: [{ label: 'Resume/CV', required: true, fields: [] }] };
+    it('recognizes the legacy boards.greenhouse.io host too', async () => {
+      const fetchImpl = stubFetch(response);
 
-    const result = mergeGreenhouseQuestions(fields, response);
+      await enrichWithApiOracle('https://boards.greenhouse.io/acme/jobs/12345', [], fetchImpl);
 
-    expect(result[0]).toEqual(fields[0]);
-  });
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://boards-api.greenhouse.io/v1/boards/acme/jobs/12345?questions=true',
+        undefined,
+      );
+    });
 
-  it('keeps the DOM selector already recorded for a choice the API also knows about — overwriting it would trade a clickable choice for a label the Fill Step can only text-match', () => {
-    const fields = [
-      field({
-        id: 'combobox-1',
-        label: 'Are you authorized to work in the US?',
-        elementRole: 'combobox',
-        category: 'question',
+    it('fills in required and options on the field whose label matches, ignoring surrounding whitespace and case', async () => {
+      const fields = [question(' Are you authorized to work in the US? ')];
+
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0]).toMatchObject({
+        required: true,
         options: [
-          { label: 'Yes', selector: '#opt-yes' },
-          { label: 'No', selector: '#opt-no' },
+          { label: 'Yes', selector: null },
+          { label: 'No', selector: null },
         ],
-      }),
-    ];
-    const response = {
-      questions: [
-        {
-          label: 'Are you authorized to work in the US?',
-          required: true,
-          fields: [
-            {
-              name: 'work_auth',
-              type: 'multi_value_single_select',
-              values: [
-                { value: '1', label: 'Yes' },
-                { value: '0', label: 'No' },
-                // The API knows a choice the rendered DOM didn't show.
-                { value: '2', label: 'Prefer not to say' },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    const result = mergeGreenhouseQuestions(fields, response);
-
-    expect(result[0].options).toEqual([
-      { label: 'Yes', selector: '#opt-yes' },
-      { label: 'No', selector: '#opt-no' },
-      { label: 'Prefer not to say', selector: null },
-    ]);
-  });
-
-  it('preserves an already-resolved options list when the matching question has no select-type field', () => {
-    const fields = [
-      field({ id: 'f1', label: 'Why do you want to work here?', category: 'question' }),
-    ];
-    const response = {
-      questions: [{ label: 'Why do you want to work here?', required: false, fields: [] }],
-    };
-
-    const result = mergeGreenhouseQuestions(fields, response);
-
-    expect(result[0]).toMatchObject({ required: false });
-    expect(result[0].options).toBeUndefined();
-  });
-});
-
-describe('parseAshbyUrl', () => {
-  it('extracts the org name and job id from a jobs.ashbyhq.com posting URL', () => {
-    expect(
-      parseAshbyUrl('https://jobs.ashbyhq.com/Ashby/9f8b1c2d-0000-1111-2222-333344445555'),
-    ).toEqual({
-      orgName: 'Ashby',
-      jobId: '9f8b1c2d-0000-1111-2222-333344445555',
+      });
     });
-  });
 
-  it('returns null for a non-Ashby URL', () => {
-    expect(parseAshbyUrl('https://jobs.lever.co/acme/123')).toBeNull();
-  });
-
-  it('returns null for the job board root with no specific job id', () => {
-    expect(parseAshbyUrl('https://jobs.ashbyhq.com/Ashby')).toBeNull();
-  });
-});
-
-describe('mergeAshbyQuestions', () => {
-  it('fills in required/options on a field whose label matches an API field title', () => {
-    const fields = [
-      field({ id: 'f1', label: 'Are you authorized to work in the US?', category: 'question' }),
-    ];
-    const response = {
-      applicationFormDefinition: {
-        sections: [
+    it('keeps the DOM selector already recorded for a choice the API also knows about — overwriting it would trade a clickable choice for a label the Fill Step can only text-match', async () => {
+      const fields = [
+        question('Are you authorized to work in the US?', {
+          options: [
+            { label: 'Yes', selector: '#opt-yes' },
+            { label: 'No', selector: '#opt-no' },
+          ],
+        }),
+      ];
+      const withExtraChoice = {
+        questions: [
           {
+            ...response.questions[0],
             fields: [
               {
-                title: 'Are you authorized to work in the US?',
-                isRequired: true,
-                selectableValues: [
-                  { label: 'Yes', value: 'yes' },
-                  { label: 'No', value: 'no' },
+                ...response.questions[0].fields[0],
+                // The API knows a choice the rendered DOM didn't show.
+                values: [
+                  { value: '1', label: 'Yes' },
+                  { value: '0', label: 'No' },
+                  { value: '2', label: 'Prefer not to say' },
                 ],
               },
             ],
           },
         ],
-      },
-    };
+      };
 
-    const result = mergeAshbyQuestions(fields, response);
-
-    expect(result[0]).toMatchObject({
-      required: true,
-      options: [
-        { label: 'Yes', selector: null },
-        { label: 'No', selector: null },
-      ],
-    });
-  });
-
-  it('leaves a field unchanged when no API field matches its label', () => {
-    const fields = [field({ id: 'f1', label: 'Referral code' })];
-    const response = { applicationFormDefinition: { sections: [] } };
-
-    expect(mergeAshbyQuestions(fields, response)).toEqual(fields);
-  });
-});
-
-describe('parseSmartRecruitersUrl', () => {
-  it('extracts a leading numeric/uuid posting id from the last path segment', () => {
-    expect(
-      parseSmartRecruitersUrl(
-        'https://jobs.smartrecruiters.com/Acme/743999812345678-senior-engineer',
-      ),
-    ).toEqual({ postingId: '743999812345678' });
-  });
-
-  it('returns null for a non-SmartRecruiters URL', () => {
-    expect(parseSmartRecruitersUrl('https://jobs.lever.co/acme/123')).toBeNull();
-  });
-
-  it('returns null when no posting id can be extracted', () => {
-    expect(
-      parseSmartRecruitersUrl('https://jobs.smartrecruiters.com/Acme/senior-engineer'),
-    ).toBeNull();
-  });
-});
-
-describe('mergeSmartRecruitersQuestions', () => {
-  it('fills in required/options on a field whose label matches an API question label', () => {
-    const fields = [field({ id: 'f1', label: 'Work authorization', category: 'question' })];
-    const response = {
-      questions: [
-        {
-          label: 'Work authorization',
-          fields: [
-            {
-              type: 'SINGLE_SELECT',
-              required: true,
-              values: [
-                { id: 'yes', label: 'Yes' },
-                { id: 'no', label: 'No' },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    const result = mergeSmartRecruitersQuestions(fields, response);
-
-    expect(result[0]).toMatchObject({
-      required: true,
-      options: [
-        { label: 'Yes', selector: null },
-        { label: 'No', selector: null },
-      ],
-    });
-  });
-
-  it('leaves a field unchanged when no API question matches its label', () => {
-    const fields = [field({ id: 'f1', label: 'Referral code' })];
-    const response = { questions: [{ label: 'Resume', fields: [] }] };
-
-    expect(mergeSmartRecruitersQuestions(fields, response)).toEqual(fields);
-  });
-});
-
-describe('parseWorkableUrl', () => {
-  it('extracts the company subdomain and shortcode from a company-subdomain apply URL', () => {
-    expect(parseWorkableUrl('https://acme.workable.com/j/ABCDEF1234')).toEqual({
-      subdomain: 'acme',
-      shortcode: 'ABCDEF1234',
-    });
-  });
-
-  it('returns null for the generic apply.workable.com host, which has no company subdomain to target the API with', () => {
-    expect(parseWorkableUrl('https://apply.workable.com/j/ABCDEF1234')).toBeNull();
-  });
-
-  it('returns null for a non-Workable URL', () => {
-    expect(parseWorkableUrl('https://jobs.lever.co/acme/123')).toBeNull();
-  });
-});
-
-describe('mergeWorkableQuestions', () => {
-  it('fills in required/options on a field whose label matches an API question label', () => {
-    const fields = [
-      field({ id: 'f1', label: 'Are you authorized to work in the US?', category: 'question' }),
-    ];
-    const response = {
-      questions: [
-        {
-          label: 'Are you authorized to work in the US?',
-          required: true,
-          choices: ['Yes', 'No'],
-        },
-      ],
-    };
-
-    const result = mergeWorkableQuestions(fields, response);
-
-    expect(result[0]).toMatchObject({
-      required: true,
-      options: [
-        { label: 'Yes', selector: null },
-        { label: 'No', selector: null },
-      ],
-    });
-  });
-
-  it('leaves a field unchanged when no API question matches its label', () => {
-    const fields = [field({ id: 'f1', label: 'Referral code' })];
-    const response = { questions: [{ label: 'Resume', required: true, choices: [] }] };
-
-    expect(mergeWorkableQuestions(fields, response)).toEqual(fields);
-  });
-});
-
-describe('enrichWithApiOracle', () => {
-  const fields = [field({ id: 'f1', label: 'Are you authorized to work in the US?' })];
-
-  it('dispatches to the Greenhouse oracle for a Greenhouse URL', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ questions: [] }), { status: 200 }));
-
-    await enrichWithApiOracle(
-      'https://job-boards.greenhouse.io/greenhouse/jobs/8080711',
-      fields,
-      fetchImpl,
-    );
-
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://boards-api.greenhouse.io/v1/boards/greenhouse/jobs/8080711?questions=true',
-    );
-  });
-
-  it('dispatches to the Ashby oracle for an Ashby URL', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ applicationFormDefinition: { sections: [] } }), {
-          status: 200,
-        }),
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch(withExtraChoice),
       );
 
-    await enrichWithApiOracle(
-      'https://jobs.ashbyhq.com/Ashby/9f8b1c2d-0000-1111-2222-333344445555',
-      fields,
-      fetchImpl,
-    );
+      expect(result[0].options).toEqual([
+        { label: 'Yes', selector: '#opt-yes' },
+        { label: 'No', selector: '#opt-no' },
+        { label: 'Prefer not to say', selector: null },
+      ]);
+    });
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    it('leaves a field untouched when no question matches its label', async () => {
+      const fields = [field({ label: 'Referral code' })];
+
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0]).toEqual(fields[0]);
+    });
+
+    it('leaves options alone when the matching question lists no choices', async () => {
+      const fields = [question('Why do you want to work here?')];
+      const noChoices = {
+        questions: [{ label: 'Why do you want to work here?', required: false, fields: [] }],
+      };
+
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch(noChoices),
+      );
+
+      expect(result[0].options).toBeUndefined();
+    });
   });
 
-  it('returns fields unchanged for a platform with no matching oracle', async () => {
-    const fetchImpl = vi.fn();
+  describe('Ashby', () => {
+    it('POSTs to the job-posting endpoint for a posting URL', async () => {
+      const fetchImpl = stubFetch({ applicationFormDefinition: { sections: [] } });
 
-    const result = await enrichWithApiOracle(
-      'https://careers-acme.icims.com/jobs/1',
-      fields,
-      fetchImpl,
-    );
+      await enrichWithApiOracle(
+        'https://jobs.ashbyhq.com/Ashby/9f8b1c2d-0000-1111-2222-333344445555',
+        [],
+        fetchImpl,
+      );
 
-    expect(result).toBe(fields);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-});
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://api.ashbyhq.com/posting-api/job-posting/9f8b1c2d-0000-1111-2222-333344445555',
+        { method: 'POST' },
+      );
+    });
 
-describe('enrichWithGreenhouseApi', () => {
-  const fields = [field({ id: 'f1', label: 'Are you authorized to work in the US?' })];
+    it('does not fetch for the job-board root, which names no specific posting', async () => {
+      const fetchImpl = stubFetch({});
 
-  it('fetches the Job Board API and merges its questions onto the given fields', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          questions: [
+      await enrichWithApiOracle('https://jobs.ashbyhq.com/Ashby', [], fetchImpl);
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('fills in required and options from the application form definition', async () => {
+      const fields = [question('Are you authorized to work in the US?')];
+      const response = {
+        applicationFormDefinition: {
+          sections: [
             {
-              label: 'Are you authorized to work in the US?',
-              required: true,
               fields: [
                 {
-                  name: 'work_auth',
-                  type: 'multi_value_single_select',
-                  values: [{ value: '1', label: 'Yes' }],
+                  title: 'Are you authorized to work in the US?',
+                  isRequired: true,
+                  selectableValues: [{ label: 'Yes' }, { label: 'No' }],
                 },
               ],
             },
           ],
-        }),
-        { status: 200 },
-      ),
-    );
+        },
+      };
 
-    const result = await enrichWithGreenhouseApi(
-      'https://job-boards.greenhouse.io/greenhouse/jobs/8080711',
-      fields,
-      fetchImpl,
-    );
+      const result = await enrichWithApiOracle(
+        'https://jobs.ashbyhq.com/acme/job-1',
+        fields,
+        stubFetch(response),
+      );
 
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://boards-api.greenhouse.io/v1/boards/greenhouse/jobs/8080711?questions=true',
-    );
-    expect(result[0]).toMatchObject({
-      required: true,
-      options: [{ label: 'Yes', selector: null }],
+      expect(result[0]).toMatchObject({
+        required: true,
+        options: [
+          { label: 'Yes', selector: null },
+          { label: 'No', selector: null },
+        ],
+      });
     });
   });
 
-  it('returns the fields unchanged when the URL is not a Greenhouse job posting', async () => {
-    const fetchImpl = vi.fn();
+  describe('SmartRecruiters', () => {
+    it('fetches the configuration endpoint for a posting id in the last path segment', async () => {
+      const fetchImpl = stubFetch({ questions: [] });
 
-    const result = await enrichWithGreenhouseApi(
-      'https://jobs.lever.co/acme/123',
-      fields,
-      fetchImpl,
-    );
+      await enrichWithApiOracle(
+        'https://jobs.smartrecruiters.com/Acme/743999812345678-senior-engineer',
+        [],
+        fetchImpl,
+      );
 
-    expect(result).toBe(fields);
-    expect(fetchImpl).not.toHaveBeenCalled();
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://api.smartrecruiters.com/v1/postings/743999812345678/configuration',
+        undefined,
+      );
+    });
+
+    it('does not fetch when no posting id can be extracted', async () => {
+      const fetchImpl = stubFetch({});
+
+      await enrichWithApiOracle(
+        'https://jobs.smartrecruiters.com/Acme/senior-engineer',
+        [],
+        fetchImpl,
+      );
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('marks a question required when any of its fields is', async () => {
+      const fields = [question('Work authorization')];
+      const response = {
+        questions: [
+          {
+            label: 'Work authorization',
+            fields: [
+              {
+                type: 'SINGLE_SELECT',
+                required: true,
+                values: [
+                  { id: 'yes', label: 'Yes' },
+                  { id: 'no', label: 'No' },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = await enrichWithApiOracle(
+        'https://jobs.smartrecruiters.com/Acme/743999812345678-x',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0]).toMatchObject({
+        required: true,
+        options: [
+          { label: 'Yes', selector: null },
+          { label: 'No', selector: null },
+        ],
+      });
+    });
+
+    it("keeps the DOM's own required flag when the matching question carries no fields, rather than overwriting it with a guess", async () => {
+      const fields = [question('Work authorization', { required: true })];
+      const response = { questions: [{ label: 'Work authorization', fields: [] }] };
+
+      const result = await enrichWithApiOracle(
+        'https://jobs.smartrecruiters.com/Acme/743999812345678-x',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0].required).toBe(true);
+    });
   });
 
-  it('returns the fields unchanged when the API request fails', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response('', { status: 500 }));
+  describe('Workable', () => {
+    it('fetches the application-form endpoint on the company subdomain', async () => {
+      const fetchImpl = stubFetch({ questions: [] });
 
-    const result = await enrichWithGreenhouseApi(
-      'https://job-boards.greenhouse.io/greenhouse/jobs/8080711',
-      fields,
-      fetchImpl,
-    );
+      await enrichWithApiOracle('https://acme.workable.com/j/ABC123', [], fetchImpl);
 
-    expect(result).toEqual(fields);
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://acme.workable.com/spi/v3/jobs/ABC123/application_form',
+        undefined,
+      );
+    });
+
+    it('does not fetch for the generic hosts, which carry no company subdomain to scope the API to', async () => {
+      const fetchImpl = stubFetch({});
+
+      for (const host of ['apply', 'jobs', 'www']) {
+        await enrichWithApiOracle(`https://${host}.workable.com/j/ABC123`, [], fetchImpl);
+      }
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('fills in required and choices', async () => {
+      const fields = [question('Work authorization')];
+      const response = {
+        questions: [{ label: 'Work authorization', required: true, choices: ['Yes'] }],
+      };
+
+      const result = await enrichWithApiOracle(
+        'https://acme.workable.com/j/ABC123',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0]).toMatchObject({
+        required: true,
+        options: [{ label: 'Yes', selector: null }],
+      });
+    });
   });
 
-  it('returns the fields unchanged when fetch itself throws', async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new Error('network error'));
+  describe('falling back to the DOM-scraped fields', () => {
+    const fields = [question('Work authorization')];
 
-    const result = await enrichWithGreenhouseApi(
-      'https://job-boards.greenhouse.io/greenhouse/jobs/8080711',
-      fields,
-      fetchImpl,
-    );
+    it('returns them unchanged for a URL no platform recognizes, without fetching', async () => {
+      const fetchImpl = stubFetch({});
 
-    expect(result).toEqual(fields);
+      const result = await enrichWithApiOracle('https://jobs.lever.co/acme/123', fields, fetchImpl);
+
+      expect(result).toEqual(fields);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('returns them unchanged for a malformed URL', async () => {
+      const fetchImpl = stubFetch({});
+
+      expect(await enrichWithApiOracle('not a url', fields, fetchImpl)).toEqual(fields);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('returns them unchanged when the API responds with an error status', async () => {
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch({}, { ok: false }),
+      );
+
+      expect(result).toEqual(fields);
+    });
+
+    it('returns them unchanged when the request throws', async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(new Error('network down'));
+
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        fetchImpl,
+      );
+
+      expect(result).toEqual(fields);
+    });
+
+    it('returns them unchanged when the response is not the shape the platform documents', async () => {
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch({ unexpected: 'shape' }),
+      );
+
+      expect(result).toEqual(fields);
+    });
   });
 });

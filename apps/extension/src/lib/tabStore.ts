@@ -41,7 +41,11 @@ export interface PipelineRunState {
   status: PipelineStatus;
   tabUrl: string | null;
   jobPageData: JobPageData;
-  pageTextOverride: string | null;
+  /**
+   * The job description the candidate pasted, as analyzed. Kept on the run so the panel can show
+   * it back for editing and a re-analysis, and so a reopened panel doesn't lose it.
+   */
+  jobDescription: string;
   jobInfo: JobInfo | null;
   tailoredResume: TailoredResume | null;
   answers: QuestionAnswer[];

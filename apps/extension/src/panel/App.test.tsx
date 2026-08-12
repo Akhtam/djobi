@@ -7,17 +7,14 @@ import type {
 } from '@djobi/shared';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchResumePdf } from '../lib/fetchResumePdf';
-import {
-  patchPipelineRun,
-  setPipelineRun,
-  storageKey as tabStorageKey,
-  type PipelineFailure,
-  type PipelineStatus,
-} from '../lib/tabStore';
+import { runAnalysis, runFill, type PipelineDeps } from '../background/applicationPipeline';
+import { callBackend, callBackendBinary } from '../lib/callBackend';
+import { fakeSessionStorage, type FakeSessionStorage } from '../lib/fakeSessionStorage';
+import { getPipelineRun, patchPipelineRun, reportDetectedPage } from '../lib/tabStore';
 import { App } from './App';
 
-vi.mock('../lib/fetchResumePdf', () => ({ fetchResumePdf: vi.fn() }));
+// The panel's backend seam: the profile it boots with, and the resume PDF it previews on demand.
+vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn(), callBackendBinary: vi.fn() }));
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -29,6 +26,8 @@ const profile: Profile = {
   education: [],
   skills: [],
   stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
 };
 
 const jobInfo: JobInfo = {
@@ -65,166 +64,130 @@ const answers: QuestionAnswer[] = [
   },
 ];
 
-const jobPageData = { pageText: 'Senior Engineer at Acme...', fields: [questionField] };
+const emailField: DetectedField = {
+  id: 'f-email',
+  label: 'Email',
+  inputType: 'email',
+  selector: '#email-field',
+  category: 'email',
+  required: false,
+  elementRole: 'native',
+};
 
-/**
- * In-memory stand-in for `chrome.storage.session`, close enough to the real callback/Promise API
- * for `tabStore.ts`. Auto-fires `onChanged` on `set`/`remove`, like real Chrome does
- * (including back to the same context that wrote the change) — this is what exercises `App.tsx`'s
- * own-write echo guard, not just the hydrate-on-mount path.
- */
-function createSessionStorageStub() {
-  const data = new Map<string, unknown>();
-  const listeners: ((changes: Record<string, { newValue?: unknown }>, areaName: string) => void)[] =
-    [];
+const nameField: DetectedField = {
+  id: 'f-name',
+  label: 'Full name',
+  inputType: 'text',
+  selector: '#name-field',
+  category: 'full_name',
+  required: false,
+  elementRole: 'native',
+};
 
-  function notify(changes: Record<string, { newValue?: unknown }>) {
-    for (const listener of listeners) listener(changes, 'session');
-  }
+// Three fillable fields, so a successful Fill Step reports "Filled 3 fields" — a count the real
+// Fill Step now derives from these, rather than one the stub asserts into the store by hand.
+const jobPageData = {
+  fields: [questionField, emailField, nameField],
+};
 
-  return {
-    session: {
-      get: vi.fn((key: string) => Promise.resolve(data.has(key) ? { [key]: data.get(key) } : {})),
-      set: vi.fn((items: Record<string, unknown>) => {
-        const changes: Record<string, { newValue?: unknown }> = {};
-        for (const [key, value] of Object.entries(items)) {
-          changes[key] = { newValue: value };
-          data.set(key, value);
-        }
-        notify(changes);
-        return Promise.resolve();
-      }),
-      remove: vi.fn((key: string) => {
-        data.delete(key);
-        notify({ [key]: { newValue: undefined } });
-        return Promise.resolve();
-      }),
-    },
-    onChanged: {
-      addListener: vi.fn((listener: (typeof listeners)[number]) => listeners.push(listener)),
-      removeListener: vi.fn((listener: (typeof listeners)[number]) => {
-        const index = listeners.indexOf(listener);
-        if (index >= 0) listeners.splice(index, 1);
-      }),
-    },
-  };
-}
-
-interface AnalysisOutcome {
-  status: Extract<PipelineStatus, 'review' | 'analyze-error'>;
-  jobInfo?: JobInfo;
-  tailoredResume?: TailoredResume;
-  answers?: QuestionAnswer[];
-  /** The cause `background/pipelineRunner.ts` would checkpoint alongside an `analyze-error`. */
-  failure?: PipelineFailure;
-}
-
-interface FillOutcome {
-  status: Extract<PipelineStatus, 'filled' | 'fill-error'>;
-  unresolvedRequiredFields?: DetectedField[];
-  /** How many fields the Fill Step wrote. Defaults to a nonzero count — the ordinary case. */
-  filledFieldCount?: number;
-  failure?: PipelineFailure;
-}
+/** The posting a test pastes in — the Analysis Step's only input now that nothing is scraped. */
+const JOB_DESCRIPTION = 'Senior Engineer at Acme, building the platform team.';
 
 interface StubOptions {
   tabUrl: string;
   tabId?: number;
   profile: Profile | null;
-  jobPageData?: { pageText: string; fields: DetectedField[] } | null;
+  jobPageData?: { fields: DetectedField[] } | null;
   /** Share one `chrome.storage.session` across multiple `stubChrome`/`render` calls — simulates
    *  the panel closing and reopening (unmount + fresh `render`), both of which see the same
    *  underlying session storage in real Chrome. */
-  sessionStorage?: ReturnType<typeof createSessionStorageStub>;
-  /** Outcomes for successive `START_ANALYSIS` messages, consumed in order (repeats the last entry
-   *  once exhausted) — simulates `background/pipelineRunner.ts` completing the Analysis Step and
-   *  checkpointing the result into `tabStore`. Defaults to one successful analysis. */
-  analysisOutcomes?: AnalysisOutcome[];
-  /** Same idea as `analysisOutcomes`, for `START_FILL`. Defaults to one successful fill. */
-  fillOutcomes?: FillOutcome[];
-  /** If true, a `START_FILL` message doesn't checkpoint its outcome until the returned
-   *  `resolveFill()` is called — simulates a Fill Step still in flight in the background. */
+  sessionStorage?: FakeSessionStorage;
+  /** Message to fail successive Analysis Steps with, `null` for success. The last entry repeats. */
+  analysisFailures?: (string | null)[];
+  /** Same idea, for the Fill Step — the failure surfaces from saving the Application. */
+  fillFailures?: (string | null)[];
+  /** If true, the Fill Step hangs at the page-filling call until `resolveFill()` is called —
+   *  simulates a Fill Step still in flight in the background. */
   holdFill?: boolean;
 }
 
+/** The entry for successive calls, repeating the last one once the list is exhausted. */
+function nth(entries: (string | null)[] | undefined, index: number): string | null {
+  if (!entries || entries.length === 0) return null;
+  return entries[Math.min(index, entries.length - 1)];
+}
+
 /**
- * Stubs `chrome.tabs.query` (active tab) and `chrome.runtime.sendMessage`. The detected job page is seeded into session storage; `/profile` and
- * `/profile` are answered directly; `START_ANALYSIS`/`START_FILL` are acknowledged (no response
- * payload, matching the real fire-and-forget handler) and, like `background/pipelineRunner.ts`
- * would, checkpoint an outcome into `tabStore` — these tests assert on that store ->
- * render wiring, not on how analysis/filling itself happens (that's `pipeline.test.ts`'s job).
+ * Stubs `chrome.tabs.query` (active tab), `chrome.runtime.sendMessage` and
+ * `chrome.storage.session`, and answers the panel's `GET /profile` through the mocked
+ * `callBackend`.
+ *
+ * `START_ANALYSIS`/`START_FILL` run the **real** `background/applicationPipeline.ts` against the
+ * real `lib/tabStore.ts`, with only its `PipelineDeps` stubbed — so these tests cover the whole
+ * round trip the panel actually depends on: message -> pipeline -> store -> `chrome.storage
+ * .onChanged` -> `usePipelineRun` -> render. This stub used to re-implement the pipeline instead,
+ * listing by hand every field the runner checkpoints; a change to what the real one wrote left
+ * these tests passing regardless.
  */
-function stubChrome(options: StubOptions) {
+async function stubChrome(options: StubOptions) {
   const openOptionsPage = vi.fn();
   let analysisCallIndex = 0;
   let fillCallIndex = 0;
-  let resolveFillFn: (() => void) | null = null;
+  // Created up front, not when the Fill Step reaches it: a test clicks and then releases within the
+  // same tick, long before the pipeline's async path gets as far as `fillPage`.
+  let releaseFill!: () => void;
+  const fillGate = new Promise<void>((resolve) => {
+    releaseFill = resolve;
+  });
+
+  vi.mocked(callBackend).mockImplementation((path) =>
+    path === '/profile'
+      ? Promise.resolve(options.profile)
+      : Promise.reject(new Error(`unexpected callBackend path: ${path}`)),
+  );
+
+  const deps: PipelineDeps = {
+    extractJob: () => {
+      const failure = nth(options.analysisFailures, analysisCallIndex++);
+      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(jobInfo);
+    },
+    tailorResume: () => Promise.resolve(tailoredResume),
+    answerQuestions: () => Promise.resolve(answers),
+    renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
+    // `null` — the page gives no account of what it kept, so the Fill Step falls back to the
+    // values it drafted, which is the reporting these tests were written against.
+    fillPage: () => (options.holdFill ? fillGate.then(() => null) : Promise.resolve(null)),
+    // The panel's concern is what the Fill Step reports back, not where its fields came from, so
+    // these tests leave the live page unreachable and let it fall back to the run's own detection.
+    scanPage: () => Promise.resolve(null),
+    saveApplication: () => {
+      const failure = nth(options.fillFailures, fillCallIndex++);
+      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(undefined);
+    },
+  };
 
   const sendMessage = vi.fn(
     (message: Record<string, unknown>, callback: (response: unknown) => void) => {
-      if (message.path === '/profile') {
-        callback({ data: options.profile });
-        return;
-      }
+      // Fire-and-forget, exactly as `background/router.ts` dispatches them.
       if (message.type === 'START_ANALYSIS') {
-        const outcomes = options.analysisOutcomes ?? [
-          { status: 'review' as const, jobInfo, tailoredResume, answers },
-        ];
-        const outcome = outcomes[Math.min(analysisCallIndex, outcomes.length - 1)];
-        analysisCallIndex += 1;
-        const tabId = message.tabId as number;
-        const pageTextOverride = message.pageTextOverride as string | null;
-        const pageText = pageTextOverride ?? options.jobPageData?.pageText ?? '';
-        void setPipelineRun(tabId, {
-          status: outcome.status,
-          tabUrl: message.tabUrl as string | null,
-          jobPageData: options.jobPageData
-            ? { ...options.jobPageData, pageText }
-            : { pageText, fields: [] },
-          pageTextOverride,
-          jobInfo: outcome.jobInfo ?? null,
-          tailoredResume: outcome.tailoredResume ?? null,
-          answers: outcome.answers ?? [],
-          unresolvedRequiredFields: [],
-          filledFieldCount: 0,
-          failure: outcome.failure ?? null,
-        });
-        callback({ data: undefined });
-        return;
+        void runAnalysis(
+          message.tabId as number,
+          message.tabUrl as string | null,
+          message.profile as Profile,
+          message.jobDescription as string,
+          deps,
+        );
+      } else if (message.type === 'START_FILL') {
+        void runFill(message.tabId as number, message.profile as Profile, deps);
       }
-      if (message.type === 'START_FILL') {
-        const outcomes = options.fillOutcomes ?? [{ status: 'filled' as const }];
-        const outcome = outcomes[Math.min(fillCallIndex, outcomes.length - 1)];
-        fillCallIndex += 1;
-        const tabId = message.tabId as number;
-        const apply = () =>
-          void patchPipelineRun(tabId, {
-            status: outcome.status,
-            unresolvedRequiredFields: outcome.unresolvedRequiredFields ?? [],
-            filledFieldCount: outcome.filledFieldCount ?? 3,
-            failure: outcome.failure ?? null,
-          });
-        if (options.holdFill) resolveFillFn = apply;
-        else apply();
-        callback({ data: undefined });
-        return;
-      }
-      callback({ data: undefined });
+      callback(undefined);
     },
   );
+
   const onActivated = { addListener: vi.fn(), removeListener: vi.fn() };
   const onUpdated = { addListener: vi.fn(), removeListener: vi.fn() };
-  const storage = options.sessionStorage ?? createSessionStorageStub();
-  // The panel reads the content script's detection straight out of session storage — seed it the
-  // way `reportDetectedPage` would, rather than answering a message that no longer exists.
-  if (options.jobPageData) {
-    void storage.session.set({
-      [tabStorageKey(options.tabId ?? 1)]: {
-        frames: { 0: { data: options.jobPageData, revision: 1 } },
-        run: null,
-      },
-    });
-  }
+  const storage = options.sessionStorage ?? fakeSessionStorage();
+
   vi.stubGlobal('chrome', {
     tabs: {
       query: vi.fn((_query: unknown, callback: (tabs: { id: number; url: string }[]) => void) =>
@@ -239,18 +202,33 @@ function stubChrome(options: StubOptions) {
     runtime: { sendMessage, openOptionsPage },
     storage,
   });
+
+  // Both the panel and the Analysis Step read the content script's detection out of the store, so
+  // seed it through the store's own entry point rather than writing its layout by hand here.
+  // Awaited: the panel reads detection on mount, and an unawaited seed loses that race.
+  if (options.jobPageData) {
+    await reportDetectedPage(options.tabId ?? 1, 0, options.jobPageData);
+  }
+
   return {
     openOptionsPage,
     sendMessage,
     onActivated,
     onUpdated,
     sessionStorage: storage,
-    resolveFill: () => resolveFillFn?.(),
+    resolveFill: releaseFill,
   };
 }
 
-/** Clicks the pre-analysis "Analyze" button, present once a job page is detected but before analysis runs. */
-async function clickAnalyze() {
+/**
+ * Pastes a job description and clicks "Analyze".
+ *
+ * Pasting is part of the action now: nothing is scraped from the page, so the button stays disabled
+ * until the candidate supplies the posting themselves.
+ */
+async function clickAnalyze(jobDescription = JOB_DESCRIPTION) {
+  const textarea = await screen.findByPlaceholderText(/paste the job description/i);
+  fireEvent.change(textarea, { target: { value: jobDescription } });
   fireEvent.click(await screen.findByRole('button', { name: 'Analyze' }));
 }
 
@@ -262,7 +240,8 @@ function callsOfType(sendMessage: ReturnType<typeof vi.fn>, type: string) {
 describe('panel App', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
-    vi.mocked(fetchResumePdf).mockReset();
+    vi.mocked(callBackend).mockReset();
+    vi.mocked(callBackendBinary).mockReset();
     // jsdom doesn't implement URL.createObjectURL/revokeObjectURL — give the resume-preview
     // code paths deterministic stubs so an `App` unmount (which revokes any created URL) and a
     // preview click both behave identically to real Chrome.
@@ -274,7 +253,7 @@ describe('panel App', () => {
   });
 
   it('prompts to set up a profile when none exists yet', async () => {
-    const { openOptionsPage } = stubChrome({
+    const { openOptionsPage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile: null,
     });
@@ -287,7 +266,7 @@ describe('panel App', () => {
   });
 
   it('shows a paste box and an "Analyze" button immediately on open, even before/without any job page being detected', async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://example.com',
       profile,
       jobPageData: null,
@@ -300,8 +279,10 @@ describe('panel App', () => {
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 
-  it('pre-fills the paste box with the scraped job description once a job page is detected in the background', async () => {
-    const { sendMessage } = stubChrome({
+  it('leaves the paste box empty even when a form is detected, and keeps Analyze disabled until something is pasted', async () => {
+    // Detecting the form says nothing about the posting: the application page is a different page
+    // from the job ad, which is why the scrape it used to be pre-filled from was dropped.
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -309,13 +290,13 @@ describe('panel App', () => {
 
     render(<App />);
 
-    await screen.findByRole('button', { name: 'Analyze' });
-    expect(screen.getByDisplayValue(jobPageData.pageText)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
+    expect(screen.getByPlaceholderText(/paste the job description/i)).toHaveValue('');
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 
   it("analyzes pasted text even when no job page was ever detected on the page, so pasting doesn't depend on auto-detection succeeding", async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://example.com',
       tabId: 1,
       profile,
@@ -334,22 +315,22 @@ describe('panel App', () => {
         tabId: 1,
         tabUrl: 'https://example.com',
         profile,
-        pageTextOverride: 'Pasted job description text.',
+        jobDescription: 'Pasted job description text.',
       },
       expect.any(Function),
     );
   });
 
   it('disables "Analyze" when there is nothing to analyze yet (no paste, no detected job page)', async () => {
-    stubChrome({ tabUrl: 'https://example.com', profile, jobPageData: null });
+    await stubChrome({ tabUrl: 'https://example.com', profile, jobPageData: null });
 
     render(<App />);
 
     expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
   });
 
-  it('analyzes with manually-edited job description text when edited before clicking Analyze (paste fallback for pages where scraping misses the job description, e.g. tabbed Overview/Application ATS embeds)', async () => {
-    const { sendMessage } = stubChrome({
+  it('sends the pasted job description with START_ANALYSIS', async () => {
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       tabId: 1,
       profile,
@@ -359,23 +340,20 @@ describe('panel App', () => {
     render(<App />);
     await screen.findByRole('button', { name: 'Analyze' });
 
-    fireEvent.change(screen.getByDisplayValue(jobPageData.pageText), {
-      target: { value: 'Pasted job description text.' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await clickAnalyze('Pasted job description text.');
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'START_ANALYSIS',
-        pageTextOverride: 'Pasted job description text.',
+        jobDescription: 'Pasted job description text.',
       }),
       expect.any(Function),
     );
   });
 
   it('shows an editable review once analysis succeeds', async () => {
-    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
     await clickAnalyze();
@@ -385,8 +363,8 @@ describe('panel App', () => {
     expect(screen.getByRole('button', { name: 'Fill form' })).toBeInTheDocument();
   });
 
-  it('reveals a job-description editor pre-filled with the scraped text when "Edit job description" is clicked on the review screen', async () => {
-    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+  it('reveals a job-description editor holding the analyzed text when "Edit job description" is clicked on the review screen', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
     await clickAnalyze();
@@ -394,11 +372,11 @@ describe('panel App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
 
-    expect(screen.getByDisplayValue(jobPageData.pageText)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(JOB_DESCRIPTION)).toBeInTheDocument();
   });
 
   it('disables "Re-analyze" when the review-screen editor is cleared to empty, rather than silently analyzing blank text', async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -409,14 +387,14 @@ describe('panel App', () => {
     await screen.findByText('Senior Engineer at Acme');
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
-    fireEvent.change(screen.getByDisplayValue(jobPageData.pageText), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue(JOB_DESCRIPTION), { target: { value: '' } });
 
     expect(screen.getByRole('button', { name: 'Re-analyze' })).toBeDisabled();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1);
   });
 
   it('re-analyzes with the manually-edited job description text from the review screen', async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -427,26 +405,23 @@ describe('panel App', () => {
     await screen.findByText('Senior Engineer at Acme');
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
-    fireEvent.change(screen.getByDisplayValue(jobPageData.pageText), {
+    fireEvent.change(screen.getByDisplayValue(JOB_DESCRIPTION), {
       target: { value: 'Pasted job description text.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
     expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({
-      pageTextOverride: 'Pasted job description text.',
+      jobDescription: 'Pasted job description text.',
     });
   });
 
   it('shows an error and retries analysis when the user clicks "Try again"', async () => {
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      analysisOutcomes: [
-        { status: 'analyze-error' },
-        { status: 'review', jobInfo, tailoredResume, answers },
-      ],
+      analysisFailures: ['backend unreachable', null],
     });
 
     render(<App />);
@@ -459,19 +434,12 @@ describe('panel App', () => {
   });
 
   it('shows the underlying cause of a failed analysis, not just a generic message', async () => {
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      analysisOutcomes: [
-        {
-          status: 'analyze-error',
-          failure: {
-            step: 'analysis',
-            message:
-              'POST /answer-questions failed (500): report_answers did not produce a tool call.',
-          },
-        },
+      analysisFailures: [
+        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
       ],
     });
 
@@ -487,16 +455,11 @@ describe('panel App', () => {
   });
 
   it('shows the underlying cause of a failed fill', async () => {
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      fillOutcomes: [
-        {
-          status: 'fill-error',
-          failure: { step: 'fill', message: 'POST /applications failed (500): db unreachable' },
-        },
-      ],
+      fillFailures: ['POST /applications failed (500): db unreachable'],
     });
 
     render(<App />);
@@ -508,7 +471,7 @@ describe('panel App', () => {
   });
 
   it('fills the form and saves the application when "Fill form" is clicked', async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -532,7 +495,7 @@ describe('panel App', () => {
     // answer can simply read badly once it's sitting in the form. Tearing the review down on
     // success stranded the user with a green check and no route back to the content short of
     // re-running the whole Analysis Step.
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -547,14 +510,12 @@ describe('panel App', () => {
 
     expect(screen.getByText('Why do you want to work here?')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Preview tailored resume' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview tailored resume' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit job description' })).toBeInTheDocument();
   });
 
   it('lets the user edit an answer after filling and fill again, sending the edit to the Fill Step', async () => {
-    const { sendMessage } = stubChrome({
+    const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -591,11 +552,10 @@ describe('panel App', () => {
       required: true,
       elementRole: 'native',
     };
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
-      jobPageData,
-      fillOutcomes: [{ status: 'filled', unresolvedRequiredFields: [unresolvedField] }],
+      jobPageData: { ...jobPageData, fields: [...jobPageData.fields, unresolvedField] },
     });
 
     render(<App />);
@@ -603,7 +563,7 @@ describe('panel App', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText(/couldn't be resolved/);
+    await screen.findByText(/didn't take a value/);
     expect(screen.getByText('Referral code')).toBeInTheDocument();
     expect(screen.queryByText(/Filled 3 fields/)).not.toBeInTheDocument();
   });
@@ -613,11 +573,11 @@ describe('panel App', () => {
     // step then "succeeds" having done nothing, `unresolvedRequiredFields` filters an empty array
     // to an empty array, and the panel used to render an unqualified green check over an untouched
     // form — the reason this failure mode went unreported for so long.
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://jobs.ashbyhq.com/outset/55d672a5/application',
       profile,
-      jobPageData,
-      fillOutcomes: [{ status: 'filled', filledFieldCount: 0 }],
+      // The pasted-text path: a job description analyzed with no detected form behind it.
+      jobPageData: { ...jobPageData, fields: [] },
     });
 
     render(<App />);
@@ -631,7 +591,7 @@ describe('panel App', () => {
   });
 
   it('ignores extra clicks on "Fill form" while a fill is already in flight', async () => {
-    const { sendMessage, resolveFill } = stubChrome({
+    const { sendMessage, resolveFill } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -651,11 +611,11 @@ describe('panel App', () => {
   });
 
   it('shows an error and retries filling when the user clicks "Try again"', async () => {
-    stubChrome({
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      fillOutcomes: [{ status: 'fill-error' }, { status: 'filled' }],
+      fillFailures: ['backend unreachable', null],
     });
 
     render(<App />);
@@ -670,7 +630,7 @@ describe('panel App', () => {
   });
 
   it('resets to the bootstrap screen when the active tab changes, so the panel (which survives tab switches) never shows a stale review for the previous tab', async () => {
-    const { onActivated } = stubChrome({
+    const { onActivated } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -689,8 +649,8 @@ describe('panel App', () => {
   });
 
   it('checkpoints review progress (including edited answers) to the pipeline run store, so a reopened panel on the same tab restores it instead of starting over', async () => {
-    const sessionStorage = createSessionStorageStub();
-    stubChrome({
+    const sessionStorage = fakeSessionStorage();
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -704,10 +664,13 @@ describe('panel App', () => {
     fireEvent.change(screen.getByDisplayValue('Draft answer.'), {
       target: { value: 'Edited answer.' },
     });
-    await vi.waitFor(() => expect(sessionStorage.session.set).toHaveBeenCalled());
+    // Wait for the edit to reach the store, or reopening races the write it's meant to restore.
+    await vi.waitFor(async () =>
+      expect((await getPipelineRun(1))?.answers[0].answer).toBe('Edited answer.'),
+    );
     first.unmount(); // simulates the panel closing
 
-    const { sendMessage: secondSendMessage } = stubChrome({
+    const { sendMessage: secondSendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -722,8 +685,8 @@ describe('panel App', () => {
   });
 
   it('reflects a pipeline run update written from elsewhere (e.g. the background service worker) via chrome.storage.onChanged, while the panel stays mounted', async () => {
-    const sessionStorage = createSessionStorageStub();
-    stubChrome({
+    const sessionStorage = fakeSessionStorage();
+    await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
@@ -736,7 +699,7 @@ describe('panel App', () => {
     await screen.findByText('Senior Engineer at Acme');
     expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
 
-    // Simulates background/pipelineRunner.ts patching the store directly, independent of this
+    // Simulates background/applicationPipeline.ts patching the store directly, independent of this
     // mounted panel's own writes.
     await patchPipelineRun(1, {
       answers: [{ ...answers[0], answer: 'Updated from elsewhere.' }],
@@ -746,7 +709,7 @@ describe('panel App', () => {
   });
 
   it('shows a "Preview tailored resume" button on the review screen once analysis succeeds', async () => {
-    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
     await clickAnalyze();
@@ -756,8 +719,8 @@ describe('panel App', () => {
   });
 
   it('renders the tailored resume PDF in a preview when "Preview tailored resume" is clicked', async () => {
-    vi.mocked(fetchResumePdf).mockResolvedValue(new Uint8Array([37, 80, 68, 70]).buffer);
-    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+    vi.mocked(callBackendBinary).mockResolvedValue(new Uint8Array([37, 80, 68, 70]).buffer);
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
     await clickAnalyze();
@@ -765,12 +728,15 @@ describe('panel App', () => {
 
     const frame = await screen.findByTitle('Tailored resume');
     expect(frame).toHaveAttribute('src', 'blob:resume-preview');
-    expect(fetchResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+    expect(callBackendBinary).toHaveBeenCalledWith('/render-resume-pdf', {
+      profile,
+      tailoredResume,
+    });
   });
 
   it('shows an error message when the resume PDF fails to render', async () => {
-    vi.mocked(fetchResumePdf).mockRejectedValue(new Error('render failed'));
-    stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+    vi.mocked(callBackendBinary).mockRejectedValue(new Error('render failed'));
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 
     render(<App />);
     await clickAnalyze();
