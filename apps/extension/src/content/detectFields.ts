@@ -3,6 +3,16 @@ import type { DetectedField, ElementRole, FieldCategory, FieldOption } from '@dj
 /** Field elements that carry data a candidate fills in, as opposed to buttons/hidden inputs. */
 type FieldElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
+/** Whether `el` carries a native `required` attribute — only inputs, textareas and selects do. */
+function isNativelyRequired(el: Element): boolean {
+  return (
+    (el instanceof HTMLInputElement ||
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLSelectElement) &&
+    el.required
+  );
+}
+
 /** Concatenated `textContent` of every element referenced by a whitespace-separated id list. */
 function resolveIdRefs(doc: Document, idRefs: string): string {
   return idRefs
@@ -86,46 +96,75 @@ function nearestLabelOrLegend(doc: Document, el: Element): Element | null {
 /** Whether a field is marked required, via the native attribute, `aria-required`, or a visual marker. */
 function getRequired(doc: Document, el: Element): boolean {
   return (
-    (el as HTMLInputElement).required === true ||
+    isNativelyRequired(el) ||
     el.getAttribute('aria-required') === 'true' ||
     el.closest('[aria-required="true"]') != null ||
     nearestLabelOrLegend(doc, el)?.querySelector('.required, [class*="required"]') != null
   );
 }
 
-/**
- * Assigns/reuses a stable id for an element, tagging it with `data-djobi-id` if it has none of its
- * own.
- *
- * A tag already on the element is reused rather than reissued, so an element keeps the same id
- * across repeated scans of the same page. The page is now re-scanned as it changes (see
- * `detect.ts`) and again at fill time, and drafted answers are keyed by field id: reissuing ids
- * from a counter that restarts at zero each scan would silently re-point every answer at whichever
- * field now happens to occupy that position in document order.
- *
- * New ids skip any value already tagged onto another element, since the counter — restarting at
- * zero while earlier tags survive in the DOM — would otherwise hand out a duplicate.
- */
-function assignId(doc: Document, el: Element, counter: { n: number }): string {
-  if (el.id) return el.id;
-
-  const existing = el.getAttribute('data-djobi-id');
-  if (existing) return existing;
-
-  let id = `djobi-field-${counter.n++}`;
-  while (doc.querySelector(`[data-djobi-id="${id}"]`)) id = `djobi-field-${counter.n++}`;
-
-  el.setAttribute('data-djobi-id', id);
-  return id;
+/** Assigns stable ids and the selectors that resolve back to them, for one scan of one document. */
+interface FieldTagger {
+  /**
+   * A stable id for `el`, tagging it with `data-djobi-id` if it has none of its own.
+   *
+   * A tag already on the element is reused rather than reissued, so an element keeps the same id
+   * across repeated scans of the same page. The page is re-scanned as it changes (see `detect.ts`)
+   * and again at fill time, and drafted answers are keyed by field id: reissuing ids from a counter
+   * that restarts at zero each scan would silently re-point every answer at whichever field now
+   * happens to occupy that position in document order.
+   */
+  id(el: Element): string;
+  /**
+   * `el`'s id and a CSS selector that resolves back to it. The id is escaped via `CSS.escape` —
+   * some ATS platforms (Greenhouse's multi-value fields) use ids like `question_123[]`, which are
+   * invalid unescaped in a `#id` selector.
+   */
+  locate(el: Element): { id: string; selector: string };
+  /** A {@link FieldOption} for one choice, tagged so the Fill Step can find that exact element. */
+  option(el: Element, label: string): FieldOption;
 }
 
 /**
- * CSS selector that resolves back to `el`, given the id `assignId` produced for it. `el.id` is
- * escaped via `CSS.escape` — some ATS platforms (e.g. Greenhouse's multi-value fields) use ids
- * like `question_123[]`, which are invalid unescaped in a `#id` selector.
+ * A tagger for one scan.
+ *
+ * The counter lives in this closure rather than in a `{ n: number }` box passed down through every
+ * detection function, which is what it used to be: eight signatures carried it alongside `doc`
+ * purely to keep one integer moving, and each one had to remember to thread it on.
  */
-function selectorFor(el: Element, id: string): string {
-  return el.id ? `#${CSS.escape(el.id)}` : `[data-djobi-id="${id}"]`;
+function createFieldTagger(doc: Document): FieldTagger {
+  let next = 0;
+
+  /** The next id not already tagged onto some element — the counter restarts each scan while earlier tags survive in the DOM, so it can otherwise hand out a duplicate. */
+  function freshId(): string {
+    let id = `djobi-field-${next++}`;
+    while (doc.querySelector(`[data-djobi-id="${id}"]`)) id = `djobi-field-${next++}`;
+    return id;
+  }
+
+  const tagger: FieldTagger = {
+    id(el) {
+      if (el.id) return el.id;
+
+      const existing = el.getAttribute('data-djobi-id');
+      if (existing) return existing;
+
+      const id = freshId();
+      el.setAttribute('data-djobi-id', id);
+      return id;
+    },
+
+    locate(el) {
+      const id = tagger.id(el);
+      return { id, selector: el.id ? `#${CSS.escape(el.id)}` : `[data-djobi-id="${id}"]` };
+    },
+
+    option(el, label) {
+      return { label, selector: tagger.locate(el).selector };
+    },
+  };
+
+  return tagger;
 }
 
 const KEYWORD_RULES: Array<[FieldCategory, RegExp]> = [
@@ -160,36 +199,31 @@ const FILE_KEYWORD_RULES: Array<[FieldCategory, RegExp]> = [
 /** A `?`, or an imperative/question-style opener, marks an unmatched textarea as a free-response question. */
 const QUESTION_SHAPE = /\?|^(why|how|what|describe|tell us|explain)\b/i;
 
+/** The category `rules` gives `signal`, or `undefined` if none matches. */
+function categoryFor(
+  rules: Array<[FieldCategory, RegExp]>,
+  signal: string,
+): FieldCategory | undefined {
+  return rules.find(([, pattern]) => pattern.test(signal))?.[0];
+}
+
 /** Classifies a field by keyword-matching its signal text against a fixed category list. */
 function classify(signal: string, inputType: string): FieldCategory {
-  if (inputType === 'file') {
-    const match = FILE_KEYWORD_RULES.find(([, pattern]) => pattern.test(signal));
-    return match?.[0] ?? 'resume_upload';
-  }
+  if (inputType === 'file') return categoryFor(FILE_KEYWORD_RULES, signal) ?? 'resume_upload';
 
-  const match = KEYWORD_RULES.find(([, pattern]) => pattern.test(signal));
-  if (match) return match[0];
+  const keyword = categoryFor(KEYWORD_RULES, signal);
+  if (keyword) return keyword;
 
   if (inputType === 'textarea' && QUESTION_SHAPE.test(signal)) return 'question';
 
   return 'unknown';
 }
 
-/**
- * Builds a {@link FieldOption} for one choice, tagging its element so the Fill Step can find that
- * exact element again instead of re-deriving its label from the DOM and hoping both derivations
- * agree.
- */
-function toOption(doc: Document, el: Element, label: string, counter: { n: number }): FieldOption {
-  const id = assignId(doc, el, counter);
-  return { label, selector: selectorFor(el, id) };
-}
-
 /** Resolves an ARIA-widget's options: `aria-controls`/`aria-owns`'s `role="option"` children, if in the DOM. */
 function resolveComboboxOptions(
   doc: Document,
   el: Element,
-  counter: { n: number },
+  tagger: FieldTagger,
 ): FieldOption[] | undefined {
   const controlsId = el.getAttribute('aria-controls') ?? el.getAttribute('aria-owns');
   if (!controlsId) return undefined;
@@ -199,8 +233,8 @@ function resolveComboboxOptions(
 
   const options = Array.from(listbox.querySelectorAll('[role="option"]'))
     .map((opt) => ({ el: opt, label: opt.textContent?.trim() ?? '' }))
-    .filter((opt) => opt.label)
-    .map((opt) => toOption(doc, opt.el, opt.label, counter));
+    .filter((opt) => opt.label !== '')
+    .map((opt) => tagger.option(opt.el, opt.label));
 
   return options.length > 0 ? options : undefined;
 }
@@ -211,16 +245,12 @@ function resolveComboboxOptions(
  * by matching option text at fill time — the exact fragility this module avoids everywhere else.
  * The empty-valued leading placeholder ("Select…") is skipped: it isn't an answer.
  */
-function resolveSelectOptions(
-  doc: Document,
-  el: Element,
-  counter: { n: number },
-): FieldOption[] | undefined {
+function resolveSelectOptions(el: Element, tagger: FieldTagger): FieldOption[] | undefined {
   if (!(el instanceof HTMLSelectElement)) return undefined;
 
   const options = Array.from(el.options)
-    .filter((opt) => opt.value !== '' && opt.text.trim())
-    .map((opt) => toOption(doc, opt, opt.text.trim(), counter));
+    .filter((opt) => opt.value !== '' && opt.text.trim() !== '')
+    .map((opt) => tagger.option(opt, opt.text.trim()));
 
   return options.length > 0 ? options : undefined;
 }
@@ -232,23 +262,20 @@ function resolveSelectOptions(
  * no `QUESTION_SHAPE` gate. `options` is left undefined when the widget's option list isn't in
  * the DOM yet (e.g. portal-mounted only once opened) rather than dropping the field.
  */
-function detectComboboxes(doc: Document, counter: { n: number }): DetectedField[] {
-  const comboboxes = Array.from(doc.querySelectorAll('[role="combobox"]'));
-
-  return comboboxes.map((el) => {
+function detectComboboxes(doc: Document, tagger: FieldTagger): DetectedField[] {
+  return Array.from(doc.querySelectorAll('[role="combobox"]')).map((el) => {
     const signal = getSignal(doc, el);
-    const id = assignId(doc, el, counter);
-    const match = KEYWORD_RULES.find(([, pattern]) => pattern.test(signal));
+    const { id, selector } = tagger.locate(el);
 
     return {
       id,
       label: signal,
       inputType: 'combobox',
-      selector: selectorFor(el, id),
-      category: match?.[0] ?? 'question',
+      selector,
+      category: categoryFor(KEYWORD_RULES, signal) ?? 'question',
       required: getRequired(doc, el),
-      elementRole: 'combobox' as ElementRole,
-      options: resolveComboboxOptions(doc, el, counter),
+      elementRole: 'combobox',
+      options: resolveComboboxOptions(doc, el, tagger),
     };
   });
 }
@@ -302,16 +329,14 @@ function groupSignal(doc: Document, container: Element): string {
 
   // The question as a plain element rendered just before the choices — either just outside the
   // container, or as its own first child (the shape a group with no grouping element takes).
-  const siblings: Element[] = [];
-  for (
-    let sibling = container.previousElementSibling;
-    sibling;
-    sibling = sibling.previousElementSibling
-  ) {
-    siblings.push(sibling);
-  }
+  return labelishText([...precedingSiblings(container), ...container.children]) ?? '';
+}
 
-  return labelishText([...siblings, ...container.children]) ?? '';
+/** `el`'s previous siblings, nearest first. */
+function* precedingSiblings(el: Element): Generator<Element> {
+  for (let sibling = el.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+    yield sibling;
+  }
 }
 
 /** Elements that hold a control are somebody else's label, not this group's question. */
@@ -333,7 +358,7 @@ function toGroupField(
   doc: Document,
   container: Element,
   choices: Element[],
-  counter: { n: number },
+  tagger: FieldTagger,
 ): DetectedField | null {
   if (choices.length === 0) return null;
 
@@ -343,13 +368,13 @@ function toGroupField(
       choice.getAttribute('role') === 'checkbox',
   );
   const elementRole: ElementRole = isCheckbox ? 'checkboxgroup' : 'radiogroup';
-  const id = assignId(doc, container, counter);
+  const { id, selector } = tagger.locate(container);
 
   return {
     id,
     label: groupSignal(doc, container),
     inputType: elementRole,
-    selector: selectorFor(container, id),
+    selector,
     category: 'question',
     required: getRequired(doc, container),
     elementRole,
@@ -357,7 +382,7 @@ function toGroupField(
     // derivation. `choiceLabel` covers ATS markup where an option's label is a `for=id` sibling
     // rather than a wrapper (e.g. Ashby's radio groups), falling back to the input's own `value`
     // only when no label can be found at all.
-    options: choices.map((choice) => toOption(doc, choice, choiceLabel(doc, choice), counter)),
+    options: choices.map((choice) => tagger.option(choice, choiceLabel(doc, choice))),
   };
 }
 
@@ -379,7 +404,7 @@ function toGroupField(
  */
 function detectChoiceGroups(
   doc: Document,
-  counter: { n: number },
+  tagger: FieldTagger,
 ): { fields: DetectedField[]; grouped: Set<Element> } {
   const grouped = new Set<Element>();
   const fields: DetectedField[] = [];
@@ -393,7 +418,7 @@ function detectChoiceGroups(
     // A nested group (a `role="radiogroup"` inside a `<fieldset>`) belongs to whichever container
     // claimed its choices first — the outer one — rather than being reported twice.
     const choices = choicesIn(container).filter((choice) => !claimed.has(choice));
-    const field = toGroupField(doc, container, choices, counter);
+    const field = toGroupField(doc, container, choices, tagger);
     if (!field) continue;
 
     for (const choice of choices) {
@@ -407,7 +432,9 @@ function detectChoiceGroups(
   const byName = new Map<string, HTMLInputElement[]>();
   for (const input of doc.querySelectorAll<HTMLInputElement>(NATIVE_CHOICE_SELECTOR)) {
     if (claimed.has(input) || !input.name) continue;
-    byName.set(input.name, [...(byName.get(input.name) ?? []), input]);
+    const group = byName.get(input.name);
+    if (group) group.push(input);
+    else byName.set(input.name, [input]);
   }
 
   for (const inputs of byName.values()) {
@@ -417,10 +444,10 @@ function detectChoiceGroups(
     const container = commonAncestor(inputs);
     if (!container) continue;
 
-    const field = toGroupField(doc, container, inputs, counter);
+    const field = toGroupField(doc, container, inputs, tagger);
     if (!field) continue;
 
-    inputs.forEach((input) => grouped.add(input));
+    for (const input of inputs) grouped.add(input);
     fields.push(field);
   }
 
@@ -429,50 +456,56 @@ function detectChoiceGroups(
 
 /** The nearest element containing all of `elements` — the group's implicit container. */
 function commonAncestor(elements: Element[]): Element | null {
-  let ancestor: Element | null = elements[0]?.parentElement ?? null;
-  while (ancestor && !elements.every((el) => ancestor?.contains(el))) {
-    ancestor = ancestor.parentElement;
+  for (
+    let ancestor = elements[0]?.parentElement ?? null;
+    ancestor;
+    ancestor = ancestor.parentElement
+  ) {
+    const candidate = ancestor;
+    if (elements.every((el) => candidate.contains(el))) return candidate;
   }
-  return ancestor;
+  return null;
 }
+
+/** Input types that carry no candidate-supplied data, so they're never a {@link DetectedField}. */
+const NON_DATA_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image']);
 
 /**
  * Finds every candidate-fillable field on the page and classifies it into a {@link DetectedField},
  * using each field's `<label for>` text (or aria-label/placeholder/name/id fallback) as the
- * classification signal. See `docs/architecture-plan.md`'s "Generic field detection" section.
+ * classification signal.
+ *
+ * Three passes, in this order because each narrows what the next may claim: choice groups first
+ * (one field per question, consuming their own native inputs), then the native scan over what's
+ * left, then `role="combobox"` widgets the native query cannot see.
  */
-const NON_DATA_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image']);
-
 export function detectFields(doc: Document): DetectedField[] {
-  const counter = { n: 0 };
-  const { fields: groupFields, grouped } = detectChoiceGroups(doc, counter);
+  const tagger = createFieldTagger(doc);
+  const { fields: groupFields, grouped } = detectChoiceGroups(doc, tagger);
 
-  const elements = Array.from(doc.querySelectorAll('input, textarea, select')) as FieldElement[];
-  const dataElements = elements.filter(
-    (el) =>
-      !NON_DATA_INPUT_TYPES.has((el as HTMLInputElement).type) &&
-      !grouped.has(el) &&
-      el.getAttribute('role') !== 'combobox',
-  );
+  const nativeFields = Array.from(doc.querySelectorAll<FieldElement>('input, textarea, select'))
+    .filter(
+      (el) =>
+        !NON_DATA_INPUT_TYPES.has(el.type) &&
+        !grouped.has(el) &&
+        el.getAttribute('role') !== 'combobox',
+    )
+    .map((el): DetectedField => {
+      const signal = getSignal(doc, el);
+      const inputType = el.type;
+      const { id, selector } = tagger.locate(el);
 
-  const nativeFields: DetectedField[] = dataElements.map((el) => {
-    const signal = getSignal(doc, el);
-    const id = assignId(doc, el, counter);
-    const inputType = (el as HTMLInputElement).type ?? el.tagName.toLowerCase();
+      return {
+        id,
+        label: signal,
+        inputType,
+        selector,
+        category: classify(signal, inputType),
+        required: getRequired(doc, el),
+        elementRole: 'native',
+        options: resolveSelectOptions(el, tagger),
+      };
+    });
 
-    return {
-      id,
-      label: signal,
-      inputType,
-      selector: selectorFor(el, id),
-      category: classify(signal, inputType),
-      required: getRequired(doc, el),
-      elementRole: 'native' as ElementRole,
-      options: resolveSelectOptions(doc, el, counter),
-    };
-  });
-
-  const comboboxFields = detectComboboxes(doc, counter);
-
-  return [...nativeFields, ...comboboxFields, ...groupFields];
+  return [...nativeFields, ...detectComboboxes(doc, tagger), ...groupFields];
 }

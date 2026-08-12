@@ -59,11 +59,9 @@ describe('handleTypedMessage', () => {
   });
 
   it('stores a REPORT_JOB_PAGE message keyed by the sending tab', async () => {
-    handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', fields: [] },
-      { tab: { id: 7 } } as chrome.runtime.MessageSender,
-      vi.fn(),
-    );
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: [] }, {
+      tab: { id: 7 },
+    } as chrome.runtime.MessageSender);
 
     await vi.waitFor(async () =>
       expect(await getDetectedPage(7)).toEqual({
@@ -88,16 +86,14 @@ describe('handleTypedMessage', () => {
     ];
 
     // The iframe holding the real form reports first, then the host page reports its stray input.
-    handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', fields: formFields },
-      { tab: { id: 7 }, frameId: 4 } as chrome.runtime.MessageSender,
-      vi.fn(),
-    );
-    handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', fields: [hostField] },
-      { tab: { id: 7 }, frameId: 0 } as chrome.runtime.MessageSender,
-      vi.fn(),
-    );
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: formFields }, {
+      tab: { id: 7 },
+      frameId: 4,
+    } as chrome.runtime.MessageSender);
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: [hostField] }, {
+      tab: { id: 7 },
+      frameId: 0,
+    } as chrome.runtime.MessageSender);
 
     await vi.waitFor(async () =>
       // The frame with the most fields wins — the iframe holding the real form.
@@ -106,11 +102,9 @@ describe('handleTypedMessage', () => {
   });
 
   it('stores REPORT_JOB_PAGE data even when the sending tab has no url (never invokes the API oracle)', () => {
-    handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', fields: [] },
-      { tab: { id: 9 } } as chrome.runtime.MessageSender,
-      vi.fn(),
-    );
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: [] }, {
+      tab: { id: 9 },
+    } as chrome.runtime.MessageSender);
 
     expect(mockEnrichWithApiOracle).not.toHaveBeenCalled();
   });
@@ -133,13 +127,9 @@ describe('handleTypedMessage', () => {
     ];
     mockEnrichWithApiOracle.mockResolvedValue(enrichedFields);
 
-    handleTypedMessage(
-      { type: 'REPORT_JOB_PAGE', fields: [] },
-      {
-        tab: { id: 7, url: 'https://job-boards.greenhouse.io/greenhouse/jobs/8080711' },
-      } as chrome.runtime.MessageSender,
-      vi.fn(),
-    );
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: [] }, {
+      tab: { id: 7, url: 'https://job-boards.greenhouse.io/greenhouse/jobs/8080711' },
+    } as chrome.runtime.MessageSender);
 
     await vi.waitFor(() =>
       expect(mockEnrichWithApiOracle).toHaveBeenCalledWith(
@@ -156,9 +146,7 @@ describe('handleTypedMessage', () => {
   });
 
   it("starts the Analysis Step in the background without holding the message channel open, so a panel that closes right after sending it doesn't block the run", () => {
-    const sendResponse = vi.fn();
-
-    const keepsChannelOpen = handleTypedMessage(
+    const returned = handleTypedMessage(
       {
         type: 'START_ANALYSIS',
         tabId: 7,
@@ -167,7 +155,6 @@ describe('handleTypedMessage', () => {
         jobDescription: 'Senior Engineer at Acme...',
       },
       {} as chrome.runtime.MessageSender,
-      sendResponse,
     );
 
     expect(mockRunAnalysis).toHaveBeenCalledWith(
@@ -176,19 +163,18 @@ describe('handleTypedMessage', () => {
       profile,
       'Senior Engineer at Acme...',
     );
-    expect(keepsChannelOpen).toBe(false);
+    // Chrome holds the channel open only for a listener that returns `true`. Returning nothing at
+    // all is what makes that impossible to get wrong here.
+    expect(returned).toBeUndefined();
   });
 
   it('starts the Fill Step in the background without holding the message channel open', () => {
-    const sendResponse = vi.fn();
-
-    const keepsChannelOpen = handleTypedMessage(
+    const returned = handleTypedMessage(
       { type: 'START_FILL', tabId: 7, profile },
       {} as chrome.runtime.MessageSender,
-      sendResponse,
     );
 
     expect(mockRunFill).toHaveBeenCalledWith(7, profile);
-    expect(keepsChannelOpen).toBe(false);
+    expect(returned).toBeUndefined();
   });
 });

@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev:backend": "pnpm --filter backend dev",
+    "dev:backend:debug": "pnpm --filter backend dev:debug",
     "dev:extension": "pnpm --filter extension dev",
     "build:extension": "pnpm --filter extension build",
     "db:generate": "pnpm --filter backend db:generate",

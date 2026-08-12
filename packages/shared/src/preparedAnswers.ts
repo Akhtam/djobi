@@ -16,8 +16,9 @@
  * Lives in `@djobi/shared` because both sides need it: the extension splits the questions before
  * calling the backend, and the backend puts `knownAnswer` into the prompt.
  */
-import { matchScreeningTopic, resolveAnswerOption, type CustomAnswer } from './screeningAnswers.js';
-import { normalizeLabel } from './optionLabel.js';
+import { matchScreeningTopic, type CustomAnswer } from './screeningAnswers.js';
+import { matchByContainment, matchPreparedAnswerToOption } from './labelMatching.js';
+import type { PendingQuestion, QuestionForModel } from './wire.js';
 
 /**
  * The prepared-answer half of a {@link Profile} — all this module needs of one.
@@ -34,50 +35,19 @@ export interface PreparedAnswerSource {
   customAnswers?: CustomAnswer[];
 }
 
-/** A question as detected on the page, before it's known who will answer it. */
-export interface PendingQuestion {
-  fieldId: string;
-  question: string;
-  options?: string[];
-}
-
-/** A question the profile already answers outright, with the exact text to fill in. */
+/**
+ * A question the profile already answers outright, with the exact text to fill in.
+ *
+ * Unlike {@link QuestionForModel} this never crosses to the backend — it's filled straight into the
+ * page — so it lives here rather than in `wire.ts`.
+ */
 export interface ResolvedQuestion extends PendingQuestion {
   answer: string;
-}
-
-/** A question for the model, carrying whatever the profile does know about it. */
-export interface QuestionForModel extends PendingQuestion {
-  /** A fact the answer must honor — present only when the profile knows it but couldn't map it. */
-  knownAnswer?: string;
 }
 
 export interface SplitQuestions {
   resolved: ResolvedQuestion[];
   forModel: QuestionForModel[];
-}
-
-/**
- * A custom prepared answer for `question`, matched by normalized text containment in either
- * direction — a stored "Are you willing to relocate?" should answer a form's "Are you willing to
- * relocate for this role?" and vice versa.
- *
- * Ambiguity means no match, as everywhere else here: if two stored questions both look like this
- * one, which was meant is exactly what isn't known.
- */
-function matchCustomAnswer(
-  customAnswers: CustomAnswer[],
-  question: string,
-): CustomAnswer | undefined {
-  const target = normalizeLabel(question);
-  if (!target) return undefined;
-
-  const matches = customAnswers.filter((candidate) => {
-    const stored = normalizeLabel(candidate.question);
-    return stored !== '' && (stored.includes(target) || target.includes(stored));
-  });
-
-  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** What the profile knows about `question`, from a screening topic first, then a custom answer. */
@@ -89,7 +59,8 @@ export function preparedAnswerFor(
   const fromTopic = topic ? profile.screeningAnswers?.[topic] : undefined;
   if (fromTopic) return fromTopic;
 
-  return matchCustomAnswer(profile.customAnswers ?? [], question)?.answer;
+  return matchByContainment(profile.customAnswers ?? [], (stored) => stored.question, question)
+    ?.answer;
 }
 
 /**
@@ -119,7 +90,7 @@ export function splitPreparedQuestions(
       continue;
     }
 
-    const option = resolveAnswerOption(question.options, prepared);
+    const option = matchPreparedAnswerToOption(question.options, prepared);
     if (option) resolved.push({ ...question, answer: option });
     else forModel.push({ ...question, knownAnswer: prepared });
   }

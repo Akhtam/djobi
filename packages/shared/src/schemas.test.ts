@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ApplicationSchema,
   ApplicationStatusSchema,
-  DetectedFieldSchema,
   EducationSchema,
-  FieldCategorySchema,
   JobInfoSchema,
   NewApplicationSchema,
   ProfileSchema,
@@ -181,109 +179,6 @@ describe('TailoredResumeSchema', () => {
   it('rejects a tailored resume missing workExperience', () => {
     const { workExperience: _workExperience, ...withoutExperience } = validTailoredResume;
     expect(TailoredResumeSchema.safeParse(withoutExperience).success).toBe(false);
-  });
-});
-
-describe('FieldCategorySchema', () => {
-  it('accepts every documented category', () => {
-    const categories = [
-      'first_name',
-      'last_name',
-      'full_name',
-      'email',
-      'phone',
-      'location',
-      'linkedin_url',
-      'portfolio_url',
-      'github_url',
-      'resume_upload',
-      'cover_letter_upload',
-      'cover_letter_text',
-      'question',
-      'unknown',
-    ];
-    for (const category of categories) {
-      expect(FieldCategorySchema.safeParse(category).success).toBe(true);
-    }
-  });
-
-  it('rejects an unrecognized category', () => {
-    expect(FieldCategorySchema.safeParse('salary_expectation').success).toBe(false);
-  });
-});
-
-describe('DetectedFieldSchema', () => {
-  const validField = {
-    id: 'field-1',
-    label: 'Email address',
-    inputType: 'input[type=email]',
-    selector: '#email',
-    category: 'email' as const,
-  };
-
-  it('accepts a valid detected field', () => {
-    expect(DetectedFieldSchema.safeParse(validField).success).toBe(true);
-  });
-
-  it('rejects an invalid category', () => {
-    expect(
-      DetectedFieldSchema.safeParse({ ...validField, category: 'not_a_category' }).success,
-    ).toBe(false);
-  });
-
-  it('defaults required to false and elementRole to native when omitted', () => {
-    const result = DetectedFieldSchema.safeParse(validField);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.required).toBe(false);
-      expect(result.data.elementRole).toBe('native');
-      expect(result.data.options).toBeUndefined();
-    }
-  });
-
-  it('accepts a required combobox field with options', () => {
-    const result = DetectedFieldSchema.safeParse({
-      ...validField,
-      category: 'question',
-      required: true,
-      elementRole: 'combobox',
-      options: [
-        { label: 'Yes', selector: '#opt-yes' },
-        { label: 'No', selector: '#opt-no' },
-      ],
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.options).toEqual([
-        { label: 'Yes', selector: '#opt-yes' },
-        { label: 'No', selector: '#opt-no' },
-      ]);
-    }
-  });
-
-  it("defaults an option's selector to null, for a choice known only from an ATS API schema", () => {
-    const result = DetectedFieldSchema.safeParse({
-      ...validField,
-      elementRole: 'combobox',
-      options: [{ label: 'Yes' }],
-    });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.options).toEqual([{ label: 'Yes', selector: null }]);
-    }
-  });
-
-  it('rejects a bare string option, so label text can never be mistaken for a locatable choice', () => {
-    expect(DetectedFieldSchema.safeParse({ ...validField, options: ['Yes', 'No'] }).success).toBe(
-      false,
-    );
-  });
-
-  it('rejects an invalid elementRole', () => {
-    expect(DetectedFieldSchema.safeParse({ ...validField, elementRole: 'dropdown' }).success).toBe(
-      false,
-    );
   });
 });
 

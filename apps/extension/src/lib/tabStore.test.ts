@@ -11,6 +11,7 @@ import {
   registerTabStateCleanup,
   reportDetectedPage,
   setPipelineRun,
+  storageKey,
   type PipelineRunState,
 } from './tabStore';
 
@@ -187,6 +188,79 @@ describe('tabStore', () => {
 
       expect((await getDetectedPage(1))?.fields).toHaveLength(1);
       expect(await getPipelineRun(1)).toEqual(run);
+    });
+  });
+
+  /**
+   * `chrome.storage.session` outlives an extension reload, so an entry can have been written by a
+   * different build than the one reading it. These pin the parse that makes that survivable.
+   */
+  describe('surviving a version skew across an extension reload', () => {
+    /** Writes `entry` straight into storage, bypassing the store's own writers. */
+    async function seedRaw(tabId: number, entry: unknown) {
+      await chrome.storage.session.set({ [storageKey(tabId)]: entry });
+    }
+
+    it('applies schema defaults to a field written before `required` and `elementRole` existed', async () => {
+      stubChrome();
+      await seedRaw(7, {
+        frames: {
+          '0': {
+            revision: 1,
+            data: {
+              fields: [
+                {
+                  id: 'f1',
+                  label: 'Email',
+                  inputType: 'email',
+                  selector: '#f1',
+                  category: 'email',
+                },
+              ],
+            },
+          },
+        },
+        run: null,
+      });
+
+      expect((await getDetectedPage(7))?.fields[0]).toMatchObject({
+        id: 'f1',
+        required: false,
+        elementRole: 'native',
+      });
+    });
+
+    it('drops a field that no longer fits the schema, keeping the rest of the form', async () => {
+      stubChrome();
+      await seedRaw(7, {
+        frames: {
+          '0': {
+            revision: 1,
+            data: {
+              fields: [
+                { id: 'stale', category: 'a-category-this-build-does-not-have' },
+                {
+                  id: 'f2',
+                  label: 'Email',
+                  inputType: 'email',
+                  selector: '#f2',
+                  category: 'email',
+                },
+              ],
+            },
+          },
+        },
+        run: null,
+      });
+
+      expect((await getDetectedPage(7))?.fields.map((f) => f.id)).toEqual(['f2']);
+    });
+
+    it('tolerates an entry whose frames key is missing entirely', async () => {
+      stubChrome();
+      await seedRaw(7, { run: null });
+
+      expect(await getDetectedPage(7)).toBeNull();
     });
   });
 

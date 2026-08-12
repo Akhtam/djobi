@@ -95,18 +95,48 @@ describe('usePipelineRun', () => {
     expect(result.current.run).toMatchObject({ status: 'filled', filledFieldCount: 3 });
   });
 
-  it('bumps syncedAt on each store update, so an optimistic status knows to stand down even when the run returns to the status it already had', async () => {
-    const { writeFromBackground } = stubChrome();
+  it('shows an optimistic status immediately, so a click gets feedback before the background answers', async () => {
+    stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
     await waitFor(() => expect(result.current.hydrated).toBe(true));
-    const before = result.current.syncedAt;
 
+    act(() => result.current.begin('filling'));
+
+    expect(result.current.status).toBe('filling');
+  });
+
+  it('stands the optimistic status down once the store speaks, even when the run returns to the status it already had', async () => {
+    // The case a status comparison cannot handle: a second Fill Step ends on `filled` having
+    // started from `filled`, so the value alone never changes and an optimistic `filling` would
+    // stand forever. This is why the hook watches for the update rather than for a different value.
+    const { writeFromBackground } = stubChrome();
     const filled = { ...run, status: 'filled' as const, filledFieldCount: 3 };
-    act(() => writeFromBackground(1, filled));
-    act(() => writeFromBackground(1, filled)); // identical status — a second Fill Step
+    await setPipelineRun(1, filled);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
 
-    expect(result.current.syncedAt).toBe(before + 2);
+    act(() => result.current.begin('filling'));
+    expect(result.current.status).toBe('filling');
+
+    act(() => writeFromBackground(1, filled));
+
+    expect(result.current.status).toBe('filled');
+  });
+
+  it('drops a standing optimistic status when the tracked tab changes', async () => {
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result, rerender } = renderHook(({ tabId }) => usePipelineRun(tabId), {
+      initialProps: { tabId: 1 },
+    });
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    act(() => result.current.begin('filling'));
+
+    rerender({ tabId: 2 });
+
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    expect(result.current.status).toBeNull();
   });
 
   it('applies an edit locally at once, so a controlled textarea never lags a storage round-trip', async () => {

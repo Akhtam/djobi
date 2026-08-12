@@ -1,26 +1,34 @@
 # ATS platform detection — research for generalizing field detection
 
+> **Status: research current, strategy implemented (2026-08-12).** The per-platform sections below
+> are live-verified primary evidence and still stand — that's what this doc is for. The
+> "Detection strategy" section at the end has since been built; it now records what landed and
+> where, rather than what to do.
+>
+> One correction to the framing below: the ATS **host allowlist described in this doc no longer
+> exists**. `lib/atsHosts.ts` was deleted. `manifest.ts` now matches `http(s)://*/*` with
+> `all_frames: true`, and whether a page is an application form is decided at runtime by the
+> page-shape heuristic in `content/detect.ts` — because ATS platforms let companies white-label
+> their job board onto their own domain, so a host list can never be complete. Where a section
+> below says a platform is reached "via the allowlist", read: reached like any other page.
+
 ## Why this doc exists
 
-We diagnosed a concrete bug: on Greenhouse (`job-boards.greenhouse.io`), `detectFields.ts` only
-queries `input, textarea, select`, then classifies each element's label/aria-label/placeholder/name
-text against a fixed `KEYWORD_RULES` / `FILE_KEYWORD_RULES` list (`packages/shared/src/schemas.ts`'s
-`FieldCategorySchema`). Anything unmatched only becomes a fillable `'question'` if it's a
-`<textarea>` with question-shaped text. Live inspection of a real Greenhouse job page (below)
-confirms the root cause: Greenhouse's required screening questions (work authorization,
-sponsorship, "how did you hear about us", location) are rendered as **react-select comboboxes**
-— `<input role="combobox">` wrapped in `div.select__*` markup — not `<select>` elements, so they
-are invisible to `detectFields.ts`'s query entirely. Multi-choice questions use native
-`<fieldset>`/`<input type="checkbox">` groups, also unhandled. `attachResumeFile` in `fillForm.ts`
-shadows a native file input's `files` property and fires `change`, which works for Greenhouse's
-default embed (confirmed native, non-dropzone `<input type="file">`) but may not for platforms
-with real drag/drop dropzone widgets.
+It was written to diagnose a concrete bug (since fixed): on Greenhouse
+(`job-boards.greenhouse.io`), `detectFields.ts` only queried `input, textarea, select`, so
+Greenhouse's required screening questions — work authorization, sponsorship, "how did you hear
+about us", location — were invisible to it entirely, because they render as **react-select
+comboboxes** (`<input role="combobox">` inside `div.select__*` markup), not `<select>` elements.
+Multi-choice questions use native `<fieldset>`/`<input type="checkbox">` groups, also unhandled at
+the time.
 
-This doc feeds a decision: **how to extend `detectFields.ts`/`fillForm.ts`/`DetectedFieldSchema`
-per-platform**, prioritized by how common each ATS is and how badly detection currently fails on
-it. Platforms covered: Greenhouse, Lever, Workday, iCIMS, Ashby, SmartRecruiters, Workable,
-BambooHR — matches the existing `ATS_DOMAINS` allowlist in
-`apps/extension/src/lib/atsHosts.ts`.
+Answering that question meant establishing, per platform, how the form is actually rendered, how
+required-ness is signalled, how labels are associated, how file upload works, and whether a public
+API exposes the form schema. **That evidence is what this doc is for, and it is what remains
+useful** — it was gathered by live `curl` and real API calls, and re-acquiring it is expensive.
+
+Platforms covered: Greenhouse, Lever, Workday, iCIMS, Ashby, SmartRecruiters, Workable, BambooHR —
+the eight djobi was researched against.
 
 ---
 
@@ -324,136 +332,49 @@ candidate-facing form fields — DOM scraping only, and needs live verification 
 
 ---
 
-## Detection strategy
+## Detection strategy — what landed
 
-Concrete, incremental extensions to the actual files in this repo — not a rewrite.
+This section used to propose seven extension points (a–g). All of them were built; it now records
+where each one lives, so the research above stays useful without reading as an open to-do list.
 
-### Priority order
+| Proposed                                                                             | Landed as                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (a) `required` on `DetectedField`, and an element-role axis separate from category   | `DetectedFieldSchema.required` and `ElementRoleSchema` (`'native' \| 'combobox' \| 'radiogroup' \| 'checkboxgroup'`) in `packages/shared/src/schemas.ts` — the enum shipped as proposed                       |
+| (b) second scan pass for comboboxes and radio/checkbox fieldsets                     | `content/detectFields.ts`. A choice group is **one** Detected Field with its choices as `options`, not N fields                                                                                               |
+| (c) `getSignal()` label resolution: implicit-wrap `<label>`, `aria-labelledby`       | `content/detectFields.ts`                                                                                                                                                                                     |
+| (d) required-signal helper (`required` / `aria-required` / ancestor / asterisk span) | `content/detectFields.ts`                                                                                                                                                                                     |
+| (e) per-platform API oracle tried alongside DOM scraping                             | `background/apiDetectors.ts` — four oracles behind one `AtsOracle` interface. Confirms the doc's conclusion: the API supplies _classification, required and options_; the DOM stays the _targeting_ mechanism |
+| (f) real `DataTransfer` for the file-upload drop path                                | `content/fillForm.ts`'s `attachResumeFile`, with the old shim kept only as a jsdom fallback                                                                                                                   |
+| (g) `all_frames: true`                                                               | `manifest.ts` — needed more than anticipated, since an ATS form is usually in an iframe on a company's own careers page                                                                                       |
 
-1. **Greenhouse** — highest priority: common, and we have concrete live-DOM evidence the current
-   pipeline fails on it (react-select comboboxes + checkbox fieldsets invisible to `input,
-textarea, select`). Also the platform with the cleanest public API (`?questions=true`).
-2. **Lever** — common, DOM-verified, and unlike Greenhouse, `<select>`/`<input type=radio>` _are_
-   already in-scope for `detectFields.ts`'s query — but `classify()`'s keyword list won't fire
-   correctly on Lever's `application-label` div text since it's not `<label for>`-bound, so the
-   `getSignal()` fallback chain currently returns `''` for wrapped/detached labels. Fixing label
-   resolution alone recovers most of Lever.
-3. **Workday** — common, confirmed pure SPA with zero static markup; needs live verification
-   before any selector work, but is worth prioritizing given prevalence once verified.
-4. **iCIMS** — common, confirmed Next.js SPA + iframe-capable; needs live verification of the
-   actual apply-form DOM.
-5. **Ashby** — has the best public API (`applicationFormDefinition`), so it's cheap to support
-   _well_ even though raw DOM is a SPA shell — API-first, not DOM-first.
-6. **SmartRecruiters / Workable** — both API-first platforms with per-customer DOM variance; same
-   playbook as Ashby (prefer API, DOM as fallback), lower priority since less commonly encountered.
-7. **BambooHR** — lowest priority of the eight: no public form-schema API, and it's an embedded
-   widget on third-party pages, meaning host/iframe targeting is itself uncertain without live
-   verification.
+Two things the research did not anticipate, learned from live use and worth carrying into any
+further platform work:
 
-### Concrete extension points
+- **Setting `.value` is not enough on a React-controlled form.** React installs an instance-level
+  `value` accessor that keeps its own cache in lockstep with direct assignment, so its change
+  detection sees nothing and the value is reverted on the next render. Writes must go through the
+  _prototype's_ setter, and the fill must drive the full keystroke sequence
+  (`focus` → `input` → `change` → `blur`) — form libraries commonly commit to the form model on
+  blur, so a fill that never blurs leaves the DOM looking right and the model empty.
+- **A fill must be verified, not assumed.** `fillForm` re-reads each field after a settle delay and
+  reports only the ids that verifiably still hold their value; the Fill Step's counts come from
+  that reply rather than from the values it sent.
 
-**a) `DetectedFieldSchema` (`packages/shared/src/schemas.ts`)** — add:
+### Platform priority
 
-- `required: z.boolean()` — every platform checked so far signals required via _some_ combination
-  of `required`/`aria-required="true"`/a visual asterisk/`data-required`; capturing it lets the
-  backend prioritize which `question` fields absolutely need an answer vs. can be skipped, and
-  lets the popup warn before submit.
-- Extend `FieldCategorySchema` with multi-choice-aware categories, or (simpler, less schema churn)
-  add an `elementRole: z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup'])` so
-  `fillForm.ts` knows _how_ to fill a field, independent of its semantic `category`.
+Unchanged from the original research, and still the right order:
 
-**b) `detectFields.ts` element scan** — the current `doc.querySelectorAll('input, textarea,
-select')` misses every pattern seen on Greenhouse. Add a second pass:
-
-```ts
-doc.querySelectorAll(
-  '[role="combobox"], [role="listbox"], fieldset[role], fieldset:has(input[type="radio"],input[type="checkbox"])',
-);
-```
-
-For `role="combobox"` elements (react-select-style, confirmed on Greenhouse): the _displayed_
-value isn't in `.value` the way a native input is — react-select renders selected text into a
-sibling `select__single-value` div and keeps the actual answer in React state, submitted via a
-hidden hidden-input pattern (Greenhouse: a `remix-css-*-requiredInput`) or a same-`name` hidden
-field. Filling these requires **simulating the widget's real interaction** (click to open →
-click/keyboard-select the matching `role="option"` inside the portal at
-`#react-portal-mount-point`, not just setting `.value`) rather than the current `el.value = ...;
-dispatchEvent('input')` approach in `fillForm.ts` — flag this as the biggest `fillForm.ts` change
-needed, not just a `detectFields.ts` one.
-
-For `fieldset`-wrapped radio/checkbox groups (confirmed on both Greenhouse and Lever): treat the
-whole `fieldset` as one `DetectedField` whose `selector` resolves to the group, with the group's
-`<legend>`/detached label div as the signal text, and store each `<input>`'s `value` as an option
-— this needs a new `DetectedField` shape (a `fields: string[]` sub-array or similar) rather than
-one field = one element, since one question maps to N radio/checkbox inputs.
-
-**c) `getSignal()` label resolution** — currently only checks `label[for={id}]` then
-aria-label/placeholder/name/id. Add, in order:
-
-1. Nearest ancestor `<label>` with no `for` (implicit wrap — confirmed pattern on Lever's
-   `application-label` and Greenhouse's checkbox `<legend>`).
-2. `aria-labelledby` resolution (confirmed pattern on Greenhouse's comboboxes and file-upload
-   group) — split on whitespace, concatenate each referenced element's `textContent`.
-3. A sibling/ancestor text node containing a `*`/`required`-styled span near the field, purely for
-   the _required_ signal (not the label signal) — feeds the new `required` field in (a).
-
-**d) Required-field signal extraction** — a small helper, checked in this priority order (all
-confirmed as real patterns across Greenhouse/Lever):
-
-```ts
-el.required ||
-  el.getAttribute('aria-required') === 'true' ||
-  el.closest('[aria-required="true"]') != null ||
-  !!nearestLabelOrLegend(el)?.querySelector('.required, [class*="required"]');
-```
-
-**e) Per-platform API-based detection as a preferred path** — add a small `apiDetectors` module
-keyed by hostname, tried _before_ DOM scraping, falling back to DOM scraping if the API call fails
-or the current page isn't identifiable as a specific job (e.g. board token / posting ID not
-extractable from the URL):
-
-- **Greenhouse**: `GET boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?questions=true`
-  — board token is the first path segment after the host on `job-boards.greenhouse.io/{board_token}/jobs/{job_id}`
-  (verified against the live URL used in this research).
-- **Ashby**: `jobPosting.info` → `applicationFormDefinition` (richest schema of any platform
-  checked) — needs Ashby's job-board API key/org identifier; check
-  `developers.ashbyhq.com/docs/public-job-posting-api` for auth requirements before implementing.
-- **SmartRecruiters**: `GET /postings/{uuid}/configuration`.
-- **Workable**: `GET {subdomain}.workable.com/spi/v3/jobs/{shortcode}/application_form` — verify
-  the actual shape live before relying on it (this session's fetch of the reference page 404'd).
-- **Lever, Workday, iCIMS, BambooHR**: no confirmed public form-schema API — DOM-only.
-
-Even where an API exists, the API gives _schema_, not the _live DOM element_ to fill — still need
-to map each API `question`/`field` back to the actual rendered input (by `name`/`id`, confirmed to
-match 1:1 on Greenhouse) so `fillForm.ts` has something to target. Treat the API as an oracle for
-_classification/required/options_, DOM scraping as the _targeting_ mechanism, for platforms where
-both exist.
-
-**f) `fillForm.ts` — drag/drop fallback for file uploads.** Current `attachResumeFile` shadows
-`.files` and fires `change` only. Confirmed sufficient for Greenhouse's default embed (plain
-hidden `<input type="file">`, no drag listeners found). Lever's `upload-dragging` CSS class hints
-its widget _may_ listen for `dragenter`/`dragleave`/`drop` rather than (or in addition to)
-`change` — needs live verification, but cheap to add defensively:
-
-```ts
-const dt = new DataTransfer();
-dt.items.add(file);
-for (const type of ['dragenter', 'dragover', 'drop']) {
-  dropzone.dispatchEvent(new DragEvent(type, { bubbles: true, dataTransfer: dt }));
-}
-```
-
-dispatched at the _dropzone wrapper_ element (nearest ancestor with a class/attribute suggesting
-drop-target styling, e.g. containing "drop"/"dragging" in its class list) in addition to the
-existing `change`-event technique on the native input, so both listener styles are covered without
-knowing in advance which one a given platform's JS actually reads.
-
-**g) Manifest / iframe reach (`apps/extension/src/manifest.ts`).** Current `content_scripts` entry
-has no `all_frames: true`. iCIMS confirmed to support an iframe-embedded mode
-(`in_iframe=1` fallback pattern seen live); Workday/BambooHR embeds on third-party marketing sites
-sometimes also run inside iframes (unverified this session but a well-known pattern for embeddable
-widgets). Add `all_frames: true` to the existing `content_scripts` entry — host permissions already
-cover `*.icims.com` etc. via `ATS_HOST_PATTERNS`, so no manifest permission change needed, just the
-`all_frames` flag, plus a same-origin guard in `content/index.ts` so the script doesn't do
-redundant work if the iframe's `document` is same-origin as the parent (rare) vs. cross-origin (the
-common case, where `all_frames` is the only way in).
+1. **Greenhouse** — common, and the cleanest public API (`?questions=true`). Its react-select
+   comboboxes and checkbox fieldsets were the original motivating failure; both are handled now,
+   and its oracle is the only one confirmed against a live posting.
+2. **Lever** — common and DOM-verified. Its labels are wrap-associated rather than `for`-bound,
+   which the label-resolution work above recovers. No API for custom questions — DOM only.
+3. **Workday** — common, pure SPA, no static markup. Needs live verification before selector work.
+4. **iCIMS** — common, Next.js SPA, iframe-capable. Needs live verification of the apply form.
+5. **Ashby** — best public form schema of any platform, so it's cheap to support _well_ — but see
+   `background/apiDetectors.ts`: the shipped Ashby oracle calls an endpoint that 401s and has never
+   worked. The endpoint that does work is documented in that file's comments.
+6. **SmartRecruiters / Workable** — API-first with per-customer DOM variance; both oracles ship
+   unverified.
+7. **BambooHR** — no public form-schema API and an embedded widget on third-party pages. Lowest
+   priority.

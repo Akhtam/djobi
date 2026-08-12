@@ -11,8 +11,9 @@ server and a persisted history of past applications. See `PROGRESS.md` for what'
 - `apps/backend` — local Hono server: LLM calls (Anthropic), Postgres persistence (Neon + Drizzle),
   resume PDF rendering. Runs on `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
-  that detect/scrape job pages and fill forms, a background service worker, an options page
-  (profile setup), and a popup (review/fill).
+  that detect application forms and fill them, a background service worker that runs the pipeline,
+  an options page (profile setup), and a side panel (paste/review/fill). There is no popup — the
+  toolbar icon opens the side panel, which survives tab switches and clicking away.
 
 ## Prerequisites
 
@@ -79,18 +80,27 @@ Then in Chrome:
 
 With the backend running and the extension loaded:
 
-1. Click the djobi icon → open the options page (or right-click the icon → **Options**)
+1. Right-click the djobi icon → **Options**
 2. Fill in your contact info, links, work experience, education, skills, and stories
-3. Save — this is stored server-side and used to seed every tailored resume/answer
+3. Also fill in the **prepared answers** — work authorization, sponsorship and the rest. These are
+   answered from your profile verbatim and never sent to a model to guess at
+4. Save — this is stored server-side and used to seed every tailored resume/answer
 
 ## 6. Use it
 
-Navigate to a job posting on a supported ATS site with an application form. Open the popup:
+Navigate to the application form for a job you want to apply to, and click the djobi icon to open
+the side panel:
 
-- If the page looks like a job application, it scrapes the posting, extracts structured job info,
-  and drafts a tailored resume + question answers for you to review/edit
-- **Fill form** writes the reviewed values into the page, attaches the generated resume PDF, and
-  saves a `draft` application record — nothing is submitted to the employer automatically
+1. **Paste the job description** into the panel. This is the only input analysis has — djobi does
+   not read the posting off the page, because the application form is usually a different page from
+   the ad
+2. **Analyze** — extracts structured job info, tailors a resume to it, and drafts answers to any
+   freeform questions the form asks
+3. **Review and edit** every drafted answer. Nothing is filled until you say so
+4. **Fill form** writes the reviewed values into the page, attaches the generated resume PDF, and
+   saves a `draft` application record — nothing is submitted to the employer automatically
+
+Analysis runs in the background service worker, so closing the panel mid-run doesn't lose it.
 
 ## Tests
 

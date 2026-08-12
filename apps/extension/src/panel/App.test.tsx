@@ -147,22 +147,26 @@ async function stubChrome(options: StubOptions) {
   );
 
   const deps: PipelineDeps = {
-    extractJob: () => {
-      const failure = nth(options.analysisFailures, analysisCallIndex++);
-      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(jobInfo);
+    backend: {
+      extractJob: () => {
+        const failure = nth(options.analysisFailures, analysisCallIndex++);
+        return failure ? Promise.reject(new Error(failure)) : Promise.resolve(jobInfo);
+      },
+      tailorResume: () => Promise.resolve(tailoredResume),
+      answerQuestions: () => Promise.resolve(answers),
+      renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
+      saveApplication: () => {
+        const failure = nth(options.fillFailures, fillCallIndex++);
+        return failure ? Promise.reject(new Error(failure)) : Promise.resolve(undefined);
+      },
     },
-    tailorResume: () => Promise.resolve(tailoredResume),
-    answerQuestions: () => Promise.resolve(answers),
-    renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
-    // `null` — the page gives no account of what it kept, so the Fill Step falls back to the
-    // values it drafted, which is the reporting these tests were written against.
-    fillPage: () => (options.holdFill ? fillGate.then(() => null) : Promise.resolve(null)),
-    // The panel's concern is what the Fill Step reports back, not where its fields came from, so
-    // these tests leave the live page unreachable and let it fall back to the run's own detection.
-    scanPage: () => Promise.resolve(null),
-    saveApplication: () => {
-      const failure = nth(options.fillFailures, fillCallIndex++);
-      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(undefined);
+    page: {
+      // `null` — the page gives no account of what it kept, so the Fill Step falls back to the
+      // values it drafted, which is the reporting these tests were written against.
+      fill: () => (options.holdFill ? fillGate.then(() => null) : Promise.resolve(null)),
+      // The panel's concern is what the Fill Step reports back, not where its fields came from, so
+      // these tests leave the live page unreachable and let it fall back to the run's own detection.
+      scan: () => Promise.resolve(null),
     },
   };
 

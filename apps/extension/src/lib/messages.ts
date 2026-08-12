@@ -87,12 +87,38 @@ export interface ScanPageCommandMessage {
   type: 'SCAN_PAGE';
 }
 
-/** Everything the background sends *to* a content script. */
+/** Everything the background sends *to* a content script. See `lib/pageClient.ts`. */
 export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMessage;
 
+/**
+ * The coordination protocol: content script and panel telling the background that something
+ * happened. **Notification-only — none of these has a response.**
+ *
+ * That's a real design decision, not an omission. Each of these three either has nothing to say
+ * back (`REPORT_JOB_PAGE`) or kicks off work whose whole point is outliving the sender
+ * (`START_ANALYSIS`/`START_FILL`) — holding the message channel open until an Analysis Step
+ * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
+ * panel that opened it. Progress is read from `lib/tabStore.ts` instead.
+ *
+ * The two messages that *do* have responses (`SCAN_PAGE`, `FILL_FORM`) are not in this union. They
+ * live in `lib/pageClient.ts`, where the response is the point.
+ *
+ * This used to be typed as request/response on both ends — a `sendMessage<TReq, TRes>` generic over
+ * a response nothing ever sent, and a handler taking `sendResponse` it never called and returning a
+ * `boolean` that was always `false`. Every caller wrote `<…, void>` and discarded the promise. An
+ * interface that describes capabilities the implementation doesn't have is worse than no types.
+ */
 export type TypedMessage = ReportJobPageMessage | StartAnalysisMessage | StartFillMessage;
 
-/** Sends `message` via `chrome.runtime.sendMessage` and resolves with whatever the callback receives. */
-export function sendMessage<TReq, TRes>(message: TReq): Promise<TRes> {
-  return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
+/**
+ * Sends a coordination message to the background and returns immediately. There is no reply to
+ * wait for.
+ *
+ * The callback exists only so `chrome.runtime.lastError` is read, which is what marks it handled —
+ * without it, sending while no service worker is listening logs an unchecked runtime error.
+ */
+export function notify(message: TypedMessage): void {
+  chrome.runtime.sendMessage(message, () => {
+    void chrome.runtime.lastError;
+  });
 }

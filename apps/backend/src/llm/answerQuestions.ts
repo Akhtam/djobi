@@ -4,6 +4,7 @@ import {
   type JobInfo,
   type Profile,
   type QuestionAnswer,
+  type QuestionForModel,
 } from '@djobi/shared';
 import { z } from 'zod';
 import { MODELS } from './client.js';
@@ -14,25 +15,6 @@ const AnswerQuestionsOutputSchema = z.object({
   answers: z.array(QuestionAnswerSchema),
 });
 
-/** One detected freeform field to draft an answer for — a trimmed-down {@link DetectedField}. */
-export interface QuestionToAnswer {
-  fieldId: string;
-  question: string;
-  /** Valid choices for a select/combobox/radiogroup/checkboxgroup question, if any. */
-  options?: string[];
-  /**
-   * A fact from the candidate's profile that this answer must honor.
-   *
-   * Set by `splitPreparedQuestions` for a question the profile answers but whose stored wording
-   * names none of this form's options unambiguously — "No" against options spelled "I do not
-   * require sponsorship now or in the future" / "I will require sponsorship". The decision is
-   * already made; only the mapping onto this form's wording is left, and getting that backwards on
-   * a work-authorization declaration is a misrepresentation, so the prompt treats it as binding
-   * rather than as context.
-   */
-  knownAnswer?: string;
-}
-
 /**
  * Enforces that a choice-question's answer is one of its `options` verbatim: corrects
  * case/whitespace-only mismatches to the exact option text, and drops answers that match no
@@ -41,11 +23,11 @@ export interface QuestionToAnswer {
  * comply, so it's enforced here too.
  *
  * `matchOptionLabel` is the same rule `content/fillForm.ts` uses to find the element for an answer;
- * see `@djobi/shared`'s `optionLabel.ts` for why it has to be.
+ * see `@djobi/shared`'s `labelMatching.ts` for why it has to be.
  */
 function constrainToOptions(
   answers: QuestionAnswer[],
-  questions: QuestionToAnswer[],
+  questions: QuestionForModel[],
 ): QuestionAnswer[] {
   const optionsByFieldId = new Map(questions.map((q) => [q.fieldId, q.options]));
 
@@ -72,7 +54,7 @@ function constrainToOptions(
 export async function answerQuestions(
   profile: Profile,
   jobInfo: JobInfo,
-  questions: QuestionToAnswer[],
+  questions: QuestionForModel[],
 ): Promise<QuestionAnswer[]> {
   if (questions.length === 0) return [];
 

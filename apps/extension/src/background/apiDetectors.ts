@@ -72,10 +72,13 @@ function mergeOptions(existing: FieldOption[] | undefined, apiLabels: string[]):
 function applyPatches(
   fields: DetectedField[],
   patches: Map<string, QuestionPatch>,
-): DetectedField[] {
-  return fields.map((field) => {
+): { fields: DetectedField[]; matched: number } {
+  let matched = 0;
+
+  const patched = fields.map((field) => {
     const patch = patches.get(normalizeLabel(field.label));
     if (!patch) return field;
+    matched++;
 
     return {
       ...field,
@@ -85,6 +88,8 @@ function applyPatches(
         : field.options,
     };
   });
+
+  return { fields: patched, matched };
 }
 
 // --- Greenhouse -------------------------------------------------------------------------------
@@ -130,11 +135,13 @@ const greenhouse: AtsOracle = {
 };
 
 // ----------------------------------------------------------------------------------------------
-// Ashby, SmartRecruiters and Workable below are UNVERIFIED: research
-// (`docs/ats-platform-detection.md`) could only reach an SPA shell for all three, so their request
-// and response shapes come from documentation rather than a confirmed live call. Each still fails
-// safely — a wrong URL or unexpected shape falls through to the DOM-scraped fields — but confirm
-// one against a real posting before relying on it.
+// SmartRecruiters and Workable below are UNVERIFIED: research (`docs/ats-platform-detection.md`)
+// could only reach an SPA shell for both, so their request and response shapes come from
+// documentation rather than a confirmed live call. Each still fails safely — a wrong URL or
+// unexpected shape falls through to the DOM-scraped fields — but confirm one against a real posting
+// before relying on it.
+//
+// Ashby is worse than unverified: it is confirmed DEAD. See the oracle below.
 // ----------------------------------------------------------------------------------------------
 
 interface AshbyResponse {
@@ -145,6 +152,46 @@ interface AshbyResponse {
   };
 }
 
+/**
+ * **DEAD — this oracle has never enriched a single field. TODO: rewrite per the notes below.**
+ *
+ * The endpoint it calls returns **401**, confirmed live:
+ * `POST https://api.ashbyhq.com/posting-api/job-posting/{jobId}` → 401. `enrichWithApiOracle`'s
+ * `if (!res.ok) return fields` then silently hands back the DOM-scraped fields, which is
+ * indistinguishable from "no oracle matched this host" — which is why this went unnoticed.
+ *
+ * Two dead ends, so they aren't re-tried:
+ *
+ * - `developers.ashbyhq.com/reference/jobpostinginfo` (which {@link AshbyResponse} was modelled on)
+ *   is the **employer** API: `POST https://api.ashbyhq.com/jobPosting.info`, BasicAuth, requires the
+ *   `jobsRead` permission. Unusable from an extension.
+ * - The unauthenticated public board API `GET https://api.ashbyhq.com/posting-api/job-board/{org}`
+ *   does return 200, but carries listing data only (`title`, `location`, `descriptionHtml`, …) and
+ *   **no `applicationFormDefinition`**. So {@link AshbyResponse} matches nothing Ashby serves
+ *   publicly at any path.
+ *
+ * The one source of the form schema that does work, verified live against a real posting:
+ *
+ * ```
+ * POST https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting
+ * jobPosting(organizationHostedJobsPageName: $orgName, jobPostingId: $jobId) {
+ *   applicationForm { sections { title fieldEntries { field isRequired } } }
+ * }
+ * ```
+ *
+ * Unauthenticated, and richer than any other platform's — every field's `type`, `isRequired` and
+ * `selectableValues`. Note the shape is `applicationForm.sections[].fieldEntries[].field` with
+ * `isRequired` on the **entry**, not `applicationFormDefinition.sections[].fields[]` with
+ * `isRequired` on the field. `parseUrl` below already yields the `orgName` the query needs as
+ * `organizationHostedJobsPageName`.
+ *
+ * Rewriting this also needs `https://jobs.ashbyhq.com/*` added to `manifest.ts`'s
+ * `host_permissions` — the current list only covers `api.ashbyhq.com`.
+ *
+ * Caveat worth carrying: that endpoint is an internal API. It is unauthenticated today and
+ * introspection is disabled, but it carries no compatibility guarantee and may change without
+ * notice.
+ */
 const ashby: AtsOracle = {
   name: 'Ashby',
 
@@ -156,6 +203,7 @@ const ashby: AtsOracle = {
     if (!orgName || !jobId) return null; // the job-board root, not a specific posting
 
     // Follows Ashby's documented posting-api convention: POST to a resource-scoped path, no body.
+    // This 401s — see the note above; kept only so the rewrite has something to replace.
     return {
       url: `https://api.ashbyhq.com/posting-api/job-posting/${jobId}`,
       init: { method: 'POST' },
@@ -274,9 +322,27 @@ export async function enrichWithApiOracle(
 
     try {
       const res = await fetchImpl(request.url, request.init);
-      if (!res.ok) return fields;
+      if (!res.ok) {
+        console.warn(`[djobi] ${oracle.name} oracle: schema request failed (${res.status})`);
+        return fields;
+      }
 
-      return applyPatches(fields, oracle.patches(await res.json()));
+      const patches = oracle.patches(await res.json());
+      const { fields: patched, matched } = applyPatches(fields, patches);
+
+      // An oracle that answered with questions none of which matched a detected field is the one
+      // failure here that looks exactly like success: the fields come back unchanged, same as if no
+      // oracle had recognized the URL at all. It means the two sides word the same question
+      // differently (the match is by normalized label text), and the enrichment silently did
+      // nothing. Say so, because the alternative is finding out from an unfillable form.
+      if (patches.size > 0 && matched === 0) {
+        console.warn(
+          `[djobi] ${oracle.name} oracle: ${patches.size} question(s) in the schema matched none of ` +
+            `the ${fields.length} detected field(s) by label — enrichment had no effect`,
+        );
+      }
+
+      return patched;
     } catch {
       return fields;
     }

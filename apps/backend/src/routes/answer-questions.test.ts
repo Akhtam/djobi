@@ -91,6 +91,41 @@ describe('POST /answer-questions', () => {
     );
   });
 
+  it('carries knownAnswer through to answerQuestions, since the prompt treats it as binding fact', async () => {
+    // The regression this pins: the route used to declare its own question schema without
+    // `knownAnswer`, and zod's `.object()` strips unknown keys — so the fact the profile held was
+    // silently deleted here and the model decided a work-authorization declaration on its own.
+    mockAnswerQuestions.mockResolvedValue(sampleAnswers);
+    const questionsWithKnownAnswer = [
+      {
+        fieldId: 'q1',
+        question: 'Will you now or in the future require sponsorship?',
+        options: [
+          'I do not require sponsorship now or in the future',
+          'I will require sponsorship',
+        ],
+        knownAnswer: 'No',
+      },
+    ];
+
+    const res = await app.request('/answer-questions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        profile: sampleProfile,
+        jobInfo: sampleJobInfo,
+        questions: questionsWithKnownAnswer,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockAnswerQuestions).toHaveBeenCalledWith(
+      sampleProfile,
+      sampleJobInfo,
+      questionsWithKnownAnswer,
+    );
+  });
+
   it("returns a JSON body carrying the real reason when answerQuestions throws, rather than a plain-text 500 the extension can't parse", async () => {
     mockAnswerQuestions.mockRejectedValueOnce(
       new Error('report_answers did not produce a tool call.'),

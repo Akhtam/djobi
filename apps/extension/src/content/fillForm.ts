@@ -1,4 +1,4 @@
-import { labelsMatch, normalizeLabel, type DetectedField } from '@djobi/shared';
+import { containsLabel, labelsMatch, optionFor, type DetectedField } from '@djobi/shared';
 import { choiceLabel } from './detectFields';
 
 /** Resolves a `DetectedField`'s `selector` to its matching DOM element, or `null` if unresolvable. */
@@ -76,11 +76,8 @@ function commitValue(
 }
 
 /**
- * Finds the element for the choice `value` names, preferring the `selector` `detectFields.ts`
- * recorded for that choice at detection time. That selector is the whole point of
- * {@link FieldOption}: the drafted answer is constrained to one of `field.options`, so matching it
- * back against *that same array* and following the recorded selector closes the round-trip exactly,
- * with no second derivation to disagree with the first.
+ * Finds the element for the choice `value` names, following the `selector` `detectFields.ts`
+ * recorded for that choice at detection time.
  *
  * Returns `null` when the choice has no selector — it came from an ATS API schema, or from a
  * listbox that only mounts once opened, so no element existed to tag. Callers fall back to matching
@@ -91,8 +88,8 @@ function resolveOptionElement<T extends Element = HTMLElement>(
   field: DetectedField,
   value: string,
 ): T | null {
-  const option = field.options?.find((candidate) => labelsMatch(candidate.label, value));
-  return option?.selector ? doc.querySelector<T>(option.selector) : null;
+  const selector = optionFor(field, value)?.selector;
+  return selector ? doc.querySelector<T>(selector) : null;
 }
 
 /**
@@ -237,7 +234,7 @@ async function fillCombobox(
   return () =>
     trigger instanceof HTMLInputElement
       ? labelsMatch(trigger.value, value)
-      : normalizeLabel(trigger.textContent ?? '').includes(normalizeLabel(value));
+      : containsLabel(trigger.textContent ?? '', value);
 }
 
 /**

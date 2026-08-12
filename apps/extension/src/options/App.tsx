@@ -1,5 +1,7 @@
 /** Options page root — profile onboarding form (`PROGRESS.md` Phase 5). */
 import {
+  EMPTY_PROFILE,
+  parseProfile,
   SCREENING_TOPICS,
   type Profile,
   type ScreeningAnswers,
@@ -27,19 +29,97 @@ function withScreeningAnswer(
   return { ...answers, [topic]: value };
 }
 
-const EMPTY_PROFILE: Profile = {
-  fullName: '',
-  email: '',
-  phone: null,
-  location: null,
-  links: { linkedin: null, portfolio: null, github: null },
-  workExperience: [],
-  education: [],
-  skills: [],
-  stories: [],
-  screeningAnswers: {},
-  customAnswers: [],
-};
+/** The Profile keys holding an editable list of entries. */
+type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
+
+/** The three things every list section does to its list. Bound to one key by {@link listEditor}. */
+interface ListEditor<T> {
+  /** Merges `patch` into entry `index`, leaving the others alone. */
+  update: (index: number, patch: Partial<T>) => void;
+  remove: (index: number) => void;
+  add: () => void;
+}
+
+/**
+ * The list operations for one Profile key.
+ *
+ * The four list sections used to write these inline, once per editable field — around twenty copies
+ * of `setProfile({ ...profile, xs: profile.xs.map((x, i) => i === index ? { ...x, k: v } : x) })`,
+ * one of them nested three levels deep for a work-experience bullet. They are the same three
+ * operations every time, and spelling them out at each input meant the shape of a Profile update
+ * was restated at every input rather than being stated once.
+ */
+function listEditor<K extends ProfileListKey>(
+  profile: Profile,
+  setProfile: (profile: Profile) => void,
+  key: K,
+  blank: () => Profile[K][number],
+): ListEditor<Profile[K][number]> {
+  const list = profile[key] as Profile[K][number][];
+
+  const write = (next: Profile[K][number][]) => setProfile({ ...profile, [key]: next });
+
+  return {
+    update: (index, patch) =>
+      write(list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry))),
+    remove: (index) => write(list.filter((_, i) => i !== index)),
+    add: () => write([...list, blank()]),
+  };
+}
+
+/**
+ * The chrome around one editable list: the card, its legend and hint, a numbered removable card per
+ * entry, and the add button.
+ *
+ * Only the fields inside an entry actually differ between the four sections, so only those are
+ * passed in. `noun` drives both the visible labels and the remove button's accessible name, which
+ * is how the tests address a specific entry.
+ */
+function ListSection<T>({
+  legend,
+  noun,
+  addLabel,
+  hint,
+  entryClassName = 'entry-card',
+  items,
+  editor,
+  children,
+}: {
+  legend: string;
+  noun: string;
+  addLabel: string;
+  hint?: string;
+  entryClassName?: string;
+  items: T[];
+  editor: ListEditor<T>;
+  children: (entry: T, index: number) => React.ReactNode;
+}) {
+  return (
+    <fieldset className="card">
+      <legend>{legend}</legend>
+      {hint && <p className="hint">{hint}</p>}
+      {items.map((entry, index) => (
+        <fieldset key={index} className={entryClassName}>
+          <div className="entry-card-header">
+            <span>{`Entry ${index + 1}`}</span>
+            <button
+              type="button"
+              className="btn-danger-ghost"
+              aria-label={`Remove ${noun} ${index + 1}`}
+              onClick={() => editor.remove(index)}
+            >
+              Remove
+            </button>
+          </div>
+          {children(entry, index)}
+        </fieldset>
+      ))}
+      <button type="button" className="btn-add" onClick={editor.add}>
+        {addLabel}
+      </button>
+    </fieldset>
+  );
+}
 
 export function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -48,14 +128,9 @@ export function App() {
 
   useEffect(() => {
     callBackend<Profile | null>('/profile', undefined, 'GET')
-      .then((loaded) => {
-        // Spread over the empty profile rather than using it as-is: a profile stored before a
-        // field was added to the schema comes back without that field, and the form binds directly
-        // to those keys (`profile.screeningAnswers[topic]`), so a missing one crashed the page on
-        // render. The backend fills defaults on read too — this is the same guarantee held locally,
-        // for a profile that was fetched and cached before that.
-        setProfile(loaded ? { ...EMPTY_PROFILE, ...loaded } : EMPTY_PROFILE);
-      })
+      // `parseProfile` completes a stored profile against the empty one and validates it, so a
+      // profile saved before a field existed can't crash the form that binds to that key.
+      .then((loaded) => setProfile(parseProfile(loaded)))
       .catch((error: Error) => {
         setProfile(EMPTY_PROFILE);
         setStatus({ kind: 'error', message: `Failed to load profile: ${error.message}` });
@@ -69,6 +144,36 @@ export function App() {
       </main>
     );
   }
+
+  const work = listEditor(profile, setProfile, 'workExperience', () => ({
+    company: '',
+    title: '',
+    startDate: '',
+    endDate: null,
+    bullets: [],
+  }));
+  const education = listEditor(profile, setProfile, 'education', () => ({
+    school: '',
+    degree: '',
+    field: null,
+    graduationYear: null,
+  }));
+  // `id: ''` matches what this form has always created. Note `QuestionAnswer.sourceStoryIds`
+  // references `Story.id`, so every story sharing the empty id makes those references useless —
+  // worth fixing, but it is a behaviour change rather than part of this de-duplication.
+  const stories = listEditor(profile, setProfile, 'stories', () => ({
+    id: '',
+    title: '',
+    tags: [],
+    situation: '',
+    task: '',
+    action: '',
+    result: '',
+  }));
+  const customAnswers = listEditor(profile, setProfile, 'customAnswers', () => ({
+    question: '',
+    answer: '',
+  }));
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -252,42 +357,23 @@ export function App() {
           ))}
         </fieldset>
 
-        <fieldset className="card">
-          <legend>Other prepared answers</legend>
-          <p className="hint">
-            Anything else you're asked repeatedly. The question is matched loosely against the
-            form's own wording, so it needn't be phrased identically.
-          </p>
-          {profile.customAnswers.map((entry, index) => (
-            <div className="entry" key={index}>
-              <div className="entry-header">
-                <h3>Prepared answer {index + 1}</h3>
-                <button
-                  type="button"
-                  className="btn-link"
-                  onClick={() =>
-                    setProfile({
-                      ...profile,
-                      customAnswers: profile.customAnswers.filter((_, i) => i !== index),
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              </div>
+        <ListSection
+          legend="Other prepared answers"
+          noun="prepared answer"
+          addLabel="Add prepared answer"
+          hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
+          entryClassName="entry"
+          items={profile.customAnswers}
+          editor={customAnswers}
+        >
+          {(entry, index) => (
+            <>
               <div className="field">
                 <label htmlFor={`customQuestion-${index}`}>Question</label>
                 <input
                   id={`customQuestion-${index}`}
                   value={entry.question}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      customAnswers: profile.customAnswers.map((a, i) =>
-                        i === index ? { ...a, question: e.target.value } : a,
-                      ),
-                    })
-                  }
+                  onChange={(e) => customAnswers.update(index, { question: e.target.value })}
                 />
               </div>
               <div className="field">
@@ -295,478 +381,238 @@ export function App() {
                 <textarea
                   id={`customAnswer-${index}`}
                   value={entry.answer}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      customAnswers: profile.customAnswers.map((a, i) =>
-                        i === index ? { ...a, answer: e.target.value } : a,
-                      ),
-                    })
-                  }
+                  onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
                 />
               </div>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() =>
-              setProfile({
-                ...profile,
-                customAnswers: [...profile.customAnswers, { question: '', answer: '' }],
-              })
-            }
-          >
-            Add prepared answer
-          </button>
-        </fieldset>
+            </>
+          )}
+        </ListSection>
 
-        <fieldset className="card">
-          <legend>Work experience</legend>
-          {profile.workExperience.map((entry, index) => {
+        <ListSection
+          legend="Work experience"
+          noun="work experience"
+          addLabel="Add work experience"
+          items={profile.workExperience}
+          editor={work}
+        >
+          {(entry, index) => {
             const n = index + 1;
             return (
-              <fieldset key={index} className="entry-card">
-                <div className="entry-card-header">
-                  <span>{`Entry ${n}`}</span>
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor={`weCompany${n}`}>{`Company ${n}`}</label>
+                  <input
+                    id={`weCompany${n}`}
+                    value={entry.company}
+                    onChange={(e) => work.update(index, { company: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`weTitle${n}`}>{`Title ${n}`}</label>
+                  <input
+                    id={`weTitle${n}`}
+                    value={entry.title}
+                    onChange={(e) => work.update(index, { title: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`weStartDate${n}`}>{`Start date ${n}`}</label>
+                  <input
+                    id={`weStartDate${n}`}
+                    value={entry.startDate}
+                    onChange={(e) => work.update(index, { startDate: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`weEndDate${n}`}>{`End date ${n}`}</label>
+                  <input
+                    id={`weEndDate${n}`}
+                    value={entry.endDate ?? ''}
+                    onChange={(e) => work.update(index, { endDate: e.target.value })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label>{`Bullets ${n}`}</label>
+                  <div className="bullet-list">
+                    {entry.bullets.map((bullet, bulletIndex) => (
+                      <div key={bulletIndex} className="bullet-row">
+                        <input
+                          aria-label={`Bullet ${n}.${bulletIndex + 1}`}
+                          value={bullet}
+                          onChange={(e) =>
+                            work.update(index, {
+                              bullets: entry.bullets.map((b, bi) =>
+                                bi === bulletIndex ? e.target.value : b,
+                              ),
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
+                          onClick={() =>
+                            work.update(index, {
+                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
+                            })
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                   <button
                     type="button"
-                    className="btn-danger-ghost"
-                    aria-label={`Remove work experience ${n}`}
-                    onClick={() =>
-                      setProfile({
-                        ...profile,
-                        workExperience: profile.workExperience.filter((_, i) => i !== index),
-                      })
-                    }
+                    className="btn-add-inline"
+                    onClick={() => work.update(index, { bullets: [...entry.bullets, ''] })}
                   >
-                    Remove
+                    + Add bullet
                   </button>
                 </div>
-                <div className="field-grid">
-                  <div className="field">
-                    <label htmlFor={`weCompany${n}`}>{`Company ${n}`}</label>
-                    <input
-                      id={`weCompany${n}`}
-                      value={entry.company}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          workExperience: profile.workExperience.map((we, i) =>
-                            i === index ? { ...we, company: e.target.value } : we,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor={`weTitle${n}`}>{`Title ${n}`}</label>
-                    <input
-                      id={`weTitle${n}`}
-                      value={entry.title}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          workExperience: profile.workExperience.map((we, i) =>
-                            i === index ? { ...we, title: e.target.value } : we,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor={`weStartDate${n}`}>{`Start date ${n}`}</label>
-                    <input
-                      id={`weStartDate${n}`}
-                      value={entry.startDate}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          workExperience: profile.workExperience.map((we, i) =>
-                            i === index ? { ...we, startDate: e.target.value } : we,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor={`weEndDate${n}`}>{`End date ${n}`}</label>
-                    <input
-                      id={`weEndDate${n}`}
-                      value={entry.endDate ?? ''}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          workExperience: profile.workExperience.map((we, i) =>
-                            i === index ? { ...we, endDate: e.target.value } : we,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label>{`Bullets ${n}`}</label>
-                    <div className="bullet-list">
-                      {entry.bullets.map((bullet, bulletIndex) => (
-                        <div key={bulletIndex} className="bullet-row">
-                          <input
-                            aria-label={`Bullet ${n}.${bulletIndex + 1}`}
-                            value={bullet}
-                            onChange={(e) =>
-                              setProfile({
-                                ...profile,
-                                workExperience: profile.workExperience.map((we, i) =>
-                                  i === index
-                                    ? {
-                                        ...we,
-                                        bullets: we.bullets.map((b, bi) =>
-                                          bi === bulletIndex ? e.target.value : b,
-                                        ),
-                                      }
-                                    : we,
-                                ),
-                              })
-                            }
-                          />
-                          <button
-                            type="button"
-                            aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
-                            onClick={() =>
-                              setProfile({
-                                ...profile,
-                                workExperience: profile.workExperience.map((we, i) =>
-                                  i === index
-                                    ? {
-                                        ...we,
-                                        bullets: we.bullets.filter((_, bi) => bi !== bulletIndex),
-                                      }
-                                    : we,
-                                ),
-                              })
-                            }
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      className="btn-add-inline"
-                      onClick={() =>
-                        setProfile({
-                          ...profile,
-                          workExperience: profile.workExperience.map((we, i) =>
-                            i === index ? { ...we, bullets: [...we.bullets, ''] } : we,
-                          ),
-                        })
-                      }
-                    >
-                      + Add bullet
-                    </button>
-                  </div>
-                </div>
-              </fieldset>
+              </div>
             );
-          })}
-          <button
-            type="button"
-            className="btn-add"
-            onClick={() =>
-              setProfile({
-                ...profile,
-                workExperience: [
-                  ...profile.workExperience,
-                  { company: '', title: '', startDate: '', endDate: null, bullets: [] },
-                ],
-              })
-            }
-          >
-            Add work experience
-          </button>
-        </fieldset>
+          }}
+        </ListSection>
 
-        <fieldset className="card">
-          <legend>Education</legend>
-          {profile.education.map((entry, index) => {
+        <ListSection
+          legend="Education"
+          noun="education"
+          addLabel="Add education"
+          items={profile.education}
+          editor={education}
+        >
+          {(entry, index) => {
             const n = index + 1;
             return (
-              <fieldset key={index} className="entry-card">
-                <div className="entry-card-header">
-                  <span>{`Entry ${n}`}</span>
-                  <button
-                    type="button"
-                    className="btn-danger-ghost"
-                    aria-label={`Remove education ${n}`}
-                    onClick={() =>
-                      setProfile({
-                        ...profile,
-                        education: profile.education.filter((_, i) => i !== index),
-                      })
-                    }
-                  >
-                    Remove
-                  </button>
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor={`eduSchool${n}`}>{`School ${n}`}</label>
+                  <input
+                    id={`eduSchool${n}`}
+                    value={entry.school}
+                    onChange={(e) => education.update(index, { school: e.target.value })}
+                  />
                 </div>
-                <div className="field-grid">
-                  <div className="field">
-                    <label htmlFor={`eduSchool${n}`}>{`School ${n}`}</label>
-                    <input
-                      id={`eduSchool${n}`}
-                      value={entry.school}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          education: profile.education.map((ed, i) =>
-                            i === index ? { ...ed, school: e.target.value } : ed,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
 
-                  <div className="field">
-                    <label htmlFor={`eduDegree${n}`}>{`Degree ${n}`}</label>
-                    <input
-                      id={`eduDegree${n}`}
-                      value={entry.degree}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          education: profile.education.map((ed, i) =>
-                            i === index ? { ...ed, degree: e.target.value } : ed,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor={`eduField${n}`}>{`Field ${n}`}</label>
-                    <input
-                      id={`eduField${n}`}
-                      value={entry.field ?? ''}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          education: profile.education.map((ed, i) =>
-                            i === index ? { ...ed, field: e.target.value } : ed,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor={`eduGradYear${n}`}>{`Graduation year ${n}`}</label>
-                    <input
-                      id={`eduGradYear${n}`}
-                      value={entry.graduationYear ?? ''}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          education: profile.education.map((ed, i) =>
-                            i === index ? { ...ed, graduationYear: e.target.value } : ed,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
+                <div className="field">
+                  <label htmlFor={`eduDegree${n}`}>{`Degree ${n}`}</label>
+                  <input
+                    id={`eduDegree${n}`}
+                    value={entry.degree}
+                    onChange={(e) => education.update(index, { degree: e.target.value })}
+                  />
                 </div>
-              </fieldset>
+
+                <div className="field">
+                  <label htmlFor={`eduField${n}`}>{`Field ${n}`}</label>
+                  <input
+                    id={`eduField${n}`}
+                    value={entry.field ?? ''}
+                    onChange={(e) => education.update(index, { field: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`eduGradYear${n}`}>{`Graduation year ${n}`}</label>
+                  <input
+                    id={`eduGradYear${n}`}
+                    value={entry.graduationYear ?? ''}
+                    onChange={(e) => education.update(index, { graduationYear: e.target.value })}
+                  />
+                </div>
+              </div>
             );
-          })}
-          <button
-            type="button"
-            className="btn-add"
-            onClick={() =>
-              setProfile({
-                ...profile,
-                education: [
-                  ...profile.education,
-                  { school: '', degree: '', field: null, graduationYear: null },
-                ],
-              })
-            }
-          >
-            Add education
-          </button>
-        </fieldset>
+          }}
+        </ListSection>
 
-        <fieldset className="card">
-          <legend>Stories</legend>
-          {profile.stories.map((entry, index) => {
+        <ListSection
+          legend="Stories"
+          noun="story"
+          addLabel="Add story"
+          items={profile.stories}
+          editor={stories}
+        >
+          {(entry, index) => {
             const n = index + 1;
             return (
-              <fieldset key={index} className="entry-card">
-                <div className="entry-card-header">
-                  <span>{`Entry ${n}`}</span>
-                  <button
-                    type="button"
-                    className="btn-danger-ghost"
-                    aria-label={`Remove story ${n}`}
-                    onClick={() =>
-                      setProfile({
-                        ...profile,
-                        stories: profile.stories.filter((_, i) => i !== index),
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor={`storyId${n}`}>{`Story id ${n}`}</label>
+                  <input
+                    id={`storyId${n}`}
+                    value={entry.id}
+                    onChange={(e) => stories.update(index, { id: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`storyTitle${n}`}>{`Story title ${n}`}</label>
+                  <input
+                    id={`storyTitle${n}`}
+                    value={entry.title}
+                    onChange={(e) => stories.update(index, { title: e.target.value })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label htmlFor={`storyTags${n}`}>{`Story tags ${n}`}</label>
+                  <input
+                    id={`storyTags${n}`}
+                    value={entry.tags.join(', ')}
+                    onChange={(e) =>
+                      stories.update(index, {
+                        tags: e.target.value
+                          .split(',')
+                          .map((tag) => tag.trim())
+                          .filter(Boolean),
                       })
                     }
-                  >
-                    Remove
-                  </button>
+                  />
                 </div>
-                <div className="field-grid">
-                  <div className="field">
-                    <label htmlFor={`storyId${n}`}>{`Story id ${n}`}</label>
-                    <input
-                      id={`storyId${n}`}
-                      value={entry.id}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, id: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
 
-                  <div className="field">
-                    <label htmlFor={`storyTitle${n}`}>{`Story title ${n}`}</label>
-                    <input
-                      id={`storyTitle${n}`}
-                      value={entry.title}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, title: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label htmlFor={`storyTags${n}`}>{`Story tags ${n}`}</label>
-                    <input
-                      id={`storyTags${n}`}
-                      value={entry.tags.join(', ')}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index
-                              ? {
-                                  ...s,
-                                  tags: e.target.value
-                                    .split(',')
-                                    .map((tag) => tag.trim())
-                                    .filter(Boolean),
-                                }
-                              : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label htmlFor={`storySituation${n}`}>{`Situation ${n}`}</label>
-                    <textarea
-                      id={`storySituation${n}`}
-                      value={entry.situation}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, situation: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label htmlFor={`storyTask${n}`}>{`Task ${n}`}</label>
-                    <textarea
-                      id={`storyTask${n}`}
-                      value={entry.task}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, task: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label htmlFor={`storyAction${n}`}>{`Action ${n}`}</label>
-                    <textarea
-                      id={`storyAction${n}`}
-                      value={entry.action}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, action: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="field span-2">
-                    <label htmlFor={`storyResult${n}`}>{`Result ${n}`}</label>
-                    <textarea
-                      id={`storyResult${n}`}
-                      value={entry.result}
-                      onChange={(e) =>
-                        setProfile({
-                          ...profile,
-                          stories: profile.stories.map((s, i) =>
-                            i === index ? { ...s, result: e.target.value } : s,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
+                <div className="field span-2">
+                  <label htmlFor={`storySituation${n}`}>{`Situation ${n}`}</label>
+                  <textarea
+                    id={`storySituation${n}`}
+                    value={entry.situation}
+                    onChange={(e) => stories.update(index, { situation: e.target.value })}
+                  />
                 </div>
-              </fieldset>
+
+                <div className="field span-2">
+                  <label htmlFor={`storyTask${n}`}>{`Task ${n}`}</label>
+                  <textarea
+                    id={`storyTask${n}`}
+                    value={entry.task}
+                    onChange={(e) => stories.update(index, { task: e.target.value })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label htmlFor={`storyAction${n}`}>{`Action ${n}`}</label>
+                  <textarea
+                    id={`storyAction${n}`}
+                    value={entry.action}
+                    onChange={(e) => stories.update(index, { action: e.target.value })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label htmlFor={`storyResult${n}`}>{`Result ${n}`}</label>
+                  <textarea
+                    id={`storyResult${n}`}
+                    value={entry.result}
+                    onChange={(e) => stories.update(index, { result: e.target.value })}
+                  />
+                </div>
+              </div>
             );
-          })}
-          <button
-            type="button"
-            className="btn-add"
-            onClick={() =>
-              setProfile({
-                ...profile,
-                stories: [
-                  ...profile.stories,
-                  {
-                    id: '',
-                    title: '',
-                    tags: [],
-                    situation: '',
-                    task: '',
-                    action: '',
-                    result: '',
-                  },
-                ],
-              })
-            }
-          >
-            Add story
-          </button>
-        </fieldset>
+          }}
+        </ListSection>
 
         <div className="footer-save">
           <button type="submit" className="btn-primary">

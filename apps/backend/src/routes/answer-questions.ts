@@ -1,26 +1,13 @@
-import { JobInfoSchema, ProfileSchema } from '@djobi/shared';
+import { AnswerQuestionsRequestSchema } from '@djobi/shared';
 import { Hono } from 'hono';
-import { z } from 'zod';
 import { answerQuestions } from '../llm/answerQuestions.js';
-
-const QuestionToAnswerSchema = z.object({
-  fieldId: z.string(),
-  question: z.string(),
-  options: z.array(z.string()).optional(),
-});
-
-const AnswerQuestionsBodySchema = z.object({
-  profile: ProfileSchema,
-  jobInfo: JobInfoSchema,
-  questions: z.array(QuestionToAnswerSchema),
-});
 
 /** `POST /answer-questions` — drafts answers to a set of freeform application questions. */
 export const answerQuestionsRoute = new Hono();
 
 answerQuestionsRoute.post('/answer-questions', async (c) => {
   const body = await c.req.json();
-  const parsed = AnswerQuestionsBodySchema.safeParse(body);
+  const parsed = AnswerQuestionsRequestSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: parsed.error.message }, 400);
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { matchScreeningTopic, resolveAnswerOption } from './screeningAnswers.js';
+import { matchScreeningTopic } from './screeningAnswers.js';
+import { matchPreparedAnswerToOption } from './labelMatching.js';
 import { preparedAnswerFor, splitPreparedQuestions } from './preparedAnswers.js';
 
 const profile = {
@@ -44,28 +45,30 @@ describe('resolveAnswerOption', () => {
       'No, I am not legally authorized',
     ];
 
-    expect(resolveAnswerOption(options, 'Yes')).toBe(options[0]);
-    expect(resolveAnswerOption(options, 'No')).toBe(options[1]);
+    expect(matchPreparedAnswerToOption(options, 'Yes')).toBe(options[0]);
+    expect(matchPreparedAnswerToOption(options, 'No')).toBe(options[1]);
   });
 
   it("doesn't let No match None of the above — a prefix running into more letters is a different word", () => {
-    expect(resolveAnswerOption(['None of the above', 'Something else'], 'No')).toBeUndefined();
+    expect(
+      matchPreparedAnswerToOption(['None of the above', 'Something else'], 'No'),
+    ).toBeUndefined();
   });
 
   it('prefers an exact match over a longer option that merely starts with the same word', () => {
-    expect(resolveAnswerOption(['Yes', 'Yes, with conditions'], 'Yes')).toBe('Yes');
+    expect(matchPreparedAnswerToOption(['Yes', 'Yes, with conditions'], 'Yes')).toBe('Yes');
   });
 
   it('refuses an ambiguous match rather than guessing between two options', () => {
     const options = ['Yes, currently', 'Yes, from January'];
 
-    expect(resolveAnswerOption(options, 'Yes')).toBeUndefined();
+    expect(matchPreparedAnswerToOption(options, 'Yes')).toBeUndefined();
   });
 
   it('falls back to a unique substring match', () => {
     const options = ['I am not a protected veteran', 'I identify as a protected veteran'];
 
-    expect(resolveAnswerOption(options, 'not a protected veteran')).toBe(options[0]);
+    expect(matchPreparedAnswerToOption(options, 'not a protected veteran')).toBe(options[0]);
   });
 });
 

@@ -17,10 +17,8 @@ import { handleTypedMessage } from './router';
 registerTabStateCleanup();
 void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-chrome.runtime.onMessage.addListener(
-  (
-    message: TypedMessage,
-    sender: chrome.runtime.MessageSender,
-    sendResponse: (response: unknown) => void,
-  ) => handleTypedMessage(message, sender, sendResponse),
-);
+// Returns nothing on purpose. Chrome keeps the message channel open only when a listener returns
+// `true`, and every message in this protocol is a notification — see `lib/messages.ts`.
+chrome.runtime.onMessage.addListener((message: TypedMessage, sender) => {
+  handleTypedMessage(message, sender);
+});

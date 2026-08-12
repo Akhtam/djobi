@@ -14,7 +14,6 @@
  * first.
  */
 import { z } from 'zod';
-import { normalizeLabel } from './optionLabel.js';
 
 /**
  * The known topics, each with the pattern that recognizes it and the label the options UI shows.
@@ -157,60 +156,4 @@ export type CustomAnswer = z.infer<typeof CustomAnswerSchema>;
 /** The topic `question` is asking about, or `undefined` if it isn't one of the known ones. */
 export function matchScreeningTopic(question: string): ScreeningTopic | undefined {
   return SCREENING_TOPICS.find((entry) => entry.pattern.test(question))?.topic;
-}
-
-/**
- * Whether `option` begins with `answer` at a word boundary — "Yes" matching the option
- * "Yes, I am legally authorized to work in the United States", which is how ATS forms habitually
- * spell a yes/no choice.
- *
- * The boundary check is what keeps "No" from matching "None of the above": a prefix that runs
- * straight into more letters is a different word, not a longer spelling of the same answer.
- */
-function startsWithAnswer(option: string, answer: string): boolean {
-  if (!option.startsWith(answer)) return false;
-
-  const next = option.charAt(answer.length);
-  return next === '' || !/[a-z0-9]/i.test(next);
-}
-
-/**
- * Whether `option` contains `answer` as whole words. The same boundary rule as
- * {@link startsWithAnswer}, for the same reason and then some: without it, a stored "No" is
- * contained in "None of the above", "Not applicable" and "Norway".
- *
- * `\b` won't do here, since an answer can begin or end with punctuation, where `\b` sits on the
- * wrong side of the character.
- */
-function containsAnswer(option: string, answer: string): boolean {
-  const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(option);
-}
-
-/**
- * The option that `answer` names, verbatim as `options` spells it.
- *
- * Deliberately more forgiving than `matchOptionLabel`, and deliberately separate from it. That
- * function governs the loop between the answer-drafting model and the page, where both ends are
- * working from the same scraped label and an exact match is the correctness property worth having.
- * A prepared answer is different: it was typed by hand, months earlier, with no knowledge of how
- * this particular form words its choices. So an exact match is tried first, then a unique
- * word-boundary prefix, then a unique substring.
- *
- * Every fallback insists the match be unique. Two options that both contain the stored answer mean
- * it doesn't say which one is meant, and a coin-flip between two answers on a legal declaration is
- * worse than leaving it to be resolved with the fact in hand.
- */
-export function resolveAnswerOption(options: string[], answer: string): string | undefined {
-  const target = normalizeLabel(answer);
-  if (!target) return undefined;
-
-  const exact = options.find((option) => normalizeLabel(option) === target);
-  if (exact) return exact;
-
-  const prefixed = options.filter((option) => startsWithAnswer(normalizeLabel(option), target));
-  if (prefixed.length === 1) return prefixed[0];
-
-  const contained = options.filter((option) => containsAnswer(normalizeLabel(option), target));
-  return contained.length === 1 ? contained[0] : undefined;
 }

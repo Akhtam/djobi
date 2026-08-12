@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import type { JobPageData } from '../lib/messages';
 import { getPipelineRun, reportDetectedPage } from '../lib/tabStore';
+import type { BackendClient } from '../lib/backendClient';
+import type { PageClient } from '../lib/pageClient';
 import { runAnalysis, runFill, type PipelineDeps } from './applicationPipeline';
 
 /**
@@ -114,21 +116,35 @@ function stubChrome(scanReply?: JobPageData) {
   return { tabsSendMessage };
 }
 
-function makeDeps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
-  return {
+/**
+ * A fake for each collaborator. Overrides are flat — `makeDeps({ scan: … })` — since a test only
+ * ever wants to replace one behaviour, and naming which of the two objects it belongs to is noise.
+ */
+function makeDeps(
+  overrides: Partial<BackendClient> & Partial<PageClient> = {},
+): PipelineDeps & { backend: BackendClient; page: PageClient } {
+  const backend: BackendClient = {
     extractJob: vi.fn().mockResolvedValue(jobInfo),
     tailorResume: vi.fn().mockResolvedValue(tailoredResume),
     answerQuestions: vi.fn().mockResolvedValue(answers),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
+    saveApplication: vi.fn().mockResolvedValue(undefined),
+  };
+  const page: PageClient = {
     // `null` — no account from the page, so the step falls back to the values it drafted. Tests
     // that care about the page's own report override this.
-    fillPage: vi.fn().mockResolvedValue(null),
+    fill: vi.fn().mockResolvedValue(null),
     // No re-scan by default, so each test states for itself whether the live page answers — the
     // `null` path (no content script in the tab) falls back to the run's own detection.
-    scanPage: vi.fn().mockResolvedValue(null),
-    saveApplication: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
+    scan: vi.fn().mockResolvedValue(null),
   };
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key in backend) Object.assign(backend, { [key]: value });
+    else Object.assign(page, { [key]: value });
+  }
+
+  return { backend, page };
 }
 
 /** Detects `fields` on `tabId` and analyzes it, leaving a run in `review` ready for the Fill Step. */
@@ -170,7 +186,7 @@ describe('runAnalysis', () => {
     await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
 
     // The model is asked nothing — the profile already settles this one.
-    expect(deps.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, []);
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, []);
     expect(await getPipelineRun(7)).toMatchObject({
       answers: [
         {
@@ -207,7 +223,7 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, [
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, [
       {
         fieldId: 'f-sponsor',
         question: 'Will you require sponsorship?',
@@ -256,9 +272,9 @@ describe('runAnalysis', () => {
       deps,
     );
 
-    expect(deps.extractJob).toHaveBeenCalledWith('Senior Engineer at Acme...');
-    expect(deps.tailorResume).toHaveBeenCalledWith(profile, jobInfo);
-    expect(deps.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
+    expect(deps.backend.extractJob).toHaveBeenCalledWith('Senior Engineer at Acme...');
+    expect(deps.backend.tailorResume).toHaveBeenCalledWith(profile, jobInfo);
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
       { fieldId: 'f-why', question: 'Why do you want to work here?' },
     ]);
     expect(await getPipelineRun(7)).toEqual({
@@ -297,7 +313,7 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
       {
         fieldId: 'f-auth',
         question: 'Are you authorized to work in the US?',
@@ -318,7 +334,7 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.extractJob).toHaveBeenCalled();
+    expect(deps.backend.extractJob).toHaveBeenCalled();
   });
 
   it('checkpoints "analyze-error" when a call fails, instead of throwing to a caller that may no longer be listening', async () => {
@@ -390,7 +406,7 @@ describe('runAnalysis', () => {
 
     await runAnalysis(11, null, profile, '   ', deps);
 
-    expect(deps.extractJob).not.toHaveBeenCalled();
+    expect(deps.backend.extractJob).not.toHaveBeenCalled();
     expect(await getPipelineRun(11)).toBeNull();
   });
 });
@@ -407,13 +423,13 @@ describe('runFill', () => {
 
     await runFill(7, profile, deps);
 
-    expect(deps.renderResumePdf).not.toHaveBeenCalled();
-    expect(deps.fillPage).toHaveBeenCalledWith(7, {
+    expect(deps.backend.renderResumePdf).not.toHaveBeenCalled();
+    expect(deps.page.fill).toHaveBeenCalledWith(7, {
       fields: [emailField, questionField],
       values: { 'f-email': 'jane@example.com', 'f-why': 'Draft answer.' },
       resume: undefined,
     });
-    expect(deps.saveApplication).toHaveBeenCalledWith({
+    expect(deps.backend.saveApplication).toHaveBeenCalledWith({
       company: 'Acme',
       roleTitle: 'Senior Engineer',
       jobUrl: 'https://boards.greenhouse.io/acme/jobs/1',
@@ -431,12 +447,12 @@ describe('runFill', () => {
     // case that used to report "nothing was filled" no matter how complete the form later became.
     await seedReviewRun(7, []);
     const deps = makeDeps({
-      scanPage: vi.fn().mockResolvedValue({ fields: [emailField] }),
+      scan: vi.fn().mockResolvedValue({ fields: [emailField] }),
     });
 
     await runFill(7, profile, deps);
 
-    expect(deps.fillPage).toHaveBeenCalledWith(7, {
+    expect(deps.page.fill).toHaveBeenCalledWith(7, {
       fields: [emailField],
       values: { 'f-email': 'jane@example.com' },
       resume: undefined,
@@ -450,12 +466,12 @@ describe('runFill', () => {
     // Same question, new id: the element was unmounted and remounted between analyzing and filling.
     const remounted: DetectedField = { ...questionField, id: 'f-why-2', selector: '#why-field-2' };
     const deps = makeDeps({
-      scanPage: vi.fn().mockResolvedValue({ fields: [remounted] }),
+      scan: vi.fn().mockResolvedValue({ fields: [remounted] }),
     });
 
     await runFill(7, profile, deps);
 
-    expect(deps.fillPage).toHaveBeenCalledWith(
+    expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ values: { 'f-why-2': 'Draft answer.' } }),
     );
@@ -464,11 +480,11 @@ describe('runFill', () => {
   it("falls back to the run's own detection when the page can't be re-scanned (no content script to answer)", async () => {
     stubChrome();
     await seedReviewRun(7, [emailField]);
-    const deps = makeDeps({ scanPage: vi.fn().mockResolvedValue(null) });
+    const deps = makeDeps({ scan: vi.fn().mockResolvedValue(null) });
 
     await runFill(7, profile, deps);
 
-    expect(deps.fillPage).toHaveBeenCalledWith(
+    expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ fields: [emailField] }),
     );
@@ -479,7 +495,7 @@ describe('runFill', () => {
     await seedReviewRun(7, []);
     const required: DetectedField = { ...resumeField, category: 'unknown', label: 'Referral code' };
     const deps = makeDeps({
-      scanPage: vi.fn().mockResolvedValue({ fields: [required] }),
+      scan: vi.fn().mockResolvedValue({ fields: [required] }),
     });
 
     await runFill(7, profile, deps);
@@ -519,7 +535,7 @@ describe('runFill', () => {
     const required = { ...emailField, required: true };
     await seedReviewRun(7, [required]);
     const deps = makeDeps({
-      fillPage: vi.fn().mockResolvedValue({ ok: true, filledFieldIds: [], resumeAttached: false }),
+      fill: vi.fn().mockResolvedValue({ ok: true, filledFieldIds: [], resumeAttached: false }),
     });
 
     await runFill(7, profile, deps);
@@ -583,9 +599,9 @@ describe('runFill', () => {
 
     await runFill(7, profile, deps);
 
-    expect(deps.renderResumePdf).toHaveBeenCalledTimes(1);
-    expect(deps.renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
-    expect(deps.fillPage).toHaveBeenCalledWith(7, {
+    expect(deps.backend.renderResumePdf).toHaveBeenCalledTimes(1);
+    expect(deps.backend.renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+    expect(deps.page.fill).toHaveBeenCalledWith(7, {
       fields: [decoyField, resumeField],
       values: {},
       resume: { name: 'jane_doe_resume.pdf', type: 'application/pdf', bytes: pdfBytes.buffer },
@@ -614,7 +630,7 @@ describe('runFill', () => {
 
     await runFill(13, profile, deps);
 
-    expect(deps.fillPage).not.toHaveBeenCalled();
+    expect(deps.page.fill).not.toHaveBeenCalled();
     expect(await getPipelineRun(13)).toBeNull();
   });
 });

@@ -1,5 +1,12 @@
 # Resume design conventions — research for `renderResume.tsx`
 
+> **Status: implemented (2026-08-12).** The recommendations below were applied to
+> `apps/backend/src/pdf/renderResume.tsx`, which also gained a one-page fitting ladder built on the
+> ranges sourced here. This doc is kept as the **record of where the numbers came from** — every
+> "current state" note and the "Now" column of the summary table describe the code _before_ that
+> pass, not today's. Read it to know why a value is what it is, or before changing one; don't read
+> it as a to-do list.
+
 ## Why this doc exists
 
 `apps/backend/src/pdf/renderResume.tsx:5-21` currently holds a `StyleSheet.create` block whose values

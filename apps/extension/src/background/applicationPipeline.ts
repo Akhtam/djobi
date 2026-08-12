@@ -15,23 +15,11 @@
  * editing both modules and the store. Here each step returns the patch it checkpoints, and the run's
  * shape lives only in `lib/tabStore.ts`.
  */
-import { labelsMatch, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
-import type {
-  DetectedField,
-  JobInfo,
-  NewApplication,
-  Profile,
-  QuestionAnswer,
-  QuestionForModel,
-  TailoredResume,
-} from '@djobi/shared';
-import { callBackend, callBackendBinary } from '../lib/callBackend';
-import type {
-  FillFormCommandMessage,
-  FillFormResult,
-  JobPageData,
-  ScanPageCommandMessage,
-} from '../lib/messages';
+import { matchAnswerToField, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
+import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
+import { httpBackendClient, type BackendClient } from '../lib/backendClient';
+import type { JobPageData } from '../lib/messages';
+import { chromePageClient, type PageClient } from '../lib/pageClient';
 import {
   asAnalyzedRun,
   getDetectedPage,
@@ -43,81 +31,23 @@ import {
 } from '../lib/tabStore';
 
 /**
- * What the Fill Step asks the page to do, in the pipeline's own terms: the fields, the values to
- * write, and the resume to attach as raw bytes.
+ * Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole.
  *
- * Deliberately not the `FILL_FORM` wire message. That message carries its bytes as `number[]`,
- * because `chrome.runtime` messaging can't carry an `ArrayBuffer` — a transport detail that has no
- * business in the step deciding *what* to fill. Naming which upload input receives the file is
- * likewise absent: `content/index.ts` owns that choice, being the only side that can see the page.
+ * Two collaborators, not the seven loose methods this used to be. Four of those were one-line
+ * wrappers over `callBackend`, so the interface grew a method for every backend route the pipeline
+ * touched while hiding nothing, and every test had to supply all seven to exercise any one of them.
+ * The two things that genuinely vary here are *which backend* and *which page*, so those are the
+ * two names.
  */
-export interface FillPageCommand {
-  fields: DetectedField[];
-  values: Record<string, string>;
-  resume?: { name: string; type: string; bytes: ArrayBuffer };
-}
-
-/** Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole. */
 export interface PipelineDeps {
-  extractJob: (jobDescription: string) => Promise<JobInfo>;
-  tailorResume: (profile: Profile, jobInfo: JobInfo) => Promise<TailoredResume>;
-  answerQuestions: (
-    profile: Profile,
-    jobInfo: JobInfo,
-    questions: QuestionForModel[],
-  ) => Promise<QuestionAnswer[]>;
-  renderResumePdf: (profile: Profile, tailoredResume: TailoredResume) => Promise<ArrayBuffer>;
-  /**
-   * Fills the tab's form, resolving with the page's own account of what landed — or `null` when no
-   * frame answers (no content script, or a content script orphaned by an extension reload), which
-   * the caller must not read as "nothing was filled".
-   */
-  fillPage: (tabId: number, command: FillPageCommand) => Promise<FillFormResult | null>;
-  /** Re-scans the tab's live form, or resolves `null` when no frame answers (no content script, no form). */
-  scanPage: (tabId: number) => Promise<JobPageData | null>;
-  saveApplication: (payload: NewApplication) => Promise<unknown>;
+  backend: BackendClient;
+  page: PageClient;
 }
 
-/** The production adapter: the local backend for the four calls, and the tab's content script for the fill. */
-const backendDeps: PipelineDeps = {
-  extractJob: (jobDescription) => callBackend('/extract-job', { jobDescription }),
-  tailorResume: (profile, jobInfo) => callBackend('/tailor-resume', { profile, jobInfo }),
-  answerQuestions: (profile, jobInfo, questions) =>
-    callBackend('/answer-questions', { profile, jobInfo, questions }),
-  renderResumePdf: (profile, tailoredResume) =>
-    callBackendBinary('/render-resume-pdf', { profile, tailoredResume }),
-  fillPage: (tabId, command) =>
-    new Promise((resolve) => {
-      const message: FillFormCommandMessage = {
-        type: 'FILL_FORM',
-        fields: command.fields,
-        values: command.values,
-        // The wire can only carry plain JSON, so the bytes are encoded here, at the edge that
-        // actually has the constraint.
-        resumeFile: command.resume && {
-          name: command.resume.name,
-          type: command.resume.type,
-          bytes: Array.from(new Uint8Array(command.resume.bytes)),
-        },
-      };
-      chrome.tabs.sendMessage(tabId, message, (response?: FillFormResult) => {
-        // Reading `lastError` marks it handled; an unanswered message would otherwise log as an
-        // unchecked runtime error. Same rule as `scanPage` below.
-        void chrome.runtime.lastError;
-        resolve(response ?? null);
-      });
-    }),
-  scanPage: (tabId) =>
-    new Promise((resolve) => {
-      const message: ScanPageCommandMessage = { type: 'SCAN_PAGE' };
-      chrome.tabs.sendMessage(tabId, message, (response?: JobPageData) => {
-        // Reading `lastError` is what marks it handled; an unanswered message (no content script in
-        // the tab, or no frame holding a form) would otherwise log as an unchecked runtime error.
-        void chrome.runtime.lastError;
-        resolve(response ?? null);
-      });
-    }),
-  saveApplication: (payload) => callBackend('/applications', payload),
+/** The production adapter: the local backend, and the tab's own content script. */
+const productionDeps: PipelineDeps = {
+  backend: httpBackendClient,
+  page: chromePageClient,
 };
 
 /** Maps a scalar (non-question, non-upload) field category to the base profile value that fills it. */
@@ -156,7 +86,7 @@ async function analysisStep(
   profile: Profile,
   deps: PipelineDeps,
 ): Promise<Pick<PipelineRunState, 'status' | 'jobInfo' | 'tailoredResume' | 'answers'>> {
-  const jobInfo = await deps.extractJob(jobDescription);
+  const jobInfo = await deps.backend.extractJob(jobDescription);
 
   const questions = jobPageData.fields
     .filter((field) => field.category === 'question')
@@ -174,8 +104,8 @@ async function analysisStep(
   const { resolved, forModel } = splitPreparedQuestions(profile, questions);
 
   const [tailoredResume, drafted] = await Promise.all([
-    deps.tailorResume(profile, jobInfo),
-    deps.answerQuestions(profile, jobInfo, forModel),
+    deps.backend.tailorResume(profile, jobInfo),
+    deps.backend.answerQuestions(profile, jobInfo, forModel),
   ]);
 
   const prepared: QuestionAnswer[] = resolved.map((question) => ({
@@ -196,40 +126,6 @@ async function analysisStep(
     .filter((answer): answer is QuestionAnswer => answer !== undefined);
 
   return { status: 'review', jobInfo, tailoredResume, answers };
-}
-
-/**
- * The drafted answer for a freshly-scanned field.
- *
- * By field id first — `detectFields.ts` keeps an element's id stable across scans, so this is the
- * normal path. By question text second, for the field that was re-tagged anyway: an element the
- * Analysis Step saw can be unmounted and remounted by the ATS between analyzing and filling
- * (expanding a section, a conditional question re-rendering), which loses its `data-djobi-id` and
- * hands it a new one. The answer was drafted for that *question*, so the question is what identifies
- * it once the id can't.
- *
- * That second path insists the match be *unambiguous*. Labels are not reliably unique — a form
- * whose labels degrade to a shared placeholder (Ashby renders "Start typing…" on every combobox)
- * gives several fields the same one, and matching the first would put one field's answer into
- * whichever of them happened to be re-tagged. An ambiguous label is treated as no match at all,
- * leaving the field to be reported as unresolved rather than confidently filled with the wrong text.
- */
-function answerForField(
-  field: DetectedField,
-  answers: QuestionAnswer[],
-  labelByAnalyzedId: Map<string, string>,
-): string | undefined {
-  const byId = answers.find((answer) => answer.fieldId === field.id);
-  if (byId) return byId.answer;
-
-  if (!field.label) return undefined;
-
-  const byLabel = answers.filter((answer) => {
-    const label = labelByAnalyzedId.get(answer.fieldId);
-    return label ? labelsMatch(label, field.label) : false;
-  });
-
-  return byLabel.length === 1 ? byLabel[0].answer : undefined;
 }
 
 /**
@@ -255,7 +151,7 @@ async function fillStep(
   // detection is the fallback for a page that can't be re-scanned (no content script — the tab was
   // open across an extension reload), and it's the only source at all for a run analyzed from a
   // pasted job description before the form had rendered, where it is empty.
-  const scanned = await deps.scanPage(tabId);
+  const scanned = await deps.page.scan(tabId);
   const fields = scanned?.fields.length ? scanned.fields : jobPageData.fields;
   const labelByAnalyzedId = new Map(
     jobPageData.fields.map((field) => [field.id, field.label] as const),
@@ -264,7 +160,7 @@ async function fillStep(
   const values: Record<string, string> = {};
   for (const field of fields) {
     if (field.category === 'question') {
-      const answer = answerForField(field, answers, labelByAnalyzedId);
+      const answer = matchAnswerToField(field, answers, labelByAnalyzedId);
       if (answer !== undefined) values[field.id] = answer;
       continue;
     }
@@ -281,13 +177,13 @@ async function fillStep(
     ? {
         name: resumeFileName(profile.fullName),
         type: 'application/pdf',
-        bytes: await deps.renderResumePdf(profile, tailoredResume),
+        bytes: await deps.backend.renderResumePdf(profile, tailoredResume),
       }
     : undefined;
 
-  const filled = await deps.fillPage(tabId, { fields, values, resume });
+  const filled = await deps.page.fill(tabId, { fields, values, resume });
 
-  await deps.saveApplication({
+  await deps.backend.saveApplication({
     company: jobInfo.company,
     roleTitle: jobInfo.roleTitle,
     jobUrl: tabUrl ?? '',
@@ -359,7 +255,7 @@ export async function runAnalysis(
   tabUrl: string | null,
   profile: Profile,
   jobDescription: string,
-  deps: PipelineDeps = backendDeps,
+  deps: PipelineDeps = productionDeps,
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
@@ -391,7 +287,7 @@ export async function runAnalysis(
 export async function runFill(
   tabId: number,
   profile: Profile,
-  deps: PipelineDeps = backendDeps,
+  deps: PipelineDeps = productionDeps,
 ): Promise<void> {
   const run = asAnalyzedRun(await getPipelineRun(tabId));
   if (!run) return;

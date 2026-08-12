@@ -1,3 +1,4 @@
+import { parseDetectedFields } from '@djobi/shared';
 import type { DetectedField, JobInfo, QuestionAnswer, TailoredResume } from '@djobi/shared';
 import type { JobPageData } from './messages';
 
@@ -103,10 +104,42 @@ export function storageKey(tabId: number): string {
   return `tab:${tabId}`;
 }
 
+/**
+ * Reads a tab's entry, re-parsing every Detected Field it carries.
+ *
+ * This is a version-skew boundary, not merely a deserialization one. `chrome.storage.session`
+ * outlives an extension reload: the entry a tab holds was written by whichever build was running
+ * when that tab was opened, which need not be the build reading it back. Casting the JSON to
+ * `TabState` — as this did — meant a field written before `elementRole` or `options[].selector`
+ * existed arrived looking valid and failed much later, as a field the Fill Step couldn't fill, with
+ * nothing pointing back here.
+ *
+ * Only the fields are re-parsed. The rest of the run is extension-internal state whose shape moves
+ * with the code that reads it, and a stricter parse there would throw away a live run over a field
+ * nobody was about to use.
+ */
 async function read(tabId: number): Promise<TabState> {
   const key = storageKey(tabId);
   const stored = await chrome.storage.session.get<Record<string, TabState>>(key);
-  return stored[key] ?? EMPTY;
+  const state = stored[key];
+  if (!state) return EMPTY;
+
+  return {
+    ...state,
+    frames: Object.fromEntries(
+      Object.entries(state.frames ?? {}).map(([frameId, frame]) => [
+        frameId,
+        { ...frame, data: { fields: parseDetectedFields(frame.data?.fields) } },
+      ]),
+    ),
+    run: state.run
+      ? {
+          ...state.run,
+          jobPageData: { fields: parseDetectedFields(state.run.jobPageData?.fields) },
+          unresolvedRequiredFields: parseDetectedFields(state.run.unresolvedRequiredFields),
+        }
+      : null,
+  };
 }
 
 async function write(tabId: number, state: TabState): Promise<void> {

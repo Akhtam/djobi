@@ -25,9 +25,10 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import { callBackend, callBackendBinary } from '../lib/callBackend';
-import type { JobPageData, StartAnalysisMessage, StartFillMessage } from '../lib/messages';
-import { sendMessage } from '../lib/messages';
+import type { JobPageData } from '../lib/messages';
+import { notify } from '../lib/messages';
 import { getDetectedPage, type PipelineStatus } from '../lib/tabStore';
+import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 
 // 'loading'/'no-profile'/'ready' are bootstrap-only, local to this component; the rest is
@@ -69,27 +70,23 @@ function statusPill(
 export function App() {
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [tabId, setTabId] = useState<number | null>(null);
-  const [tabUrl, setTabUrl] = useState<string | null>(null);
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
   // The pasted job description before any run exists — once one does, it lives on the run.
   const [localPageText, setLocalPageText] = useState<string | null>(null);
 
-  // The stored run — hydration, the storage subscription and write-back all live in the hook.
-  const { run, syncedAt, edit } = usePipelineRun(tabId);
+  // The tracked tab, and everything `chrome.tabs` — the panel survives a tab switch, so it follows.
+  const { tabId, tabUrl, changeToken } = useActiveTab(Boolean(profile));
 
-  // A status shown between clicking and the background writing its own, so the UI responds at once
-  // and the action can't be double-fired. Never persisted — the background owns the run's progress
-  // — and stood down as soon as any store update arrives.
-  const [pendingStatus, setPendingStatus] = useState<PipelineStatus | null>(null);
-  useEffect(() => setPendingStatus(null), [syncedAt]);
+  // The stored run — hydration, the storage subscription, the optimistic status and write-back all
+  // live in the hook.
+  const { run, status: runStatus, begin, edit } = usePipelineRun(tabId);
 
   const status: Status = !profileLoaded
     ? 'loading'
     : !profile
       ? 'no-profile'
-      : (pendingStatus ?? run?.status ?? 'ready');
+      : (runStatus ?? 'ready');
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
   const jobPageData = run?.jobPageData ?? detectedPage;
@@ -111,11 +108,12 @@ export function App() {
   >({ kind: 'idle' });
   const resumeUrlRef = useRef<string | null>(null);
 
-  /** Points the panel at a tab and clears everything scoped to the previous one. The run itself
-   *  is re-read by `usePipelineRun` when `tabId` changes. */
-  function trackTab(newTabId: number, newTabUrl: string | null) {
-    setTabId(newTabId);
-    setTabUrl(newTabUrl);
+  // Everything scoped to the page being shown, dropped whenever that page changes — a different
+  // tab, or a navigation within one. `useActiveTab` reports both as a bumped `changeToken`, and the
+  // run itself is re-read by `usePipelineRun` off the new `tabId`.
+  useEffect(() => {
+    if (tabId === null) return;
+
     setShowPageTextEditor(false);
     setLocalPageText(null);
     setDetectedPage(null);
@@ -124,50 +122,22 @@ export function App() {
     // Opportunistic only — the paste + Analyze screen is shown regardless of whether this finds
     // anything, so a page where detection fails (or hasn't finished) never blocks the user from
     // pasting the job description themselves.
-    void getDetectedPage(newTabId).then((data) => {
-      if (data) setDetectedPage(data);
+    let current = true;
+    void getDetectedPage(tabId).then((data) => {
+      if (current && data) setDetectedPage(data);
     });
-  }
+    return () => {
+      current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `changeToken` is the reset signal
+  }, [tabId, changeToken]);
 
   useEffect(() => {
-    Promise.all([
-      callBackend<Profile | null>('/profile', undefined, 'GET'),
-      new Promise<chrome.tabs.Tab[]>((resolve) =>
-        chrome.tabs.query({ active: true, currentWindow: true }, resolve),
-      ),
-    ]).then(([loadedProfile, tabs]) => {
+    void callBackend<Profile | null>('/profile', undefined, 'GET').then((loadedProfile) => {
       setProfile(loadedProfile);
       setProfileLoaded(true);
-      if (!loadedProfile) return;
-
-      const tab = tabs[0];
-      setTabUrl(tab.url ?? null);
-      if (tab.id !== undefined) trackTab(tab.id, tab.url ?? null);
     });
   }, []);
-
-  // The panel survives a tab switch (unlike a popup, which is destroyed by one) — without this,
-  // it would keep showing the previous tab's review after the user switches away.
-  useEffect(() => {
-    if (!profile) return;
-
-    function onActivated(activeInfo: chrome.tabs.OnActivatedInfo) {
-      if (activeInfo.tabId === tabId) return;
-      chrome.tabs.get(activeInfo.tabId, (tab) => trackTab(activeInfo.tabId, tab.url ?? null));
-    }
-
-    function onUpdated(updatedTabId: number, changeInfo: chrome.tabs.OnUpdatedInfo) {
-      if (updatedTabId !== tabId || !changeInfo.url) return;
-      trackTab(updatedTabId, changeInfo.url);
-    }
-
-    chrome.tabs.onActivated.addListener(onActivated);
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-    };
-  }, [profile, tabId]);
 
   // Release the preview's blob: URL when the panel unmounts (the blob outlives the component's
   // state, so without this revoked here it'd leak until the browser reclaims it).
@@ -180,15 +150,15 @@ export function App() {
   // Analysis/Fill Step execution lives in `background/applicationPipeline.ts`, not here — the panel
   // closing mid-request must not kill it. `START_ANALYSIS`/`START_FILL` fire-and-forget (the
   // background handler doesn't hold the response channel open); real progress arrives through
-  // `usePipelineRun`'s storage subscription. `pendingStatus` is only instant UI feedback until the
-  // background writes its own, and is never persisted — see the ownership note on the hook.
+  // `usePipelineRun`'s storage subscription. `begin` is only instant UI feedback until the
+  // background writes its own status, and is never persisted — see the ownership note on the hook.
 
   function handleAnalyze() {
     if (!jobDescription.trim() || tabId === null || !profile) return;
 
-    setPendingStatus('analyzing');
+    begin('analyzing');
 
-    void sendMessage<StartAnalysisMessage, void>({
+    notify({
       type: 'START_ANALYSIS',
       tabId,
       tabUrl,
@@ -214,9 +184,9 @@ export function App() {
   function handleFill() {
     if (!jobPageData || !profile || !jobInfo || !tailoredResume || tabId === null) return;
 
-    setPendingStatus('filling');
+    begin('filling');
 
-    void sendMessage<StartFillMessage, void>({ type: 'START_FILL', tabId, profile });
+    notify({ type: 'START_FILL', tabId, profile });
   }
 
   /** Releases the preview's blob: URL and resets the resume-preview state (used on preview

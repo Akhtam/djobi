@@ -89,6 +89,59 @@ export const ProfileSchema = z.object({
 export type Profile = z.infer<typeof ProfileSchema>;
 
 /**
+ * A Profile with nothing in it — the starting point for a candidate who hasn't filled the form in
+ * yet, and the base every partial Profile is completed against by {@link parseProfile}.
+ *
+ * Lives here, beside the schema it mirrors, because it was previously hand-maintained in the
+ * options page: a fourth copy of the Profile's shape, which a field added to the schema had to be
+ * remembered into separately.
+ *
+ * Note the schema deliberately does *not* default these fields. `POST /profile` validates against
+ * it, and a route that quietly accepts a body with no `fullName` and stores an empty one is worse
+ * than a route that rejects it. Completing a partial Profile is a read-side concern, so it lives in
+ * a read-side function rather than in the schema both sides share.
+ */
+export const EMPTY_PROFILE: Profile = {
+  fullName: '',
+  email: '',
+  phone: null,
+  location: null,
+  links: { linkedin: null, portfolio: null, github: null },
+  workExperience: [],
+  education: [],
+  skills: [],
+  stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
+};
+
+/**
+ * Completes a stored Profile against {@link EMPTY_PROFILE} and validates the result.
+ *
+ * A Profile is read back from jsonb exactly as it was written, so one saved before a field existed
+ * comes back without it — and the options form binds straight to those keys
+ * (`profile.screeningAnswers[topic]`), so a missing one used to crash the page on render.
+ *
+ * `links` is merged too, not just replaced. A top-level spread over an empty profile — which is
+ * what this replaces — takes a stored `links` object wholesale, so a Profile saved before `github`
+ * was added to it kept a `links` with no `github` key and the default never applied. That is the
+ * nested case a single spread cannot reach, and the reason this is a function rather than a literal.
+ *
+ * Falls back to the empty Profile if the merged value still doesn't parse: an unusable stored
+ * Profile should leave the candidate with a blank form they can fill in, not a page that won't load.
+ */
+export function parseProfile(value: unknown): Profile {
+  const stored = (value ?? {}) as Partial<Profile>;
+  const parsed = ProfileSchema.safeParse({
+    ...EMPTY_PROFILE,
+    ...stored,
+    links: { ...EMPTY_PROFILE.links, ...stored.links },
+  });
+
+  return parsed.success ? parsed.data : EMPTY_PROFILE;
+}
+
+/**
  * Structured job-posting information extracted from scraped page text by `extractJob`
  * (see `apps/backend/src/llm/extractJob.ts`).
  */
@@ -133,83 +186,6 @@ export const TailoredResumeSchema = z.object({
 });
 /** Inferred type of {@link TailoredResumeSchema}. */
 export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
-
-/**
- * The categories the (not-yet-built) content script classifies each form field on an ATS page
- * into, before reporting {@link DetectedFieldSchema} entries back to the backend.
- */
-export const FieldCategorySchema = z.enum([
-  'first_name',
-  'last_name',
-  'full_name',
-  'email',
-  'phone',
-  'location',
-  'linkedin_url',
-  'portfolio_url',
-  'github_url',
-  'resume_upload',
-  'cover_letter_upload',
-  'cover_letter_text',
-  'question',
-  'unknown',
-]);
-/** Inferred type of {@link FieldCategorySchema}. */
-export type FieldCategory = z.infer<typeof FieldCategorySchema>;
-
-/**
- * How `fillForm.ts` should interact with a field, independent of its semantic `category` —
- * `'native'` covers plain input/textarea/select; the others are ARIA-widget patterns that need
- * click-based interaction instead of setting `.value`.
- */
-export const ElementRoleSchema = z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup']);
-/** Inferred type of {@link ElementRoleSchema}. */
-export type ElementRole = z.infer<typeof ElementRoleSchema>;
-
-/** One form field found on an ATS application page, classified by the content script. */
-/**
- * One choice on a select/combobox/radiogroup/checkboxgroup {@link DetectedFieldSchema}.
- *
- * `label` is what a candidate reads — it's what the answer-drafting model is shown and constrained
- * to. `selector` is how the Fill Step finds that choice's element again. Keeping the two apart is
- * the whole point: re-deriving a choice's label from the DOM at fill time and hoping it matches the
- * text drafted against is fragile, because every ATS associates option labels differently (a
- * wrapping `<label>`, a `for=`-linked sibling, an `aria-labelledby` reference) and the same element
- * yields different text depending on how you ask.
- */
-export const FieldOptionSchema = z.object({
-  label: z.string().describe('The choice text a candidate reads — used for prompting and display'),
-  selector: z
-    .string()
-    .nullable()
-    .default(null)
-    .describe(
-      "CSS selector for this choice's element, when one existed at detection time. Null for choices known only from an ATS API schema, or from a listbox that only mounts once opened — those fall back to label matching at fill time.",
-    ),
-});
-/** Inferred type of {@link FieldOptionSchema}. */
-export type FieldOption = z.infer<typeof FieldOptionSchema>;
-
-export const DetectedFieldSchema = z.object({
-  id: z.string().describe('Stable id assigned by the content script for round-tripping'),
-  label: z.string().describe('Best-effort human label text for the field'),
-  inputType: z.string().describe('input/textarea/select and its type attribute'),
-  selector: z
-    .string()
-    .describe('CSS selector or content-script-internal handle used to locate the element'),
-  category: FieldCategorySchema,
-  required: z
-    .boolean()
-    .default(false)
-    .describe('Whether the field is marked required (native `required` or `aria-required`)'),
-  options: z
-    .array(FieldOptionSchema)
-    .optional()
-    .describe('Available choices for a select/combobox/radiogroup/checkboxgroup field'),
-  elementRole: ElementRoleSchema.default('native'),
-});
-/** Inferred type of {@link DetectedFieldSchema}. */
-export type DetectedField = z.infer<typeof DetectedFieldSchema>;
 
 /**
  * One drafted answer to one detected `question` field, produced by `answerQuestions`

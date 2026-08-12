@@ -1,13 +1,7 @@
-import { JobInfoSchema, ProfileSchema, type Application } from '@djobi/shared';
+import { TailorResumeRequestSchema, type Application } from '@djobi/shared';
 import { Hono } from 'hono';
-import { z } from 'zod';
 import { listApplicationsByCompany } from '../db/applicationsRepository.js';
 import { tailorResume } from '../llm/tailorResume.js';
-
-const TailorResumeBodySchema = z.object({
-  profile: ProfileSchema,
-  jobInfo: JobInfoSchema,
-});
 
 /**
  * Builds a short summary of past applications to the same company, one line per application, so
@@ -26,7 +20,7 @@ export const tailorResumeRoute = new Hono();
 
 tailorResumeRoute.post('/tailor-resume', async (c) => {
   const body = await c.req.json();
-  const parsed = TailorResumeBodySchema.safeParse(body);
+  const parsed = TailorResumeRequestSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ error: parsed.error.message }, 400);
   }

@@ -3,27 +3,40 @@
 **What this is:** a Chrome extension that autofills job applications on ATS sites (Greenhouse,
 Ashby, Lever, Workday, ...) with an AI-tailored resume and drafted answers to freeform questions —
 plus a local dashboard for tracking which resume/answers went to which job, interview stage, and
-notes (Phases 7-8, added 2026-08-07). Full architecture/design plan: `docs/architecture-plan.md`
-(in git — summarized below; Phases 7-8 are new and only documented here so far).
+notes (Phases 7-8, added 2026-08-07).
+
+Domain vocabulary is in `CONTEXT.md`; per-package detail is in `README.md`, `apps/backend/README.md`
+and `packages/shared/README.md`. (`docs/architecture-plan.md`, the original design plan, was deleted
+2026-08-12 — it had been overtaken on nearly every point and is in git history.)
 
 **Read this file at the start of a new session** to pick up where the last one left off. Update it
 as work happens — check items off, add new ones, don't let it go stale.
 
-## Key decisions (see plan file / package READMEs for full detail)
+## Key decisions
 
 - **Models:** `claude-haiku-4-5` for job-info extraction, `claude-sonnet-5` for resume tailoring
   and question answering.
 - **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
 - **Structured output workaround:** the installed `@anthropic-ai/sdk` (0.68.0) has no
   `.messages.parse()` / `zodOutputFormat`. Every LLM call forces a tool call instead and validates
-  the result with zod — see `apps/backend/src/llm/structuredCall.ts`.
-- **Form filling:** one generic heuristic field-classifier, not per-ATS selectors.
+  the result with zod — see `apps/backend/src/llm/structuredCall.ts`. Each tool's `input_schema` is
+  derived from its zod schema via `zod-to-json-schema` (pinned exact at 3.24.6, `$refStrategy:
+'none'` since Anthropic's `input_schema` doesn't dereference `$ref`). No hand-maintained JSON
+  Schema mirrors exist; if one appears, it's a regression.
+- **Form filling:** one generic heuristic field-classifier, not per-ATS selectors. ATS platform
+  APIs are used as an _oracle_ (classification, required, options) where one exists; the DOM stays
+  the targeting mechanism. See `background/apiDetectors.ts`.
+- **Job Description is pasted, never scraped.** The application form is a different page from the
+  job ad, so scraping captured form labels and nav bars instead of the posting. Removed 2026-08-12.
+- **Review surface is a side panel, not a popup.** A popup is destroyed on any outside click; the
+  panel survives tab switches, and the pipeline runs in the service worker so closing the panel
+  mid-run doesn't drop the result.
 - **Process:** this project is being built test-first (red → green, one vertical slice at a time)
   — see the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
 - **Repo:** pnpm workspace, `packages/shared` (zod schemas) + `apps/backend` (Hono) +
   `apps/extension` (MV3, Vite + `@crxjs/vite-plugin` + React) + `apps/dashboard` (planned, Phase 8:
   separate Vite + React web app, not part of the extension). GitHub remote: `Akhtam/djobi`.
-  Current branch: `phase_6`.
+  Current branch: `dash`.
 - **Application tracking (Phase 7-8):** `status` (draft/submitted) and `stage` (applied →
   phone_screen → interviewing → offer/rejected/withdrawn) are separate fields. Notes are a
   timestamped, categorized log (`technical_questions` / `behavioral_questions` / `general`) you
@@ -32,251 +45,49 @@ as work happens — check items off, add new ones, don't let it go stale.
 
 ## Checklist
 
-### Phase 1 — Workspace scaffold
+### Phases 1-6 — complete (2026-08-07 → 2026-08-12)
 
-- [x] pnpm workspace (`pnpm-workspace.yaml`, root `package.json`)
-- [x] `packages/shared` — zod schemas (`Profile` incl. `stories[]`, `JobInfo`, `TailoredResume`,
-      `DetectedField`, `QuestionAnswer`), JSDoc'd, tested (25 tests), documented in its README
-- [x] Prettier configured at workspace root (single quotes)
+The workspace, backend, and extension are built and green end-to-end. Summary of what each phase
+delivered, in terms of the modules that exist today — the blow-by-blow build log lived here until
+2026-08-12 and is in git history if you need it.
 
-### Phase 2 — Backend skeleton ✅ done
+- **Phase 1 — workspace.** pnpm workspace; `packages/shared` with the zod schemas both apps import;
+  Prettier at the root (single quotes).
+- **Phase 2 — backend skeleton.** Drizzle schema (`profiles`, `applications`), lazily-initialized
+  Neon client, `app.ts` (testable Hono instance) separate from `index.ts` (the entrypoint, bound to
+  `127.0.0.1:5391`). Real Neon project created and migrated (`0000_slimy_manta.sql`).
+- **Phase 3 — LLM layer + routes.** `extractJob` (Haiku), `tailorResume` / `answerQuestions`
+  (Sonnet), all through `structuredCall.ts`; `pdf/renderResume.tsx`; the five LLM/PDF routes.
+- **Phase 4 — persistence.** `GET`/`POST /profile`, `GET`/`POST /applications`,
+  `GET /applications/:id`, backed by the two repositories. `/tailor-resume` computes
+  `priorApplicationsSummary` server-side from past applications to the same company; the route
+  deliberately does not accept a client-supplied one.
+- **Phase 5 — extension scaffold.** MV3 manifest, Vite + `@crxjs/vite-plugin`, the options page
+  (full Profile editor), and `lib/callBackend.ts` as the single transport to the local backend from
+  every extension context.
+- **Phase 6 — content scripts and the end-to-end flow.** `content/detect.ts` (a page-shape heuristic
+  plus an arming-window `MutationObserver`), `content/detectFields.ts` (the field classifier),
+  `content/fillForm.ts` (the filler), `background/applicationPipeline.ts` (the Analysis and Fill
+  Steps), `lib/tabStore.ts` (per-tab state in `chrome.storage.session`), and the side panel.
 
-- [x] Drizzle schema (`profiles`, `applications` tables) — `apps/backend/src/db/schema.ts`
-- [x] Neon DB client, lazily initialized — `apps/backend/src/db/client.ts`
-- [x] `apps/backend/src/app.ts` (testable Hono app instance, separate from the entrypoint)
-- [x] `apps/backend/src/index.ts` — starts the server via `@hono/node-server` on `127.0.0.1:5391`
-      (or `$PORT`); smoke-tested, fails routes gracefully (500, no crash) when env vars are missing
-- [x] Real Neon project created, `apps/backend/.env` has `DATABASE_URL` (gitignored,
-      `ANTHROPIC_API_KEY` still needs a real value before the LLM routes will work)
-- [x] `drizzle-kit generate` + `drizzle-kit migrate` run against Neon — `profiles`/`applications`
-      tables exist for real (migration: `src/db/migrations/0000_slimy_manta.sql`)
-- [x] Full round trip verified live: `POST /profile` → `GET /profile` against the real Neon DB
-- Note: a test profile (`Jane Doe`) is sitting in the real `profiles` table from the smoke test —
-  harmless (gets overwritten by the real profile), but worth knowing it's there
+**Decisions from those phases that are still load-bearing**, and are recorded nowhere else:
 
-### Phase 3 — LLM layer + routes ✅ done
-
-- [x] `extractJob` (Haiku), `tailorResume` (Sonnet), `answerQuestions` (Sonnet) — all tested (9 tests)
-- [x] `POST /extract-job` route — tested (3 tests)
-- [x] `POST /tailor-resume` route — tested (2 tests), zod-validates `{ profile, jobInfo,
-priorApplicationsSummary? }` against `ProfileSchema`/`JobInfoSchema`
-- [x] `POST /answer-questions` route — tested (2 tests), zod-validates `{ profile, jobInfo,
-questions }` (`questions` via an inline schema — `QuestionToAnswer` isn't in `@djobi/shared`)
-- [x] `renderResumePdf(profile, tailoredResume)` — `apps/backend/src/pdf/renderResume.tsx`, a
-      single `@react-pdf/renderer` template; contact info + education come from `profile` (not
-      job-specific), skills/work-experience from `tailoredResume`. Tested (1 test, asserts
-      real `%PDF-` output — no mocking, since there's no LLM/network involved)
-- [x] `POST /render-resume-pdf` route — tested (2 tests), zod-validates `{ profile,
-tailoredResume }`, returns raw PDF bytes with `content-type: application/pdf`
-- Note: no `tsconfig.json` in `apps/backend` (see Known loose ends) means JSX in
-  `renderResume.tsx` uses the classic transform by default — needed an explicit `import React from
-'react'` for `React.createElement` to resolve at runtime; switch to the automatic runtime once a
-  tsconfig exists.
-- [x] **Derive LLM `input_schema` from zod** (2026-08-07, via
-      `/mattpocock-skills:improve-codebase-architecture` → grilling → `/tdd`): `callStructured`
-      (`structuredCall.ts`) now derives each tool's `input_schema` from `schema` via
-      `zod-to-json-schema@3.24.6` (pinned exact — its peer dep is `zod: ^3.24.1`, an exact match for
-      the installed zod; the newer `3.25.2` needs `zod ^3.25.28` and would've forced an unrelated
-      bump), with `$refStrategy: 'none'` so the schema stays flat/self-contained (Anthropic's tool
-      `input_schema` doesn't dereference `$ref`/`definitions`). Deleted the three hand-maintained
-      JSON Schema blocks (`jobInfoInputSchema`, `workExperienceItemSchema` +
-      `tailoredResumeInputSchema`, `answerQuestionsInputSchema`) along with the `inputSchema` field
-      on `StructuredToolCallOptions` — nothing passes one anymore. New `structuredCall.test.ts`
-      (didn't exist before; the module was only tested transitively and none of those tests looked
-      at `input_schema`) asserts the derivation against a sample schema (nested object, array,
-      nullable, `.describe()`) and that no `$ref` leaks through.
-
-### Phase 4 — Profile + applications persistence ✅ done
-
-- [x] `GET /profile` / `POST /profile` — tested (4 tests), backed by `db/profileRepository.ts`
-- [x] `GET /applications`, `GET /applications/:id` — tested (4 tests), backed by
-      `db/applicationsRepository.ts` (`listApplications`, `getApplicationById`)
-- [x] `POST /applications` — tested (3 tests), zod-validates against `NewApplicationSchema`
-      (`@djobi/shared` — `ApplicationSchema` minus `id`/`createdAt`, `status` defaults to `draft`),
-      writes via `applicationsRepository.saveApplication`
-- [x] `tailorResume`'s `priorApplicationsSummary` is now populated automatically: the
-      `/tailor-resume` route calls `applicationsRepository.listApplicationsByCompany(jobInfo.company)`
-      and builds a one-line-per-application summary before calling `tailorResume` — tested (3 tests,
-      up from 2); the route no longer accepts a client-supplied `priorApplicationsSummary` in the
-      body, since nothing sent one and the plan always intended this to be server-computed
-- Fixed a pre-existing bug found while starting this phase: `app.ts` only mounted
-  `extractJobRoute`/`profileRoute` — `tailor-resume`, `answer-questions`, and `render-resume-pdf`
-  were never wired in despite having passing unit-level logic, so their route tests were 404ing (6
-  failing tests). Wired all five routes in `app.ts`; full suite was green before phase 4 work began.
-
-### Phase 5 — Chrome extension ✅ done
-
-- [x] `apps/extension` scaffold: `package.json`, `tsconfig.json`, `vite.config.ts`, MV3
-      `src/manifest.ts` (host permissions for the local backend + ATS content-script matches,
-      background service worker, popup/options pages), builds clean via `pnpm --filter extension
-build` — infra, not TDD'd
-- [x] `src/background/callBackend.ts` — posts JSON to the local backend
-      (`http://127.0.0.1:5391<path>`), resolves with the parsed response, rejects with the
-      backend's `{ error }` message on a non-ok response; tested (3 tests, up from 2 — added an
-      optional `method` param, defaulting to `POST`, so `GET /profile` is reachable too)
-- [x] `src/background/index.ts` relays `chrome.runtime.sendMessage({ path, body, method? })` to
-      `callBackend`, responding `{ data }` / `{ error }`; tested (3 tests)
-- [x] `src/lib/sendToBackground.ts` — the popup/options-side counterpart, wraps
-      `chrome.runtime.sendMessage` in a promise; tested (3 tests)
-- [x] Test infra: added `jsdom` + `@testing-library/react` + `@testing-library/jest-dom`
-      devDependencies, switched `vitest.config.ts` to the `jsdom` environment (was `node`), added
-      `vitest.setup.ts` (jest-dom matchers + RTL `cleanup` after each test)
-- [x] Options page (`src/options/App.tsx`) — full profile onboarding form covering every
-      `ProfileSchema` field: scalar fields (name/email/phone/location/links), plus
-      add/edit/remove list UIs for skills, work experience, education, and stories. Loads the
-      existing profile via `GET /profile` on mount (empty form if none saved yet), saves via
-      `POST /profile`, shows a saved/error message. Tested (11 tests)
-- [x] Popup (`src/popup/App.tsx`) — scoped down deliberately (see note below): shows a "set up
-      your profile" prompt (with a button to open the options page) when no profile is saved, a
-      "navigate to a supported page" prompt when the active tab isn't an ATS host, and a ready
-      state otherwise. Tested (3 tests)
-- [x] `src/lib/atsHosts.ts` — single source of truth for the ATS domain allowlist:
-      `isSupportedAtsHost(hostname)` (tested, 3 tests) used by the popup, and `ATS_HOST_PATTERNS`
-      (derived from the same domain list) now imported by `manifest.ts` instead of a duplicated
-      array. Added the `activeTab` permission so the popup can read the active tab's URL.
-- [x] Extension icons (16/48/128 px) generated as placeholder PNGs at
-      `src/assets/icons/icon{16,48,128}.png`, wired into `manifest.ts`'s `icons` and
-      `action.default_icon` — infra, not TDD'd
-- Note: the popup's real job — reviewing/editing a detected job's tailored resume and drafted
-  answers — depends on data Phase 6 (content script) doesn't produce yet. Decided with the user to
-  scope the popup down to profile-status/page-support plumbing now and build the actual review UI
-  in Phase 6 once there's real data to review, rather than build it against an imagined contract.
-
-### Phase 6 — Content scripts ✅ done, end-to-end
-
-- [x] `src/content/detect.ts` — `isJobApplicationPage(doc)`: page-shape heuristic (does a form on
-      the page have a resume file-upload input?) layered on top of the host-level allowlist that
-      already gates content-script injection via `manifest.ts`. Tested (3 tests)
-- [x] `src/content/scrapeJob.ts` — `scrapePageText(doc)`: readability heuristic for `/extract-job`
-      input — `<main>`, then `[role="main"]`, falling back to `document.body`. Tested (3 tests)
-- [x] `src/content/detectFields.ts` — `detectFields(doc)`: classifies every candidate-fillable
-      `input`/`textarea`/`select` into a `DetectedField` (`@djobi/shared`'s `FieldCategory` enum)
-      via keyword-matching a `<label for>`/aria-label/placeholder/name/id signal string; file
-      inputs classified by upload type, unmatched question-shaped textareas classified as
-      `question`, hidden/submit/button/reset/image inputs skipped. Tested (6 tests). Elements
-      without a native `id` are tagged with a `data-djobi-id` attribute so `selector` reliably
-      resolves back to the element — the initial `nth-of-type`-based selector was wrong (index was
-      global across all fields, not per-parent-per-tag) and a test caught it before it shipped
-- [x] `src/content/fillForm.ts` — `fillForm(doc, fields, values)` sets each field's value (keyed by
-      `DetectedField.id`) and dispatches `input`/`change`, skipping fields with no supplied value
-      or an unresolvable selector; `attachResumeFile(input, file)` attaches a resume file. Tested
-      (3 tests)
-- Deviation from `docs/architecture-plan.md`'s literal `DataTransfer` snippet for resume upload:
-  jsdom (this project's test environment) doesn't implement `DataTransfer` at all, and there's no
-  public `FileList` constructor to hand back from a polyfilled one either way — so the documented
-  snippet can't be exercised by a real test. `attachResumeFile` instead uses
-  `Object.defineProperty(input, 'files', { value: fileListLike, configurable: true })`, which
-  shadows the inherited (read-only) `files` accessor with an own data property. This works
-  identically in real Chrome (`files` is a configurable, non-`[Unforgeable]` IDL attribute) and is
-  the same technique DOM testing/automation libraries use for this exact browser-API gap
-- **End-to-end wiring** (content script → background → popup review UI → fill-on-confirm →
-  `/applications`), completing the note deferred above and in Phase 5:
-  - [x] `src/background/jobPageStore.ts` — per-tab `Map`-backed store (`setJobPageData`/
-        `getJobPageData`), pure and tested without mocking `chrome` (2 tests)
-  - [x] `src/background/index.ts` — the legacy untyped `{ path, body, method? }` backend relay is
-        unchanged; new messages route via a `type` discriminator: `REPORT_JOB_PAGE` (content
-        script → background, stores by `sender.tab.id`), `GET_JOB_PAGE_DATA` (popup → background,
-        `{ tabId }` → stored data or `null`), `FILL_FORM` (popup → background →
-        `chrome.tabs.sendMessage(tabId, ...)` → that tab's content script, response relayed back).
-        Tested (3 new tests, 6 total)
-  - [x] `src/content/index.ts` — no longer a stub: on load, if `isJobApplicationPage`, scrapes +
-        detects fields and sends `REPORT_JOB_PAGE`; always listens for `FILL_FORM` and calls
-        `fillForm`/`attachResumeFile` (reconstructing a `File` from the message's `{ name, type,
-bytes }`, since binary data crossing the message boundary can't carry a real `File`).
-        Tested (4 tests)
-  - [x] `src/popup/App.tsx` — the `ready` state now polls `GET_JOB_PAGE_DATA` for the active tab;
-        once present, runs `/extract-job` → `/tailor-resume` + `/answer-questions` in parallel,
-        then shows an editable review (job title/company, one textarea per drafted answer). "Fill
-        form" builds a `values` map (profile scalars for name/email/phone/location/links fields,
-        edited answers for `question` fields), fetches the resume PDF, sends `FILL_FORM`, then
-        saves a `draft` application via `POST /applications`. Tested (2 new tests, 5 total)
-  - [x] `src/lib/fetchResumePdf.ts` — fetches `/render-resume-pdf` **directly** (not via
-        `callBackend`/`sendToBackground`): those always call `res.json()`, which can't parse a
-        binary PDF response. Tested (2 tests)
-  - Deviation, documented here since it's a real design choice: cover-letter fields
-    (`cover_letter_text`/`cover_letter_upload`) are detected but not yet filled — `answerQuestions`
-    is only wired to `question`-category fields, matching `docs/architecture-plan.md`'s original
-    scope. Extending it to cover letters is future work, not an oversight.
-  - Not done: no loading/error UI for a failed extract/tailor/answer/fill call (the popup just
-    hangs) — worth hardening before this is used against a real ATS site
-- [x] **Application pipeline extraction** (2026-08-07, via
-      `/mattpocock-skills:improve-codebase-architecture` → grilling → `/tdd`): pulled the
-      extract→tailor→answer→fill→save orchestration out of `popup/App.tsx` into
-      `popup/pipeline.ts` — `analyzeJobPage()` (the Analysis Step) and `fillAndSubmit()` (the Fill
-      Step), each taking a `PipelineDeps` object so they're testable with fake deps, no `chrome`/DOM
-      mocking. `App.tsx` is now a thin caller holding `Status`. Also fixes the "no loading/error
-      UI" gap noted above: both functions reject with typed errors (`AnalysisFailedError`,
-      `FillFailedError`); `Status` gained `'analyze-error'`/`'fill-error'`, each rendering a "Try
-      again" that re-invokes the same phase (idempotent — safe to redo, save is always last).
-      Tested (5 new tests in `pipeline.test.ts`); `App.test.tsx` now mocks the `pipeline` module
-      directly and only asserts status→render wiring (7 tests, down from 5 broader ones, replaced
-      not layered). Domain terms **Application Pipeline**/**Analysis Step**/**Fill Step** captured
-      in the repo's first `CONTEXT.md`.
-- [x] **Shared message protocol** (2026-08-07, via `/mattpocock-skills:improve-codebase-architecture`
-      → grilling → `/tdd`): new `lib/messages.ts` is the single source of truth for every
-      `chrome.runtime` message shape (`ReportJobPageMessage`, `GetJobPageDataMessage`,
-      `FillFormRequestMessage`/`FillFormCommandMessage` — split into two types because FILL_FORM
-      has different shapes popup→background (`tabId`) vs background→content, sharing a
-      `FillFormPayload` base) plus a typed `sendMessage<TReq, TRes>()` helper, replacing three
-      independently hand-rolled `new Promise((resolve) => chrome.runtime.sendMessage(...))`
-      wrappers. Also caught and fixed a second instance of the same duplication:
-      `JobPageData` was independently redeclared in `jobPageStore.ts`, `pipeline.ts`, and
-      `App.tsx` — now defined once in `messages.ts`. `background/index.ts`, `content/index.ts`,
-      `pipeline.ts`, and `App.tsx` all import from it instead of redeclaring locally.
-      `sendMessage` tested (1 test, mirrors `sendToBackground.test.ts`'s pattern); the five
-      call-site migrations are type-safety-only with no behavior change, verified by the existing
-      suites staying green untouched.
-- [x] **Split `background/index.ts`'s dispatcher** (2026-08-07, via grilling → `/tdd`):
-      `background/relay.ts` (`handleRelayMessage` — the untyped `{path,body,method}` relay,
-      unchanged behavior) and `background/router.ts` (`handleTypedMessage` — the
-      `REPORT_JOB_PAGE`/`GET_JOB_PAGE_DATA`/`FILL_FORM` switch) replace the single dispatcher that
-      used to share one `onMessage` listener for both; `background/index.ts` is now ~10 lines
-      composing the two. `background/index.test.ts`'s six cases moved to `relay.test.ts`
-      (3 tests, calling `handleRelayMessage` directly, no `chrome` mocking) and `router.test.ts`
-      (3 tests, calling `handleTypedMessage` directly) — replaced, not layered. `index.ts` itself
-      has no dedicated test, same as `manifest.ts`.
-- [x] **Selector resolution deduped into `fillForm.ts`** (2026-08-07, via grilling → `/tdd`):
-      `content/fillForm.ts` exports `resolveField<T extends Element = HTMLElement>(doc, field)`,
-      used internally by `fillForm()` and by `content/index.ts`'s resume-attach path (which
-      previously re-implemented the same `querySelector` lookup independently). Tested directly
-      (2 new tests in `fillForm.test.ts`); `fillForm()`'s and `content/index.ts`'s existing tests
-      stayed green unmodified, confirming the refactor didn't change behavior.
-- [x] **Job-description paste fallback** (2026-08-10, via `/tdd`): some ATS embeds split a posting
-      into Overview/Application tabs, and it's unconfirmed whether the Overview tab's DOM content
-      survives a client-side tab switch (may be unmounted, not just hidden) — if it doesn't,
-      `scrapePageText`'s single DOM snapshot at detection time can miss the job description
-      entirely, since detection fires once the Application tab's form is visible. Rather than guess
-      at ATS-specific tab markup, `popup/App.tsx`'s review screen gained an "Edit job description"
-      toggle revealing a textarea (pre-filled with the scraped `pageText`) and a "Re-analyze"
-      button; re-analysis re-runs `analyzeJobPage` with the edited text substituted in, everything
-      else (fields, tabId, etc.) unchanged. Manual/universal fallback — works regardless of which
-      platform or failure mode caused a bad scrape, not just the tabbed-Ashby case that prompted it.
-      Tested (2 new tests in `App.test.tsx`, 11 total).
-- [x] **Paste fallback moved before first analysis, not just after** (2026-08-10, via `/tdd`):
-      `status: 'ready'` no longer auto-transitions straight to `'analyzing'` once a job page is
-      detected — it now shows a "Ready to analyze" screen with the scraped `pageText` in an
-      always-visible (not toggled) textarea and an explicit "Analyze" button, so a bad scrape can
-      be corrected before the first LLM call, not only after seeing a bad result. The `'review'`
-      screen's toggled "Edit job description"/"Re-analyze" editor (previous entry) is unchanged and
-      still there for after-the-fact correction. Both share the same `pageTextOverride` state.
-      Existing tests updated (a `clickAnalyze()` helper added, since analysis no longer starts on
-      its own); 2 new tests. `App.test.tsx`: 13 total (up from 11).
-- [x] **Paste + Analyze decoupled from job-page detection entirely** (2026-08-10, via `/tdd`):
-      the `'ready'` screen now always shows the paste box + "Analyze" button immediately, whether
-      or not a job page has been auto-detected yet — the `'not-detected'` status/dead-end and its
-      "Try again" retry are gone; detection is now purely a background pre-fill (populates the
-      textarea + `fields` when it succeeds) rather than something that gates the UI. Clicking
-      "Analyze" with no job page ever detected synthesizes `{ pageText, fields: [] }` so analysis
-      (job info + tailored resume + drafted answers) still works standalone from pasted text alone
-      — "Fill form" just has nothing to act on until a real form is detected, which is an accepted
-      trade-off of the manual-first flow. "Analyze"/"Re-analyze" are disabled whenever there's no
-      text to send (pasted or scraped) — needed a `??` vs `||` fix along the way: the effective
-      text used for the textarea's _display_ value, the disabled check, and the analyze payload
-      must all read from the exact same `pageTextOverride ?? jobPageData?.pageText ?? ''`
-      expression, or clearing the box either fights the user's typing (silently reverts) or lets a
-      blank submission slip through depending on which operator is used where. `App.test.tsx`: 14
-      total (up from 13) — replaced the not-detected/retry tests, added paste-without-detection and
-      the disabled-on-empty cases for both editors.
+- `attachResumeFile` keeps a non-`DataTransfer` fallback branch (shadowing `.files` via
+  `Object.defineProperty`) purely because **jsdom has no `DataTransfer` constructor** and no public
+  `FileList` constructor either. Production takes the real `DataTransfer` path. This is a test
+  environment constraint living in product code — don't "simplify" it away.
+- **Cover-letter fields (`cover_letter_text` / `cover_letter_upload`) are detected but deliberately
+  not filled.** `answerQuestions` is wired only to `question`-category fields. A scope decision,
+  not an oversight.
+- **The `??` vs `||` trap on the job-description box.** The textarea's display value, the
+  Analyze-button disabled check, and the analyze payload must all read the _same_ expression.
+  Use different operators in different places and the box either silently reverts the user's typing
+  or lets a blank submission through.
+- `pdf/renderResume.tsx` needs an explicit `import React from 'react'` — without a
+  `tsconfig.json` in `apps/backend`, JSX uses the classic transform and `React.createElement` must
+  resolve at runtime. Switch to the automatic runtime once a tsconfig exists.
+- A test profile (`Jane Doe`) is sitting in the real `profiles` table from an early smoke test.
+  Harmless — it gets overwritten by the real profile — but worth knowing it's there.
 
 ### Phase 7 — Application tracking data model (planned 2026-08-07, not started)
 
@@ -350,7 +161,7 @@ process — decided with the user:
 
 ### Phase 10 — Live chat to refine drafted answers (planned 2026-08-10, not started)
 
-New scope: in the popup's review UI, let the user open a chat with the AI _about a specific
+New scope: in the side panel's review UI, let the user open a chat with the AI _about a specific
 drafted answer_ and iterate on it conversationally ("make this shorter", "lead with the
 migration story instead", "sound less formal") instead of only hand-editing the textarea. Scoped
 to `question`-category fields only (the freeform drafted answers already in the review UI) — not
@@ -361,15 +172,12 @@ Note on numbering: **Phase 9 is already taken** (company-culture-aware answers, 
 2026-08-07, not started) — this is filed as Phase 10 rather than renumbering existing phases.
 Reorder if this should actually take priority over Phase 9.
 
-Open design question, not yet decided with the user: Chrome extension **popups are destroyed and
-rebuilt from scratch every time they close** (unlike a persistent surface), so any in-progress chat
-history kept only in the popup's React state is lost if the user clicks away mid-conversation. Two
-ways to handle this, needing a decision before implementation starts:
-
-- Accept the limitation for v1 (chat is scoped to a single popup-open session; closing the popup
-  resets it) — simplest, no architecture change.
-- Move the review UI (or just the chat) into a `chrome.sidePanel` (MV3 API), which stays open
-  independent of navigation/clicks — bigger change, but matches what "live chat" implies.
+**Resolved 2026-08-12:** this phase's open design question was whether to accept chat history being
+destroyed on every popup close, or move the review UI into a `chrome.sidePanel`. The side panel was
+built for unrelated reasons (the popup lost in-flight runs on any outside click), so the harder
+option is already taken and this phase inherits a persistent surface. What's left to decide is only
+whether chat history should survive a _panel reopen_ — i.e. whether it belongs on
+`PipelineRunState` in `lib/tabStore.ts` alongside the answers, or stays React-local.
 
 - [ ] `packages/shared`: add `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`) and a
       request/response shape for one chat turn (profile, jobInfo, question, current answer, prior
@@ -391,18 +199,18 @@ ways to handle this, needing a decision before implementation starts:
 
 - [x] `content/fillForm.ts` — a fill now drives the event sequence a real keystroke produces
       (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), not just a value write plus
-      `input`. Form libraries layered over React commonly commit a field's value to the *form*
+      `input`. Form libraries layered over React commonly commit a field's value to the _form_
       model on blur, so a fill that never blurred left the DOM looking right and the model empty —
       which is what an ATS reports on submit as "missing entry for required field" over a visibly
       filled form.
 - [x] `content/fillForm.ts` — `fillForm` returns the ids it can **verify** still hold their value,
       checked after a 300ms settle (a controlled field whose `onChange` never fired reverts on the
-      *next* render, so an immediate re-read calls every failed fill a success). Per-widget checks:
+      _next_ render, so an immediate re-read calls every failed fill a success). Per-widget checks:
       `value` for text/select, `checked`/`aria-checked`/`aria-pressed` for groups, trigger text for
       comboboxes.
 - [x] `FILL_FORM` now replies `{ ok, filledFieldIds, resumeAttached }`, and `applicationPipeline`'s
       `unresolvedRequiredFields`/`filledFieldCount` come from that reply rather than from the values
-      it *sent*. A fill the page discarded is now reported instead of showing a green check. A
+      it _sent_. A fill the page discarded is now reported instead of showing a green check. A
       `null` reply (no content script — tab open across an extension reload) still falls back to the
       drafted values, since "no account" isn't "nothing filled".
 - [x] **Page-text scraping removed entirely.** `content/scrapeJob.ts` is deleted, `JobPageData` is
@@ -443,36 +251,103 @@ ways to handle this, needing a decision before implementation starts:
 
 ## Open architecture-review recommendations
 
-From two `/mattpocock-skills:improve-codebase-architecture` runs — 2026-08-07 (backend-focused,
-report not saved) and a second 2026-08-07 pass (extension-focused, after Phase 6 landed). Not yet
-decided/actioned:
+Every **Strong** candidate from the two 2026-08-07 runs was actioned under Phases 3 and 6. What
+follows is what's still open, newest run first.
+
+### From the 2026-08-12 run
+
+- [x] **Done — candidates 1-4, 2026-08-12.** Four of the run's seven, including the one live bug.
+      Full suite green at 347 tests (82 shared / 41 backend / 224 extension).
+
+  - **The wire contract is one artifact.** New `packages/shared/src/wire.ts` owns the request schema
+    for every Application Pipeline route; the six routes parse with it instead of restating the
+    domain inline, and `lib/backendClient.ts` builds each body against the same schema via
+    `satisfies`, so a drift between what the extension sends and what the backend accepts is now a
+    compile error. **This fixed a live bug**: `/answer-questions` had been silently stripping
+    `knownAnswer` (zod `.object()` drops unknown keys), so the prompt paragraph treating a
+    sponsorship or work-authorization answer as binding fact had never once run in production. The
+    regression test was confirmed red against the old schema before the fix landed.
+  - **`PipelineDeps` is two collaborators, not seven methods** — `{ backend: BackendClient; page:
+PageClient }`. New `lib/pageClient.ts` owns both `chrome.tabs.sendMessage` round-trips and now
+    has its own test: the `lastError` handshake and the `ArrayBuffer → number[]` encoding were
+    previously reachable only by running a whole pipeline step.
+  - **The coordination protocol is notification-only.** `sendMessage<TReq, TRes>` is now
+    `notify(message): void` (and reads `lastError`, which nothing did before); `handleTypedMessage`
+    no longer takes a `sendResponse` it never called or returns a `boolean` that was always `false`.
+    The two messages that genuinely have responses live in `PageClient`.
+  - **The label-matching rules have names.** New `packages/shared/src/labelMatching.ts` (replacing
+    `optionLabel.ts`) holds all of them with a table saying which to use when, and the ambiguity
+    invariant — _more than one candidate means no match_ — is implemented once in `uniqueMatch`
+    rather than re-derived at three sites. `apiDetectors` now warns when an oracle answered but
+    matched no field by label, which used to be indistinguishable from no oracle running at all.
+    **Found and fixed a second real bug while naming the rules**: containment matching kept trailing
+    punctuation, so a stored custom answer for "Are you willing to relocate?" could never match a
+    form's "Are you willing to relocate for this role?" — the "?" lands mid-phrase. That is the
+    exact case the feature exists for, and it had never worked.
+
+- [x] **Done — candidates 5-7, 2026-08-12.** The run is fully actioned. Suite green at 370 tests
+      (93 shared / 41 backend / 236 extension).
+
+  - **Detected Field is a module.** New `packages/shared/src/detectedField.ts` owns the schema plus
+    the rules that were documented in six separate files — id stability, a choice group being one
+    field, a nullable option `selector`, and "an ambiguous match is no match" — as `optionFor` and
+    `matchAnswerToField`. `parseDetectedFields` is now applied at the two boundaries that actually
+    skew and previously parsed nothing: `tabStore.read`, where `chrome.storage.session` outlives an
+    extension reload and can hold a field written by an older build, and the router's
+    `REPORT_JOB_PAGE`, where an orphaned content script keeps reporting the shape it knows. Schema
+    defaults mean an older field parses rather than being dropped; a field that genuinely no longer
+    fits costs that field, not the form.
+  - **The panel's status has one owner.** `usePipelineRun` returns the _effective_ status and takes
+    the optimistic request as `begin(status)`, so `syncedAt` — a counter exported purely so one
+    `useEffect` could stand an optimistic status down — is gone from the interface entirely. New
+    `panel/useActiveTab.ts` holds the four `chrome.tabs` touchpoints behind one seam and reports a
+    `changeToken` that covers same-tab navigation, which a tab id alone cannot.
+  - **The options page is 626 lines, down from 780.** `EMPTY_PROFILE` and a new `parseProfile` live
+    in `@djobi/shared` beside the schema they mirror, replacing the hand-maintained fourth copy of
+    the Profile shape. `parseProfile` also merges `links`, which the old top-level spread could not
+    reach — a Profile saved before `github` was added to `links` kept a `links` with no `github` key
+    and the default never applied. The four list editors now share one `ListSection` and a
+    `listEditor(profile, setProfile, key, blank)`, replacing ~20 inline
+    `setProfile({ ...profile, xs: … })` closures including one nested three levels deep. All 16
+    existing options tests passed unmodified, which is the evidence the behaviour is unchanged.
+
+Still open from that run — nothing. Noted while in there, not actioned:
+
+- [ ] Every new Story is created with `id: ''`, but `QuestionAnswer.sourceStoryIds` references
+      `Story.id` — so those references are useless whenever the candidate didn't type an id by hand.
+      A behaviour change rather than a refactor, hence left alone; see `options/App.tsx`.
+
+### Still open from 2026-08-07
 
 - [ ] **Worth exploring:** `profileRepository.saveProfile`'s upsert logic has zero test coverage
-      (the route test mocks the whole repository away) — test it directly
+      (the route test mocks the whole repository away) — test it directly. Related:
+      `applicationsRepository.toApplication` casts jsonb straight to typed fields while
+      `profileRepository.getProfile` deliberately parses — two policies for the same hazard.
 - [ ] **Worth exploring:** unify request-body validation across routes — `profile.ts` uses zod,
-      `extract-job.ts` uses a bare truthiness check with no runtime type guarantee
+      `extract-job.ts` uses a bare truthiness check with no runtime type guarantee. Folded into the
+      shared-wire-contract item above.
 - [ ] **Speculative:** `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
       `<base_profile>`/`<job_info>` prompt scaffold — extract a shared helper if a third
-      writing-model call site appears
-
-**Done:** all three **Strong** candidates from both runs are actioned — extracting
-`popup/App.tsx`'s orchestration into `popup/pipeline.ts` and giving the message protocol a shared
-module (`lib/messages.ts`), both under Phase 6 above; and deriving the LLM `input_schema` from
-zod, under Phase 3 above. Both **Worth exploring** extension candidates are also actioned (2026-08-07,
-via grilling → `/tdd`), under Phase 6 above: `background/index.ts` split into `relay.ts`
-(`handleRelayMessage`, thin, unchanged) + `router.ts` (`handleTypedMessage`, owns
-`REPORT_JOB_PAGE`/`GET_JOB_PAGE_DATA`/`FILL_FORM`), with `index.ts` reduced to composing the two —
-`background/index.test.ts` replaced by `relay.test.ts`/`router.test.ts` testing each function
-directly; and `content/fillForm.ts` gained `resolveField<T>(doc, field)`, used by both `fillForm()`
-and `content/index.ts`'s resume-attach path (which previously re-implemented the same lookup).
-What's left below is all backend, all lower-conviction (**Worth exploring**/**Speculative**).
+      writing-model call site appears.
+- [ ] **Speculative:** `options/App.tsx` is a 780-line leaf whose four list editors are hand-written
+      variants of one shape. The cheap half is worth doing on its own: replace the hand-maintained
+      `EMPTY_PROFILE` and its spread with `ProfileSchema.parse(loaded ?? {})`, since the schema
+      already owns the defaults and the spread is where the missing-key defect class lives.
 
 ## Known loose ends / notes
 
-- The `/code-review` background agent run on 2026-08-07 terminated itself immediately with "no
-  findings" — looked anomalous, never actually reviewed anything. Worth re-running.
-- `apps/backend/README.md` says routes/app.ts are "not built yet" — that's now stale (they exist);
-  update it next time you're in that file.
 - `pnpm --filter backend build` (`tsc -p tsconfig.json`) fails — there's no `tsconfig.json` in
-  `apps/backend` at all (only `packages/shared` has one). Pre-existing, not caused by the route
-  work above; needs fixing before a real build/deploy is possible.
+  `apps/backend` at all (only `packages/shared` has one). Needs fixing before a real build/deploy is
+  possible, and it's what forces the classic JSX transform in `renderResume.tsx`.
+- **The Ashby API oracle is dead code.** `background/apiDetectors.ts` calls an endpoint that returns
+  401 and has never enriched a field; the working unauthenticated GraphQL endpoint, the query, and
+  the response shape are all written up in that file's own doc comment. Needs a
+  `host_permissions` addition too.
+- **`packages/shared/src/screeningAnswers.ts` has no test file** — the only module in that package
+  without one, and it holds `resolveAnswerOption`, whose uniqueness rule is what stands between a
+  stored prepared answer and the wrong box on a legal declaration.
+- Two Ashby questions still need a live browser check, carried over from the (now deleted)
+  fill-failure investigation: whether `data-djobi-id` attributes survive an Ashby form re-mount
+  (if not, `resolveField` returns null for every field), and how Ashby renders its four Boolean
+  screening questions — native fieldset/radios and `role="combobox"` are handled, custom buttons
+  are not.

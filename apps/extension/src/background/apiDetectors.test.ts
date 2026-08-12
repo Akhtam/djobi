@@ -30,7 +30,12 @@ function stubFetch(body: unknown, init: { ok?: boolean } = {}) {
 }
 
 describe('enrichWithApiOracle', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // Silenced by default so a diagnostic warning doesn't clutter the run; the tests that care
+    // about one read it back off this spy.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
 
   describe('Greenhouse', () => {
     const response = {
@@ -390,6 +395,55 @@ describe('enrichWithApiOracle', () => {
       );
 
       expect(result).toEqual(fields);
+    });
+  });
+
+  /**
+   * The one failure mode that looks exactly like success: the oracle answered, but its wording
+   * matched none of the detected labels, so the fields come back untouched — the same result as no
+   * oracle recognizing the URL at all. Nothing distinguished the two until this warning existed.
+   */
+  describe('reporting an enrichment that had no effect', () => {
+    const schemaWithOneQuestion = {
+      questions: [
+        {
+          label: 'Are you authorized to work in the United States?',
+          required: true,
+          fields: [{ name: 'work_auth', type: 'input_text', values: [] }],
+        },
+      ],
+    };
+
+    it('warns when the schema matched none of the detected fields by label', async () => {
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        // The page words the same question differently, so the label lookup misses.
+        [question('Work authorization')],
+        stubFetch(schemaWithOneQuestion),
+      );
+
+      expect(result).toEqual([question('Work authorization')]);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('had no effect'));
+    });
+
+    it('stays quiet when at least one field did match', async () => {
+      await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        [question('Are you authorized to work in the United States?')],
+        stubFetch(schemaWithOneQuestion),
+      );
+
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    it('stays quiet when the schema carried no questions at all — nothing was expected to match', async () => {
+      await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        [question('Work authorization')],
+        stubFetch({ questions: [] }),
+      );
+
+      expect(console.warn).not.toHaveBeenCalled();
     });
   });
 });
