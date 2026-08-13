@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApplicationSchema,
+  ApplicationStageSchema,
   ApplicationStatusSchema,
   EducationSchema,
   JobInfoSchema,
   NewApplicationSchema,
+  NewNoteSchema,
+  NoteSchema,
   ProfileSchema,
   QuestionAnswerSchema,
   StorySchema,
@@ -80,7 +83,16 @@ const validApplication = {
   tailoredResume: validTailoredResume,
   answers: [validQuestionAnswer],
   status: 'draft' as const,
+  stage: 'applied' as const,
+  notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
+};
+
+const validNote = {
+  id: 'note-1',
+  category: 'technical' as const,
+  text: 'Asked to design a rate limiter. They pushed on what happens when Redis is down.',
+  createdAt: '2026-08-09T14:15:00.000Z',
 };
 
 describe('WorkExperienceSchema', () => {
@@ -224,6 +236,55 @@ describe('ApplicationStatusSchema', () => {
   });
 });
 
+describe('ApplicationStageSchema', () => {
+  it('accepts every stage in the interview pipeline', () => {
+    for (const stage of ['applied', 'phone_screen', 'interviewing', 'rejected']) {
+      expect(ApplicationStageSchema.safeParse(stage).success).toBe(true);
+    }
+  });
+
+  it('rejects an arbitrary stage', () => {
+    expect(ApplicationStageSchema.safeParse('ghosted').success).toBe(false);
+  });
+});
+
+describe('NoteSchema', () => {
+  it('accepts a well-formed note', () => {
+    expect(NoteSchema.safeParse(validNote).success).toBe(true);
+  });
+
+  it('accepts each note category', () => {
+    for (const category of ['technical', 'behavioral', 'general']) {
+      expect(NoteSchema.safeParse({ ...validNote, category }).success).toBe(true);
+    }
+  });
+
+  it('rejects an unknown category', () => {
+    expect(NoteSchema.safeParse({ ...validNote, category: 'salary' }).success).toBe(false);
+  });
+
+  it('rejects a missing text', () => {
+    const { text: _text, ...withoutText } = validNote;
+    expect(NoteSchema.safeParse(withoutText).success).toBe(false);
+  });
+});
+
+describe('NewNoteSchema', () => {
+  it('accepts a note body without id/createdAt', () => {
+    expect(NewNoteSchema.safeParse({ category: 'general', text: 'Recruiter called.' }).success).toBe(
+      true,
+    );
+  });
+
+  it('drops a client-supplied id and createdAt rather than honouring them', () => {
+    const result = NewNoteSchema.safeParse(validNote);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ category: validNote.category, text: validNote.text });
+    }
+  });
+});
+
 describe('ApplicationSchema', () => {
   it('accepts a full application row', () => {
     expect(ApplicationSchema.safeParse(validApplication).success).toBe(true);
@@ -254,6 +315,25 @@ describe('NewApplicationSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.status).toBe('draft');
+    }
+  });
+
+  it('defaults stage to applied and notes to empty when omitted', () => {
+    // The extension posts a body with neither field; requiring either would 400 every fill.
+    const { stage: _stage, notes: _notes, ...withoutTracking } = validNewApplication;
+    const result = NewApplicationSchema.safeParse(withoutTracking);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.stage).toBe('applied');
+      expect(result.data.notes).toEqual([]);
+    }
+  });
+
+  it('accepts notes supplied explicitly', () => {
+    const result = NewApplicationSchema.safeParse({ ...validNewApplication, notes: [validNote] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.notes).toEqual([validNote]);
     }
   });
 

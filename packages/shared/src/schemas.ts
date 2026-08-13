@@ -206,6 +206,55 @@ export const ApplicationStatusSchema = z.enum(['draft', 'submitted']);
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
 
 /**
+ * Where an application sits in the interview pipeline. Deliberately separate from
+ * {@link ApplicationStatusSchema}: status answers "was this actually sent to the employer", stage
+ * answers "how far has it got since". A `draft` application still carries a stage — it defaults to
+ * `'applied'` rather than being nullable, so nothing downstream has to null-check it. Listed in
+ * pipeline order, which is the order a stage picker should offer them in.
+ */
+export const ApplicationStageSchema = z.enum([
+  'applied',
+  'phone_screen',
+  'interviewing',
+  'rejected',
+]);
+/** Inferred type of {@link ApplicationStageSchema}. */
+export type ApplicationStage = z.infer<typeof ApplicationStageSchema>;
+
+/**
+ * How a {@link NoteSchema} entry is filed. Interview questions are split from general notes because
+ * that's the split that makes them reusable later — "what did this company ask me technically" is a
+ * question you want to answer without re-reading every note on the application.
+ */
+export const NoteCategorySchema = z.enum(['technical', 'behavioral', 'general']);
+/** Inferred type of {@link NoteCategorySchema}. */
+export type NoteCategory = z.infer<typeof NoteCategorySchema>;
+
+/**
+ * One timestamped entry in an application's notes log — appended, never overwritten, so past
+ * interview questions stay around as reference material for future applications.
+ *
+ * `id` and `createdAt` are assigned by the server on append, never by the client: a note whose
+ * timestamp the sender chose isn't trustworthy history.
+ */
+export const NoteSchema = z.object({
+  id: z.string(),
+  category: NoteCategorySchema,
+  text: z.string(),
+  createdAt: z.string(),
+});
+/** Inferred type of {@link NoteSchema}. */
+export type Note = z.infer<typeof NoteSchema>;
+
+/**
+ * Body shape for `POST /applications/:id/notes` — a {@link NoteSchema} minus the fields the server
+ * assigns. Derived rather than hand-written so it can't drift from `NoteSchema`.
+ */
+export const NewNoteSchema = NoteSchema.omit({ id: true, createdAt: true });
+/** Inferred type of {@link NewNoteSchema}. */
+export type NewNote = z.infer<typeof NewNoteSchema>;
+
+/**
  * One persisted `applications` row: a completed (or in-progress) autofill, keyed to the job
  * posting, so past applications can be referenced later (e.g. by `tailorResume`'s
  * `priorApplicationsSummary`).
@@ -219,6 +268,8 @@ export const ApplicationSchema = z.object({
   tailoredResume: TailoredResumeSchema,
   answers: z.array(QuestionAnswerSchema),
   status: ApplicationStatusSchema,
+  stage: ApplicationStageSchema,
+  notes: z.array(NoteSchema),
   createdAt: z.string(),
 });
 /** Inferred type of {@link ApplicationSchema}. */
@@ -228,9 +279,14 @@ export type Application = z.infer<typeof ApplicationSchema>;
  * Body shape for `POST /applications` — an {@link ApplicationSchema} minus the fields the database
  * assigns (`id`, `createdAt`); `status` defaults to `draft` when omitted, matching a fill that
  * hasn't been submitted yet.
+ *
+ * `stage` and `notes` default too, and must keep doing so: the extension posts a body with neither
+ * (`background/applicationPipeline.ts`), so making either required 400s every fill.
  */
 export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
   status: ApplicationStatusSchema.default('draft'),
+  stage: ApplicationStageSchema.default('applied'),
+  notes: z.array(NoteSchema).default([]),
 });
 /** Inferred type of {@link NewApplicationSchema}. */
 export type NewApplication = z.infer<typeof NewApplicationSchema>;

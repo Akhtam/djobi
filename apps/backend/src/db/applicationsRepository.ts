@@ -1,4 +1,11 @@
-import { ApplicationSchema, type Application, type NewApplication } from '@djobi/shared';
+import {
+  ApplicationSchema,
+  type Application,
+  type ApplicationStage,
+  type NewApplication,
+  type NewNote,
+  type Note,
+} from '@djobi/shared';
 import { desc, eq } from 'drizzle-orm';
 import { db } from './client.js';
 import { applications } from './schema.js';
@@ -68,4 +75,18 @@ export async function listApplicationsByCompany(company: string): Promise<Applic
     .where(eq(applications.company, company))
     .orderBy(desc(applications.createdAt));
   return toApplications(rows);
+}
+
+/** Moves an application to a new interview stage, or `null` if no application has that id. */
+export async function updateApplicationStage(
+  id: string,
+  stage: ApplicationStage,
+): Promise<Application | null> {
+  const [row] = await db
+    .update(applications)
+    .set({ stage })
+    .where(eq(applications.id, id))
+    .returning();
+
+  return row ? toApplication(row) : null;
 }

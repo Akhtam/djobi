@@ -8,6 +8,13 @@
       "when": 1786152768784,
       "tag": "0000_slimy_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786590662964,
+      "tag": "0001_living_captain_stacy",
+      "breakpoints": true
     }
   ]
 }

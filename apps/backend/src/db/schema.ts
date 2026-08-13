@@ -26,5 +26,7 @@ export const applications = pgTable('applications', {
   tailoredResume: jsonb('tailored_resume').notNull(),
   answers: jsonb('answers').notNull(),
   status: text('status').notNull().default('draft'),
+  stage: text('stage').notNull().default('applied'),
+  notes: jsonb('notes').notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

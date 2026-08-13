@@ -35,6 +35,8 @@ const sampleApplication: Application = {
   },
   answers: [],
   status: 'draft',
+  stage: 'applied',
+  notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
 };
 
@@ -124,6 +126,25 @@ describe('POST /applications', () => {
 
     expect(res.status).toBe(200);
     expect(mockSaveApplication).toHaveBeenCalledWith({ ...withoutStatus, status: 'draft' });
+  });
+
+  it('defaults stage and notes when the extension omits them', async () => {
+    // The Fill Step posts neither field; requiring either would 400 every fill.
+    mockSaveApplication.mockResolvedValue(sampleApplication);
+    const { stage: _stage, notes: _notes, ...withoutTracking } = newApplication;
+
+    const res = await app.request('/applications', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(withoutTracking),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockSaveApplication).toHaveBeenCalledWith({
+      ...withoutTracking,
+      stage: 'applied',
+      notes: [],
+    });
   });
 
   it('returns 400 and does not save when the body fails validation', async () => {
