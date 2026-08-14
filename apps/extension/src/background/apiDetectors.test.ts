@@ -1,6 +1,6 @@
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { enrichWithApiOracle } from './apiDetectors';
+import { carryEnrichment, enrichWithApiOracle } from './apiDetectors';
 
 /**
  * Every test drives the one exported function with a stubbed `fetch`. The per-platform URL parsers
@@ -68,7 +68,6 @@ describe('enrichWithApiOracle', () => {
 
       expect(fetchImpl).toHaveBeenCalledWith(
         'https://boards-api.greenhouse.io/v1/boards/greenhouse/jobs/8080711?questions=true',
-        undefined,
       );
     });
 
@@ -79,7 +78,6 @@ describe('enrichWithApiOracle', () => {
 
       expect(fetchImpl).toHaveBeenCalledWith(
         'https://boards-api.greenhouse.io/v1/boards/acme/jobs/12345?questions=true',
-        undefined,
       );
     });
 
@@ -171,60 +169,21 @@ describe('enrichWithApiOracle', () => {
   });
 
   describe('Ashby', () => {
-    it('POSTs to the job-posting endpoint for a posting URL', async () => {
-      const fetchImpl = stubFetch({ applicationFormDefinition: { sections: [] } });
+    // These used to assert that an Ashby posting URL produced
+    // `POST https://api.ashbyhq.com/posting-api/job-posting/{id}`, and that a response shaped like
+    // `applicationFormDefinition` enriched a field. Both passed for the whole life of the oracle,
+    // which never enriched anything: the endpoint returns 401, and no public Ashby path serves that
+    // response shape. Green tests over a dead adapter — so they went with it.
+    it('recognizes no Ashby URL, because no Ashby oracle exists to be fooled into a 401', async () => {
+      const fetchImpl = stubFetch({});
 
       await enrichWithApiOracle(
-        'https://jobs.ashbyhq.com/Ashby/9f8b1c2d-0000-1111-2222-333344445555',
+        'https://jobs.ashbyhq.com/acme/9f8b1c2d-0000-1111-2222-333344445555',
         [],
         fetchImpl,
       );
 
-      expect(fetchImpl).toHaveBeenCalledWith(
-        'https://api.ashbyhq.com/posting-api/job-posting/9f8b1c2d-0000-1111-2222-333344445555',
-        { method: 'POST' },
-      );
-    });
-
-    it('does not fetch for the job-board root, which names no specific posting', async () => {
-      const fetchImpl = stubFetch({});
-
-      await enrichWithApiOracle('https://jobs.ashbyhq.com/Ashby', [], fetchImpl);
-
       expect(fetchImpl).not.toHaveBeenCalled();
-    });
-
-    it('fills in required and options from the application form definition', async () => {
-      const fields = [question('Are you authorized to work in the US?')];
-      const response = {
-        applicationFormDefinition: {
-          sections: [
-            {
-              fields: [
-                {
-                  title: 'Are you authorized to work in the US?',
-                  isRequired: true,
-                  selectableValues: [{ label: 'Yes' }, { label: 'No' }],
-                },
-              ],
-            },
-          ],
-        },
-      };
-
-      const result = await enrichWithApiOracle(
-        'https://jobs.ashbyhq.com/acme/job-1',
-        fields,
-        stubFetch(response),
-      );
-
-      expect(result[0]).toMatchObject({
-        required: true,
-        options: [
-          { label: 'Yes', selector: null },
-          { label: 'No', selector: null },
-        ],
-      });
     });
   });
 
@@ -240,7 +199,6 @@ describe('enrichWithApiOracle', () => {
 
       expect(fetchImpl).toHaveBeenCalledWith(
         'https://api.smartrecruiters.com/v1/postings/743999812345678/configuration',
-        undefined,
       );
     });
 
@@ -313,7 +271,6 @@ describe('enrichWithApiOracle', () => {
 
       expect(fetchImpl).toHaveBeenCalledWith(
         'https://acme.workable.com/spi/v3/jobs/ABC123/application_form',
-        undefined,
       );
     });
 
@@ -445,5 +402,123 @@ describe('enrichWithApiOracle', () => {
 
       expect(console.warn).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('carryEnrichment', () => {
+  it("keeps the API's option wording while taking the fresh scan's selectors", () => {
+    const analyzed = [
+      question('Work authorization', {
+        options: [
+          { label: 'Yes, I am authorized', selector: '#opt-yes' },
+          { label: 'No, I require sponsorship', selector: null },
+        ],
+      }),
+    ];
+    // The same question re-scanned: the page's own wording, and freshly tagged elements.
+    const scanned = [
+      question('Work authorization', {
+        id: 'q9',
+        options: [
+          { label: 'Yes', selector: '#new-yes' },
+          { label: 'No', selector: '#new-no' },
+        ],
+      }),
+    ];
+
+    const [carried] = carryEnrichment(scanned, analyzed);
+
+    // The answer was drafted against — and constrained to — the API's wording, so that is what the
+    // Fill Step has to be able to match.
+    expect(carried.options?.map((option) => option.label)).toEqual([
+      'Yes, I am authorized',
+      'No, I require sponsorship',
+    ]);
+    expect(carried.id).toBe('q9');
+  });
+
+  it("carries the fresh scan's selector, not the stale one the earlier scan recorded", () => {
+    // The point of re-scanning at fill time: the page may have re-mounted and re-tagged. Asserting
+    // the labels alone would pass just as happily if the selector were dropped or left stale.
+    const analyzed = [
+      question('Work authorization', {
+        options: [{ label: 'Yes', selector: '#stale-yes' }],
+      }),
+    ];
+    const scanned = [
+      question('Work authorization', {
+        id: 'q9',
+        options: [{ label: 'Yes', selector: '#fresh-yes' }],
+      }),
+    ];
+
+    expect(carryEnrichment(scanned, analyzed)[0].options).toEqual([
+      { label: 'Yes', selector: '#fresh-yes' },
+    ]);
+  });
+
+  it('says so when the API words every choice differently from the page, instead of returning unclickable options quietly', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const analyzed = [
+      question('Work authorization', {
+        // No selector: `mergeOptions` already failed to pair this wording at enrichment time.
+        options: [{ label: 'Yes, I am authorized to work in the US', selector: null }],
+      }),
+    ];
+    const scanned = [
+      question('Work authorization', { id: 'q9', options: [{ label: 'Yes', selector: '#yes' }] }),
+    ];
+
+    const [carried] = carryEnrichment(scanned, analyzed);
+
+    // Nothing was lost in the carrying — the selector was already null — but the field cannot fill,
+    // and that has to be visible rather than looking like a successful enrichment.
+    expect(carried.options).toEqual([
+      { label: 'Yes, I am authorized to work in the US', selector: null },
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('will not fill'));
+  });
+
+  it('stays quiet when the page had no selectors to pair in the first place', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const analyzed = [
+      question('Work authorization', { options: [{ label: 'Yes', selector: null }] }),
+    ];
+    const scanned = [
+      question('Work authorization', { id: 'q9', options: [{ label: 'Yes', selector: null }] }),
+    ];
+
+    carryEnrichment(scanned, analyzed);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("carries an oracle's required flag onto the re-scanned field, which the raw DOM had no way to know", () => {
+    const analyzed = [question('Work authorization', { required: true })];
+    const scanned = [question('Work authorization', { id: 'q9', required: false })];
+
+    expect(carryEnrichment(scanned, analyzed)[0].required).toBe(true);
+  });
+
+  it('never lowers a required flag the fresh page asserts on its own', () => {
+    const analyzed = [question('Work authorization', { required: false })];
+    const scanned = [question('Work authorization', { id: 'q9', required: true })];
+
+    expect(carryEnrichment(scanned, analyzed)[0].required).toBe(true);
+  });
+
+  it('leaves a field the earlier scan never saw exactly as scanned', () => {
+    const scanned = [question('A question that appeared later', { id: 'q9' })];
+
+    expect(carryEnrichment(scanned, [])).toEqual(scanned);
+  });
+
+  it('matches on normalized label, so trivial re-wording between scans still carries', () => {
+    const analyzed = [
+      question('Work Authorization', { options: [{ label: 'Yes', selector: null }] }),
+    ];
+    const scanned = [question('  work authorization  ', { id: 'q9' })];
+
+    expect(carryEnrichment(scanned, analyzed)[0].options).toHaveLength(1);
   });
 });

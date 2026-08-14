@@ -167,16 +167,57 @@ function isChosen(el: HTMLElement): boolean {
   return el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
 }
 
-/** How long to wait for a combobox's options to appear, as attempts × delay between them. */
-const OPTION_WAIT_ATTEMPTS = 20;
-const OPTION_WAIT_INTERVAL_MS = 50;
+/**
+ * The timing this module runs on.
+ *
+ * Parameters rather than module constants, matching `detect.ts`'s {@link WatchOptions} — the same
+ * decision, taken the other way, two files apart. As constants these were unreachable from a test,
+ * so `fillForm.test.ts` ran against real timers and the "options never arrive" case spent the full
+ * `attempts × interval` budget on every run.
+ */
+export interface FillOptions {
+  /** How long to let the page render before re-reading what was written. Default 300ms. */
+  settleMs?: number;
+  /** How many times to look for a combobox's options before giving up. Default 20. */
+  optionWaitAttempts?: number;
+  /** How long to wait between those looks. Default 50ms. */
+  optionWaitIntervalMs?: number;
+}
+
+/** Defaults for {@link FillOptions}, resolved once per {@link fillForm} call. */
+const DEFAULT_FILL_OPTIONS = {
+  settleMs: 300,
+  optionWaitAttempts: 20,
+  optionWaitIntervalMs: 50,
+} satisfies Required<FillOptions>;
+
+type ResolvedFillOptions = Required<FillOptions>;
+
+/**
+ * The `[role="option"]` elements belonging to `trigger`'s listbox.
+ *
+ * Prefers the listbox the combobox names via `aria-controls`/`aria-owns`, which is the same link
+ * `detectFields.resolveComboboxOptions` follows. Only when the widget names none does this fall back
+ * to searching the whole document — which is what it always used to do, and is unsafe on a form with
+ * two comboboxes open or portal-mounted at once: the first text match wins, and it may belong to a
+ * different field entirely.
+ */
+function liveOptionsFor(doc: Document, trigger: Element): Element[] {
+  const controlsId = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns');
+  const listbox = controlsId ? doc.getElementById(controlsId) : null;
+
+  return Array.from((listbox ?? doc).querySelectorAll('[role="option"]'));
+}
 
 /** Polls `find` until it returns something or the budget runs out. */
-async function waitForOption(find: () => Element | undefined): Promise<Element | undefined> {
-  for (let attempt = 0; attempt < OPTION_WAIT_ATTEMPTS; attempt++) {
+async function waitForOption(
+  find: () => Element | undefined,
+  options: ResolvedFillOptions,
+): Promise<Element | undefined> {
+  for (let attempt = 0; attempt < options.optionWaitAttempts; attempt++) {
     const found = find();
     if (found) return found;
-    await new Promise((resolve) => setTimeout(resolve, OPTION_WAIT_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, options.optionWaitIntervalMs));
   }
   return find();
 }
@@ -202,6 +243,7 @@ async function fillCombobox(
   doc: Document,
   field: DetectedField,
   value: string,
+  options: ResolvedFillOptions,
 ): Promise<FillVerifier> {
   const trigger = resolveField(doc, field);
   if (!trigger) return FAILED;
@@ -217,9 +259,8 @@ async function fillCombobox(
   const match = await waitForOption(
     () =>
       resolveOptionElement(doc, field, value) ??
-      Array.from(doc.querySelectorAll('[role="option"]')).find((opt) =>
-        labelsMatch(opt.textContent ?? '', value),
-      ),
+      liveOptionsFor(doc, trigger).find((opt) => labelsMatch(opt.textContent ?? '', value)),
+    options,
   );
   if (!match) return FAILED;
 
@@ -238,15 +279,6 @@ async function fillCombobox(
 }
 
 /**
- * How long to let the page react before re-reading what was written. A React form reverts a value
- * its `onChange` never saw on the *next render*, not synchronously, so an immediate re-read
- * reports every failed fill as a success. This is a settle delay, not a poll: there is nothing to
- * wait *for* — a fill that worked already reads back correctly and only loses this much time once
- * per run, at the very end.
- */
-const SETTLE_MS = 300;
-
-/**
  * Fills every field in `fields` that has a value in `values` (keyed by `DetectedField.id`), and
  * returns the ids of the fields whose value was still there afterwards.
  *
@@ -259,15 +291,20 @@ const SETTLE_MS = 300;
  * this project keeps hitting: a controlled input whose `onChange` never fired, a combobox whose
  * options never arrived, a `data-djobi-id` on a node the form has since re-mounted. All of them
  * leave a fill looking done from here. So every path returns a {@link FillVerifier}, the page is
- * given {@link SETTLE_MS} to render, and only fields that still hold their value are reported
- * filled — which is what lets the panel tell the user *which* fields to go fix, rather than
- * showing a green check over a form the ATS will reject as empty.
+ * given `settleMs` to render, and only fields that still hold their value are reported filled —
+ * which is what lets the panel tell the user *which* fields to go fix, rather than showing a green
+ * check over a form the ATS will reject as empty.
+ *
+ * That settle is a delay, not a poll: there is nothing to wait *for*, since a fill that worked
+ * already reads back correctly. It costs its budget once per run, at the very end.
  */
 export async function fillForm(
   doc: Document,
   fields: DetectedField[],
   values: Record<string, string>,
+  fillOptions: FillOptions = {},
 ): Promise<string[]> {
+  const options = { ...DEFAULT_FILL_OPTIONS, ...fillOptions };
   const verifiers: Array<[string, FillVerifier]> = [];
 
   for (const field of fields) {
@@ -275,7 +312,7 @@ export async function fillForm(
     if (value === undefined) continue;
 
     if (field.elementRole === 'combobox') {
-      verifiers.push([field.id, await fillCombobox(doc, field, value)]);
+      verifiers.push([field.id, await fillCombobox(doc, field, value, options)]);
       continue;
     }
 
@@ -301,7 +338,7 @@ export async function fillForm(
 
   if (verifiers.length === 0) return [];
 
-  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  await new Promise((resolve) => setTimeout(resolve, options.settleMs));
   return verifiers.filter(([, verify]) => verify()).map(([id]) => id);
 }
 

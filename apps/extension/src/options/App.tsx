@@ -29,6 +29,22 @@ function withScreeningAnswer(
   return { ...answers, [topic]: value };
 }
 
+/**
+ * A cleared optional field, as `null` rather than `''`.
+ *
+ * The Profile's optional scalars — `phone`, `location`, every `links` entry, an education's `field`
+ * and `graduationYear`, a role's `endDate` — are typed `string | null`, and `null` is what the rest
+ * of the system reads as "not provided". Binding an input straight to `e.target.value` wrote `''`
+ * into all of them instead, so a field the candidate cleared came back as present-but-empty and had
+ * to be treated as absent by everything downstream that cared.
+ *
+ * This is the same rule {@link withScreeningAnswer} applies to screening answers, which stated it
+ * first and stated it alone: one module held two contradictory ideas of what empty means.
+ */
+function orNull(value: string): string | null {
+  return value.trim() ? value : null;
+}
+
 /** The Profile keys holding an editable list of entries. */
 type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
 
@@ -228,7 +244,7 @@ export function App() {
               <input
                 id="phone"
                 value={profile.phone ?? ''}
-                onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                onChange={(e) => setProfile({ ...profile, phone: orNull(e.target.value) })}
               />
             </div>
 
@@ -237,7 +253,7 @@ export function App() {
               <input
                 id="location"
                 value={profile.location ?? ''}
-                onChange={(e) => setProfile({ ...profile, location: e.target.value })}
+                onChange={(e) => setProfile({ ...profile, location: orNull(e.target.value) })}
               />
             </div>
           </div>
@@ -252,7 +268,10 @@ export function App() {
                 id="linkedin"
                 value={profile.links.linkedin ?? ''}
                 onChange={(e) =>
-                  setProfile({ ...profile, links: { ...profile.links, linkedin: e.target.value } })
+                  setProfile({
+                    ...profile,
+                    links: { ...profile.links, linkedin: orNull(e.target.value) },
+                  })
                 }
               />
             </div>
@@ -263,7 +282,10 @@ export function App() {
                 id="portfolio"
                 value={profile.links.portfolio ?? ''}
                 onChange={(e) =>
-                  setProfile({ ...profile, links: { ...profile.links, portfolio: e.target.value } })
+                  setProfile({
+                    ...profile,
+                    links: { ...profile.links, portfolio: orNull(e.target.value) },
+                  })
                 }
               />
             </div>
@@ -274,7 +296,10 @@ export function App() {
                 id="github"
                 value={profile.links.github ?? ''}
                 onChange={(e) =>
-                  setProfile({ ...profile, links: { ...profile.links, github: e.target.value } })
+                  setProfile({
+                    ...profile,
+                    links: { ...profile.links, github: orNull(e.target.value) },
+                  })
                 }
               />
             </div>
@@ -431,7 +456,7 @@ export function App() {
                   <input
                     id={`weEndDate${n}`}
                     value={entry.endDate ?? ''}
-                    onChange={(e) => work.update(index, { endDate: e.target.value })}
+                    onChange={(e) => work.update(index, { endDate: orNull(e.target.value) })}
                   />
                 </div>
 
@@ -512,7 +537,7 @@ export function App() {
                   <input
                     id={`eduField${n}`}
                     value={entry.field ?? ''}
-                    onChange={(e) => education.update(index, { field: e.target.value })}
+                    onChange={(e) => education.update(index, { field: orNull(e.target.value) })}
                   />
                 </div>
 
@@ -521,7 +546,9 @@ export function App() {
                   <input
                     id={`eduGradYear${n}`}
                     value={entry.graduationYear ?? ''}
-                    onChange={(e) => education.update(index, { graduationYear: e.target.value })}
+                    onChange={(e) =>
+                      education.update(index, { graduationYear: orNull(e.target.value) })
+                    }
                   />
                 </div>
               </div>

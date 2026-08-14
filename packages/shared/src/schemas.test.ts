@@ -215,13 +215,18 @@ describe('QuestionAnswerSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects a missing sourceStoryIds field', () => {
+  it('reads a missing sourceStoryIds as an empty one, rather than failing the whole batch of answers', () => {
+    // The model omits the key instead of sending `[]` when an answer drew on no story. This used
+    // to reject, and because `callStructured` validates the tool input as a single object, one
+    // omission took every other answer down with it.
     const result = QuestionAnswerSchema.safeParse({
       fieldId: 'field-2',
       question: 'Why this company?',
       answer: 'Because of the mission.',
     });
-    expect(result.success).toBe(false);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.sourceStoryIds).toEqual([]);
   });
 });
 
@@ -271,9 +276,9 @@ describe('NoteSchema', () => {
 
 describe('NewNoteSchema', () => {
   it('accepts a note body without id/createdAt', () => {
-    expect(NewNoteSchema.safeParse({ category: 'general', text: 'Recruiter called.' }).success).toBe(
-      true,
-    );
+    expect(
+      NewNoteSchema.safeParse({ category: 'general', text: 'Recruiter called.' }).success,
+    ).toBe(true);
   });
 
   it('drops a client-supplied id and createdAt rather than honouring them', () => {

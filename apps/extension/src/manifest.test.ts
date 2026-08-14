@@ -7,9 +7,12 @@ const manifest = manifestExport as chrome.runtime.ManifestV3;
 describe('manifest', () => {
   it('grants host permission for each platform API oracle used by the background service worker', () => {
     expect(manifest.host_permissions).toContain('https://boards-api.greenhouse.io/*');
-    expect(manifest.host_permissions).toContain('https://api.ashbyhq.com/*');
     expect(manifest.host_permissions).toContain('https://api.smartrecruiters.com/*');
     expect(manifest.host_permissions).toContain('https://*.workable.com/*');
+  });
+
+  it('grants no host that no oracle calls — the Ashby host outlived the oracle that used it', () => {
+    expect(manifest.host_permissions).not.toContain('https://api.ashbyhq.com/*');
   });
 
   it('still declares the local backend host permission', () => {

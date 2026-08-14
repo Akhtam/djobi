@@ -109,6 +109,24 @@ describe('handleTypedMessage', () => {
     expect(mockEnrichWithApiOracle).not.toHaveBeenCalled();
   });
 
+  it("gives the oracle the sending frame's url, not the tab's — an ATS form is usually an iframe on a company careers domain", async () => {
+    mockEnrichWithApiOracle.mockResolvedValue([]);
+
+    handleTypedMessage({ type: 'REPORT_JOB_PAGE', fields: [] }, {
+      tab: { id: 7, url: 'https://careers.acme.com/openings' },
+      frameId: 3,
+      url: 'https://job-boards.greenhouse.io/acme/jobs/8080711',
+    } as chrome.runtime.MessageSender);
+
+    // The tab's url names no posting, so passing it meant no oracle ever recognized the platform.
+    await vi.waitFor(() =>
+      expect(mockEnrichWithApiOracle).toHaveBeenCalledWith(
+        'https://job-boards.greenhouse.io/acme/jobs/8080711',
+        [],
+      ),
+    );
+  });
+
   it('re-stores REPORT_JOB_PAGE data with API-enriched fields once the Greenhouse oracle resolves', async () => {
     const enrichedFields = [
       {

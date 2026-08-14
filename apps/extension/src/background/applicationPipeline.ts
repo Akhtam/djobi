@@ -17,6 +17,7 @@
  */
 import { matchAnswerToField, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
+import { carryEnrichment } from './apiDetectors';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
@@ -152,7 +153,12 @@ async function fillStep(
   // open across an extension reload), and it's the only source at all for a run analyzed from a
   // pasted job description before the form had rendered, where it is empty.
   const scanned = await deps.page.scan(tabId);
-  const fields = scanned?.fields.length ? scanned.fields : jobPageData.fields;
+  // The fresh scan has the right elements; the analyzed run has the right wording. `carryEnrichment`
+  // keeps both — without it the re-scan silently discarded every API-supplied option label and
+  // `required` flag, because enrichment only ever attached on the report path, never on `SCAN_PAGE`.
+  const fields = scanned?.fields.length
+    ? carryEnrichment(scanned.fields, jobPageData.fields)
+    : jobPageData.fields;
   const labelByAnalyzedId = new Map(
     jobPageData.fields.map((field) => [field.id, field.label] as const),
   );

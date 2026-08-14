@@ -27,45 +27,17 @@ import icon48 from '../assets/icons/icon48.png';
 import { callBackend, callBackendBinary } from '../lib/callBackend';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
+import { reviewOf } from '../lib/runReview';
 import { getDetectedPage, type PipelineStatus } from '../lib/tabStore';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 
 // 'loading'/'no-profile'/'ready' are bootstrap-only, local to this component; the rest is
 // `PipelineRunState`'s `PipelineStatus`, checkpointed to `tabStore` as it progresses.
+//
+// What the run *means* — the pill, whether the review stays up, how the Fill Step went — is not
+// derived here. It is `reviewOf` in `lib/runReview.ts`, one derivation the whole component reads.
 type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus;
-
-function isPipelineStatus(status: Status): status is PipelineStatus {
-  return status !== 'loading' && status !== 'no-profile' && status !== 'ready';
-}
-
-/** Header status-pill label/tone for a given {@link Status}, or `null` when no pill should show. */
-function statusPill(
-  status: Status,
-  unresolvedRequiredFieldCount: number,
-  filledFieldCount: number,
-): { label: string; tone: 'busy' | 'success' | 'error' } | null {
-  switch (status) {
-    case 'analyzing':
-      return { label: 'Analyzing…', tone: 'busy' };
-    case 'filling':
-      return { label: 'Filling…', tone: 'busy' };
-    case 'analyze-error':
-    case 'fill-error':
-      return { label: 'Error', tone: 'error' };
-    case 'filled':
-      // A run that wrote nothing is a failure wearing a success status — it reaches 'filled'
-      // because every step "succeeded", having been handed no fields to fill.
-      if (filledFieldCount === 0) return { label: 'Nothing filled', tone: 'error' };
-      return unresolvedRequiredFieldCount > 0
-        ? { label: 'Incomplete', tone: 'error' }
-        : { label: 'Done', tone: 'success' };
-    case 'review':
-      return { label: 'Ready to fill', tone: 'success' };
-    default:
-      return null;
-  }
-}
 
 export function App() {
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -212,15 +184,11 @@ export function App() {
       .catch(() => setResumePreview({ kind: 'error' }));
   }
 
-  const pill = statusPill(status, unresolvedRequiredFields.length, filledFieldCount);
-  // 'filled' is included deliberately: filling a form is rarely the end of the task. The page's own
-  // validation may reject a value, a required field may have gone unresolved, or an answer may just
-  // read badly once it's sitting in the form — and in every one of those cases the user needs the
-  // drafted answers, the job-description editor and the resume preview still in front of them to
-  // edit and re-fill. Tearing the review down on success left them with a green check and no way
-  // back to the content except re-running the whole Analysis Step.
-  const canReview =
-    status === 'review' || status === 'filling' || status === 'fill-error' || status === 'filled';
+  const review = reviewOf(run);
+  // The pill is suppressed while the panel is still booting — that part genuinely is local state,
+  // and a hydrated run shouldn't flash its pill before we know there's a profile to act with.
+  const pill = status === 'loading' || status === 'no-profile' ? null : review.pill;
+  const { canReview, outcome } = review;
 
   return (
     <main className="panel">
@@ -302,7 +270,7 @@ export function App() {
 
         {/* The Fill Step's outcome sits above the review, not below it: the review is long, and a
             result the user has to scroll past it to find is a result they won't see. */}
-        {status === 'filled' && filledFieldCount === 0 && (
+        {outcome === 'nothing-filled' && (
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>
@@ -314,7 +282,7 @@ export function App() {
           </div>
         )}
 
-        {status === 'filled' && filledFieldCount > 0 && unresolvedRequiredFields.length === 0 && (
+        {outcome === 'complete' && (
           <div className="state success">
             <span className="state-icon success">✅</span>
             <p>
@@ -324,7 +292,7 @@ export function App() {
           </div>
         )}
 
-        {status === 'filled' && filledFieldCount > 0 && unresolvedRequiredFields.length > 0 && (
+        {outcome === 'incomplete' && (
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>

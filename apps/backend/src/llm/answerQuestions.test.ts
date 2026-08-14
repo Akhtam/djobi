@@ -90,6 +90,52 @@ describe('answerQuestions', () => {
     expect(request.messages[0].content).toContain('led under pressure');
   });
 
+  it('keeps every answer when the model omits sourceStoryIds on some of them', async () => {
+    // The reported failure, verbatim: the model set `sourceStoryIds` on the answer that drew on a
+    // story and left the key off the two that didn't. Because `callStructured` validates the tool
+    // input as one object, that took all three answers down together and the Analysis Step died
+    // with `report_answers produced input that failed validation`.
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'f1',
+            question: 'Tell us about a time you led under pressure.',
+            answer: 'During the billing migration...',
+            sourceStoryIds: ['story-migration-deadline'],
+          },
+          { fieldId: 'f2', question: 'Why this company?', answer: 'Because of the mission.' },
+          { fieldId: 'f3', question: 'Notice period?', answer: 'Four weeks.' },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'f1', question: 'Tell us about a time you led under pressure.' },
+      { fieldId: 'f2', question: 'Why this company?' },
+      { fieldId: 'f3', question: 'Notice period?' },
+    ]);
+
+    expect(result).toHaveLength(3);
+    expect(result.map((answer) => answer.sourceStoryIds)).toEqual([
+      ['story-migration-deadline'],
+      [],
+      [],
+    ]);
+  });
+
+  it('does not tell the model sourceStoryIds is required, since absence is a legitimate answer', async () => {
+    mockCreate.mockResolvedValue(toolUseResponse({ answers: [] }));
+
+    await answerQuestions(profile, jobInfo, [{ fieldId: 'f1', question: 'Why this company?' }]);
+
+    const answerSchema = mockCreate.mock.calls[0][0].tools[0].input_schema.properties.answers.items;
+    expect(answerSchema.required).not.toContain('sourceStoryIds');
+    expect(answerSchema.required).toEqual(
+      expect.arrayContaining(['fieldId', 'question', 'answer']),
+    );
+  });
+
   it('throws when the model does not return a tool call', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'nope' }] });
 

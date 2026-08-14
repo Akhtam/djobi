@@ -48,7 +48,9 @@ export default defineManifest({
   host_permissions: [
     'http://127.0.0.1:5391/*',
     'https://boards-api.greenhouse.io/*',
-    'https://api.ashbyhq.com/*',
+    // No `api.ashbyhq.com` — the oracle that used it was removed (it only ever got 401s; see
+    // `background/apiDetectors.ts`). The endpoint that does work is on `jobs.ashbyhq.com`, so
+    // rebuilding that oracle means granting *that* host, not restoring this one.
     'https://api.smartrecruiters.com/*',
     'https://*.workable.com/*',
   ],

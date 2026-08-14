@@ -8,7 +8,7 @@ vi.mock('./client.js', () => ({
   MODELS: { extraction: 'claude-haiku-4-5', writing: 'claude-sonnet-5' },
 }));
 
-const { callStructured } = await import('./structuredCall.js');
+const { callStructured, StructuredCallError } = await import('./structuredCall.js');
 
 const SampleSchema = z.object({
   title: z.string().describe('A short label'),
@@ -64,5 +64,37 @@ describe('callStructured', () => {
       properties: { note: { type: 'string' } },
     });
     expect(inputSchema.required).toEqual(expect.arrayContaining(['title', 'tags', 'detail']));
+  });
+
+  const call = () =>
+    callStructured({
+      model: 'claude-haiku-4-5',
+      maxTokens: 1024,
+      toolName: 'report_sample',
+      toolDescription: 'Report the sample.',
+      schema: SampleSchema,
+      userContent: 'sample prompt',
+    });
+
+  // The two failures below are meaningfully different — a model that answered in prose usually
+  // succeeds on a retry, one whose input didn't fit the schema usually doesn't — and telling them
+  // apart used to require matching substrings of the message text.
+  it('reports a prose answer as a retryable no-tool-call failure', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Sure, here you go!' }] });
+
+    await expect(call()).rejects.toMatchObject({
+      kind: 'no-tool-call',
+      toolName: 'report_sample',
+      message: 'report_sample did not produce a tool call.',
+    });
+  });
+
+  it('reports a schema violation as invalid-input, distinct from the model not calling the tool', async () => {
+    mockCreate.mockResolvedValue(toolUseResponse({ title: 42, tags: 'not-an-array' }));
+
+    const error = await call().catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(StructuredCallError);
+    expect(error).toMatchObject({ kind: 'invalid-input', toolName: 'report_sample' });
   });
 });

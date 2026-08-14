@@ -29,8 +29,12 @@ export interface AtsOracle {
   /**
    * The schema request for `url`, or `null` if this platform doesn't recognize it. Returning `null`
    * is how URL parsing reports "not mine", so a posting only ever reaches one oracle.
+   *
+   * A plain GET. This carried an `init?: RequestInit` for a while, used by exactly one adapter —
+   * the Ashby one, which never worked; see the note further down. Reinstate it when a platform that
+   * actually answers needs a POST, not before.
    */
-  request(url: string): { url: string; init?: RequestInit } | null;
+  request(url: string): { url: string } | null;
   /** Projects a parsed schema response into patches keyed by normalized question label. */
   patches(response: unknown): Map<string, QuestionPatch>;
 }
@@ -141,91 +145,31 @@ const greenhouse: AtsOracle = {
 // unexpected shape falls through to the DOM-scraped fields — but confirm one against a real posting
 // before relying on it.
 //
-// Ashby is worse than unverified: it is confirmed DEAD. See the oracle below.
+// There is no Ashby oracle. One existed and was removed: it called
+// `POST https://api.ashbyhq.com/posting-api/job-posting/{jobId}`, which returns **401**, so it never
+// enriched a single field in its life. Because `enrichWithApiOracle` falls through silently on a bad
+// response, that was indistinguishable from "no oracle recognized this host" — and its tests passed
+// throughout, because they asserted the dead endpoint and a response shape Ashby serves nowhere.
+//
+// Two dead ends, recorded so they aren't retried:
+//   - `developers.ashbyhq.com/reference/jobpostinginfo` is the *employer* API: BasicAuth, requires
+//     the `jobsRead` permission. Unusable from an extension.
+//   - The public board API `GET https://api.ashbyhq.com/posting-api/job-board/{org}` returns 200 but
+//     carries listing data only — no application form schema at any public path.
+//
+// The one source that does work, verified live against a real posting:
+//
+//   POST https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting
+//   jobPosting(organizationHostedJobsPageName: $orgName, jobPostingId: $jobId) {
+//     applicationForm { sections { title fieldEntries { field isRequired } } }
+//   }
+//
+// Unauthenticated, and richer than any other platform's. Note the shape is
+// `applicationForm.sections[].fieldEntries[].field` with `isRequired` on the **entry**. Building it
+// also needs `https://jobs.ashbyhq.com/*` in `manifest.ts`'s `host_permissions`, and a POST body —
+// which is why `AtsOracle.request` would need to return an `init` again (see its doc comment).
+// Caveat: that endpoint is an internal API with no compatibility guarantee.
 // ----------------------------------------------------------------------------------------------
-
-interface AshbyResponse {
-  applicationFormDefinition: {
-    sections: {
-      fields: { title: string; isRequired: boolean; selectableValues?: { label: string }[] }[];
-    }[];
-  };
-}
-
-/**
- * **DEAD — this oracle has never enriched a single field. TODO: rewrite per the notes below.**
- *
- * The endpoint it calls returns **401**, confirmed live:
- * `POST https://api.ashbyhq.com/posting-api/job-posting/{jobId}` → 401. `enrichWithApiOracle`'s
- * `if (!res.ok) return fields` then silently hands back the DOM-scraped fields, which is
- * indistinguishable from "no oracle matched this host" — which is why this went unnoticed.
- *
- * Two dead ends, so they aren't re-tried:
- *
- * - `developers.ashbyhq.com/reference/jobpostinginfo` (which {@link AshbyResponse} was modelled on)
- *   is the **employer** API: `POST https://api.ashbyhq.com/jobPosting.info`, BasicAuth, requires the
- *   `jobsRead` permission. Unusable from an extension.
- * - The unauthenticated public board API `GET https://api.ashbyhq.com/posting-api/job-board/{org}`
- *   does return 200, but carries listing data only (`title`, `location`, `descriptionHtml`, …) and
- *   **no `applicationFormDefinition`**. So {@link AshbyResponse} matches nothing Ashby serves
- *   publicly at any path.
- *
- * The one source of the form schema that does work, verified live against a real posting:
- *
- * ```
- * POST https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting
- * jobPosting(organizationHostedJobsPageName: $orgName, jobPostingId: $jobId) {
- *   applicationForm { sections { title fieldEntries { field isRequired } } }
- * }
- * ```
- *
- * Unauthenticated, and richer than any other platform's — every field's `type`, `isRequired` and
- * `selectableValues`. Note the shape is `applicationForm.sections[].fieldEntries[].field` with
- * `isRequired` on the **entry**, not `applicationFormDefinition.sections[].fields[]` with
- * `isRequired` on the field. `parseUrl` below already yields the `orgName` the query needs as
- * `organizationHostedJobsPageName`.
- *
- * Rewriting this also needs `https://jobs.ashbyhq.com/*` added to `manifest.ts`'s
- * `host_permissions` — the current list only covers `api.ashbyhq.com`.
- *
- * Caveat worth carrying: that endpoint is an internal API. It is unauthenticated today and
- * introspection is disabled, but it carries no compatibility guarantee and may change without
- * notice.
- */
-const ashby: AtsOracle = {
-  name: 'Ashby',
-
-  request(url) {
-    const parsed = parseUrl(url);
-    if (!parsed || parsed.hostname !== 'jobs.ashbyhq.com') return null;
-
-    const [orgName, jobId] = parsed.pathname.split('/').filter(Boolean);
-    if (!orgName || !jobId) return null; // the job-board root, not a specific posting
-
-    // Follows Ashby's documented posting-api convention: POST to a resource-scoped path, no body.
-    // This 401s — see the note above; kept only so the rewrite has something to replace.
-    return {
-      url: `https://api.ashbyhq.com/posting-api/job-posting/${jobId}`,
-      init: { method: 'POST' },
-    };
-  },
-
-  patches(response) {
-    const fields = (response as AshbyResponse).applicationFormDefinition.sections.flatMap(
-      (section) => section.fields,
-    );
-
-    return new Map(
-      fields.map((field) => [
-        normalizeLabel(field.title),
-        {
-          required: field.isRequired,
-          optionLabels: field.selectableValues?.map((value) => value.label),
-        },
-      ]),
-    );
-  },
-};
 
 interface SmartRecruitersResponse {
   questions: {
@@ -303,8 +247,78 @@ const workable: AtsOracle = {
   },
 };
 
+/**
+ * Re-applies the enrichment an earlier scan received to the fields a later scan produced.
+ *
+ * The Fill Step re-scans the page so it fills what's there *now* rather than what was there when the
+ * Analysis Step ran. But that re-scan comes back through `SCAN_PAGE`, which never passes an oracle —
+ * enrichment only ever attached on the `REPORT_JOB_PAGE` path. Preferring the fresh scan therefore
+ * threw the enrichment away, and the failure was total rather than partial: a Question Answer is
+ * drafted against, and constrained to, the API's wording of the choices, so filling it against the
+ * DOM's wording missed on the strict match *and* on the label fallback, and the field came back
+ * reported as an unresolved required field. Enriched `required` flags were dropped the same way.
+ *
+ * Carrying rather than re-fetching is the point: the answers were drafted against `analyzed`'s
+ * labels, so `analyzed` is by definition the right thing to match them against. A second oracle call
+ * would cost a round trip during the fill to reproduce what we already hold.
+ *
+ * This is {@link applyPatches} with the earlier scan standing in for the oracle, so the wording/
+ * selector trade is made in exactly one place rather than described twice.
+ *
+ * **Where a selector survives, and where it can't.** When the API and the DOM word a choice the same
+ * way, the fresh scan's selector is carried and the Fill Step can click the element. When they word
+ * it differently, the carried option has no selector — but nothing was lost in the carrying: the
+ * analyzed option had no selector *either*, because {@link mergeOptions} already failed to pair the
+ * two wordings back at enrichment time. That field is unfillable from the moment the oracle
+ * disagreed with the page, which is a hole in enrichment itself and not in this function.
+ * {@link warnOnUnpairedOptions} exists so it stops being a silent one.
+ */
+export function carryEnrichment(
+  scanned: DetectedField[],
+  analyzed: readonly DetectedField[],
+): DetectedField[] {
+  const patches = new Map(
+    analyzed
+      .filter((field) => field.label)
+      .map((field) => [
+        normalizeLabel(field.label),
+        {
+          // `undefined` rather than `false`, so `applyPatches`' `??` leaves a `required` the fresh
+          // DOM asserts on its own standing. An oracle raises the flag; carrying never lowers it.
+          required: field.required || undefined,
+          optionLabels: field.options?.map((option) => option.label),
+        },
+      ]),
+  );
+
+  const carried = applyPatches(scanned, patches).fields;
+  warnOnUnpairedOptions(scanned, carried);
+  return carried;
+}
+
+/**
+ * Reports a field whose carried options all lost their selector while the fresh scan had one.
+ *
+ * That is the signature of the API and the page wording the same choice differently: every option
+ * now carries text the DOM never renders, so the answer drafted against it will match no element and
+ * the field will be reported unresolved. It looks identical to success from here — the fields come
+ * back enriched, just unclickable — which is the failure shape this module keeps producing.
+ */
+function warnOnUnpairedOptions(scanned: DetectedField[], carried: DetectedField[]): void {
+  carried.forEach((field, index) => {
+    const before = scanned[index]?.options;
+    if (!before?.some((option) => option.selector)) return;
+    if (!field.options?.length || field.options.some((option) => option.selector)) return;
+
+    console.warn(
+      `[djobi] "${field.label}": the ATS API words every choice differently from the page, so none ` +
+        `could be paired back to an element — this field will not fill`,
+    );
+  });
+}
+
 /** Greenhouse first — the one confirmed live. A given URL only ever matches one of these. */
-const ORACLES: readonly AtsOracle[] = [greenhouse, ashby, smartRecruiters, workable];
+const ORACLES: readonly AtsOracle[] = [greenhouse, smartRecruiters, workable];
 
 /**
  * Improves `fields` using whichever platform recognizes `url`, or returns them unchanged when none
@@ -321,7 +335,7 @@ export async function enrichWithApiOracle(
     if (!request) continue;
 
     try {
-      const res = await fetchImpl(request.url, request.init);
+      const res = await fetchImpl(request.url);
       if (!res.ok) {
         console.warn(`[djobi] ${oracle.name} oracle: schema request failed (${res.status})`);
         return fields;

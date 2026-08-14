@@ -108,6 +108,32 @@ describe('options App', () => {
     });
   });
 
+  it('saves a cleared optional field as null, not as an empty string the rest of the system has to treat as absent', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      fullName: 'Jane Doe',
+      phone: '555-1234',
+      location: 'Remote',
+      links: { linkedin: 'https://linkedin.com/in/jane', portfolio: null, github: null },
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByDisplayValue('Jane Doe');
+
+    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('LinkedIn'), { target: { value: '   ' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+      ...loaded,
+      phone: null,
+      links: { ...loaded.links, linkedin: null },
+    });
+  });
+
   it('adds and removes skills, and saves the resulting list', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', skills: ['TypeScript'] };
     stubBackend({ get: () => loaded });

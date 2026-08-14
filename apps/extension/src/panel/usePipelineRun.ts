@@ -37,7 +37,15 @@ export interface PipelineRunHandle {
    * otherwise, and `null` before anything has been analyzed on this tab.
    */
   status: PipelineStatus | null;
-  /** Whether the initial read for the current tab has completed. */
+  /**
+   * Whether the initial read for the current tab has completed.
+   *
+   * The panel doesn't render this — it renders `run` and `status`, both of which read as "nothing
+   * yet" until the read lands, so it has nothing to wait for. It is here for tests, which need a
+   * precise barrier to await before asserting: without it they would have to wait on the *effect*
+   * of hydration and would pass or fail on timing. An affordance that exists only for the test
+   * surface is still part of the interface, so it's stated rather than quietly present.
+   */
   hydrated: boolean;
   /**
    * Shows `status` immediately, until the store next speaks.

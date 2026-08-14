@@ -17,6 +17,36 @@
 import { z } from 'zod';
 import { JobInfoSchema, ProfileSchema, TailoredResumeSchema } from './schemas.js';
 
+/**
+ * Why a structured LLM call failed, as it crosses the wire.
+ *
+ * - `no-tool-call` — the model answered in prose instead of calling the forced tool. Transient; the
+ *   same request often succeeds on a retry.
+ * - `invalid-input` — the tool was called, but its input didn't satisfy the schema. Usually a prompt
+ *   or schema problem, and retrying the identical request tends to fail the same way.
+ *
+ * Shared rather than declared on either side, for the reason this whole module exists: the backend
+ * throws it, `app.ts` puts it in the error body, and `callBackend` reads it back out. Declared once
+ * on the backend it was a union the extension could only receive as `string` — which typechecks
+ * `kind === 'no-tool-cal'` and quietly never matches, exactly the class of drift the shared wire
+ * contract is here to make impossible.
+ */
+export const StructuredCallFailureSchema = z.enum(['no-tool-call', 'invalid-input']);
+/** Inferred type of {@link StructuredCallFailureSchema}. */
+export type StructuredCallFailure = z.infer<typeof StructuredCallFailureSchema>;
+
+/**
+ * Body of any 500 raised by `app.onError`. `kind` is present only when the failure was a structured
+ * LLM call; every other error carries the message alone.
+ */
+export const BackendErrorBodySchema = z.object({
+  error: z.string(),
+  kind: StructuredCallFailureSchema.optional(),
+  toolName: z.string().optional(),
+});
+/** Inferred type of {@link BackendErrorBodySchema}. */
+export type BackendErrorBody = z.infer<typeof BackendErrorBodySchema>;
+
 /** A question as detected on the page, before it's known who will answer it. */
 export const PendingQuestionSchema = z.object({
   fieldId: z.string(),

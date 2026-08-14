@@ -15,6 +15,13 @@ function field(overrides: Partial<DetectedField>): DetectedField {
   };
 }
 
+/**
+ * Timing collapsed to near-nothing. These knobs were module constants until they became
+ * {@link FillOptions}, so every test that awaited a fill paid the real 300ms settle, and the
+ * "options never arrive" case paid the whole 20 × 50ms poll budget.
+ */
+const FAST = { settleMs: 0, optionWaitAttempts: 3, optionWaitIntervalMs: 1 };
+
 describe('fillForm', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -81,7 +88,12 @@ describe('fillForm', () => {
       input.addEventListener(type, () => seen.push(type));
     }
 
-    await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane@example.com' });
+    await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1' })],
+      { f1: 'jane@example.com' },
+      FAST,
+    );
 
     expect(seen).toEqual(['focus', 'input', 'change', 'blur', 'focusout']);
   });
@@ -102,6 +114,7 @@ describe('fillForm', () => {
       document,
       [field({ id: 'f1', selector: '#f1' }), field({ id: 'f2', selector: '#f2' })],
       { f1: 'jane@example.com', f2: 'jane@example.com' },
+      FAST,
     );
 
     expect(filled).toEqual(['f2']);
@@ -112,9 +125,9 @@ describe('fillForm', () => {
 
     // The stale-selector case: the form re-mounted between detection and fill, so `data-djobi-id`
     // went with it. Nothing is written, and nothing is claimed.
-    expect(await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'x' })).toEqual(
-      [],
-    );
+    expect(
+      await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'x' }, FAST),
+    ).toEqual([]);
   });
 
   it('leaves fields with no supplied value untouched and skips selectors that resolve to nothing, without throwing', () => {
@@ -191,6 +204,7 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Yes' },
+      FAST,
     );
 
     expect(document.querySelector<HTMLInputElement>('#opt-yes')!.checked).toBe(true);
@@ -347,6 +361,7 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Yes' },
+      FAST,
     );
 
     expect(clickedOption).toBe('Yes');
@@ -380,6 +395,7 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Yes' },
+      FAST,
     );
 
     expect(clickedId).toBe('opt-yes');
@@ -404,6 +420,7 @@ describe('fillForm', () => {
           field({ id: 'f2', selector: '#f2' }),
         ],
         { f1: 'Yes', f2: 'filled' },
+        FAST,
       ),
     ).resolves.not.toThrow();
 

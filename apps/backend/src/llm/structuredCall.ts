@@ -1,3 +1,4 @@
+import type { StructuredCallFailure } from '@djobi/shared';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { anthropic } from './client.js';
@@ -19,13 +20,36 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
 }
 
 /**
+ * A structured call that didn't produce a usable result.
+ *
+ * The distinction above used to exist only inside the two message strings, and those strings were
+ * the entire interface: they were thrown, flattened into `{ error }` by `app.ts`, dug back out by
+ * `callBackend`'s `reasonFrom`, re-wrapped with a status prefix, stored on the run, and rendered
+ * verbatim in the panel — six modules, and asserted verbatim across both packages' test suites.
+ * Nothing anywhere could tell the retryable case from the non-retryable one without matching on
+ * substrings of English. `message` is unchanged so what the user reads stays the same; `kind` is
+ * what anything downstream should branch on.
+ */
+export class StructuredCallError extends Error {
+  constructor(
+    readonly kind: StructuredCallFailure,
+    readonly toolName: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'StructuredCallError';
+  }
+}
+
+/**
  * Forces the model to call a single tool and validates its input against the given zod schema.
  * Used instead of `output_config.format` / `messages.parse()`, which aren't available in the
  * installed `@anthropic-ai/sdk` version (0.68.0) — see `apps/backend/README.md` for why.
  *
  * @param options - See {@link StructuredToolCallOptions}.
  * @returns The tool call's `input`, validated and typed against `options.schema`.
- * @throws If the model doesn't return a tool call, or the tool call's input fails validation.
+ * @throws {StructuredCallError} If the model doesn't return a tool call (`kind: 'no-tool-call'`),
+ *   or the tool call's input fails validation (`kind: 'invalid-input'`).
  */
 export async function callStructured<Schema extends z.ZodTypeAny>(
   options: StructuredToolCallOptions<Schema>,
@@ -46,12 +70,18 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
 
   const toolUse = response.content.find((block) => block.type === 'tool_use');
   if (!toolUse || toolUse.type !== 'tool_use') {
-    throw new Error(`${options.toolName} did not produce a tool call.`);
+    throw new StructuredCallError(
+      'no-tool-call',
+      options.toolName,
+      `${options.toolName} did not produce a tool call.`,
+    );
   }
 
   const parsed = options.schema.safeParse(toolUse.input);
   if (!parsed.success) {
-    throw new Error(
+    throw new StructuredCallError(
+      'invalid-input',
+      options.toolName,
       `${options.toolName} produced input that failed validation: ${parsed.error.message}`,
     );
   }

@@ -11,6 +11,8 @@
  * `background/service-worker.ts` stop multiplexing two message protocols onto one `onMessage`
  * listener, and leaves one origin and one error type instead of three of each.
  */
+import { BackendErrorBodySchema, type StructuredCallFailure } from '@djobi/shared';
+
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
 
 /**
@@ -23,6 +25,16 @@ export class BackendError extends Error {
     readonly status: number,
     readonly path: string,
     message: string,
+    /**
+     * Why a structured LLM call failed, when that is what this was. Carried as data so a caller can
+     * decide whether a retry is worth anything; before this it existed only inside the message text.
+     * `undefined` for every other failure.
+     *
+     * Typed as the shared union rather than `string`: a bare `string` accepts
+     * `kind === 'no-tool-cal'` as a perfectly good comparison that never matches, which would give
+     * back exactly the stringly-typed error this field replaced.
+     */
+    readonly kind?: StructuredCallFailure,
   ) {
     super(message);
     this.name = 'BackendError';
@@ -35,18 +47,23 @@ export class BackendError extends Error {
  * falls back to the raw text for anything that isn't JSON at all — a crash outside the backend's
  * own error handling, or nothing listening on the port, still produces a readable message.
  */
-function reasonFrom(raw: string): string {
+function reasonFrom(raw: string): { reason: string; kind?: StructuredCallFailure } {
   try {
     const parsed: unknown = JSON.parse(raw);
-    const error = (parsed as { error?: unknown })?.error;
-    if (typeof error === 'string') return error;
-    if (typeof (error as { message?: unknown })?.message === 'string') {
-      return (error as { message: string }).message;
-    }
+
+    // The shape `app.onError` produces. Parsing rather than hand-checking is what keeps `kind`
+    // narrowed to the union — an unrecognized value is dropped here instead of reaching a caller
+    // as a `string` that compares equal to nothing.
+    const body = BackendErrorBodySchema.safeParse(parsed);
+    if (body.success) return { reason: body.data.error, kind: body.data.kind };
+
+    // A route that put an `Error`-like object under `error` rather than a string.
+    const message = (parsed as { error?: { message?: unknown } })?.error?.message;
+    if (typeof message === 'string') return { reason: message };
   } catch {
     // Not JSON — fall through and use the raw body below.
   }
-  return raw.trim().slice(0, 300) || 'empty response body';
+  return { reason: raw.trim().slice(0, 300) || 'empty response body' };
 }
 
 /**
@@ -67,10 +84,12 @@ async function request(path: string, body: unknown, method: 'GET' | 'POST'): Pro
   );
 
   if (!res.ok) {
+    const { reason, kind } = reasonFrom(await res.text());
     throw new BackendError(
       res.status,
       path,
-      `${method} ${path} failed (${res.status}): ${reasonFrom(await res.text())}`,
+      `${method} ${path} failed (${res.status}): ${reason}`,
+      kind,
     );
   }
 

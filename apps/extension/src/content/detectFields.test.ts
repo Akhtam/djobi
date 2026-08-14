@@ -160,6 +160,215 @@ describe('detectFields', () => {
     expect(fields.map((field) => field.required)).toEqual([true, true, true, false]);
   });
 
+  it('flags a radio group whose `required` sits on the inputs rather than on the container (Lever), which used to report every screening question as optional', () => {
+    // Lever's real markup: `required` on each radio, nothing on the <ul> holding them.
+    document.body.innerHTML = `
+      <form>
+        <div class="application-label">Are you legally authorized to work in the US?<span class="required">✱</span></div>
+        <ul data-qa="multiple-choice">
+          <li><label><input type="radio" name="auth" value="yes" required /><span>Yes</span></label></li>
+          <li><label><input type="radio" name="auth" value="no" required /><span>No</span></label></li>
+        </ul>
+      </form>
+    `;
+
+    const [group] = detectFields(document);
+
+    expect(group).toMatchObject({ elementRole: 'radiogroup', required: true });
+    expect(group.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+  });
+
+  it("flags a native radio group where only one member carries `required`, per the spec's group semantics", () => {
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>Do you require sponsorship?</legend>
+          <label><input type="radio" name="sponsor" value="yes" required /> Yes</label>
+          <label><input type="radio" name="sponsor" value="no" /> No</label>
+        </fieldset>
+      </form>
+    `;
+
+    expect(detectFields(document)[0].required).toBe(true);
+  });
+
+  it("reads a required marker from a label that isn't formally associated with the input, which is how Lever renders one", () => {
+    // Lever puts the question in a plain div beside the input, with the asterisk inside it — no
+    // `for`, no wrapping `<label>`, no `<legend>`. Nothing here is an associated label.
+    document.body.innerHTML = `
+      <form>
+        <div class="application-field">
+          <div class="application-label">Full name<span class="required">✱</span></div>
+          <input type="text" name="name" />
+        </div>
+        <div class="application-field">
+          <div class="application-label">Referral code</div>
+          <input type="text" name="referral" />
+        </div>
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.required)).toEqual([true, false]);
+  });
+
+  it('does not mark a field required because some class merely contains the word — `not-required` is the opposite claim', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="opt">Referral code<span class="not-required">optional</span></label>
+        <input id="opt" type="text" />
+        <label for="hashed">How did you hear about us?<span class="css-1x2y3z-requiredInput"></span></label>
+        <input id="hashed" type="text" />
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.required)).toEqual([false, false]);
+  });
+
+  it('stops the aria-required walk at the enclosing field grouping, so one marked section does not mark every field inside it', () => {
+    document.body.innerHTML = `
+      <form>
+        <section aria-required="true">
+          <label for="inside">Referral code</label>
+          <input id="inside" type="text" />
+        </section>
+      </form>
+    `;
+
+    expect(detectFields(document)[0].required).toBe(false);
+  });
+
+  it("still honours a fieldset's own aria-required, which is what Greenhouse ships around its checkbox groups", () => {
+    document.body.innerHTML = `
+      <form>
+        <fieldset aria-required="true">
+          <legend>Which locations work for you?</legend>
+          <label><input type="checkbox" name="loc[]" value="nyc" /> NYC</label>
+          <label><input type="checkbox" name="loc[]" value="sf" /> SF</label>
+        </fieldset>
+      </form>
+    `;
+
+    expect(detectFields(document)[0]).toMatchObject({
+      elementRole: 'checkboxgroup',
+      required: true,
+    });
+  });
+
+  it('classifies from the autocomplete attribute the page declares, in preference to guessing from the label', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="a">Vorname</label>
+        <input id="a" type="text" autocomplete="given-name" />
+        <label for="b">Nachname</label>
+        <input id="b" type="text" autocomplete="family-name" />
+        <label for="c">Wo wohnen Sie?</label>
+        <input id="c" type="text" autocomplete="address-level2" />
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.category)).toEqual([
+      'first_name',
+      'last_name',
+      'location',
+    ]);
+  });
+
+  it('reads the field name out of a multi-token autocomplete value, past its section and modifier tokens', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" autocomplete="section-primary shipping given-name" />
+        <input type="text" autocomplete="home tel" />
+        <label for="off-field">Referral code</label>
+        <input id="off-field" type="text" autocomplete="off" />
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.category)).toEqual([
+      'first_name',
+      'phone',
+      'unknown',
+    ]);
+  });
+
+  it('collapses a label written across several source lines into one line, which keyword and API label matching both depend on', () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="auth">Are you legally
+              authorized to work?</label>
+        <input id="auth" type="text" />
+      </form>
+    `;
+
+    expect(detectFields(document)[0].label).toBe('Are you legally authorized to work?');
+  });
+
+  it("leaves out the control's own value when reading a label that wraps it, so a pre-filled field keeps its question", () => {
+    document.body.innerHTML = `
+      <form>
+        <label>Country
+          <select name="country"><option value="us" selected>United States</option></select>
+        </label>
+      </form>
+    `;
+
+    expect(detectFields(document)[0].label).toBe('Country');
+  });
+
+  it('reports one field for a react-select widget, not a second one for the hidden `required` input it renders beside it', () => {
+    // react-select's RequiredInput: no `type`, so it reads as a text input to a native scan.
+    document.body.innerHTML = `
+      <div class="field">
+        <label for="work-auth-label">Are you authorized to work in the US?</label>
+        <div class="select__control">
+          <input role="combobox" aria-labelledby="work-auth-label" />
+          <input required tabindex="-1" aria-hidden="true" value="" class="css-1x2y3z-requiredInput" />
+        </div>
+      </div>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({ elementRole: 'combobox', required: true });
+  });
+
+  it('prefers the title attribute to the placeholder, and never reports a generated id as the question', () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="text" title="Years of experience" placeholder="e.g. 5" />
+        <input type="text" id="react-select-3-input" />
+      </form>
+    `;
+
+    const fields = detectFields(document);
+
+    expect(fields[0].label).toBe('Years of experience');
+    expect(fields[1].label).toBe('');
+  });
+
+  it('collapses option labels onto one line too, so a multi-line choice still matches an ATS API wording of it', () => {
+    document.body.innerHTML = `
+      <form>
+        <div id="loc-label">Preferred location</div>
+        <input role="combobox" aria-labelledby="loc-label" aria-controls="loc-list" />
+        <ul id="loc-list" role="listbox">
+          <li role="option">San Francisco,
+                California</li>
+        </ul>
+        <label for="s">Team</label>
+        <select id="s"><option value="a">Platform
+              Engineering</option></select>
+      </form>
+    `;
+
+    const fields = detectFields(document);
+    const combobox = fields.find((field) => field.elementRole === 'combobox');
+    const select = fields.find((field) => field.inputType === 'select-one');
+
+    expect(combobox?.options?.[0].label).toBe('San Francisco, California');
+    expect(select?.options?.[0].label).toBe('Platform Engineering');
+  });
+
   it('resolves a label that wraps its input with no `for` attribute', () => {
     document.body.innerHTML = `
       <form>
@@ -505,6 +714,54 @@ describe('detectFields', () => {
     const orphan = detectFields(document).find((field) => field.label !== 'First question');
 
     expect(orphan?.label).toBe('orphan');
+  });
+
+  it('returns native fields, then comboboxes, then groups — an order content/index.ts depends on when choosing which upload input gets the resume', () => {
+    // Deliberately authored so document order and return order disagree: the group comes first in
+    // the markup and must still come last in the result.
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>Which locations work for you?</legend>
+          <label><input type="checkbox" name="loc[]" value="nyc" /> NYC</label>
+          <label><input type="checkbox" name="loc[]" value="sf" /> SF</label>
+        </fieldset>
+        <div id="cb-label">Work authorization</div>
+        <input role="combobox" aria-labelledby="cb-label" />
+        <label for="email">Email</label>
+        <input id="email" type="text" />
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.elementRole)).toEqual([
+      'native',
+      'combobox',
+      'checkboxgroup',
+    ]);
+  });
+
+  it('detects a document from another realm, which used to degrade silently to unclassified fields', () => {
+    // `detectFields(iframe.contentDocument)` type-checks, and an ATS form is usually in an iframe.
+    // Every `instanceof` here tests against constructor identities, and a foreign document's are
+    // different objects — so all of them returned false and the whole scan quietly lost required
+    // flags, select options and group roles.
+    document.body.innerHTML = `<iframe></iframe>`;
+    const frame = document.querySelector('iframe')!;
+    const inner = frame.contentDocument!;
+    inner.body.innerHTML = `
+      <form>
+        <label for="email">Email</label>
+        <input id="email" type="text" required />
+        <label for="team">Team</label>
+        <select id="team"><option value="a">Platform</option></select>
+      </form>
+    `;
+
+    const fields = detectFields(inner);
+
+    expect(fields.map((field) => field.category)).toEqual(['email', 'unknown']);
+    expect(fields[0].required).toBe(true);
+    expect(fields[1].options?.map((option) => option.label)).toEqual(['Platform']);
   });
 
   it('gives an element the same id on every scan, so answers drafted against one scan still name the same field in the next', () => {

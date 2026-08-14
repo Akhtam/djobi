@@ -195,7 +195,21 @@ export const QuestionAnswerSchema = z.object({
   fieldId: z.string().describe('Matches DetectedField.id'),
   question: z.string(),
   answer: z.string(),
-  sourceStoryIds: z.array(z.string()).describe('Story.id values this answer drew on, if any'),
+  /**
+   * Defaulted, not required. The model is asked for an empty array when an answer drew on no
+   * story, and it routinely omits the key instead — which is the same fact stated by absence.
+   * Requiring it made that ordinary omission fatal for the **whole batch**: `callStructured`
+   * validates the tool input as one object, so a single missing `sourceStoryIds` failed every
+   * answer alongside it and the Analysis Step died with
+   * `report_answers produced input that failed validation`.
+   *
+   * Defaulting also removes the field from the tool's `input_schema.required` and advertises
+   * `"default": []` to the model, so omission stops being a contract violation at the source.
+   */
+  sourceStoryIds: z
+    .array(z.string())
+    .default([])
+    .describe('Story.id values this answer drew on, if any'),
 });
 /** Inferred type of {@link QuestionAnswerSchema}. */
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;

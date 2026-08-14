@@ -31,7 +31,14 @@ export function handleTypedMessage(
       // `content/index.ts` already handles the send side of this case; this is the receive side.
       const fields = parseDetectedFields(message.fields);
       const data = { fields };
-      const url = sender.tab?.url;
+      // The *sending document's* URL, not the tab's. These differ in the case that matters: an ATS
+      // form is usually an iframe on a company's own careers domain, so `sender.tab.url` is
+      // `careers.acme.com` while the form — and the posting id every oracle parses out of it — is at
+      // `job-boards.greenhouse.io`. Handing the oracle the tab's URL meant it recognized no platform
+      // and never fetched, in exactly the case enrichment exists to serve. That failure is
+      // indistinguishable from "no oracle matched" by design (see `apiDetectors.ts`), which is why
+      // it went unnoticed. Falls back to the tab for a main-frame form, where the two are the same.
+      const url = sender.url ?? sender.tab?.url;
 
       void reportDetectedPage(tabId, frameId, data).then((reportedAt) => {
         if (!url) return;

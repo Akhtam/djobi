@@ -1,4 +1,6 @@
+import type { BackendErrorBody } from '@djobi/shared';
 import { Hono } from 'hono';
+import { StructuredCallError } from './llm/structuredCall.js';
 import { answerQuestionsRoute } from './routes/answer-questions.js';
 import { applicationsRoute } from './routes/applications.js';
 import { extractJobRoute } from './routes/extract-job.js';
@@ -23,7 +25,16 @@ export const app = new Hono();
  */
 app.onError((err, c) => {
   console.error(`[djobi] ${c.req.method} ${c.req.path} failed:`, err);
-  return c.json({ error: err.message }, 500);
+
+  // `kind` rides alongside the message so a caller can branch on *why* a structured call failed
+  // without matching substrings of English. The message is unchanged, so anything still reading
+  // only that keeps working.
+  const body: BackendErrorBody =
+    err instanceof StructuredCallError
+      ? { error: err.message, kind: err.kind, toolName: err.toolName }
+      : { error: err.message };
+
+  return c.json(body, 500);
 });
 
 app.route('/', extractJobRoute);
