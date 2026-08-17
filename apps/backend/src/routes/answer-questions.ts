@@ -13,8 +13,7 @@ answerQuestionsRoute.post('/answer-questions', async (c) => {
   }
 
   const { profile, jobInfo, questions } = parsed.data;
-  console.log('QUESTIONS', questions);
-  
+
   const answers = await answerQuestions(profile, jobInfo, questions);
   return c.json(answers);
 });

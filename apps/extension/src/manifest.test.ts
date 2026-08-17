@@ -37,4 +37,8 @@ describe('manifest', () => {
     expect(manifest.side_panel?.default_path).toBe('src/panel/index.html');
     expect(manifest.permissions).toContain('sidePanel');
   });
+
+  it('grants tabs permission so the side panel can retain the active application URL after navigation', () => {
+    expect(manifest.permissions).toContain('tabs');
+  });
 });

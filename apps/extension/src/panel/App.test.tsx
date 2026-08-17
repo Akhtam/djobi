@@ -94,7 +94,7 @@ const jobPageData = {
 const JOB_DESCRIPTION = 'Senior Engineer at Acme, building the platform team.';
 
 interface StubOptions {
-  tabUrl: string;
+  tabUrl: string | null;
   tabId?: number;
   profile: Profile | null;
   jobPageData?: { fields: DetectedField[] } | null;
@@ -194,11 +194,11 @@ async function stubChrome(options: StubOptions) {
 
   vi.stubGlobal('chrome', {
     tabs: {
-      query: vi.fn((_query: unknown, callback: (tabs: { id: number; url: string }[]) => void) =>
-        callback([{ id: options.tabId ?? 1, url: options.tabUrl }]),
+      query: vi.fn((_query: unknown, callback: (tabs: { id: number; url?: string }[]) => void) =>
+        callback([{ id: options.tabId ?? 1, url: options.tabUrl ?? undefined }]),
       ),
-      get: vi.fn((tabId: number, callback: (tab: { id: number; url: string }) => void) =>
-        callback({ id: tabId, url: options.tabUrl }),
+      get: vi.fn((tabId: number, callback: (tab: { id: number; url?: string }) => void) =>
+        callback({ id: tabId, url: options.tabUrl ?? undefined }),
       ),
       onActivated,
       onUpdated,
@@ -296,6 +296,17 @@ describe('panel App', () => {
 
     expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
     expect(screen.getByPlaceholderText(/paste the job description/i)).toHaveValue('');
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it('keeps Analyze disabled when Chrome has not exposed the active tab URL', async () => {
+    const { sendMessage } = await stubChrome({ tabUrl: null, profile, jobPageData: null });
+
+    render(<App />);
+    const textarea = await screen.findByPlaceholderText(/paste the job description/i);
+    fireEvent.change(textarea, { target: { value: JOB_DESCRIPTION } });
+
+    expect(screen.getByRole('button', { name: 'Analyze' })).toBeDisabled();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 

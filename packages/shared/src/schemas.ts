@@ -298,6 +298,8 @@ export type Application = z.infer<typeof ApplicationSchema>;
  * (`background/applicationPipeline.ts`), so making either required 400s every fill.
  */
 export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
+  // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
+  jobUrl: z.string().url(),
   status: ApplicationStatusSchema.default('draft'),
   stage: ApplicationStageSchema.default('applied'),
   notes: z.array(NoteSchema).default([]),

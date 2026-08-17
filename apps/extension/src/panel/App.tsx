@@ -126,7 +126,7 @@ export function App() {
   // background writes its own status, and is never persisted — see the ownership note on the hook.
 
   function handleAnalyze() {
-    if (!jobDescription.trim() || tabId === null || !profile) return;
+    if (!jobDescription.trim() || tabId === null || !tabUrl || !profile) return;
 
     begin('analyzing');
 
@@ -243,7 +243,7 @@ export function App() {
               type="button"
               className="btn-primary"
               onClick={handleAnalyze}
-              disabled={!jobDescription.trim()}
+              disabled={!jobDescription.trim() || !tabUrl}
             >
               Analyze
             </button>

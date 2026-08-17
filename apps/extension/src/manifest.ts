@@ -54,5 +54,7 @@ export default defineManifest({
     'https://api.smartrecruiters.com/*',
     'https://*.workable.com/*',
   ],
-  permissions: ['storage', 'scripting', 'activeTab', 'sidePanel'],
+  // `activeTab` is temporary and is revoked on navigation; `tabs` keeps `Tab.url` available while
+  // the side panel follows an application through an ATS flow.
+  permissions: ['storage', 'scripting', 'activeTab', 'sidePanel', 'tabs'],
 });

@@ -346,4 +346,10 @@ describe('NewApplicationSchema', () => {
     const { company: _company, ...withoutCompany } = validNewApplication;
     expect(NewApplicationSchema.safeParse(withoutCompany).success).toBe(false);
   });
+
+  it('rejects an empty job URL', () => {
+    expect(NewApplicationSchema.safeParse({ ...validNewApplication, jobUrl: '' }).success).toBe(
+      false,
+    );
+  });
 });
