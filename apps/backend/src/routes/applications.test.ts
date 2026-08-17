@@ -1,16 +1,26 @@
-import type { Application } from '@djobi/shared';
+import type { Application, ApplicationSnapshot } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockListApplications, mockGetApplicationById, mockSaveApplication } = vi.hoisted(() => ({
+const {
+  mockListApplications,
+  mockListApplicationsByJobUrl,
+  mockGetApplicationById,
+  mockSaveApplication,
+  mockUpdateApplication,
+} = vi.hoisted(() => ({
   mockListApplications: vi.fn(),
+  mockListApplicationsByJobUrl: vi.fn(),
   mockGetApplicationById: vi.fn(),
   mockSaveApplication: vi.fn(),
+  mockUpdateApplication: vi.fn(),
 }));
 
 vi.mock('../db/applicationsRepository.js', () => ({
   listApplications: mockListApplications,
+  listApplicationsByJobUrl: mockListApplicationsByJobUrl,
   getApplicationById: mockGetApplicationById,
   saveApplication: mockSaveApplication,
+  updateApplication: mockUpdateApplication,
 }));
 
 const { app } = await import('../app.js');
@@ -43,6 +53,7 @@ const sampleApplication: Application = {
 describe('GET /applications', () => {
   beforeEach(() => {
     mockListApplications.mockReset();
+    mockListApplicationsByJobUrl.mockReset();
     mockGetApplicationById.mockReset();
   });
 
@@ -62,6 +73,29 @@ describe('GET /applications', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
+  });
+
+  it('narrows to one posting when asked for a job URL — what the duplicate guard on Analyze reads', async () => {
+    mockListApplicationsByJobUrl.mockResolvedValue([sampleApplication]);
+
+    const res = await app.request(
+      `/applications?jobUrl=${encodeURIComponent('https://acme.com/jobs/123')}`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([sampleApplication]);
+    // Matched exactly: the query string can be what tells two postings on one board apart.
+    expect(mockListApplicationsByJobUrl).toHaveBeenCalledWith('https://acme.com/jobs/123');
+    expect(mockListApplications).not.toHaveBeenCalled();
+  });
+
+  it('reports no match for a URL never applied to, rather than falling back to the full list', async () => {
+    mockListApplicationsByJobUrl.mockResolvedValue([]);
+
+    const res = await app.request('/applications?jobUrl=https%3A%2F%2Facme.com%2Fjobs%2F999');
+
+    expect(await res.json()).toEqual([]);
+    expect(mockListApplications).not.toHaveBeenCalled();
   });
 });
 
@@ -158,5 +192,56 @@ describe('POST /applications', () => {
 
     expect(res.status).toBe(400);
     expect(mockSaveApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /applications/:id', () => {
+  const {
+    id: _id,
+    createdAt: _createdAt,
+    stage: _stage,
+    notes: _notes,
+    ...snapshot
+  } = sampleApplication;
+
+  beforeEach(() => {
+    mockUpdateApplication.mockReset();
+  });
+
+  it('updates a valid application snapshot and preserves tracking fields', async () => {
+    mockUpdateApplication.mockResolvedValue(sampleApplication);
+
+    const res = await app.request('/applications/application-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot satisfies ApplicationSnapshot),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(sampleApplication);
+    expect(mockUpdateApplication).toHaveBeenCalledWith('application-1', snapshot);
+  });
+
+  it('returns 404 when the application no longer exists', async () => {
+    mockUpdateApplication.mockResolvedValue(null);
+
+    const res = await app.request('/applications/missing', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 400 and does not update when tracking fields are included', async () => {
+    const res = await app.request('/applications/application-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...snapshot, stage: 'rejected' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockUpdateApplication).not.toHaveBeenCalled();
   });
 });

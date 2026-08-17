@@ -75,7 +75,9 @@ function reasonFrom(raw: string): { reason: string; kind?: StructuredCallFailure
  * unrelated `SyntaxError` (a plain-text `Internal Server Error` throws `Unexpected token 'I'`),
  * which is exactly how a backend 500 used to reach the panel as an uninformative parse error.
  */
-async function request(path: string, body: unknown, method: 'GET' | 'POST'): Promise<Response> {
+type Method = 'GET' | 'POST' | 'PATCH';
+
+async function request(path: string, body: unknown, method: Method): Promise<Response> {
   const res = await fetch(
     `${BACKEND_ORIGIN}${path}`,
     method === 'GET'
@@ -98,14 +100,17 @@ async function request(path: string, body: unknown, method: 'GET' | 'POST'): Pro
 
 /**
  * Sends `body` as JSON and resolves with the parsed JSON response. `method` defaults to `POST`;
- * `GET` requests are sent bodyless.
+ * `GET` requests are sent bodyless, so `body` may be omitted for them.
+ *
+ * `PATCH` is in the union because `backendClient.updateApplication` has always sent one — the
+ * narrower `'GET' | 'POST'` type was simply a lie the compiler flagged and the runtime ignored.
  *
  * @throws {BackendError} When the response status is not 2xx.
  */
 export async function callBackend<T>(
   path: string,
-  body: unknown,
-  method: 'GET' | 'POST' = 'POST',
+  body?: unknown,
+  method: Method = 'POST',
 ): Promise<T> {
   const raw = await (await request(path, body, method)).text();
   return (raw ? JSON.parse(raw) : undefined) as T;

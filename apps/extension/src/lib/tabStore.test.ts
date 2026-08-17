@@ -38,6 +38,8 @@ const run: PipelineRunState = {
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,
+  applicationId: null,
+  duplicateOf: null,
 };
 
 function textField(id: string) {

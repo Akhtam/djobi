@@ -1,6 +1,7 @@
 import {
   ApplicationSchema,
   type Application,
+  type ApplicationSnapshot,
   type ApplicationStage,
   type NewApplication,
   type NewNote,
@@ -61,10 +62,23 @@ export async function getApplicationById(id: string): Promise<Application | null
   return toApplication(row);
 }
 
-/** Inserts a new application row after an autofill completes. */
+/** Inserts a new application row after the candidate explicitly saves an autofill. */
 export async function saveApplication(newApplication: NewApplication): Promise<Application> {
   const [row] = await db.insert(applications).values(newApplication).returning();
   return toApplication(row);
+}
+
+/** Replaces an application's autofill snapshot without disturbing interview tracking. */
+export async function updateApplication(
+  id: string,
+  snapshot: ApplicationSnapshot,
+): Promise<Application | null> {
+  const [row] = await db
+    .update(applications)
+    .set(snapshot)
+    .where(eq(applications.id, id))
+    .returning();
+  return row ? toApplication(row) : null;
 }
 
 /** Lists past applications to the given company, most recently created first. */
@@ -73,6 +87,23 @@ export async function listApplicationsByCompany(company: string): Promise<Applic
     .select()
     .from(applications)
     .where(eq(applications.company, company))
+    .orderBy(desc(applications.createdAt));
+  return toApplications(rows);
+}
+
+/**
+ * Lists past applications to the exact same job URL, most recently created first.
+ *
+ * Backs the duplicate guard on Analyze: the extension asks this before spending any LLM call, so a
+ * posting the candidate already applied to stops the run instead of re-tailoring a resume for it.
+ * Matched exactly rather than normalized — a query string can be what distinguishes two postings on
+ * the same board, so stripping one risks suppressing an application the candidate hasn't made.
+ */
+export async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> {
+  const rows = await db
+    .select()
+    .from(applications)
+    .where(eq(applications.jobUrl, jobUrl))
     .orderBy(desc(applications.createdAt));
   return toApplications(rows);
 }

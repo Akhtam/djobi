@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   /* Palette anchored to the extension icon's blue-violet gradient (assets/icons), sampled
      directly from the PNG: top-left #425BD8 -> bottom-right #8450D8, ~135deg. */
   --bg: #f6f7fb;
@@ -25,27 +25,26 @@
   --shadow-md: 0 4px 16px rgb(20 21 31 / 6%);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101117;
-    --surface: #191a22;
-    --surface-muted: #21222c;
-    --border: #2c2e3a;
-    --text: #f0f1f6;
-    --text-muted: #9396a8;
-    --primary: #8f83f2;
-    --primary-hover: #a79cff;
-    --primary-contrast: #101117;
-    --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
-    --danger: #ff6b83;
-    --danger-hover: #ff8598;
-    --danger-bg: rgb(255 107 131 / 12%);
-    --success: #3ddb9b;
-    --success-bg: rgb(61 219 155 / 12%);
-    --ring: rgb(143 131 242 / 35%);
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
-    --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
-  }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #101117;
+  --surface: #191a22;
+  --surface-muted: #21222c;
+  --border: #2c2e3a;
+  --text: #f0f1f6;
+  --text-muted: #a7aabd;
+  --primary: #8f83f2;
+  --primary-hover: #a79cff;
+  --primary-contrast: #101117;
+  --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
+  --danger: #ff7890;
+  --danger-hover: #ff98a8;
+  --danger-bg: rgb(255 107 131 / 14%);
+  --success: #46dc9e;
+  --success-bg: rgb(61 219 155 / 14%);
+  --ring: rgb(143 131 242 / 38%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
 }
 
 * {
@@ -144,6 +143,20 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.theme-toggle {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.theme-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .status-pill {

@@ -15,13 +15,22 @@ import type { JobPageData } from './messages';
  * usually inside an iframe on a company's own careers page.
  *
  * Backed entirely by `chrome.storage.session`: survives service-worker eviction, clears when the
- * browser closes (in-progress review state isn't the permanent record — that's the `applications`
- * row written at the end of the Fill Step), and is directly readable from both the background
+ * browser closes (in-progress review state isn't the permanent record — that is the `applications`
+ * row written after an explicit save), and is directly readable from both the background
  * worker and the panel, so neither needs a message round-trip to reach it.
  */
 
 export type PipelineStatus =
-  'analyzing' | 'analyze-error' | 'review' | 'filling' | 'fill-error' | 'filled';
+  | 'analyzing'
+  | 'analyze-error'
+  | 'duplicate'
+  | 'review'
+  | 'filling'
+  | 'fill-error'
+  | 'filled'
+  | 'saving'
+  | 'save-error'
+  | 'saved';
 // Deliberately excludes 'loading'/'no-profile'/'ready' — those are panel-local bootstrap state
 // (has a profile loaded yet, has an active tab been found yet), not Application Pipeline progress.
 // A null `run` means "ready".
@@ -32,10 +41,27 @@ export type PipelineStatus =
  * could only ever render a generic message.
  */
 export interface PipelineFailure {
-  /** Which half of the Application Pipeline failed. */
-  step: 'analysis' | 'fill';
+  /** Which pipeline operation failed. */
+  step: 'analysis' | 'fill' | 'save';
   /** The underlying cause, verbatim — e.g. `POST /answer-questions failed (500): …`. */
   message: string;
+}
+
+/**
+ * What the candidate already has on file for this job URL, when the duplicate guard stopped a run.
+ *
+ * A flattened summary rather than the whole `Application`: the panel needs four fields to explain
+ * itself, and storing the full record would put a tailored resume and every answer into
+ * `chrome.storage.session` for a run that deliberately did no work.
+ */
+export interface DuplicateApplication {
+  id: string;
+  company: string;
+  roleTitle: string;
+  /** The *most recent* save for this URL — the lookup returns matches newest-first. */
+  createdAt: string;
+  /** How many saved applications share this URL. Greater than one means repeated applications. */
+  count: number;
 }
 
 export interface PipelineRunState {
@@ -60,6 +86,10 @@ export interface PipelineRunState {
    * empty list — i.e. as success.
    */
   filledFieldCount: number;
+  /** The permanent record created by the first explicit save, if any. */
+  applicationId: string | null;
+  /** Set alongside a `duplicate` status; `null` on every run that was allowed to proceed. */
+  duplicateOf: DuplicateApplication | null;
 }
 
 /**

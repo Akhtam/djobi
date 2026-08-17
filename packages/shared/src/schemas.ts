@@ -306,3 +306,13 @@ export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt
 });
 /** Inferred type of {@link NewApplicationSchema}. */
 export type NewApplication = z.infer<typeof NewApplicationSchema>;
+
+/**
+ * The editable snapshot of a saved application. Interview tracking belongs to the persisted record,
+ * not the autofill run, so a re-save must never overwrite its stage or notes.
+ */
+export const ApplicationSnapshotSchema = NewApplicationSchema.omit({
+  stage: true,
+  notes: true,
+}).strict();
+export type ApplicationSnapshot = z.infer<typeof ApplicationSnapshotSchema>;

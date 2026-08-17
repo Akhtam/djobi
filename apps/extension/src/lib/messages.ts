@@ -34,6 +34,11 @@ export interface StartAnalysisMessage {
   profile: Profile;
   /** The posting the candidate pasted into the panel — the Analysis Step's only input. */
   jobDescription: string;
+  /**
+   * Skip the duplicate check and analyze regardless. Set only when the candidate chose "Analyze and
+   * apply anyway" after being told they already applied to this URL.
+   */
+  force?: boolean;
 }
 
 /** Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of `tabStore`. */
@@ -41,6 +46,12 @@ export interface StartFillMessage {
   type: 'START_FILL';
   tabId: number;
   profile: Profile;
+}
+
+/** Panel -> background: persist the current filled application snapshot. */
+export interface StartSaveApplicationMessage {
+  type: 'START_SAVE_APPLICATION';
+  tabId: number;
 }
 
 export interface FillFormPayload {
@@ -96,7 +107,7 @@ export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMess
  *
  * That's a real design decision, not an omission. Each of these three either has nothing to say
  * back (`REPORT_JOB_PAGE`) or kicks off work whose whole point is outliving the sender
- * (`START_ANALYSIS`/`START_FILL`) — holding the message channel open until an Analysis Step
+ * (`START_ANALYSIS`/`START_FILL`/`START_SAVE_APPLICATION`) — holding the message channel open until an Analysis Step
  * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
  * panel that opened it. Progress is read from `lib/tabStore.ts` instead.
  *
@@ -108,7 +119,8 @@ export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMess
  * `boolean` that was always `false`. Every caller wrote `<…, void>` and discarded the promise. An
  * interface that describes capabilities the implementation doesn't have is worse than no types.
  */
-export type TypedMessage = ReportJobPageMessage | StartAnalysisMessage | StartFillMessage;
+export type TypedMessage =
+  ReportJobPageMessage | StartAnalysisMessage | StartFillMessage | StartSaveApplicationMessage;
 
 /**
  * Sends a coordination message to the background and returns immediately. There is no reply to

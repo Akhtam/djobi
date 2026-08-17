@@ -14,6 +14,8 @@
  */
 import type {
   AnswerQuestionsRequest,
+  Application,
+  ApplicationSnapshot,
   ExtractJobRequest,
   JobInfo,
   NewApplication,
@@ -36,7 +38,10 @@ export interface BackendClient {
     questions: QuestionForModel[],
   ): Promise<QuestionAnswer[]>;
   renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
-  saveApplication(payload: NewApplication): Promise<unknown>;
+  saveApplication(payload: NewApplication): Promise<Application>;
+  updateApplication(id: string, payload: ApplicationSnapshot): Promise<Application>;
+  /** Past applications to this exact job URL, most recent first. Empty when it's a new posting. */
+  findApplicationsByJobUrl(jobUrl: string): Promise<Application[]>;
 }
 
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
@@ -60,5 +65,15 @@ export const httpBackendClient: BackendClient = {
       tailoredResume,
     } satisfies RenderResumePdfRequest),
 
-  saveApplication: (payload) => callBackend('/applications', payload),
+  saveApplication: (payload) => callBackend<Application>('/applications', payload),
+
+  updateApplication: (id, payload) =>
+    callBackend<Application>(`/applications/${encodeURIComponent(id)}`, payload, 'PATCH'),
+
+  findApplicationsByJobUrl: (jobUrl) =>
+    callBackend<Application[]>(
+      `/applications?jobUrl=${encodeURIComponent(jobUrl)}`,
+      undefined,
+      'GET',
+    ),
 };

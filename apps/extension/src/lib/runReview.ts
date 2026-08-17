@@ -73,6 +73,11 @@ export function reviewOf(run: PipelineRunState | null): RunReview {
     case 'analyze-error':
       return { pill: { label: 'Error', tone: 'error' }, canReview: false, outcome: null };
 
+    // Not an error — the run did exactly what it should have. The pill says what happened; the
+    // panel's own branch offers the way past it.
+    case 'duplicate':
+      return { pill: { label: 'Already applied', tone: 'error' }, canReview: false, outcome: null };
+
     case 'review':
       return { pill: { label: 'Ready to fill', tone: 'success' }, canReview: true, outcome: null };
 
@@ -82,9 +87,20 @@ export function reviewOf(run: PipelineRunState | null): RunReview {
     case 'fill-error':
       return { pill: { label: 'Error', tone: 'error' }, canReview: true, outcome: null };
 
-    case 'filled': {
+    case 'filled':
+    case 'saving':
+    case 'save-error':
+    case 'saved': {
       const outcome = outcomeOf(run);
-      return { pill: OUTCOME_PILL[outcome], canReview: true, outcome };
+      const pill =
+        run.status === 'saving'
+          ? { label: 'Saving...', tone: 'busy' as const }
+          : run.status === 'save-error'
+            ? { label: 'Save failed', tone: 'error' as const }
+            : run.status === 'saved'
+              ? { label: 'Saved', tone: 'success' as const }
+              : OUTCOME_PILL[outcome];
+      return { pill, canReview: true, outcome };
     }
   }
 }

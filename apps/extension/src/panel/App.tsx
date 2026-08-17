@@ -28,7 +28,8 @@ import { callBackend, callBackendBinary } from '../lib/callBackend';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import { reviewOf } from '../lib/runReview';
-import { getDetectedPage, type PipelineStatus } from '../lib/tabStore';
+import { getDetectedPage, patchPipelineRun, type PipelineStatus } from '../lib/tabStore';
+import { useThemePreference } from '../lib/theme';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 
@@ -39,7 +40,13 @@ import { usePipelineRun } from './usePipelineRun';
 // derived here. It is `reviewOf` in `lib/runReview.ts`, one derivation the whole component reads.
 type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus;
 
+/** When a past application was saved, in the reader's own locale — stored as an ISO string. */
+function formatAppliedDate(createdAt: string): string {
+  return new Date(createdAt).toLocaleDateString(undefined, { dateStyle: 'long' });
+}
+
 export function App() {
+  const { theme, toggleTheme } = useThemePreference();
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
@@ -68,6 +75,7 @@ export function App() {
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
   const failure = run?.failure ?? null;
+  const duplicateOf = run?.duplicateOf ?? null;
   // The pasted job description: the run's copy once analysis has started, the panel-local draft
   // before that. It is the only input the Analysis Step has — nothing is read off the page.
   const jobDescription = run ? run.jobDescription : (localPageText ?? '');
@@ -125,7 +133,12 @@ export function App() {
   // `usePipelineRun`'s storage subscription. `begin` is only instant UI feedback until the
   // background writes its own status, and is never persisted — see the ownership note on the hook.
 
-  function handleAnalyze() {
+  /**
+   * `force` is set only by "Analyze and apply anyway", after the background told us this job URL
+   * already has a saved application. The check itself runs in the background, not here, so every
+   * entry point into analysis is covered by it.
+   */
+  function handleAnalyze(force = false) {
     if (!jobDescription.trim() || tabId === null || !tabUrl || !profile) return;
 
     begin('analyzing');
@@ -136,6 +149,7 @@ export function App() {
       tabUrl,
       profile,
       jobDescription,
+      force,
     });
   }
 
@@ -151,6 +165,8 @@ export function App() {
       ),
       jobDescription,
     });
+    // A saved record is a snapshot. Editing it makes the displayed snapshot pending until saved again.
+    if (tabId !== null && status === 'saved') void patchPipelineRun(tabId, { status: 'filled' });
   }
 
   function handleFill() {
@@ -159,6 +175,13 @@ export function App() {
     begin('filling');
 
     notify({ type: 'START_FILL', tabId, profile });
+  }
+
+  function handleSaveApplication() {
+    if (tabId === null || (status !== 'filled' && status !== 'save-error')) return;
+
+    begin('saving');
+    notify({ type: 'START_SAVE_APPLICATION', tabId });
   }
 
   /** Releases the preview's blob: URL and resets the resume-preview state (used on preview
@@ -196,6 +219,14 @@ export function App() {
         <img src={icon48} alt="" className="brand-mark" />
         <h1>djobi</h1>
         {pill && <span className={`status-pill ${pill.tone}`}>{pill.label}</span>}
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+        >
+          {theme === 'light' ? 'Dark' : 'Light'}
+        </button>
       </header>
 
       <div className="panel-body">
@@ -242,7 +273,7 @@ export function App() {
             <button
               type="button"
               className="btn-primary"
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={!jobDescription.trim() || !tabUrl}
             >
               Analyze
@@ -257,12 +288,29 @@ export function App() {
           </div>
         )}
 
+        {status === 'duplicate' && duplicateOf && (
+          <div className="state">
+            <span className="state-icon">📮</span>
+            <p>
+              {duplicateOf.count > 1
+                ? `You've already applied to this job ${duplicateOf.count} times, most recently on ${formatAppliedDate(duplicateOf.createdAt)}.`
+                : `You already applied to this job on ${formatAppliedDate(duplicateOf.createdAt)}.`}
+            </p>
+            <p className="failure-detail">
+              {duplicateOf.roleTitle} at {duplicateOf.company}
+            </p>
+            <button type="button" className="btn-primary" onClick={() => handleAnalyze(true)}>
+              Analyze and apply anyway
+            </button>
+          </div>
+        )}
+
         {status === 'analyze-error' && (
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>Something went wrong analyzing this job posting.</p>
             {failure && <p className="failure-detail">{failure.message}</p>}
-            <button type="button" className="btn-secondary" onClick={handleAnalyze}>
+            <button type="button" className="btn-secondary" onClick={() => handleAnalyze()}>
               Try again
             </button>
           </div>
@@ -275,7 +323,7 @@ export function App() {
             <span className="state-icon error">⚠️</span>
             <p>
               Nothing was filled — no form fields were found on this page, including in a fresh scan
-              taken just now. The application was saved, but you'll need to fill the form yourself.
+              taken just now. You'll need to fill the form yourself before saving this application.
               If the form is visibly there, reload the page and try again: this extension can't
               reach a page that was already open when it was last reloaded.
             </p>
@@ -286,8 +334,8 @@ export function App() {
           <div className="state success">
             <span className="state-icon success">✅</span>
             <p>
-              Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'} and saved the
-              application.
+              Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'}. Save the
+              application when you're ready.
             </p>
           </div>
         )}
@@ -296,7 +344,7 @@ export function App() {
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>
-              Filled and application saved, but {unresolvedRequiredFields.length} required field
+              Filled, but {unresolvedRequiredFields.length} required field
               {unresolvedRequiredFields.length === 1 ? '' : 's'} didn't take a value — fill{' '}
               {unresolvedRequiredFields.length === 1 ? 'it' : 'them'} in by hand before submitting:
             </p>
@@ -305,6 +353,13 @@ export function App() {
                 <li key={field.id}>{field.label || field.category}</li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {status === 'saved' && (
+          <div className="state success">
+            <span className="state-icon success">✅</span>
+            <p>Application saved.</p>
           </div>
         )}
 
@@ -339,7 +394,7 @@ export function App() {
                   <button
                     type="button"
                     className="btn-secondary"
-                    onClick={handleAnalyze}
+                    onClick={() => handleAnalyze()}
                     disabled={!jobDescription.trim()}
                   >
                     Re-analyze
@@ -389,10 +444,21 @@ export function App() {
             {status === 'fill-error' && (
               <div className="inline-error">
                 <div className="inline-error-body">
-                  <p>Something went wrong filling the form and saving the application.</p>
+                  <p>Something went wrong filling the form.</p>
                   {failure && <p className="failure-detail">{failure.message}</p>}
                 </div>
                 <button type="button" className="btn-secondary" onClick={handleFill}>
+                  Try again
+                </button>
+              </div>
+            )}
+            {status === 'save-error' && (
+              <div className="inline-error">
+                <div className="inline-error-body">
+                  <p>Something went wrong saving the application.</p>
+                  {failure && <p className="failure-detail">{failure.message}</p>}
+                </div>
+                <button type="button" className="btn-secondary" onClick={handleSaveApplication}>
                   Try again
                 </button>
               </div>
@@ -407,11 +473,24 @@ export function App() {
             type="button"
             className="btn-primary"
             onClick={handleFill}
-            disabled={status === 'filling'}
+            disabled={status === 'filling' || status === 'saving'}
           >
             {status === 'filling' && <span className="spinner" />}
-            {status === 'filled' ? 'Fill form again' : 'Fill form'}
+            {status === 'filled' || status === 'saved' || status === 'save-error'
+              ? 'Fill form again'
+              : 'Fill form'}
           </button>
+          {(status === 'filled' || status === 'save-error' || status === 'saving') && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleSaveApplication}
+              disabled={status === 'saving'}
+            >
+              {status === 'saving' && <span className="spinner" />}
+              {status === 'saving' ? 'Saving...' : 'Save application'}
+            </button>
+          )}
         </footer>
       )}
     </main>

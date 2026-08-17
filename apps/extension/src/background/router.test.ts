@@ -3,14 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDetectedPage } from '../lib/tabStore';
 import { handleTypedMessage } from './router';
 
-const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill } = vi.hoisted(() => ({
-  mockEnrichWithApiOracle: vi.fn(),
-  mockRunAnalysis: vi.fn(),
-  mockRunFill: vi.fn(),
-}));
+const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill, mockRunSaveApplication } =
+  vi.hoisted(() => ({
+    mockEnrichWithApiOracle: vi.fn(),
+    mockRunAnalysis: vi.fn(),
+    mockRunFill: vi.fn(),
+    mockRunSaveApplication: vi.fn(),
+  }));
 
 vi.mock('./apiDetectors', () => ({ enrichWithApiOracle: mockEnrichWithApiOracle }));
-vi.mock('./applicationPipeline', () => ({ runAnalysis: mockRunAnalysis, runFill: mockRunFill }));
+vi.mock('./applicationPipeline', () => ({
+  runAnalysis: mockRunAnalysis,
+  runFill: mockRunFill,
+  runSaveApplication: mockRunSaveApplication,
+}));
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -56,6 +62,8 @@ describe('handleTypedMessage', () => {
     mockRunAnalysis.mockResolvedValue(undefined);
     mockRunFill.mockReset();
     mockRunFill.mockResolvedValue(undefined);
+    mockRunSaveApplication.mockReset();
+    mockRunSaveApplication.mockResolvedValue(undefined);
   });
 
   it('stores a REPORT_JOB_PAGE message keyed by the sending tab', async () => {
@@ -180,10 +188,35 @@ describe('handleTypedMessage', () => {
       'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       'Senior Engineer at Acme...',
+      undefined,
+      undefined,
     );
     // Chrome holds the channel open only for a listener that returns `true`. Returning nothing at
     // all is what makes that impossible to get wrong here.
     expect(returned).toBeUndefined();
+  });
+
+  it('carries the candidate\'s "analyze anyway" through to the run, so the duplicate guard is skipped', () => {
+    handleTypedMessage(
+      {
+        type: 'START_ANALYSIS',
+        tabId: 7,
+        tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+        profile,
+        jobDescription: 'Senior Engineer at Acme...',
+        force: true,
+      },
+      {} as chrome.runtime.MessageSender,
+    );
+
+    expect(mockRunAnalysis).toHaveBeenCalledWith(
+      7,
+      'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      'Senior Engineer at Acme...',
+      undefined,
+      true,
+    );
   });
 
   it('starts the Fill Step in the background without holding the message channel open', () => {
@@ -193,6 +226,16 @@ describe('handleTypedMessage', () => {
     );
 
     expect(mockRunFill).toHaveBeenCalledWith(7, profile);
+    expect(returned).toBeUndefined();
+  });
+
+  it('starts saving in the background without holding the message channel open', () => {
+    const returned = handleTypedMessage(
+      { type: 'START_SAVE_APPLICATION', tabId: 7 },
+      {} as chrome.runtime.MessageSender,
+    );
+
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7);
     expect(returned).toBeUndefined();
   });
 });

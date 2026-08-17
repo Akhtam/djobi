@@ -28,6 +28,8 @@ const run: PipelineRunState = {
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,
+  applicationId: null,
+  duplicateOf: null,
 };
 
 /** The shared in-memory `chrome.storage.session`, which fires `onChanged` on write as Chrome does. */

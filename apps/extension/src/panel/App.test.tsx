@@ -104,8 +104,10 @@ interface StubOptions {
   sessionStorage?: FakeSessionStorage;
   /** Message to fail successive Analysis Steps with, `null` for success. The last entry repeats. */
   analysisFailures?: (string | null)[];
-  /** Same idea, for the Fill Step — the failure surfaces from saving the Application. */
-  fillFailures?: (string | null)[];
+  /** Same idea for the explicit Save Application action. */
+  saveFailures?: (string | null)[];
+  /** Applications already saved for the tab's URL — what the duplicate guard on Analyze finds. */
+  existingApplications?: { id: string; company: string; roleTitle: string; createdAt: string }[];
   /** If true, the Fill Step hangs at the page-filling call until `resolveFill()` is called —
    *  simulates a Fill Step still in flight in the background. */
   holdFill?: boolean;
@@ -156,9 +158,14 @@ async function stubChrome(options: StubOptions) {
       answerQuestions: () => Promise.resolve(answers),
       renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
       saveApplication: () => {
-        const failure = nth(options.fillFailures, fillCallIndex++);
-        return failure ? Promise.reject(new Error(failure)) : Promise.resolve(undefined);
+        const failure = nth(options.saveFailures, fillCallIndex++);
+        return failure
+          ? Promise.reject(new Error(failure))
+          : Promise.resolve({ id: 'application-1' } as never);
       },
+      updateApplication: () => Promise.resolve({ id: 'application-1' } as never),
+      findApplicationsByJobUrl: () =>
+        Promise.resolve((options.existingApplications ?? []) as never),
     },
     page: {
       // `null` — the page gives no account of what it kept, so the Fill Step falls back to the
@@ -180,9 +187,14 @@ async function stubChrome(options: StubOptions) {
           message.profile as Profile,
           message.jobDescription as string,
           deps,
+          message.force as boolean | undefined,
         );
       } else if (message.type === 'START_FILL') {
         void runFill(message.tabId as number, message.profile as Profile, deps);
+      } else if (message.type === 'START_SAVE_APPLICATION') {
+        void import('../background/applicationPipeline').then(({ runSaveApplication }) =>
+          runSaveApplication(message.tabId as number, deps),
+        );
       }
       callback(undefined);
     },
@@ -331,6 +343,7 @@ describe('panel App', () => {
         tabUrl: 'https://example.com',
         profile,
         jobDescription: 'Pasted job description text.',
+        force: false,
       },
       expect.any(Function),
     );
@@ -448,6 +461,56 @@ describe('panel App', () => {
     await screen.findByText('Senior Engineer at Acme');
   });
 
+  it('stops on a job already applied to, naming when it was applied for', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      existingApplications: [
+        {
+          id: 'application-1',
+          company: 'Acme',
+          roleTitle: 'Senior Engineer',
+          createdAt: '2026-08-03T10:00:00.000Z',
+        },
+      ],
+    });
+
+    render(<App />);
+    await clickAnalyze();
+
+    await screen.findByText(/you already applied to this job on august 3, 2026/i);
+    // The review never appears — the point of the guard is that no analysis ran at all.
+    expect(screen.queryByRole('button', { name: 'Edit job description' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze and apply anyway' }));
+
+    await screen.findByText('Senior Engineer at Acme');
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({ force: true });
+  });
+
+  it('says how many times a repeatedly-applied-to job was applied for', async () => {
+    const application = { id: 'a', company: 'Acme', roleTitle: 'Senior Engineer' };
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      existingApplications: [
+        { ...application, createdAt: '2026-08-03T10:00:00.000Z' },
+        { ...application, createdAt: '2026-07-02T10:00:00.000Z' },
+      ],
+    });
+
+    render(<App />);
+    await clickAnalyze();
+
+    // A single date would hide the repeat entirely.
+    await screen.findByText(
+      /already applied to this job 2 times, most recently on august 3, 2026/i,
+    );
+  });
+
   it('shows the underlying cause of a failed analysis, not just a generic message', async () => {
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
@@ -474,18 +537,19 @@ describe('panel App', () => {
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      fillFailures: ['POST /applications failed (500): db unreachable'],
+      saveFailures: ['POST /applications failed (500): db unreachable'],
     });
 
     render(<App />);
     await clickAnalyze();
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
 
     await screen.findByText('POST /applications failed (500): db unreachable');
   });
 
-  it('fills the form and saves the application when "Fill form" is clicked', async () => {
+  it('fills the form without saving until "Save application" is clicked', async () => {
     const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
@@ -498,9 +562,17 @@ describe('panel App', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText(/Save the application when you're ready/);
     expect(sendMessage).toHaveBeenCalledWith(
       { type: 'START_FILL', tabId: 1, profile },
+      expect.any(Function),
+    );
+    expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save application' }));
+    await screen.findByText('Application saved.');
+    expect(sendMessage).toHaveBeenCalledWith(
+      { type: 'START_SAVE_APPLICATION', tabId: 1 },
       expect.any(Function),
     );
   });
@@ -521,7 +593,7 @@ describe('panel App', () => {
     await clickAnalyze();
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText(/Save the application when you're ready/);
 
     expect(screen.getByText('Why do you want to work here?')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
@@ -541,7 +613,7 @@ describe('panel App', () => {
     await clickAnalyze();
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText(/Save the application when you're ready/);
 
     fireEvent.change(screen.getByDisplayValue('Draft answer.'), {
       target: { value: 'Revised answer.' },
@@ -550,7 +622,7 @@ describe('panel App', () => {
     const refill = await screen.findByRole('button', { name: 'Fill form again' });
     fireEvent.click(refill);
 
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText(/Save the application when you're ready/);
     expect(screen.getByDisplayValue('Revised answer.')).toBeInTheDocument();
     expect(
       sendMessage.mock.calls.filter(([message]) => message.type === 'START_FILL'),
@@ -622,7 +694,7 @@ describe('panel App', () => {
     expect(callsOfType(sendMessage, 'START_FILL')).toHaveLength(1);
 
     resolveFill();
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText(/Save the application when you're ready/);
   });
 
   it('shows an error and retries filling when the user clicks "Try again"', async () => {
@@ -630,18 +702,19 @@ describe('panel App', () => {
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
-      fillFailures: ['backend unreachable', null],
+      saveFailures: ['backend unreachable', null],
     });
 
     render(<App />);
     await clickAnalyze();
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
 
-    await screen.findByText('Something went wrong filling the form and saving the application.');
+    await screen.findByText('Something went wrong saving the application.');
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    await screen.findByText('Filled 3 fields and saved the application.');
+    await screen.findByText('Application saved.');
   });
 
   it('resets to the bootstrap screen when the active tab changes, so the panel (which survives tab switches) never shows a stale review for the previous tab', async () => {

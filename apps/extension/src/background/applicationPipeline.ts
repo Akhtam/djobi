@@ -28,6 +28,7 @@ import {
   patchPipelineRun,
   setPipelineRun,
   type AnalyzedRun,
+  type DuplicateApplication,
   type PipelineRunState,
 } from '../lib/tabStore';
 
@@ -144,7 +145,10 @@ async function fillStep(
   tabId: number,
   deps: PipelineDeps,
 ): Promise<
-  Pick<PipelineRunState, 'status' | 'unresolvedRequiredFields' | 'filledFieldCount' | 'jobPageData'>
+  Pick<
+    PipelineRunState,
+    'status' | 'unresolvedRequiredFields' | 'filledFieldCount' | 'jobPageData' | 'failure'
+  >
 > {
   const { jobPageData, jobInfo, tailoredResume, answers, tabUrl } = run;
 
@@ -189,16 +193,6 @@ async function fillStep(
 
   const filled = await deps.page.fill(tabId, { fields, values, resume });
 
-  await deps.backend.saveApplication({
-    company: jobInfo.company,
-    roleTitle: jobInfo.roleTitle,
-    jobUrl: tabUrl ?? '',
-    jobInfo,
-    tailoredResume,
-    answers,
-    status: 'draft',
-  });
-
   // What the page confirmed it kept. A run whose content script didn't answer at all (`null`) has
   // no such account, and falling back to the drafted values is the honest reading there: the fill
   // may well have worked, and reporting every field as unresolved would be its own lie.
@@ -230,7 +224,44 @@ async function fillStep(
     unresolvedRequiredFields,
     filledFieldCount,
     jobPageData: { ...jobPageData, fields },
+    failure: null,
   };
+}
+
+/** Saves the current filled snapshot, creating it once and replacing it after later edits or fills. */
+export async function runSaveApplication(
+  tabId: number,
+  deps: PipelineDeps = productionDeps,
+): Promise<void> {
+  const run = asAnalyzedRun(await getPipelineRun(tabId));
+  if (!run || (run.status !== 'filled' && run.status !== 'save-error')) return;
+
+  const payload = {
+    company: run.jobInfo.company,
+    roleTitle: run.jobInfo.roleTitle,
+    jobUrl: run.tabUrl ?? '',
+    jobInfo: run.jobInfo,
+    tailoredResume: run.tailoredResume,
+    answers: run.answers,
+    status: 'draft' as const,
+  };
+
+  await patchPipelineRun(tabId, { status: 'saving', failure: null });
+  try {
+    const application = run.applicationId
+      ? await deps.backend.updateApplication(run.applicationId, payload)
+      : await deps.backend.saveApplication(payload);
+    await patchPipelineRun(tabId, {
+      status: 'saved',
+      applicationId: application.id,
+      failure: null,
+    });
+  } catch (error) {
+    await patchPipelineRun(tabId, {
+      status: 'save-error',
+      failure: { step: 'save', message: failureMessage(error) },
+    });
+  }
 }
 
 /**
@@ -250,11 +281,48 @@ function failureMessage(error: unknown): string {
 }
 
 /**
+ * Looks for applications the candidate has already saved for `tabUrl`.
+ *
+ * Deliberately fails open: the guard exists to save the candidate from re-applying, not to gate
+ * their work, and there is no uniqueness constraint on `job_url` making it authoritative anyway. A
+ * backend that isn't running must not be the reason Analyze stops working, so a failed lookup is
+ * logged and treated as "no duplicates" — which is also why it lives in its own call rather than
+ * inside `/extract-job`, where a repository throw would surface as an analysis failure.
+ */
+async function findDuplicate(
+  tabUrl: string | null,
+  deps: PipelineDeps,
+): Promise<DuplicateApplication | null> {
+  if (!tabUrl) return null; // no URL to match on — Chrome hasn't exposed one for this tab
+
+  try {
+    const matches = await deps.backend.findApplicationsByJobUrl(tabUrl);
+    const [newest] = matches; // the backend orders these newest-first
+    if (!newest) return null;
+
+    return {
+      id: newest.id,
+      company: newest.company,
+      roleTitle: newest.roleTitle,
+      createdAt: newest.createdAt,
+      count: matches.length,
+    };
+  } catch (error) {
+    console.warn(`[djobi] duplicate check failed, analyzing anyway: ${failureMessage(error)}`);
+    return null;
+  }
+}
+
+/**
  * Starts a run: analyzes `jobDescription` and drafts everything the Fill Step will write.
  *
  * `jobDescription` is the candidate's pasted posting, and it is the only thing analyzed. The page
  * is consulted solely for the *form* — which fields exist to be filled — and a tab with no
  * detection yet still analyzes fine, because the Fill Step re-scans the live page anyway.
+ *
+ * Unless `force` is set, a job URL the candidate already saved an application for ends the run at
+ * `duplicate` before a single LLM call — the guard lives here, rather than in the panel, because
+ * every entry point (Analyze, Re-analyze, Try again) already funnels through this function.
  */
 export async function runAnalysis(
   tabId: number,
@@ -262,13 +330,15 @@ export async function runAnalysis(
   profile: Profile,
   jobDescription: string,
   deps: PipelineDeps = productionDeps,
+  force = false,
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
   const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
+  const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
 
   await setPipelineRun(tabId, {
-    status: 'analyzing',
+    status: duplicateOf ? 'duplicate' : 'analyzing',
     tabUrl,
     jobPageData,
     jobDescription,
@@ -277,8 +347,14 @@ export async function runAnalysis(
     answers: [],
     unresolvedRequiredFields: [],
     filledFieldCount: 0,
+    applicationId: null,
     failure: null,
+    duplicateOf,
   });
+
+  // Stop before any backend work: not spending three LLM calls on a posting the candidate has
+  // already applied to is the entire point of the check.
+  if (duplicateOf) return;
 
   try {
     await patchPipelineRun(tabId, await analysisStep(jobDescription, jobPageData, profile, deps));

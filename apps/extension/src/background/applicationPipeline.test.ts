@@ -11,7 +11,7 @@ import type { JobPageData } from '../lib/messages';
 import { getPipelineRun, reportDetectedPage } from '../lib/tabStore';
 import type { BackendClient } from '../lib/backendClient';
 import type { PageClient } from '../lib/pageClient';
-import { runAnalysis, runFill, type PipelineDeps } from './applicationPipeline';
+import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
 
 /**
  * The Analysis and Fill Steps used to be tested separately from the checkpointing that drives them,
@@ -23,6 +23,10 @@ import { runAnalysis, runFill, type PipelineDeps } from './applicationPipeline';
  * reach around the module to replace what it calls. The two tests at the bottom deliberately don't
  * pass any, exercising the real adapter — that's where the wire encoding lives.
  */
+
+const JOB_URL = 'https://boards.greenhouse.io/acme/jobs/1';
+const EARLIER = '2026-07-02T10:00:00.000Z';
+const LATER = '2026-08-03T10:00:00.000Z';
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -129,6 +133,10 @@ function makeDeps(
     answerQuestions: vi.fn().mockResolvedValue(answers),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
     saveApplication: vi.fn().mockResolvedValue(undefined),
+    updateApplication: vi.fn().mockResolvedValue(undefined),
+    // No past application for this URL by default, so the duplicate guard lets every other test
+    // through untouched.
+    findApplicationsByJobUrl: vi.fn().mockResolvedValue([]),
   };
   const page: PageClient = {
     // `null` — no account from the page, so the step falls back to the values it drafted. Tests
@@ -287,7 +295,9 @@ describe('runAnalysis', () => {
       answers,
       unresolvedRequiredFields: [],
       filledFieldCount: 0,
+      applicationId: null,
       failure: null,
+      duplicateOf: null,
     });
   });
 
@@ -400,6 +410,67 @@ describe('runAnalysis', () => {
     });
   });
 
+  it('stops on a job URL already applied to, before spending a single backend call', async () => {
+    stubChrome();
+    const deps = makeDeps({
+      findApplicationsByJobUrl: vi.fn().mockResolvedValue([
+        // Newest first, as the backend orders them.
+        { id: 'application-2', company: 'Acme', roleTitle: 'Senior Engineer', createdAt: LATER },
+        { id: 'application-1', company: 'Acme', roleTitle: 'Senior Engineer', createdAt: EARLIER },
+      ]),
+    });
+
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
+
+    expect(deps.backend.findApplicationsByJobUrl).toHaveBeenCalledWith(JOB_URL);
+    expect(deps.backend.extractJob).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'duplicate',
+      // The most recent save, and how many there have been — one date alone would hide that the
+      // candidate has applied to this posting more than once.
+      duplicateOf: { id: 'application-2', createdAt: LATER, count: 2 },
+    });
+  });
+
+  it('analyzes a job URL already applied to when the candidate insists', async () => {
+    stubChrome();
+    const deps = makeDeps({
+      findApplicationsByJobUrl: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'application-1', company: 'Acme', roleTitle: 'X', createdAt: LATER },
+        ]),
+    });
+
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps, true);
+
+    // Not even asked: forcing means the answer cannot change anything.
+    expect(deps.backend.findApplicationsByJobUrl).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review', duplicateOf: null });
+  });
+
+  it('analyzes anyway when the duplicate check itself fails', async () => {
+    // The guard is advisory — a backend that isn't running must not be why Analyze stops working.
+    stubChrome();
+    const deps = makeDeps({
+      findApplicationsByJobUrl: vi.fn().mockRejectedValue(new Error('backend unreachable')),
+    });
+
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
+
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review', duplicateOf: null });
+  });
+
+  it('skips the check when Chrome never exposed a URL for the tab', async () => {
+    stubChrome();
+    const deps = makeDeps();
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+
+    expect(deps.backend.findApplicationsByJobUrl).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
+  });
+
   it('does nothing when no job description was pasted — there is nothing to analyze', async () => {
     stubChrome();
     const deps = makeDeps();
@@ -416,7 +487,7 @@ describe('runFill', () => {
     vi.unstubAllGlobals();
   });
 
-  it('fills scalar and question fields, saves the application, and checkpoints "filled"', async () => {
+  it('fills scalar and question fields without saving the application, then checkpoints "filled"', async () => {
     stubChrome();
     await seedReviewRun(7, [emailField, questionField]);
     const deps = makeDeps();
@@ -429,15 +500,7 @@ describe('runFill', () => {
       values: { 'f-email': 'jane@example.com', 'f-why': 'Draft answer.' },
       resume: undefined,
     });
-    expect(deps.backend.saveApplication).toHaveBeenCalledWith({
-      company: 'Acme',
-      roleTitle: 'Senior Engineer',
-      jobUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-      jobInfo,
-      tailoredResume,
-      answers,
-      status: 'draft',
-    });
+    expect(deps.backend.saveApplication).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({ status: 'filled' });
   });
 
@@ -609,7 +672,7 @@ describe('runFill', () => {
     expect(await getPipelineRun(7)).toMatchObject({ unresolvedRequiredFields: [] });
   });
 
-  it('checkpoints "fill-error" with the cause when saving the application fails', async () => {
+  it('does not save while filling, so a backend persistence failure cannot make the fill fail', async () => {
     stubChrome();
     await seedReviewRun(7, [emailField]);
     const deps = makeDeps({
@@ -618,9 +681,67 @@ describe('runFill', () => {
 
     await runFill(7, profile, deps);
 
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled', failure: null });
+  });
+
+  it('creates an application only after an explicit save, then updates that record on later saves', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const saved = { id: 'application-1' } as never;
+    const deps = makeDeps({
+      saveApplication: vi.fn().mockResolvedValue(saved),
+      updateApplication: vi.fn().mockResolvedValue(saved),
+    });
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    expect(deps.backend.saveApplication).toHaveBeenCalledWith({
+      company: 'Acme',
+      roleTitle: 'Senior Engineer',
+      jobUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      jobInfo,
+      tailoredResume,
+      answers: [],
+      status: 'draft',
+    });
     expect(await getPipelineRun(7)).toMatchObject({
-      status: 'fill-error',
-      failure: { step: 'fill', message: 'backend unreachable' },
+      status: 'saved',
+      applicationId: 'application-1',
+    });
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    expect(deps.backend.updateApplication).toHaveBeenCalledWith(
+      'application-1',
+      expect.any(Object),
+    );
+    expect(deps.backend.saveApplication).toHaveBeenCalledTimes(1);
+  });
+
+  it('checkpoints a save error and allows it to be retried', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const saved = { id: 'application-1' } as never;
+    const deps = makeDeps({
+      saveApplication: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('backend unreachable'))
+        .mockResolvedValueOnce(saved),
+    });
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'save-error',
+      failure: { step: 'save', message: 'backend unreachable' },
+    });
+
+    await runSaveApplication(7, deps);
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'saved',
+      applicationId: 'application-1',
     });
   });
 
@@ -693,7 +814,7 @@ describe('the backend adapter', () => {
     );
   });
 
-  it('sends the fill command to the tab as a FILL_FORM message, encoding the resume as a plain number[] the runtime can carry', async () => {
+  it('sends the fill command as a FILL_FORM message, then persists only when explicitly saved', async () => {
     const { tabsSendMessage } = stubChrome();
     await seedReviewRun(7, [emailField, resumeField]);
     vi.stubGlobal(
@@ -702,7 +823,7 @@ describe('the backend adapter', () => {
         Promise.resolve(
           url.endsWith('/render-resume-pdf')
             ? new Response(pdfBytes.buffer, { status: 200 })
-            : Response.json({}),
+            : Response.json({ id: 'application-1' }),
         ),
       ),
     );
@@ -723,10 +844,16 @@ describe('the backend adapter', () => {
       },
       expect.any(Function),
     );
+    expect(fetch).not.toHaveBeenCalledWith('http://127.0.0.1:5391/applications', expect.anything());
+
+    await runSaveApplication(7);
     expect(fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:5391/applications',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled' });
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'saved',
+      applicationId: 'application-1',
+    });
   });
 });

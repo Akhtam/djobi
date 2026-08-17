@@ -14,6 +14,8 @@ function run(overrides: Partial<PipelineRunState> = {}): PipelineRunState {
     failure: null,
     unresolvedRequiredFields: [],
     filledFieldCount: 0,
+    applicationId: null,
+    duplicateOf: null,
     ...overrides,
   };
 }
@@ -67,6 +69,7 @@ describe('reviewOf', () => {
     for (const status of [
       'analyzing',
       'analyze-error',
+      'duplicate',
       'review',
       'filling',
       'fill-error',
@@ -78,8 +81,16 @@ describe('reviewOf', () => {
   it('keeps the review up from the moment there is something to review until well past filling it', () => {
     // 'filled' included deliberately — the user still needs the answers and the editor in front of
     // them to fix anything the page rejected.
-    const keeps: PipelineStatus[] = ['review', 'filling', 'fill-error', 'filled'];
-    const drops: PipelineStatus[] = ['analyzing', 'analyze-error'];
+    const keeps: PipelineStatus[] = [
+      'review',
+      'filling',
+      'fill-error',
+      'filled',
+      'saving',
+      'save-error',
+      'saved',
+    ];
+    const drops: PipelineStatus[] = ['analyzing', 'analyze-error', 'duplicate'];
 
     for (const status of keeps) expect(reviewOf(run({ status })).canReview).toBe(true);
     for (const status of drops) expect(reviewOf(run({ status })).canReview).toBe(false);
@@ -89,10 +100,14 @@ describe('reviewOf', () => {
     const statuses: PipelineStatus[] = [
       'analyzing',
       'analyze-error',
+      'duplicate',
       'review',
       'filling',
       'fill-error',
       'filled',
+      'saving',
+      'save-error',
+      'saved',
     ];
 
     for (const status of statuses) expect(reviewOf(run({ status })).pill).not.toBeNull();

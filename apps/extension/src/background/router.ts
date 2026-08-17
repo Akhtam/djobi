@@ -2,7 +2,7 @@ import { parseDetectedFields } from '@djobi/shared';
 import type { TypedMessage } from '../lib/messages';
 import { enrichDetectedFields, reportDetectedPage } from '../lib/tabStore';
 import { enrichWithApiOracle } from './apiDetectors';
-import { runAnalysis, runFill } from './applicationPipeline';
+import { runAnalysis, runFill, runSaveApplication } from './applicationPipeline';
 
 /**
  * Routes a coordination message, using `lib/tabStore.ts` as the hand-off point.
@@ -57,11 +57,22 @@ export function handleTypedMessage(
     case 'START_ANALYSIS':
       // `runAnalysis` checkpoints progress into `tabStore` itself, so the panel reads results from
       // there rather than from a reply it would have to stay open to receive.
-      void runAnalysis(message.tabId, message.tabUrl, message.profile, message.jobDescription);
+      void runAnalysis(
+        message.tabId,
+        message.tabUrl,
+        message.profile,
+        message.jobDescription,
+        undefined, // production deps
+        message.force,
+      );
       return;
 
     case 'START_FILL':
       void runFill(message.tabId, message.profile);
+      return;
+
+    case 'START_SAVE_APPLICATION':
+      void runSaveApplication(message.tabId);
       return;
   }
 }
