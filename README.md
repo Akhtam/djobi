@@ -95,12 +95,20 @@ the side panel:
    not read the posting off the page, because the application form is usually a different page from
    the ad
 2. **Analyze** — extracts structured job info, tailors a resume to it, and drafts answers to any
-   freeform questions the form asks
+   freeform questions the form asks. If you've already saved an application for this exact URL, the
+   panel says so and spends no LLM calls until you choose **Analyze and apply anyway**
 3. **Review and edit** every drafted answer. Nothing is filled until you say so
-4. **Fill form** writes the reviewed values into the page, attaches the generated resume PDF, and
-   saves a `draft` application record — nothing is submitted to the employer automatically
+4. **Fill form** writes the reviewed values into the page and attaches the generated resume PDF. It
+   reports how many fields the page actually kept, and lists any required field it couldn't resolve
+5. **Save application** records what went out — job info, tailored resume and answers — as a
+   `draft` application. Saving is explicit and separate from filling; re-saving after another edit
+   or fill updates the same record rather than creating a second one
 
-Analysis runs in the background service worker, so closing the panel mid-run doesn't lose it.
+Nothing is submitted to the employer at any point. Analysis, filling and saving all run in the
+background service worker, so closing the panel mid-run doesn't lose them.
+
+The panel and options page share a light/dark theme, toggled from the icon in either header and
+persisted in `chrome.storage.local`.
 
 ## Tests
 

@@ -337,15 +337,15 @@ candidate-facing form fields — DOM scraping only, and needs live verification 
 This section used to propose seven extension points (a–g). All of them were built; it now records
 where each one lives, so the research above stays useful without reading as an open to-do list.
 
-| Proposed                                                                             | Landed as                                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| (a) `required` on `DetectedField`, and an element-role axis separate from category   | `DetectedFieldSchema.required` and `ElementRoleSchema` (`'native' \| 'combobox' \| 'radiogroup' \| 'checkboxgroup'`) in `packages/shared/src/schemas.ts` — the enum shipped as proposed                       |
-| (b) second scan pass for comboboxes and radio/checkbox fieldsets                     | `content/detectFields.ts`. A choice group is **one** Detected Field with its choices as `options`, not N fields                                                                                               |
-| (c) `getSignal()` label resolution: implicit-wrap `<label>`, `aria-labelledby`       | `content/detectFields.ts`                                                                                                                                                                                     |
-| (d) required-signal helper (`required` / `aria-required` / ancestor / asterisk span) | `content/detectFields.ts`                                                                                                                                                                                     |
-| (e) per-platform API oracle tried alongside DOM scraping                             | `background/apiDetectors.ts` — four oracles behind one `AtsOracle` interface. Confirms the doc's conclusion: the API supplies _classification, required and options_; the DOM stays the _targeting_ mechanism |
-| (f) real `DataTransfer` for the file-upload drop path                                | `content/fillForm.ts`'s `attachResumeFile`, with the old shim kept only as a jsdom fallback                                                                                                                   |
-| (g) `all_frames: true`                                                               | `manifest.ts` — needed more than anticipated, since an ATS form is usually in an iframe on a company's own careers page                                                                                       |
+| Proposed                                                                             | Landed as                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| (a) `required` on `DetectedField`, and an element-role axis separate from category   | `DetectedFieldSchema.required` and `ElementRoleSchema` (`'native' \| 'combobox' \| 'radiogroup' \| 'checkboxgroup'`) in `packages/shared/src/detectedField.ts` — the enum shipped as proposed                                                          |
+| (b) second scan pass for comboboxes and radio/checkbox fieldsets                     | `content/detectFields.ts`. A choice group is **one** Detected Field with its choices as `options`, not N fields                                                                                                                                        |
+| (c) `getSignal()` label resolution: implicit-wrap `<label>`, `aria-labelledby`       | `content/detectFields.ts`                                                                                                                                                                                                                              |
+| (d) required-signal helper (`required` / `aria-required` / ancestor / asterisk span) | `content/detectFields.ts`                                                                                                                                                                                                                              |
+| (e) per-platform API oracle tried alongside DOM scraping                             | `background/apiDetectors.ts` — three oracles (Greenhouse, SmartRecruiters, Workable) behind one `AtsOracle` interface. Confirms the doc's conclusion: the API supplies _classification, required and options_; the DOM stays the _targeting_ mechanism |
+| (f) real `DataTransfer` for the file-upload drop path                                | `content/fillForm.ts`'s `attachResumeFile`, with the old shim kept only as a jsdom fallback                                                                                                                                                            |
+| (g) `all_frames: true`                                                               | `manifest.ts` — needed more than anticipated, since an ATS form is usually in an iframe on a company's own careers page                                                                                                                                |
 
 Two things the research did not anticipate, learned from live use and worth carrying into any
 further platform work:
@@ -371,9 +371,11 @@ Unchanged from the original research, and still the right order:
    which the label-resolution work above recovers. No API for custom questions — DOM only.
 3. **Workday** — common, pure SPA, no static markup. Needs live verification before selector work.
 4. **iCIMS** — common, Next.js SPA, iframe-capable. Needs live verification of the apply form.
-5. **Ashby** — best public form schema of any platform, so it's cheap to support _well_ — but see
-   `background/apiDetectors.ts`: the shipped Ashby oracle calls an endpoint that 401s and has never
-   worked. The endpoint that does work is documented in that file's comments.
+5. **Ashby** — best public form schema of any platform, so it's cheap to support _well_, but it
+   currently has **no oracle**: the one that shipped called an endpoint that only ever 401'd, and it
+   was removed along with its host permission. The unauthenticated endpoint that does work, its
+   query and its response shape are documented in `background/apiDetectors.ts`'s comments, and
+   rebuilding from them is the highest-value oracle work left.
 6. **SmartRecruiters / Workable** — API-first with per-customer DOM variance; both oracles ship
    unverified.
 7. **BambooHR** — no public form-schema API and an embedded widget on third-party pages. Lowest

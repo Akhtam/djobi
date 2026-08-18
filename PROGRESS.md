@@ -1,16 +1,38 @@
 # djobi — Progress
 
 **What this is:** a Chrome extension that autofills job applications on ATS sites (Greenhouse,
-Ashby, Lever, Workday, ...) with an AI-tailored resume and drafted answers to freeform questions —
-plus a local dashboard for tracking which resume/answers went to which job, interview stage, and
-notes (Phases 7-8, added 2026-08-07).
+Ashby, Lever, Workday, ...) with an AI-tailored resume and drafted answers to freeform questions,
+backed by a local server and a persisted history of past applications.
 
 Domain vocabulary is in `CONTEXT.md`; per-package detail is in `README.md`, `apps/backend/README.md`
-and `packages/shared/README.md`. (`docs/architecture-plan.md`, the original design plan, was deleted
-2026-08-12 — it had been overtaken on nearly every point and is in git history.)
+and `packages/shared/README.md`.
 
-**Read this file at the start of a new session** to pick up where the last one left off. Update it
-as work happens — check items off, add new ones, don't let it go stale.
+**Read this file at the start of a new session** to pick up where the last one left off. It records
+what the project _is_ now and what's planned next — not how it got here. Update it as work happens;
+history belongs in git, not in this file.
+
+## Current state
+
+Everything below is built, tested and works end to end. Suite green at **436 tests** (104 shared /
+51 backend / 281 extension), `pnpm test` from the repo root.
+
+- **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
+  (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
+  Detected Field is and how an answer gets back onto one), `wire.ts` (every route body, so drift
+  between the two ends is a compile error), `labelMatching.ts` (when two labels are the same),
+  `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a model).
+- **`apps/backend`** — Hono on `127.0.0.1:5391`. Three LLM calls (`extractJob`, `tailorResume`,
+  `answerQuestions`) through `structuredCall.ts`, a one-page-fitting resume PDF renderer, and
+  Postgres persistence (Neon + Drizzle) for profiles and applications.
+- **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
+  (`detect.ts`) and classify its fields (`detectFields.ts`) and fill them (`fillForm.ts`); the
+  service worker runs the pipeline (`applicationPipeline.ts`); the options page edits the Profile;
+  the side panel is the review surface. Light/dark theme shared by both pages (`lib/theme.tsx`),
+  persisted in `chrome.storage.local`.
+
+The Application Pipeline as it runs today: **paste a job description → duplicate guard → Analysis
+Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
+checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses nothing.
 
 ## Key decisions
 
@@ -26,158 +48,150 @@ as work happens — check items off, add new ones, don't let it go stale.
 - **Form filling:** one generic heuristic field-classifier, not per-ATS selectors. ATS platform
   APIs are used as an _oracle_ (classification, required, options) where one exists; the DOM stays
   the targeting mechanism. See `background/apiDetectors.ts`.
-- **Job Description is pasted, never scraped.** The application form is a different page from the
-  job ad, so scraping captured form labels and nav bars instead of the posting. Removed 2026-08-12.
+- **The Job Description is pasted, never scraped.** The application form is a different page from
+  the job ad, so a scrape captured form labels and nav bars instead of the posting. The page is read
+  for its _form_ only.
 - **Review surface is a side panel, not a popup.** A popup is destroyed on any outside click; the
   panel survives tab switches, and the pipeline runs in the service worker so closing the panel
   mid-run doesn't drop the result.
-- **Process:** this project is being built test-first (red → green, one vertical slice at a time)
-  — see the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
-- **Repo:** pnpm workspace, `packages/shared` (zod schemas) + `apps/backend` (Hono) +
-  `apps/extension` (MV3, Vite + `@crxjs/vite-plugin` + React) + `apps/dashboard` (planned, Phase 8:
-  separate Vite + React web app, not part of the extension). GitHub remote: `Akhtam/djobi`.
-  Current branch: `dash`.
-- **Application tracking (Phase 7-8):** `status` (draft/submitted) and `stage` (applied →
-  phone_screen → interviewing → offer/rejected/withdrawn) are separate fields. Notes are a
-  timestamped, categorized log (`technical_questions` / `behavioral_questions` / `general`) you
-  append to, not a single overwritable text field — so old interview-question notes stay around as
-  reference for future applications.
+- **Saving is explicit and separate from filling.** The Fill Step writes the page; the Save Step
+  records the Application. The first save creates the record and every later one updates it via
+  `PATCH /applications/:id`, so re-filling or re-editing a run can't leave two rows behind.
+- **The duplicate guard fails open.** A job URL already saved stops a run at `duplicate` before any
+  LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
+  counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
+  stopped backend the reason Analyze doesn't work.
+- **Application tracking:** `status` (draft/submitted) and `stage` (applied → phone_screen →
+  interviewing → offer/rejected/withdrawn) are separate fields. Notes are a timestamped, categorized
+  log (`technical` / `behavioral` / `general`) you append to, not a single overwritable text field —
+  so old interview-question notes stay around as reference for future applications.
+- **Process:** this project is built test-first (red → green, one vertical slice at a time) — see
+  the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
+- **Repo:** pnpm workspace — `packages/shared` + `apps/backend` + `apps/extension`, with
+  `apps/dashboard` planned (Phase 8). GitHub remote: `Akhtam/djobi`.
 
-## Checklist
+## Constraints that look like mistakes
 
-### Phases 1-6 — complete (2026-08-07 → 2026-08-12)
-
-The workspace, backend, and extension are built and green end-to-end. Summary of what each phase
-delivered, in terms of the modules that exist today — the blow-by-blow build log lived here until
-2026-08-12 and is in git history if you need it.
-
-- **Phase 1 — workspace.** pnpm workspace; `packages/shared` with the zod schemas both apps import;
-  Prettier at the root (single quotes).
-- **Phase 2 — backend skeleton.** Drizzle schema (`profiles`, `applications`), lazily-initialized
-  Neon client, `app.ts` (testable Hono instance) separate from `index.ts` (the entrypoint, bound to
-  `127.0.0.1:5391`). Real Neon project created and migrated (`0000_slimy_manta.sql`).
-- **Phase 3 — LLM layer + routes.** `extractJob` (Haiku), `tailorResume` / `answerQuestions`
-  (Sonnet), all through `structuredCall.ts`; `pdf/renderResume.tsx`; the five LLM/PDF routes.
-- **Phase 4 — persistence.** `GET`/`POST /profile`, `GET`/`POST /applications`,
-  `GET /applications/:id`, backed by the two repositories. `/tailor-resume` computes
-  `priorApplicationsSummary` server-side from past applications to the same company; the route
-  deliberately does not accept a client-supplied one.
-- **Phase 5 — extension scaffold.** MV3 manifest, Vite + `@crxjs/vite-plugin`, the options page
-  (full Profile editor), and `lib/callBackend.ts` as the single transport to the local backend from
-  every extension context.
-- **Phase 6 — content scripts and the end-to-end flow.** `content/detect.ts` (a page-shape heuristic
-  plus an arming-window `MutationObserver`), `content/detectFields.ts` (the field classifier),
-  `content/fillForm.ts` (the filler), `background/applicationPipeline.ts` (the Analysis and Fill
-  Steps), `lib/tabStore.ts` (per-tab state in `chrome.storage.session`), and the side panel.
-
-**Decisions from those phases that are still load-bearing**, and are recorded nowhere else:
+Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
 
 - `attachResumeFile` keeps a non-`DataTransfer` fallback branch (shadowing `.files` via
   `Object.defineProperty`) purely because **jsdom has no `DataTransfer` constructor** and no public
   `FileList` constructor either. Production takes the real `DataTransfer` path. This is a test
-  environment constraint living in product code — don't "simplify" it away.
+  environment constraint living in product code — don't simplify it away.
 - **Cover-letter fields (`cover_letter_text` / `cover_letter_upload`) are detected but deliberately
   not filled.** `answerQuestions` is wired only to `question`-category fields. A scope decision,
   not an oversight.
 - **The `??` vs `||` trap on the job-description box.** The textarea's display value, the
-  Analyze-button disabled check, and the analyze payload must all read the _same_ expression.
-  Use different operators in different places and the box either silently reverts the user's typing
-  or lets a blank submission through.
-- `pdf/renderResume.tsx` needs an explicit `import React from 'react'` — without a
-  `tsconfig.json` in `apps/backend`, JSX uses the classic transform and `React.createElement` must
-  resolve at runtime. Switch to the automatic runtime once a tsconfig exists.
-- A test profile (`Jane Doe`) is sitting in the real `profiles` table from an early smoke test.
-  Harmless — it gets overwritten by the real profile — but worth knowing it's there.
+  Analyze-button disabled check, and the analyze payload must all read the _same_ expression. Use
+  different operators in different places and the box either silently reverts the user's typing or
+  lets a blank submission through.
+- `pdf/renderResume.tsx` needs an explicit `import React from 'react'` — without a `tsconfig.json`
+  in `apps/backend`, JSX uses the classic transform and `React.createElement` must resolve at
+  runtime. Switch to the automatic runtime once a tsconfig exists.
+- **A fill is only reported as landed if the page kept it.** `fillForm` re-reads each field after a
+  300ms settle, because a controlled field whose `onChange` never fired reverts on the _next_
+  render — an immediate re-read calls every failed fill a success. A fill also drives the full
+  keystroke event sequence (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), since
+  form libraries commonly commit to the form model on blur; a value write plus `input` leaves the
+  DOM looking right and the model empty, which an ATS reports on submit as a missing required field.
+- **The resume PDF fits itself to one page** by re-rendering down a four-step density ladder, never
+  touching `fontSize` — leading and whitespace are spendable, legibility is not. Past ~5 roles × 6
+  bullets it returns two pages with all content rather than truncating. Every step sits inside a
+  range sourced in `docs/resume-design-conventions.md`; the "fill 85–90% of the page" heuristic is
+  **folklore** and is not one of them. A resume that comes out thin is a `tailorResume.ts` problem,
+  not a stylesheet one.
 
-### Phase 7 — Application tracking data model (planned 2026-08-07, not started)
+## Planned
 
-New scope: track interview progress per application (stage) and keep a running, categorized notes
-log (e.g. "what technical questions were asked", "what behavioral questions were asked") so past
-interviews are useful reference material later.
+### Phase 7 — Application tracking data model (in progress)
 
-- [ ] `packages/shared`: add `ApplicationStageSchema` — `'applied' | 'phone_screen' |
-'interviewing' | 'offer' | 'rejected' | 'withdrawn'`. Kept separate from the existing
-      `status: 'draft' | 'submitted'` (status = "was this actually sent"; stage = "where it is in
-      the interview pipeline post-submission")
-- [ ] `packages/shared`: add `NoteSchema` — `{ id, category: 'technical_questions' |
-'behavioral_questions' | 'general', text, createdAt }`; add `notes: Note[]` (defaults `[]`)
-      and `stage: ApplicationStage` (defaults `'applied'`) to `ApplicationSchema`/`NewApplicationSchema`
-- [ ] `applicationsRepository.ts`: add `updateApplicationStage(id, stage)` and
-      `addApplicationNote(id, note)`
-- [ ] `PATCH /applications/:id/stage` route — body `{ stage }`
-- [ ] `POST /applications/:id/notes` route — body `{ category, text }`, server generates
+Landed:
+
+- [x] `ApplicationStageSchema`, `NoteSchema` / `NoteCategorySchema` / `NewNoteSchema`, and
+      `stage`/`notes` on `ApplicationSchema`/`NewApplicationSchema` — with `ApplicationSnapshotSchema`
+      (`NewApplication` minus stage/notes) as what a re-save is allowed to overwrite
+- [x] Migration `0001_living_captain_stacy.sql` adding the `stage`/`notes` columns
+- [x] `applicationsRepository.updateApplicationStage(id, stage)`
+
+Left:
+
+- [ ] `applicationsRepository.addApplicationNote(id, note)` — appends to the log, server-generated
       `id`/`createdAt`
-- [ ] Migration for the new `stage`/`notes` columns on `applications`
-- Build test-first per the established process, same as Phases 3/4
+- [ ] `PATCH /applications/:id/stage` route — body `{ stage }`
+- [ ] `POST /applications/:id/notes` route — body `{ category, text }` (`NewNote`)
+- Build test-first, same as the routes that already exist
 
-### Phase 8 — Frontend dashboard (planned 2026-08-07, not started)
+### Phase 8 — Frontend dashboard (not started)
 
-New scope: a local web app to browse past applications, see which resume/answers went to which
-job, and track/update interview stage + notes. Depends on Phase 7's stage/notes routes.
+A local web app to browse past applications, see which resume/answers went to which job, and
+track/update stage + notes. Depends on Phase 7's remaining routes.
 
 - [ ] `apps/dashboard` — separate Vite + React app (own dev server, e.g. `localhost:5173`),
       **not** part of the extension — talks to the same backend on `127.0.0.1:5391`
-- [ ] Backend needs CORS middleware added (`hono/cors`) — currently none exists, and the dashboard
-      is a different origin than the backend
+- [ ] Backend needs CORS middleware added (`hono/cors`) — none exists, and the dashboard is a
+      different origin than the backend
 - [ ] Applications list view — table of company / role / stage (badge) / date, filterable by stage
 - [ ] Application detail view — job info, tailored resume, drafted answers, notes log (filterable
       by category), stage selector, add-note form
 - [ ] No LLM calls from the dashboard itself — pure read/write against existing + Phase 7 endpoints
 
-### Phase 9 — Company-culture-aware answers (planned 2026-08-07, not started)
+### Phase 9 — Ask tab: answer a pasted question from the Profile (not started)
 
-New scope: before drafting Question Answers, optionally research the company's own site (about/
-careers/values pages) and feed that into the answer-drafting prompt so freeform answers (e.g. "why
-do you want to work here") reflect the company's actual stated culture instead of generic
-tailoring. Runs as an extra step inside the existing Analysis Step, not a new always-on background
-process — decided with the user:
+A second tab in the side panel where the candidate pastes **any** question from an application
+they're filling in and gets an answer drafted from their Profile. Answer drafting only ever fires
+for `question`-category fields the detector found on the page, so a question the detector missed,
+one on a page the extension can't see, or one from a form the candidate is filling elsewhere has no
+path to an answer today. This is that path: paste, get a draft, copy it out.
 
-- Source is the **company's own website only** (about/careers/values pages), not third-party
-  review sites (Glassdoor/LinkedIn) — cheaper, no scraping-ToS gray area, and matches this
-  project's existing pattern of only using first-party sources (the job posting itself).
-- **User confirmation required before it runs** — this step does an extra site fetch + LLM call
-  the user might not want on every job page, so the popup must ask (e.g. a "Research company
-  culture?" prompt/button) before kicking it off, rather than running it silently every time like
-  the rest of the Analysis Step.
-- Drafted answers stay subject to the existing rule: **always reviewed/edited by the user before
-  the Fill Step** — this phase does not introduce any new auto-fill/auto-submit path.
+Decisions:
 
-- [ ] `packages/shared`: add `CompanyCultureSchema` — structured culture signals (e.g. values,
-      mission, work-style keywords) extracted from a company's site, plus the raw source URL(s)
-      used
-- [ ] `apps/backend/src/llm/researchCompanyCulture.ts` — scrapes the company's about/careers/values
-      page(s) and extracts `CompanyCulture` via an LLM call (Haiku, same cost class as
-      `extractJob`); tested like the other LLM-layer modules (Phase 3 pattern)
-- [ ] `POST /research-culture` route — body `{ companyUrl }` (or company name, if a lookup step is
-      needed to find the site first), zod-validated, returns `CompanyCulture`
-- [ ] `answerQuestions` gains an optional `companyCulture` param; when present, the prompt
-      incorporates it so drafted answers align with the company's stated culture — never fabricates
-      alignment the Profile doesn't support, same non-fabrication rule as `tailorResume`
-- [ ] Popup: add a confirmation prompt ("Research company culture?") before this step runs; on
-      confirm, calls `/research-culture` then re-runs answer drafting with the result; drafted
-      answers still land in the existing editable review UI before the Fill Step, unchanged
-- [ ] Extend `CONTEXT.md`'s Language section with **Company Culture** once the shape is settled
-- Build test-first per the established process, same as Phases 3/4/7
+- **Grounded in the Profile, and nothing else is required.** `jobInfo` is optional here — the whole
+  point is that this works without a detected job page. When the panel does have a run with
+  `jobInfo`, pass it so the answer is tailored; when it doesn't, the Profile alone is the input.
+- **Same non-fabrication rule as everywhere else.** The answer may only use what the Profile
+  supports — this surface must not become the one place the model is allowed to invent experience.
+- **Copy-out, not auto-fill.** The answer lands in a copyable box. This phase adds no new path from
+  a drafted answer into a form field; filling stays the Fill Step's job, from detected fields.
+- **The panel becomes tabbed.** Today `panel/App.tsx` renders one flow keyed off `status`. This
+  needs a tab switcher above it, with the existing pipeline UI as the first tab, so the Ask tab is
+  reachable at any point in a run — including `ready`, when there's no run at all.
 
-### Phase 10 — Live chat to refine drafted answers (planned 2026-08-10, not started)
+**Overlaps with Phase 10** (live chat to refine a drafted answer), which is also a chat surface
+grounded in `profile`/`jobInfo`. Decide before building: either this phase's route is a single-turn
+special case of Phase 10's `/chat-answer` and they share one backend module, or Phase 10 is folded
+into this tab and the review UI links into it. Building both independently would put two chat
+implementations in one panel.
 
-New scope: in the side panel's review UI, let the user open a chat with the AI _about a specific
-drafted answer_ and iterate on it conversationally ("make this shorter", "lead with the
-migration story instead", "sound less formal") instead of only hand-editing the textarea. Scoped
-to `question`-category fields only (the freeform drafted answers already in the review UI) — not
+- [ ] `packages/shared/src/wire.ts`: request/response shape for one ask — a body of `profile`,
+      `question` and an optional `jobInfo`, answered with `{ answer }`. A wire schema, so
+      `lib/backendClient.ts` can build the body against it via `satisfies` like every other route
+- [ ] `apps/backend/src/llm/answerFreeQuestion.ts` — one drafted answer from Profile (+ optional
+      `jobInfo`), through `structuredCall.ts`; `MODELS.writing` (Sonnet), same tier and same
+      grounding rules as `answerQuestions`. Reuse its `<base_profile>`/`<job_info>` prompt scaffold
+      rather than hand-building a third copy (see the open "speculative" item on that duplication)
+- [ ] `POST /ask` route — zod-validated against the wire schema, returns the drafted answer
+- [ ] `lib/backendClient.ts`: add the method to `BackendClient` and `httpBackendClient`
+- [ ] `panel/App.tsx`: a tab switcher — "Application" (everything that renders today) and "Ask"
+- [ ] `panel/AskTab.tsx` — question textarea, submit, answer box with a copy button, in-flight and
+      error states. Calls the backend directly via `callBackend`, as the panel already does for
+      `/profile` and `/render-resume-pdf`; this needs no service-worker involvement since there is
+      no run to checkpoint and nothing to survive the panel closing
+- [ ] Decide whether an ask history survives a panel reopen. Default to React-local state (lost on
+      close) unless there's a reason to persist — `PipelineRunState` in `lib/tabStore.ts` is keyed
+      per tab and per run, which is the wrong shape for a surface that works with no run at all
+- Build test-first, same as the rest
+
+### Phase 10 — Live chat to refine drafted answers (not started)
+
+In the side panel's review UI, let the user open a chat with the AI _about a specific drafted
+answer_ and iterate on it conversationally ("make this shorter", "lead with the migration story
+instead", "sound less formal") instead of only hand-editing the textarea. Scoped to
+`question`-category fields only (the freeform drafted answers already in the review UI) — not
 select/combobox/radiogroup fields, which are constrained-choice and not a good fit for freeform
 rewriting. Manual textarea editing stays as-is; this is an additive alternative, not a replacement.
 
-Note on numbering: **Phase 9 is already taken** (company-culture-aware answers, planned
-2026-08-07, not started) — this is filed as Phase 10 rather than renumbering existing phases.
-Reorder if this should actually take priority over Phase 9.
-
-**Resolved 2026-08-12:** this phase's open design question was whether to accept chat history being
-destroyed on every popup close, or move the review UI into a `chrome.sidePanel`. The side panel was
-built for unrelated reasons (the popup lost in-flight runs on any outside click), so the harder
-option is already taken and this phase inherits a persistent surface. What's left to decide is only
-whether chat history should survive a _panel reopen_ — i.e. whether it belongs on
-`PipelineRunState` in `lib/tabStore.ts` alongside the answers, or stays React-local.
+See the overlap warning in Phase 9: both are chat surfaces grounded in `profile`/`jobInfo`, and
+which one owns the backend turn should be settled before either is built.
 
 - [ ] `packages/shared`: add `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`) and a
       request/response shape for one chat turn (profile, jobInfo, question, current answer, prior
@@ -185,169 +199,50 @@ whether chat history should survive a _panel reopen_ — i.e. whether it belongs
       assistant's reply represents a concrete new draft rather than just conversation)
 - [ ] `apps/backend/src/llm/chatAboutAnswer.ts` — one turn of the conversation; same model tier as
       `answerQuestions` (`MODELS.writing`, Sonnet), grounded in `profile`/`jobInfo` with the same
-      non-fabrication rule as the rest of the answer-drafting prompts. Tested like the other
-      LLM-layer modules (Phase 3 pattern)
+      non-fabrication rule as the rest of the answer-drafting prompts
 - [ ] `POST /chat-answer` route — zod-validated body, returns `{ reply, revisedAnswer? }`
-- [ ] Popup: a "Refine with AI" affordance per question card opening a small message-thread UI
+- [ ] Panel: a "Refine with AI" affordance per question card opening a small message-thread UI
       (history + input); when a reply includes `revisedAnswer`, a "Use this" action applies it to
       the existing answer textarea (still editable by hand afterward, same as today)
-- [ ] Decide + document the popup-teardown question above before writing the chat-history state
-      management
-- Build test-first per the established process, same as Phases 3/4/7/9
+- [ ] Decide whether chat history survives a _panel reopen_ — i.e. whether it belongs on
+      `PipelineRunState` in `lib/tabStore.ts` alongside the answers, or stays React-local. (The
+      harder half of this question is already settled: the side panel was built for unrelated
+      reasons, so the surface itself is persistent.)
+- Build test-first, same as the rest
 
-### Fill fidelity + dropping the page scrape (2026-08-12)
+## Open cleanups
 
-- [x] `content/fillForm.ts` — a fill now drives the event sequence a real keystroke produces
-      (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), not just a value write plus
-      `input`. Form libraries layered over React commonly commit a field's value to the _form_
-      model on blur, so a fill that never blurred left the DOM looking right and the model empty —
-      which is what an ATS reports on submit as "missing entry for required field" over a visibly
-      filled form.
-- [x] `content/fillForm.ts` — `fillForm` returns the ids it can **verify** still hold their value,
-      checked after a 300ms settle (a controlled field whose `onChange` never fired reverts on the
-      _next_ render, so an immediate re-read calls every failed fill a success). Per-widget checks:
-      `value` for text/select, `checked`/`aria-checked`/`aria-pressed` for groups, trigger text for
-      comboboxes.
-- [x] `FILL_FORM` now replies `{ ok, filledFieldIds, resumeAttached }`, and `applicationPipeline`'s
-      `unresolvedRequiredFields`/`filledFieldCount` come from that reply rather than from the values
-      it _sent_. A fill the page discarded is now reported instead of showing a green check. A
-      `null` reply (no content script — tab open across an extension reload) still falls back to the
-      drafted values, since "no account" isn't "nothing filled".
-- [x] **Page-text scraping removed entirely.** `content/scrapeJob.ts` is deleted, `JobPageData` is
-      `{ fields }`, and the pasted job description is the Analysis Step's only input
-      (`StartAnalysisMessage.jobDescription`, `PipelineRunState.jobDescription`). The application
-      form is a different page from the job ad, so the scrape routinely captured the form's own
-      labels and a nav bar instead of the posting — and on a client-rendered ATS, whatever happened
-      to have mounted. Detection stays: the Fill Step still needs to know what to fill.
-- [x] Backend renamed to match: `POST /extract-job` takes `{ jobDescription }` (was `{ pageText }`)
-      and `extractJob`'s prompt no longer tells the model it is reading scraped page text — told
-      that, it tolerates and mines the junk a scrape carries.
-
-### Resume PDF design pass (2026-08-12)
-
-- [x] `docs/resume-design-conventions.md` — research against primary sources (Butterick, Harvard OCS,
-      MIT CAPD, Stanford, Greenhouse/Workday/Taleo parsing docs) on margins, sizes, leading, line
-      length, type scale, section order, and what breaks ATS parsing. Names the conflicts rather
-      than smoothing them: Butterick's 45–90 cpl is unreachable single-column on A4, and the
-      "fill 85–90% of the page" heuristic is **folklore** — no primary source states it, and
-      Butterick argues the opposite ("uncomfortably dense with text").
-- [x] `pdf/renderResume.tsx` — restyled to those values. Hierarchy now comes from weight, case,
-      tracking and a hairline rule rather than size (section headings are 1.05× body, not 1.2×).
-      Fixed two sourced floors the file sat under: `padding: 32` (0.44") was below MIT's 0.5"
-      minimum, and no `lineHeight` left react-pdf's ~1.15 default under Butterick's 120%.
-- [x] `renderResume.test.ts` — reads the rendered text back with `unpdf` so a layout regression can
-      actually fail a test.
-- [x] `pdf/renderResume.tsx` — the render now **fits itself to one page**: it renders at the
-      researched density, counts pages (`pageCount`, read off the PDF's own page tree), and
-      re-renders one step tighter down a four-step ladder until it fits. Every step is inside a
-      sourced range, and no step touches `fontSize` — leading and whitespace are spendable,
-      legibility is not. Fits up to ~5 roles × 6 bullets; beyond that it returns two pages with all
-      content rather than truncating, since silently dropping the candidate's experience is the
-      worse failure. Common case still costs exactly one render.
-- Page fill went 65.5% → 86.3% on the current profile (14 bullets / 3 roles), inside every sourced
-  floor. **It is tuned to that content**: 1.4 lines of slack remain before it spills to page 2, and
-  the research's own budget says ~50 line-equivalents (3 roles × 7–8 bullets) is what honestly
-  fills a page. Real fix for a thin resume is upstream in `tailorResume.ts`, not in the stylesheet.
-
-## Open architecture-review recommendations
-
-Every **Strong** candidate from the two 2026-08-07 runs was actioned under Phases 3 and 6. What
-follows is what's still open, newest run first.
-
-### From the 2026-08-12 run
-
-- [x] **Done — candidates 1-4, 2026-08-12.** Four of the run's seven, including the one live bug.
-      Full suite green at 347 tests (82 shared / 41 backend / 224 extension).
-
-  - **The wire contract is one artifact.** New `packages/shared/src/wire.ts` owns the request schema
-    for every Application Pipeline route; the six routes parse with it instead of restating the
-    domain inline, and `lib/backendClient.ts` builds each body against the same schema via
-    `satisfies`, so a drift between what the extension sends and what the backend accepts is now a
-    compile error. **This fixed a live bug**: `/answer-questions` had been silently stripping
-    `knownAnswer` (zod `.object()` drops unknown keys), so the prompt paragraph treating a
-    sponsorship or work-authorization answer as binding fact had never once run in production. The
-    regression test was confirmed red against the old schema before the fix landed.
-  - **`PipelineDeps` is two collaborators, not seven methods** — `{ backend: BackendClient; page:
-PageClient }`. New `lib/pageClient.ts` owns both `chrome.tabs.sendMessage` round-trips and now
-    has its own test: the `lastError` handshake and the `ArrayBuffer → number[]` encoding were
-    previously reachable only by running a whole pipeline step.
-  - **The coordination protocol is notification-only.** `sendMessage<TReq, TRes>` is now
-    `notify(message): void` (and reads `lastError`, which nothing did before); `handleTypedMessage`
-    no longer takes a `sendResponse` it never called or returns a `boolean` that was always `false`.
-    The two messages that genuinely have responses live in `PageClient`.
-  - **The label-matching rules have names.** New `packages/shared/src/labelMatching.ts` (replacing
-    `optionLabel.ts`) holds all of them with a table saying which to use when, and the ambiguity
-    invariant — _more than one candidate means no match_ — is implemented once in `uniqueMatch`
-    rather than re-derived at three sites. `apiDetectors` now warns when an oracle answered but
-    matched no field by label, which used to be indistinguishable from no oracle running at all.
-    **Found and fixed a second real bug while naming the rules**: containment matching kept trailing
-    punctuation, so a stored custom answer for "Are you willing to relocate?" could never match a
-    form's "Are you willing to relocate for this role?" — the "?" lands mid-phrase. That is the
-    exact case the feature exists for, and it had never worked.
-
-- [x] **Done — candidates 5-7, 2026-08-12.** The run is fully actioned. Suite green at 370 tests
-      (93 shared / 41 backend / 236 extension).
-
-  - **Detected Field is a module.** New `packages/shared/src/detectedField.ts` owns the schema plus
-    the rules that were documented in six separate files — id stability, a choice group being one
-    field, a nullable option `selector`, and "an ambiguous match is no match" — as `optionFor` and
-    `matchAnswerToField`. `parseDetectedFields` is now applied at the two boundaries that actually
-    skew and previously parsed nothing: `tabStore.read`, where `chrome.storage.session` outlives an
-    extension reload and can hold a field written by an older build, and the router's
-    `REPORT_JOB_PAGE`, where an orphaned content script keeps reporting the shape it knows. Schema
-    defaults mean an older field parses rather than being dropped; a field that genuinely no longer
-    fits costs that field, not the form.
-  - **The panel's status has one owner.** `usePipelineRun` returns the _effective_ status and takes
-    the optimistic request as `begin(status)`, so `syncedAt` — a counter exported purely so one
-    `useEffect` could stand an optimistic status down — is gone from the interface entirely. New
-    `panel/useActiveTab.ts` holds the four `chrome.tabs` touchpoints behind one seam and reports a
-    `changeToken` that covers same-tab navigation, which a tab id alone cannot.
-  - **The options page is 626 lines, down from 780.** `EMPTY_PROFILE` and a new `parseProfile` live
-    in `@djobi/shared` beside the schema they mirror, replacing the hand-maintained fourth copy of
-    the Profile shape. `parseProfile` also merges `links`, which the old top-level spread could not
-    reach — a Profile saved before `github` was added to `links` kept a `links` with no `github` key
-    and the default never applied. The four list editors now share one `ListSection` and a
-    `listEditor(profile, setProfile, key, blank)`, replacing ~20 inline
-    `setProfile({ ...profile, xs: … })` closures including one nested three levels deep. All 16
-    existing options tests passed unmodified, which is the evidence the behaviour is unchanged.
-
-Still open from that run — nothing. Noted while in there, not actioned:
+From the architecture-review runs. Everything **Strong** has been actioned; this is what's left.
 
 - [ ] Every new Story is created with `id: ''`, but `QuestionAnswer.sourceStoryIds` references
       `Story.id` — so those references are useless whenever the candidate didn't type an id by hand.
       A behaviour change rather than a refactor, hence left alone; see `options/App.tsx`.
-
-### Still open from 2026-08-07
-
 - [ ] **Worth exploring:** `profileRepository.saveProfile`'s upsert logic has zero test coverage
       (the route test mocks the whole repository away) — test it directly. Related:
       `applicationsRepository.toApplication` casts jsonb straight to typed fields while
       `profileRepository.getProfile` deliberately parses — two policies for the same hazard.
-- [ ] **Worth exploring:** unify request-body validation across routes — `profile.ts` uses zod,
-      `extract-job.ts` uses a bare truthiness check with no runtime type guarantee. Folded into the
-      shared-wire-contract item above.
 - [ ] **Speculative:** `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
       `<base_profile>`/`<job_info>` prompt scaffold — extract a shared helper if a third
-      writing-model call site appears.
-- [ ] **Speculative:** `options/App.tsx` is a 780-line leaf whose four list editors are hand-written
-      variants of one shape. The cheap half is worth doing on its own: replace the hand-maintained
-      `EMPTY_PROFILE` and its spread with `ProfileSchema.parse(loaded ?? {})`, since the schema
-      already owns the defaults and the spread is where the missing-key defect class lives.
+      writing-model call site appears (Phase 9 would be it).
 
-## Known loose ends / notes
+## Known loose ends
 
 - `pnpm --filter backend build` (`tsc -p tsconfig.json`) fails — there's no `tsconfig.json` in
-  `apps/backend` at all (only `packages/shared` has one). Needs fixing before a real build/deploy is
-  possible, and it's what forces the classic JSX transform in `renderResume.tsx`.
-- **The Ashby API oracle is dead code.** `background/apiDetectors.ts` calls an endpoint that returns
-  401 and has never enriched a field; the working unauthenticated GraphQL endpoint, the query, and
-  the response shape are all written up in that file's own doc comment. Needs a
-  `host_permissions` addition too.
+  `apps/backend` at all (only `packages/shared` and `apps/extension` have one). Needs fixing before
+  a real build/deploy is possible, and it's what forces the classic JSX transform in
+  `renderResume.tsx`. `pnpm dev:backend` (via `tsx`) is unaffected.
+- **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
+  with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,
+  its query and its response shape are written up in `background/apiDetectors.ts`'s own comment;
+  rebuilding it needs `jobs.ashbyhq.com` in `host_permissions` and a POST body, which
+  `AtsOracle.request` would have to start returning an `init` for again.
 - **`packages/shared/src/screeningAnswers.ts` has no test file** — the only module in that package
-  without one, and it holds `resolveAnswerOption`, whose uniqueness rule is what stands between a
-  stored prepared answer and the wrong box on a legal declaration.
-- Two Ashby questions still need a live browser check, carried over from the (now deleted)
-  fill-failure investigation: whether `data-djobi-id` attributes survive an Ashby form re-mount
-  (if not, `resolveField` returns null for every field), and how Ashby renders its four Boolean
-  screening questions — native fieldset/radios and `role="combobox"` are handled, custom buttons
-  are not.
+  without one. `matchScreeningTopic`'s order-dependent matching (a question naming both work
+  authorization and sponsorship must resolve to the former) is covered only indirectly, through
+  `preparedAnswers`.
+- Two Ashby questions still need a live browser check: whether `data-djobi-id` attributes survive an
+  Ashby form re-mount (if not, `resolveField` returns null for every field), and how Ashby renders
+  its four Boolean screening questions — native fieldset/radios and `role="combobox"` are handled,
+  custom buttons are not.
+- A test profile (`Jane Doe`) is sitting in the real `profiles` table from an early smoke test.
+  Harmless — it gets overwritten by the real profile — but worth knowing it's there.

@@ -29,7 +29,7 @@ import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import { reviewOf } from '../lib/runReview';
 import { getDetectedPage, patchPipelineRun, type PipelineStatus } from '../lib/tabStore';
-import { useThemePreference } from '../lib/theme';
+import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 
@@ -219,14 +219,7 @@ export function App() {
         <img src={icon48} alt="" className="brand-mark" />
         <h1>djobi</h1>
         {pill && <span className={`status-pill ${pill.tone}`}>{pill.label}</span>}
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? 'Dark' : 'Light'}
-        </button>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
 
       <div className="panel-body">

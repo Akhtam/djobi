@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import { callBackend } from '../lib/callBackend';
-import { useThemePreference } from '../lib/theme';
+import { ThemeToggle, useThemePreference } from '../lib/theme';
 
 /**
  * Sets one screening topic's answer, dropping the key entirely when cleared. An empty string would
@@ -219,14 +219,7 @@ export function App() {
             <p className="subtitle">Profile</p>
           </div>
         </div>
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? 'Dark mode' : 'Light mode'}
-        </button>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
       <form onSubmit={handleSave}>
         <div className="card">

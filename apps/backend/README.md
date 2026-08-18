@@ -10,10 +10,13 @@ Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**,
 
 ## `src/app.ts` / `src/index.ts`
 
-`app.ts` builds and returns the Hono app with all six routes mounted, and installs an `onError`
-handler that renders every uncaught failure as `{ error }` with a 500 — so a route never leaks a
-stack trace or a bare non-JSON body to the extension. It's a separate module from the entrypoint
-precisely so route tests can import the app without starting a server.
+`app.ts` builds and returns the Hono app with all six route modules mounted, and installs an
+`onError` handler that renders every uncaught failure as a `BackendErrorBody` (from
+`@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack trace or a bare non-JSON
+body to the extension. A failure from `structuredCall.ts` carries a `kind` alongside the message, so
+the extension can branch on _why_ a structured call failed without matching substrings of English.
+It's a separate module from the entrypoint precisely so route tests can import the app without
+starting a server.
 
 `index.ts` is the entrypoint: starts `app.ts` via `@hono/node-server` bound to `127.0.0.1` (never
 `0.0.0.0`) on `$PORT`, defaulting to 5391. It mounts `app` under a wrapper instance carrying
@@ -111,14 +114,30 @@ fixed. `curl` against a running server works too, for a payload you already have
 Each route validates its body with zod and delegates; each has a test asserting the 200 / 400
 (validation) / 500 (downstream throw) triple.
 
-| Route                                               | Body                              | Delegates to                |
-| --------------------------------------------------- | --------------------------------- | --------------------------- |
-| `POST /extract-job`                                 | `{ jobDescription }`              | `llm/extractJob`            |
-| `POST /tailor-resume`                               | `{ profile, jobInfo }`            | `llm/tailorResume`          |
-| `POST /answer-questions`                            | `{ profile, jobInfo, questions }` | `llm/answerQuestions`       |
-| `POST /render-resume-pdf`                           | `{ profile, tailoredResume }`     | `pdf/renderResume`          |
-| `GET`/`POST /profile`                               | `Profile`                         | `db/profileRepository`      |
-| `GET`/`POST /applications`, `GET /applications/:id` | `NewApplication`                  | `db/applicationsRepository` |
+Every Application Pipeline body is validated against the shared schema in `@djobi/shared`'s
+`wire.ts` — the same one `lib/backendClient.ts` builds the request against — rather than a schema
+private to the route. See that package's README for why.
+
+| Route                     | Body                     | Delegates to                |
+| ------------------------- | ------------------------ | --------------------------- |
+| `POST /extract-job`       | `ExtractJobRequest`      | `llm/extractJob`            |
+| `POST /tailor-resume`     | `TailorResumeRequest`    | `llm/tailorResume`          |
+| `POST /answer-questions`  | `AnswerQuestionsRequest` | `llm/answerQuestions`       |
+| `POST /render-resume-pdf` | `RenderResumePdfRequest` | `pdf/renderResume`          |
+| `GET`/`POST /profile`     | `Profile`                | `db/profileRepository`      |
+| `GET /applications`       | — (optional `?jobUrl=`)  | `db/applicationsRepository` |
+| `GET /applications/:id`   | —                        | `db/applicationsRepository` |
+| `POST /applications`      | `NewApplication`         | `db/applicationsRepository` |
+| `PATCH /applications/:id` | `ApplicationSnapshot`    | `db/applicationsRepository` |
+
+`GET /applications` takes `?jobUrl=` to narrow the list to one posting — the extension's duplicate
+guard calls it before every analysis. It's a query parameter rather than its own path because
+`/applications/…` is already claimed by the `:id` route, so a sibling `/applications/lookup` would
+depend on registration order to not be read as an id.
+
+`PATCH /applications/:id` is the Save Step re-saving a run it already saved once, so it takes an
+`ApplicationSnapshot` — `NewApplication` minus `stage` and `notes`. Those belong to tracking the
+application rather than to the autofill run, and a re-save must not overwrite them.
 
 `tailor-resume.ts` is the only route with logic of its own: it calls
 `listApplicationsByCompany(jobInfo.company)` and builds a one-line-per-application summary to pass
@@ -141,7 +160,10 @@ Two tables:
 - **`applications`** — one row per job you autofill. `company`/`roleTitle`/`jobUrl` are plain columns
   (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
   jsonb snapshots of what was generated for that specific application, so past applications stay
-  readable even if `Profile` or the tailoring prompt changes later.
+  readable even if `Profile` or the tailoring prompt changes later. `status` (`draft`/`submitted`)
+  and `stage` (`applied` → … → `offer`/`rejected`/`withdrawn`) are separate columns answering
+  separate questions — whether it went out, and how far it got. `notes` is a jsonb array appended to
+  over the life of the application, never overwritten.
 
 ### `client.ts`
 
@@ -158,6 +180,12 @@ then vouches for fields that are `undefined` at runtime, and the mismatch surfac
 `Cannot read properties of undefined` somewhere far away. Parsing applies the schema's defaults, so
 an older row is upgraded on read.
 
+`applicationsRepository` also holds the reads and writes the extension's later steps need:
+`listApplicationsByJobUrl` (newest first — the duplicate guard's lookup), `updateApplication` (the
+Save Step replacing a snapshot it already saved), `listApplicationsByCompany` (what
+`/tailor-resume` builds `priorApplicationsSummary` from), and `updateApplicationStage`. That last
+one has no route yet — see `PROGRESS.md`'s Phase 7.
+
 `applicationsRepository` is deliberately stricter for a single row than for a list. `getApplicationById`
 throws if the row won't parse, because returning `null` would claim the application doesn't exist —
 a different and untrue thing. The list functions skip an unreadable row with a warning instead, so
@@ -165,7 +193,8 @@ one bad row from an older build doesn't hide the entire history behind it.
 
 ### `migrations/`
 
-`drizzle-kit` output, applied against Neon. Current: `0000_slimy_manta.sql` creating both tables.
+`drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both tables;
+`0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
 
 ## `drizzle.config.ts`
 

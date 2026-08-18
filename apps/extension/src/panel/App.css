@@ -107,7 +107,6 @@ body {
 }
 
 .status-pill {
-  margin-left: auto;
   font-size: 11px;
   font-weight: 500;
   padding: 4px 10px;
@@ -133,17 +132,31 @@ body {
 }
 
 .theme-toggle {
+  display: grid;
+  place-items: center;
   flex: 0 0 auto;
-  padding: 5px 8px;
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
   border-color: var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 11px;
 }
 
 .theme-toggle:hover {
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .panel-body {
