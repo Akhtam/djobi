@@ -97,7 +97,6 @@ function ListSection<T>({
   noun,
   addLabel,
   hint,
-  entryClassName = 'entry-card',
   items,
   editor,
   children,
@@ -106,7 +105,6 @@ function ListSection<T>({
   noun: string;
   addLabel: string;
   hint?: string;
-  entryClassName?: string;
   items: T[];
   editor: ListEditor<T>;
   children: (entry: T, index: number) => React.ReactNode;
@@ -114,9 +112,13 @@ function ListSection<T>({
   return (
     <fieldset className="card">
       <legend>{legend}</legend>
-      {hint && <p className="hint">{hint}</p>}
+      <div className="section-meta">
+        {hint ? <p className="hint">{hint}</p> : <span />}
+        <span className="entry-count">{items.length}</span>
+      </div>
+      {items.length === 0 && <p className="empty-list">No {noun} added yet.</p>}
       {items.map((entry, index) => (
-        <fieldset key={index} className={entryClassName}>
+        <fieldset key={index} className="entry-card">
           <div className="entry-card-header">
             <span>{`Entry ${index + 1}`}</span>
             <button
@@ -140,17 +142,25 @@ function ListSection<T>({
 
 export function App() {
   const { theme, toggleTheme } = useThemePreference();
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfileState] = useState<Profile | null>(null);
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  function setProfile(next: Profile) {
+    setProfileState(next);
+    setDirty(true);
+    if (status?.kind === 'saved') setStatus(null);
+  }
 
   useEffect(() => {
     callBackend<Profile | null>('/profile', undefined, 'GET')
       // `parseProfile` completes a stored profile against the empty one and validates it, so a
       // profile saved before a field existed can't crash the form that binds to that key.
-      .then((loaded) => setProfile(parseProfile(loaded)))
+      .then((loaded) => setProfileState(parseProfile(loaded)))
       .catch((error: Error) => {
-        setProfile(EMPTY_PROFILE);
+        setProfileState(EMPTY_PROFILE);
         setStatus({ kind: 'error', message: `Failed to load profile: ${error.message}` });
       });
   }, []);
@@ -197,6 +207,7 @@ export function App() {
     e.preventDefault();
     if (!profile) return;
     setStatus(null);
+    setSaving(true);
     const toSave: Profile = {
       ...profile,
       workExperience: profile.workExperience.map((we) => ({
@@ -205,8 +216,13 @@ export function App() {
       })),
     };
     callBackend<Profile>('/profile', toSave)
-      .then(() => setStatus({ kind: 'saved', message: 'Profile saved.' }))
-      .catch((error: Error) => setStatus({ kind: 'error', message: error.message }));
+      .then((saved) => {
+        setProfileState(parseProfile(saved));
+        setDirty(false);
+        setStatus({ kind: 'saved', message: 'Profile saved.' });
+      })
+      .catch((error: Error) => setStatus({ kind: 'error', message: error.message }))
+      .finally(() => setSaving(false));
   }
 
   return (
@@ -221,13 +237,32 @@ export function App() {
         </div>
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
+      <section className="profile-intro" aria-labelledby="profile-title">
+        <div>
+          <p className="eyebrow">Application profile</p>
+          <h2 id="profile-title">Your reusable career record</h2>
+          <p>
+            Keep this accurate and specific. Djobi uses it to tailor resumes and prepare application
+            answers without inventing details.
+          </p>
+        </div>
+        <span className="profile-intro-badge">One profile, every application</span>
+      </section>
       <form onSubmit={handleSave}>
-        <div className="card">
+        <section className="card contact-card" aria-labelledby="contact-title">
+          <div className="card-heading">
+            <div>
+              <p className="eyebrow">Essentials</p>
+              <h3 id="contact-title">Contact details</h3>
+            </div>
+            <p>Used for form fields and the resume header.</p>
+          </div>
           <div className="field-grid">
             <div className="field">
               <label htmlFor="fullName">Full name</label>
               <input
                 id="fullName"
+                autoComplete="name"
                 value={profile.fullName}
                 onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
               />
@@ -237,6 +272,8 @@ export function App() {
               <label htmlFor="email">Email</label>
               <input
                 id="email"
+                type="email"
+                autoComplete="email"
                 value={profile.email}
                 onChange={(e) => setProfile({ ...profile, email: e.target.value })}
               />
@@ -246,6 +283,8 @@ export function App() {
               <label htmlFor="phone">Phone</label>
               <input
                 id="phone"
+                type="tel"
+                autoComplete="tel"
                 value={profile.phone ?? ''}
                 onChange={(e) => setProfile({ ...profile, phone: orNull(e.target.value) })}
               />
@@ -255,12 +294,13 @@ export function App() {
               <label htmlFor="location">Location</label>
               <input
                 id="location"
+                autoComplete="address-level2"
                 value={profile.location ?? ''}
                 onChange={(e) => setProfile({ ...profile, location: orNull(e.target.value) })}
               />
             </div>
           </div>
-        </div>
+        </section>
 
         <fieldset className="card">
           <legend>Links</legend>
@@ -269,6 +309,8 @@ export function App() {
               <label htmlFor="linkedin">LinkedIn</label>
               <input
                 id="linkedin"
+                type="url"
+                autoComplete="url"
                 value={profile.links.linkedin ?? ''}
                 onChange={(e) =>
                   setProfile({
@@ -283,6 +325,8 @@ export function App() {
               <label htmlFor="portfolio">Portfolio</label>
               <input
                 id="portfolio"
+                type="url"
+                autoComplete="url"
                 value={profile.links.portfolio ?? ''}
                 onChange={(e) =>
                   setProfile({
@@ -297,6 +341,8 @@ export function App() {
               <label htmlFor="github">GitHub</label>
               <input
                 id="github"
+                type="url"
+                autoComplete="url"
                 value={profile.links.github ?? ''}
                 onChange={(e) =>
                   setProfile({
@@ -348,73 +394,6 @@ export function App() {
             </button>
           </div>
         </fieldset>
-
-        {/* Facts, not prose. Anything answered here is filled straight from the profile and never
-            reaches the answer-drafting model — see `@djobi/shared`'s `screeningAnswers.ts`. */}
-        <fieldset className="card">
-          <legend>Screening answers</legend>
-          <p className="hint">
-            The questions almost every application asks. Anything you answer here is filled in
-            directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as
-            usual.
-          </p>
-          {SCREENING_TOPICS.map((entry) => (
-            <div className="field" key={entry.topic}>
-              <label htmlFor={entry.topic}>{entry.label}</label>
-              <input
-                id={entry.topic}
-                list={`${entry.topic}-suggestions`}
-                value={profile.screeningAnswers[entry.topic] ?? ''}
-                onChange={(e) =>
-                  setProfile({
-                    ...profile,
-                    screeningAnswers: withScreeningAnswer(
-                      profile.screeningAnswers,
-                      entry.topic,
-                      e.target.value,
-                    ),
-                  })
-                }
-              />
-              <datalist id={`${entry.topic}-suggestions`}>
-                {entry.suggestions.map((suggestion) => (
-                  <option key={suggestion} value={suggestion} />
-                ))}
-              </datalist>
-            </div>
-          ))}
-        </fieldset>
-
-        <ListSection
-          legend="Other prepared answers"
-          noun="prepared answer"
-          addLabel="Add prepared answer"
-          hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
-          entryClassName="entry"
-          items={profile.customAnswers}
-          editor={customAnswers}
-        >
-          {(entry, index) => (
-            <>
-              <div className="field">
-                <label htmlFor={`customQuestion-${index}`}>Question</label>
-                <input
-                  id={`customQuestion-${index}`}
-                  value={entry.question}
-                  onChange={(e) => customAnswers.update(index, { question: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor={`customAnswer-${index}`}>Answer</label>
-                <textarea
-                  id={`customAnswer-${index}`}
-                  value={entry.answer}
-                  onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
-                />
-              </div>
-            </>
-          )}
-        </ListSection>
 
         <ListSection
           legend="Work experience"
@@ -559,6 +538,74 @@ export function App() {
           }}
         </ListSection>
 
+        {/* Facts, not prose. Anything answered here is filled straight from the profile and never
+            reaches the answer-drafting model — see `@djobi/shared`'s `screeningAnswers.ts`. */}
+        <fieldset className="card screening-card">
+          <legend>Screening answers</legend>
+          <p className="hint">
+            The questions almost every application asks. Anything you answer here is filled in
+            directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as
+            usual.
+          </p>
+          <div className="screening-grid">
+            {SCREENING_TOPICS.map((entry) => (
+              <div className="field" key={entry.topic}>
+                <label htmlFor={entry.topic}>{entry.label}</label>
+                <input
+                  id={entry.topic}
+                  list={`${entry.topic}-suggestions`}
+                  value={profile.screeningAnswers[entry.topic] ?? ''}
+                  onChange={(e) =>
+                    setProfile({
+                      ...profile,
+                      screeningAnswers: withScreeningAnswer(
+                        profile.screeningAnswers,
+                        entry.topic,
+                        e.target.value,
+                      ),
+                    })
+                  }
+                />
+                <datalist id={`${entry.topic}-suggestions`}>
+                  {entry.suggestions.map((suggestion) => (
+                    <option key={suggestion} value={suggestion} />
+                  ))}
+                </datalist>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+
+        <ListSection
+          legend="Other prepared answers"
+          noun="prepared answer"
+          addLabel="Add prepared answer"
+          hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
+          items={profile.customAnswers}
+          editor={customAnswers}
+        >
+          {(entry, index) => (
+            <>
+              <div className="field">
+                <label htmlFor={`customQuestion-${index}`}>Question</label>
+                <input
+                  id={`customQuestion-${index}`}
+                  value={entry.question}
+                  onChange={(e) => customAnswers.update(index, { question: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor={`customAnswer-${index}`}>Answer</label>
+                <textarea
+                  id={`customAnswer-${index}`}
+                  value={entry.answer}
+                  onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
+                />
+              </div>
+            </>
+          )}
+        </ListSection>
+
         <ListSection
           legend="Stories"
           noun="story"
@@ -645,10 +692,23 @@ export function App() {
         </ListSection>
 
         <div className="footer-save">
-          <button type="submit" className="btn-primary">
-            Save profile
+          <div className="save-feedback">
+            {status ? (
+              <p
+                className={`status-pill ${status.kind}`}
+                role={status.kind === 'error' ? 'alert' : 'status'}
+              >
+                {status.message}
+              </p>
+            ) : (
+              <p className="save-hint">
+                {dirty ? 'You have unsaved changes.' : 'Changes are saved to your profile.'}
+              </p>
+            )}
+          </div>
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save profile'}
           </button>
-          {status && <p className={`status-pill ${status.kind}`}>{status.message}</p>}
         </div>
       </form>
     </main>
