@@ -1,6 +1,5 @@
 import type { Profile, TailoredResume } from '@djobi/shared';
 import { Document, Page, renderToBuffer, StyleSheet, Text, View } from '@react-pdf/renderer';
-import React from 'react';
 
 /**
  * The layout, per `docs/resume-design-conventions.md` — every value there is inside a range some

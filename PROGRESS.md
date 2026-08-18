@@ -13,8 +13,8 @@ history belongs in git, not in this file.
 
 ## Current state
 
-Everything below is built, tested and works end to end. Suite green at **436 tests** (104 shared /
-51 backend / 281 extension), `pnpm test` from the repo root.
+Everything below is built, tested and works end to end. Suite green at **450 tests** (104 shared /
+51 backend / 295 extension), `pnpm test` from the repo root.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
   (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
@@ -23,7 +23,8 @@ Everything below is built, tested and works end to end. Suite green at **436 tes
   `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a model).
 - **`apps/backend`** — Hono on `127.0.0.1:5391`. Three LLM calls (`extractJob`, `tailorResume`,
   `answerQuestions`) through `structuredCall.ts`, a one-page-fitting resume PDF renderer, and
-  Postgres persistence (Neon + Drizzle) for profiles and applications.
+  Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
+build` compiles the shared package and emits a plain-Node production server to `dist/`.
 - **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
   (`detect.ts`) and classify its fields (`detectFields.ts`) and fill them (`fillForm.ts`); the
   service worker runs the pipeline (`applicationPipeline.ts`); the options page edits the Profile;
@@ -85,15 +86,21 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   Analyze-button disabled check, and the analyze payload must all read the _same_ expression. Use
   different operators in different places and the box either silently reverts the user's typing or
   lets a blank submission through.
-- `pdf/renderResume.tsx` needs an explicit `import React from 'react'` — without a `tsconfig.json`
-  in `apps/backend`, JSX uses the classic transform and `React.createElement` must resolve at
-  runtime. Switch to the automatic runtime once a tsconfig exists.
 - **A fill is only reported as landed if the page kept it.** `fillForm` re-reads each field after a
   300ms settle, because a controlled field whose `onChange` never fired reverts on the _next_
   render — an immediate re-read calls every failed fill a success. A fill also drives the full
   keystroke event sequence (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), since
   form libraries commonly commit to the form model on blur; a value write plus `input` leaves the
   DOM looking right and the model empty, which an ATS reports on submit as a missing required field.
+- **`renderResume.tsx` compiles under `apps/backend/tsconfig.json`'s `"jsx": "react-jsx"`.** That
+  tsconfig is what replaced its explicit `import React`; delete or retarget the file and the backend
+  build stops compiling JSX, with the error pointing at the component rather than at the config.
+- **`packages/shared`'s `exports` now resolves to `dist/`, so shared source edits need a build.**
+  `pnpm dev:backend` and `pnpm build:extension` run `pnpm --filter @djobi/shared build` first via
+  `pre*` hooks, but `tsx watch` does **not** re-run them — edit a schema in `packages/shared/src`
+  mid-session and the backend keeps serving the previously built copy until the filter is run again.
+  The `development` condition in that `exports` block is what keeps the extension's vite build and
+  vitest reading source directly.
 - **The resume PDF fits itself to one page** by re-rendering down a four-step density ladder, never
   touching `fontSize` — leading and whitespace are spendable, legibility is not. Past ~5 roles × 6
   bullets it returns two pages with all content rather than truncating. Every step sits inside a
@@ -227,10 +234,6 @@ From the architecture-review runs. Everything **Strong** has been actioned; this
 
 ## Known loose ends
 
-- `pnpm --filter backend build` (`tsc -p tsconfig.json`) fails — there's no `tsconfig.json` in
-  `apps/backend` at all (only `packages/shared` and `apps/extension` have one). Needs fixing before
-  a real build/deploy is possible, and it's what forces the classic JSX transform in
-  `renderResume.tsx`. `pnpm dev:backend` (via `tsx`) is unaffected.
 - **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
   with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,
   its query and its response shape are written up in `background/apiDetectors.ts`'s own comment;
@@ -240,9 +243,15 @@ From the architecture-review runs. Everything **Strong** has been actioned; this
   without one. `matchScreeningTopic`'s order-dependent matching (a question naming both work
   authorization and sponsorship must resolve to the former) is covered only indirectly, through
   `preparedAnswers`.
+- **A second non-autofilling form was mentioned but never supplied**, so it is unreproduced and
+  unfixed. The Greenhouse/Brex posting alongside it is fixed and covered by
+  `content/greenhouseForm.test.ts`; there is no repro, and therefore no test seam, for the other.
+- **Nothing proves a Gem posting (`jobs.gem.com`) fills.** A detection fix was tried and reverted at
+  the user's request because it did not fix the reported symptom. Gem is a fully client-rendered SPA
+  whose inputs carry no `id`, `name`, `placeholder` or `<label>`; the untested suspicion is that its
+  React-controlled inputs revert a written value, which would be a Fill Step problem rather than a
+  detection one. Diagnosing it needs a live browser, not a captured snapshot.
 - Two Ashby questions still need a live browser check: whether `data-djobi-id` attributes survive an
   Ashby form re-mount (if not, `resolveField` returns null for every field), and how Ashby renders
   its four Boolean screening questions — native fieldset/radios and `role="combobox"` are handled,
   custom buttons are not.
-- A test profile (`Jane Doe`) is sitting in the real `profiles` table from an early smoke test.
-  Harmless — it gets overwritten by the real profile — but worth knowing it's there.

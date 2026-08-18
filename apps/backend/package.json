@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "pnpm -w run build:shared",
     "dev": "tsx watch src/index.ts",
+    "predev:debug": "pnpm -w run build:shared",
     "dev:debug": "tsx watch --inspect src/index.ts",
+    "prebuild": "pnpm -w run build:shared",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",

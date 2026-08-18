@@ -8,6 +8,7 @@
     "dev:backend:debug": "pnpm --filter backend dev:debug",
     "dev:extension": "pnpm --filter extension dev",
     "build:extension": "pnpm --filter extension build",
+    "build:shared": "pnpm --filter @djobi/shared build",
     "db:generate": "pnpm --filter backend db:generate",
     "db:migrate": "pnpm --filter backend db:migrate",
     "format": "prettier --write .",

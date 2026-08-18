@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "pnpm -w run build:shared",
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest"

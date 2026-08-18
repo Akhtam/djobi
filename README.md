@@ -126,8 +126,4 @@ pnpm format         # prettier --write .
 pnpm format:check   # prettier --check .
 ```
 
-## Known issues
-
-- `apps/backend` has no `tsconfig.json`, so `pnpm --filter backend build` (production build) fails.
-  `pnpm dev:backend` (via `tsx`) is unaffected and works fine for local development.
-- See `PROGRESS.md` → "Known loose ends" for more.
+Known issues and loose ends live in `PROGRESS.md` → "Known loose ends".
