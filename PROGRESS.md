@@ -13,8 +13,8 @@ history belongs in git, not in this file.
 
 ## Current state
 
-Everything below is built, tested and works end to end. Suite green at **450 tests** (104 shared /
-51 backend / 295 extension), `pnpm test` from the repo root.
+Everything below is built, tested and works end to end. Suite green at **465 tests** (104 shared /
+51 backend / 310 extension), `pnpm test` from the repo root.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
   (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
@@ -63,7 +63,7 @@ checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses no
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.
 - **Application tracking:** `status` (draft/submitted) and `stage` (applied → phone_screen →
-  interviewing → offer/rejected/withdrawn) are separate fields. Notes are a timestamped, categorized
+  interviewing → rejected) are separate fields. Notes are a timestamped, categorized
   log (`technical` / `behavioral` / `general`) you append to, not a single overwritable text field —
   so old interview-question notes stay around as reference for future applications.
 - **Process:** this project is built test-first (red → green, one vertical slice at a time) — see
@@ -107,6 +107,16 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   range sourced in `docs/resume-design-conventions.md`; the "fill 85–90% of the page" heuristic is
   **folklore** and is not one of them. A resume that comes out thin is a `tailorResume.ts` problem,
   not a stylesheet one.
+
+- **`chrome.tabs.sendMessage` is always given a `frameId` when one is known** (`lib/pageClient.ts`,
+  fed by `getDetectedFrame` in `lib/tabStore.ts`). Without it the runtime delivers to _every_ frame
+  and resolves with whichever answers first, dropping the rest — and the content script is injected
+  into all frames, third-party ones included. A page carrying an invisible hCaptcha or a
+  tag-manager pixel therefore had those frames answering `FILL_FORM` with an empty result before
+  the frame owning the form finished verifying its writes, so the Fill Step reported "nothing
+  filled" regardless of what happened. `content/index.ts` staying silent on `FILL_FORM` in frames
+  holding none of the fields is the backstop, and mirrors the same rule `SCAN_PAGE` already
+  followed. Collapsing either back to a broadcast reintroduces the bug silently.
 
 ## Planned
 
@@ -243,9 +253,12 @@ From the architecture-review runs. Everything **Strong** has been actioned; this
   without one. `matchScreeningTopic`'s order-dependent matching (a question naming both work
   authorization and sponsorship must resolve to the former) is covered only indirectly, through
   `preparedAnswers`.
-- **A second non-autofilling form was mentioned but never supplied**, so it is unreproduced and
-  unfixed. The Greenhouse/Brex posting alongside it is fixed and covered by
-  `content/greenhouseForm.test.ts`; there is no repro, and therefore no test seam, for the other.
+- ~~**A second non-autofilling form was mentioned but never supplied.**~~ Supplied and fixed: a
+  Lever posting (`jobs.lever.co/sonarsource/…/apply`) that filled nothing at all. Detection was
+  never the problem — `content/leverForm.test.ts` runs against the captured live form and finds and
+  fills every field. The fault was in the frame plumbing, and it is not Lever-specific: both
+  `SCAN_PAGE` and `FILL_FORM` are now addressed to the frame that reported the form rather than
+  broadcast to the tab. See the `chrome.tabs.sendMessage` entry under _Constraints that look like mistakes_.
 - **Nothing proves a Gem posting (`jobs.gem.com`) fills.** A detection fix was tried and reverted at
   the user's request because it did not fix the reported symptom. Gem is a fully client-rendered SPA
   whose inputs carry no `id`, `name`, `placeholder` or `<label>`; the untested suspicion is that its

@@ -111,6 +111,11 @@ interface StubOptions {
   /** If true, the Fill Step hangs at the page-filling call until `resolveFill()` is called —
    *  simulates a Fill Step still in flight in the background. */
   holdFill?: boolean;
+  /** If true, the page answers that it kept none of the values — an ATS whose form model discards
+   *  every programmatic write. */
+  pageKeepsNothing?: boolean;
+  /** If true, no frame answers the fill request, so its result cannot be verified. */
+  pageDoesNotAnswer?: boolean;
 }
 
 /** The entry for successive calls, repeating the last one once the list is exhausted. */
@@ -168,9 +173,18 @@ async function stubChrome(options: StubOptions) {
         Promise.resolve((options.existingApplications ?? []) as never),
     },
     page: {
-      // `null` — the page gives no account of what it kept, so the Fill Step falls back to the
-      // values it drafted, which is the reporting these tests were written against.
-      fill: () => (options.holdFill ? fillGate.then(() => null) : Promise.resolve(null)),
+      fill: (_tabId, command) => {
+        const result = options.pageDoesNotAnswer
+          ? null
+          : options.pageKeepsNothing
+            ? { ok: true as const, filledFieldIds: [], resumeAttached: false }
+            : {
+                ok: true as const,
+                filledFieldIds: Object.keys(command.values),
+                resumeAttached: command.resume !== undefined,
+              };
+        return options.holdFill ? fillGate.then(() => result) : Promise.resolve(result);
+      },
       // The panel's concern is what the Fill Step reports back, not where its fields came from, so
       // these tests leave the live page unreachable and let it fall back to the run's own detection.
       scan: () => Promise.resolve(null),
@@ -672,9 +686,49 @@ describe('panel App', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText(/Nothing was filled/);
-    expect(screen.getByText('Nothing filled')).toBeInTheDocument();
+    await screen.findByText(/no form fields were found on this page/);
+    expect(screen.getByText('No form found')).toBeInTheDocument();
     expect(screen.queryByText(/saved the application\./)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a form it never found from one that kept nothing it was given', async () => {
+    // Both are zero fields written, and they used to share one banner telling the user to reload
+    // the page. That advice is wrong here: the form was detected perfectly well and the *page*
+    // rejected every write, so reloading changes nothing and the reload advice sends the user
+    // after the wrong problem.
+    await stubChrome({
+      tabUrl: 'https://jobs.lever.co/acme/1/apply',
+      profile,
+      jobPageData,
+      pageKeepsNothing: true,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/kept none of the values written into it/);
+    expect(screen.getByText('Nothing filled')).toBeInTheDocument();
+    expect(screen.queryByText(/no form fields were found on this page/)).not.toBeInTheDocument();
+  });
+
+  it('warns when no frame answered instead of rendering a confident success', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      pageDoesNotAnswer: true,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/fill could not be verified because this page did not answer/i);
+    expect(screen.getByText('Fill unverified')).toBeInTheDocument();
+    expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
   });
 
   it('ignores extra clicks on "Fill form" while a fill is already in flight', async () => {

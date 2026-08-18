@@ -4,6 +4,7 @@ import {
   labelsMatch,
   matchByContainment,
   matchOptionLabel,
+  matchPreparedAnswerToOption,
   normalizeLabel,
   uniqueMatch,
 } from './labelMatching.js';
@@ -40,8 +41,14 @@ describe('matchOptionLabel', () => {
     expect(matchOptionLabel(['Yes', 'No'], 'Maybe')).toBeUndefined();
   });
 
-  it('returns the first match when options collide once normalized', () => {
-    expect(matchOptionLabel(['Remote', 'remote'], 'REMOTE')).toBe('Remote');
+  it('returns undefined when options collide once normalized', () => {
+    expect(matchOptionLabel(['Remote', 'remote'], 'REMOTE')).toBeUndefined();
+  });
+});
+
+describe('matchPreparedAnswerToOption', () => {
+  it('does not let the exact-match stage bypass the ambiguity invariant', () => {
+    expect(matchPreparedAnswerToOption(['Yes', ' yes '], 'YES')).toBeUndefined();
   });
 });
 

@@ -61,7 +61,7 @@ export function labelsMatch(a: string, b: string): boolean {
  * worth having.
  */
 export function matchOptionLabel(options: string[], answer: string): string | undefined {
-  return options.find((option) => labelsMatch(option, answer));
+  return uniqueMatch(options, (option) => labelsMatch(option, answer));
 }
 
 /** Whether `haystack` contains `needle` as a whole phrase. See {@link containsAsWords} for the strict form. */
@@ -113,7 +113,7 @@ export function matchPreparedAnswerToOption(options: string[], answer: string): 
   const target = normalizeLabel(answer);
   if (!target) return undefined;
 
-  const exact = options.find((option) => normalizeLabel(option) === target);
+  const exact = uniqueMatch(options, (option) => normalizeLabel(option) === target);
   if (exact) return exact;
 
   const prefixed = uniqueMatch(options, (option) =>

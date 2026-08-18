@@ -40,10 +40,13 @@ export interface PageClient {
    * Fills the tab's form, resolving with the page's own account of what landed — or `null` when no
    * frame answers (no content script, or a content script orphaned by an extension reload), which
    * the caller must not read as "nothing was filled".
+   *
+   * `frameId` addresses the frame known to hold the form. Omitting it broadcasts to every frame and
+   * takes whichever answers first — see {@link ask}.
    */
-  fill(tabId: number, command: FillPageCommand): Promise<FillFormResult | null>;
+  fill(tabId: number, command: FillPageCommand, frameId?: number): Promise<FillFormResult | null>;
   /** Re-scans the tab's live form, or resolves `null` when no frame answers (no content script, no form). */
-  scan(tabId: number): Promise<JobPageData | null>;
+  scan(tabId: number, frameId?: number): Promise<JobPageData | null>;
 }
 
 /**
@@ -52,22 +55,34 @@ export interface PageClient {
  * Reading `chrome.runtime.lastError` is what marks it handled. An unanswered message — no content
  * script in the tab, or no frame holding a form — would otherwise log as an unchecked runtime
  * error, so this is not optional even though nothing reads the value.
+ *
+ * **Pass `frameId` whenever it is known.** Without it `chrome.tabs.sendMessage` delivers to every
+ * frame in the tab and resolves with whichever calls `sendResponse` first, dropping the rest — and
+ * the content script is injected into all frames (`manifest.ts`, `all_frames: true`), third-party
+ * ones included. An invisible hCaptcha iframe answers instantly with an empty result while the
+ * frame that actually owns the form is still waiting out its verification settle, so the fast,
+ * wrong answer wins deterministically. The two-argument form remains for the case where no frame
+ * has reported yet and there is genuinely nobody to address.
  */
 function ask<TResponse>(
   tabId: number,
   message: FillFormCommandMessage | ScanPageCommandMessage,
+  frameId?: number,
 ): Promise<TResponse | null> {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (response?: TResponse) => {
+    const handle = (response?: TResponse): void => {
       void chrome.runtime.lastError;
       resolve(response ?? null);
-    });
+    };
+
+    if (frameId === undefined) chrome.tabs.sendMessage(tabId, message, handle);
+    else chrome.tabs.sendMessage(tabId, message, { frameId }, handle);
   });
 }
 
 /** The production adapter: the tab's own content script. */
 export const chromePageClient: PageClient = {
-  fill(tabId, command) {
+  fill(tabId, command, frameId) {
     const message: FillFormCommandMessage = {
       type: 'FILL_FORM',
       fields: command.fields,
@@ -80,11 +95,11 @@ export const chromePageClient: PageClient = {
         bytes: Array.from(new Uint8Array(command.resume.bytes)),
       },
     };
-    return ask<FillFormResult>(tabId, message);
+    return ask<FillFormResult>(tabId, message, frameId);
   },
 
-  scan(tabId) {
+  scan(tabId, frameId) {
     const message: ScanPageCommandMessage = { type: 'SCAN_PAGE' };
-    return ask<JobPageData>(tabId, message);
+    return ask<JobPageData>(tabId, message, frameId);
   },
 };

@@ -1,4 +1,11 @@
-import { containsLabel, labelsMatch, optionFor, type DetectedField } from '@djobi/shared';
+import {
+  containsLabel,
+  labelsMatch,
+  optionFor,
+  uniqueMatch,
+  type DetectedField,
+} from '@djobi/shared';
+import type { FillFormResult } from '../lib/messages';
 import { choiceLabel } from './detectFields';
 
 /** Resolves a `DetectedField`'s `selector` to its matching DOM element, or `null` if unresolvable. */
@@ -92,6 +99,11 @@ function resolveOptionElement<T extends Element = HTMLElement>(
   return selector ? doc.querySelector<T>(selector) : null;
 }
 
+/** Whether the recorded option list itself gives more than one meaning to this answer. */
+function hasAmbiguousRecordedOption(field: DetectedField, value: string): boolean {
+  return (field.options?.filter((option) => labelsMatch(option.label, value)).length ?? 0) > 1;
+}
+
 /**
  * A check, run after the page has had a chance to re-render, of whether a fill actually stuck.
  *
@@ -113,9 +125,11 @@ function fillSelect(
   el: HTMLSelectElement,
   value: string,
 ): FillVerifier {
+  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
+
   const match =
     resolveOptionElement<HTMLOptionElement>(doc, field, value) ??
-    Array.from(el.options).find((opt) => labelsMatch(opt.text, value));
+    uniqueMatch(Array.from(el.options), (opt) => labelsMatch(opt.text, value));
   if (!match) return FAILED;
 
   commitValue(el, match.value);
@@ -136,6 +150,8 @@ function fillSelect(
  * drives both identically.
  */
 function fillGroup(doc: Document, field: DetectedField, value: string): FillVerifier {
+  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
+
   const recorded = resolveOptionElement<HTMLElement>(doc, field, value);
   if (recorded) {
     recorded.click();
@@ -150,7 +166,7 @@ function fillGroup(doc: Document, field: DetectedField, value: string): FillVeri
       'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], button[aria-pressed]',
     ),
   );
-  const match = choices.find((choice) => labelsMatch(choiceLabel(doc, choice), value));
+  const match = uniqueMatch(choices, (choice) => labelsMatch(choiceLabel(doc, choice), value));
   if (!match) return FAILED;
 
   match.click();
@@ -245,6 +261,8 @@ async function fillCombobox(
   value: string,
   options: ResolvedFillOptions,
 ): Promise<FillVerifier> {
+  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
+
   const trigger = resolveField(doc, field);
   if (!trigger) return FAILED;
 
@@ -259,7 +277,7 @@ async function fillCombobox(
   const match = await waitForOption(
     () =>
       resolveOptionElement(doc, field, value) ??
-      liveOptionsFor(doc, trigger).find((opt) => labelsMatch(opt.textContent ?? '', value)),
+      uniqueMatch(liveOptionsFor(doc, trigger), (opt) => labelsMatch(opt.textContent ?? '', value)),
     options,
   );
   if (!match) return FAILED;
@@ -389,4 +407,52 @@ export function attachResumeFile(input: HTMLInputElement, file: File): void {
     Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
     input.dispatchEvent(event);
   }
+}
+
+/** Whether this frame owns any field in the fill command. Must remain synchronous for messaging. */
+function ownsAnyField(doc: Document, fields: DetectedField[]): boolean {
+  return fields.some((field) => resolveField(doc, field) !== null);
+}
+
+/** Fills a frame already known to own at least one requested field and assembles its full result. */
+async function fillOwnedPage(
+  doc: Document,
+  fields: DetectedField[],
+  values: Record<string, string>,
+  resumeFile: File | undefined,
+  fillOptions: FillOptions,
+): Promise<FillFormResult> {
+  const filledFieldIds = await fillForm(doc, fields, values, fillOptions);
+  let resumeAttached = false;
+
+  if (resumeFile) {
+    // Some ATS platforms render an unlabeled decoy alongside the validated upload. Required wins;
+    // field order is only the tie-break between equally eligible inputs.
+    const uploadField =
+      fields.find((field) => field.category === 'resume_upload' && field.required) ??
+      fields.find((field) => field.category === 'resume_upload');
+    const input = uploadField ? resolveField<HTMLInputElement>(doc, uploadField) : null;
+
+    if (input) {
+      attachResumeFile(input, resumeFile);
+      resumeAttached = (input.files?.length ?? 0) > 0;
+    }
+  }
+
+  return { ok: true, filledFieldIds, resumeAttached };
+}
+
+/**
+ * Fills this frame and returns its complete report, or synchronously returns `null` when this frame
+ * owns none of the requested fields and therefore must stay silent in a multi-frame message race.
+ */
+export function fillPage(
+  doc: Document,
+  fields: DetectedField[],
+  values: Record<string, string>,
+  resumeFile?: File,
+  fillOptions: FillOptions = {},
+): Promise<FillFormResult> | null {
+  if (!ownsAnyField(doc, fields)) return null;
+  return fillOwnedPage(doc, fields, values, resumeFile, fillOptions);
 }

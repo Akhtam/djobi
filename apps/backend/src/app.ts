@@ -24,15 +24,21 @@ export const app = new Hono();
  * already return, so one client-side branch handles both.
  */
 app.onError((err, c) => {
-  console.error(`[djobi] ${c.req.method} ${c.req.path} failed:`, err);
+  const context = `${c.req.method} ${c.req.path}`;
+  if (err instanceof StructuredCallError) {
+    console.error(`[djobi] ${context} failed`, {
+      name: err.name,
+      message: err.message,
+      kind: err.kind,
+      toolName: err.toolName,
+      requestId: err.requestId,
+      stopReason: err.stopReason,
+    });
+  } else {
+    console.error(`[djobi] ${context} failed:`, err);
+  }
 
-  // `kind` rides alongside the message so a caller can branch on *why* a structured call failed
-  // without matching substrings of English. The message is unchanged, so anything still reading
-  // only that keeps working.
-  const body: BackendErrorBody =
-    err instanceof StructuredCallError
-      ? { error: err.message, kind: err.kind, toolName: err.toolName }
-      : { error: err.message };
+  const body: BackendErrorBody = { error: err.message };
 
   return c.json(body, 500);
 });

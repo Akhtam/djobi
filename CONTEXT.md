@@ -74,7 +74,7 @@ Whether an Application was actually sent to the employer: `draft` or `submitted`
 _Avoid_: state, stage (Stage is the separate field below)
 
 **Stage**:
-Where a sent Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `offer`/`rejected`/`withdrawn`. Kept separate from Status; a `draft` still carries a Stage, defaulting to `applied`.
+Where a sent Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `rejected`. Kept separate from Status; a `draft` still carries a Stage, defaulting to `applied`.
 _Avoid_: status, step
 
 **Note**:

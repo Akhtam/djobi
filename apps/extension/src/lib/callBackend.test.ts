@@ -66,7 +66,7 @@ describe('callBackend', () => {
     });
   });
 
-  it("carries the backend's failure kind across the wire, so a caller can tell a retryable model failure from a schema one", async () => {
+  it('accepts a legacy error body while dropping metadata that has no extension consumer', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -78,20 +78,15 @@ describe('callBackend', () => {
       ),
     );
 
-    await expect(callBackend('/answer-questions', {})).rejects.toMatchObject({
-      kind: 'no-tool-call',
+    const error = await callBackend('/answer-questions', {}).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: 'BackendError',
+      status: 500,
+      path: '/answer-questions',
+      message: expect.stringContaining('report_answers did not produce a tool call.'),
     });
-  });
-
-  it('leaves kind undefined for a failure that was never a structured call', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ error: 'jobDescription is required' }), {
-        status: 400,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-
-    await expect(callBackend('/extract-job', {})).rejects.toMatchObject({ kind: undefined });
+    expect(error).not.toHaveProperty('kind');
   });
 
   it('reports an empty error body rather than throwing on the empty string', async () => {

@@ -23,12 +23,14 @@ import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
 import {
   asAnalyzedRun,
+  getDetectedFrame,
   getDetectedPage,
   getPipelineRun,
   patchPipelineRun,
   setPipelineRun,
   type AnalyzedRun,
   type DuplicateApplication,
+  type FillOutcome,
   type PipelineRunState,
 } from '../lib/tabStore';
 
@@ -147,7 +149,12 @@ async function fillStep(
 ): Promise<
   Pick<
     PipelineRunState,
-    'status' | 'unresolvedRequiredFields' | 'filledFieldCount' | 'jobPageData' | 'failure'
+    | 'status'
+    | 'unresolvedRequiredFields'
+    | 'filledFieldCount'
+    | 'fillOutcome'
+    | 'jobPageData'
+    | 'failure'
   >
 > {
   const { jobPageData, jobInfo, tailoredResume, answers, tabUrl } = run;
@@ -156,7 +163,15 @@ async function fillStep(
   // detection is the fallback for a page that can't be re-scanned (no content script — the tab was
   // open across an extension reload), and it's the only source at all for a run analyzed from a
   // pasted job description before the form had rendered, where it is empty.
-  const scanned = await deps.page.scan(tabId);
+  // Address the frame that reported the form. If navigation destroyed that frame, retry only this
+  // read-only scan as a broadcast and use broadcast addressing for the single fill attempt below.
+  // Retrying fill itself would be unsafe: clicks and uploads are not idempotent.
+  let frameId = (await getDetectedFrame(tabId))?.frameId;
+  let scanned = await deps.page.scan(tabId, frameId);
+  if (frameId !== undefined && scanned === null) {
+    frameId = undefined;
+    scanned = await deps.page.scan(tabId);
+  }
   // The fresh scan has the right elements; the analyzed run has the right wording. `carryEnrichment`
   // keeps both — without it the re-scan silently discarded every API-supplied option label and
   // `required` flag, because enrichment only ever attached on the report path, never on `SCAN_PAGE`.
@@ -180,7 +195,7 @@ async function fillStep(
 
   // Whether to render a resume at all — not which input it lands on. An ATS can render several
   // `resume_upload`-classified inputs (Ashby pairs an unlabeled decoy with the real, required one),
-  // and picking between them needs the live page, so `content/index.ts` does it. This module used
+  // and picking between them needs the live page, so `content/fillForm.ts` does it. This module used
   // to pick one too, purely to decide this boolean, and the two copies of that rule could disagree.
   const needsResume = fields.some((field) => field.category === 'resume_upload');
   const resume = needsResume
@@ -191,7 +206,12 @@ async function fillStep(
       }
     : undefined;
 
-  const filled = await deps.page.fill(tabId, { fields, values, resume });
+  // No frame can own an empty command, so sending it would necessarily return `null` and erase the
+  // useful distinction between "no form fields" and "a real fill whose response was lost".
+  const filled =
+    fields.length === 0
+      ? { ok: true as const, filledFieldIds: [], resumeAttached: false }
+      : await deps.page.fill(tabId, { fields, values, resume }, frameId);
 
   // What the page confirmed it kept. A run whose content script didn't answer at all (`null`) has
   // no such account, and falling back to the drafted values is the honest reading there: the fill
@@ -217,12 +237,23 @@ async function fillStep(
   // `attachResumeFile` rather than through `values`.
   const filledFieldCount = landed.size + (resumeLanded ? 1 : 0);
 
+  // The page response is the only evidence that can distinguish success from an unanswered
+  // message. Keep that fact whole on the run instead of asking the panel to infer certainty from
+  // counts that deliberately remain optimistic when no frame answers.
+  let fillOutcome: FillOutcome;
+  if (fields.length === 0) fillOutcome = 'no-fields-detected';
+  else if (filled === null) fillOutcome = 'unverified';
+  else if (filledFieldCount === 0) fillOutcome = 'nothing-filled';
+  else if (unresolvedRequiredFields.length > 0) fillOutcome = 'incomplete';
+  else fillOutcome = 'complete';
+
   // The re-scan is checkpointed back onto the run so the panel reports what was actually filled —
   // `unresolvedRequiredFields` above is derived from these fields, and the panel lists them.
   return {
     status: 'filled',
     unresolvedRequiredFields,
     filledFieldCount,
+    fillOutcome,
     jobPageData: { ...jobPageData, fields },
     failure: null,
   };
@@ -347,6 +378,7 @@ export async function runAnalysis(
     answers: [],
     unresolvedRequiredFields: [],
     filledFieldCount: 0,
+    fillOutcome: null,
     applicationId: null,
     failure: null,
     duplicateOf,

@@ -101,10 +101,9 @@ side — which is exactly what happened to `knownAnswer`, silently dropped befor
 ever saw it, so the prompt paragraph treating a work-authorization answer as binding fact never ran
 in production. One schema per body makes that class of drift a compile error.
 
-Also holds `StructuredCallFailureSchema` and `BackendErrorBodySchema` — the error shape `app.ts`
-renders and `callBackend` reads back. Declared on the backend alone, the failure kind was a union
-the extension could only receive as `string`, which typechecks a misspelled comparison and quietly
-never matches.
+Also holds `BackendErrorBodySchema`, the deliberately small `{ error }` shape `app.ts` renders and
+`callBackend` reads back. Structured-call retry classification stays inside the backend operation
+that can act on it rather than crossing the wire to a client with no branch for it.
 
 ### `src/labelMatching.ts`
 

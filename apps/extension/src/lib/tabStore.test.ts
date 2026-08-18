@@ -38,6 +38,7 @@ const run: PipelineRunState = {
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,
+  fillOutcome: null,
   applicationId: null,
   duplicateOf: null,
 };
@@ -263,6 +264,17 @@ describe('tabStore', () => {
       await seedRaw(7, { run: null });
 
       expect(await getDetectedPage(7)).toBeNull();
+    });
+
+    it('conservatively marks a completed run from before fill outcomes were persisted as unverified', async () => {
+      stubChrome();
+      const { fillOutcome: _fillOutcome, ...legacyRun } = run;
+      await seedRaw(7, { frames: {}, run: { ...legacyRun, status: 'filled' } });
+
+      expect(await getPipelineRun(7)).toMatchObject({
+        status: 'filled',
+        fillOutcome: 'unverified',
+      });
     });
   });
 

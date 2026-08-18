@@ -10,7 +10,7 @@ import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import type { JobPageData } from '../lib/messages';
 import { getPipelineRun, reportDetectedPage } from '../lib/tabStore';
 import type { BackendClient } from '../lib/backendClient';
-import type { PageClient } from '../lib/pageClient';
+import type { FillPageCommand, PageClient } from '../lib/pageClient';
 import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
 
 /**
@@ -106,9 +106,27 @@ const pdfBytes = new Uint8Array([37, 80, 68, 70]);
  * invokes the callback with no argument and sets `runtime.lastError`).
  */
 function stubChrome(scanReply?: JobPageData) {
+  // The callback is the *last* argument, not the third: `chrome.tabs.sendMessage` takes an optional
+  // options bag before it, and `lib/pageClient.ts` supplies `{ frameId }` whenever the frame holding
+  // the form is known. A stub hard-coded to the three-argument shape never invokes the callback in
+  // that case, so every command hangs unanswered.
   const tabsSendMessage = vi.fn(
-    (_tabId: number, message: { type: string }, callback: (r: unknown) => void) =>
-      callback(message.type === 'SCAN_PAGE' ? scanReply : { ok: true }),
+    (
+      _tabId: number,
+      message: { type: string; values?: Record<string, string>; resumeFile?: unknown },
+      ...rest: unknown[]
+    ) => {
+      const callback = rest[rest.length - 1] as (r: unknown) => void;
+      return callback(
+        message.type === 'SCAN_PAGE'
+          ? scanReply
+          : {
+              ok: true,
+              filledFieldIds: Object.keys(message.values ?? {}),
+              resumeAttached: message.resumeFile !== undefined,
+            },
+      );
+    },
   );
 
   vi.stubGlobal('chrome', {
@@ -139,12 +157,17 @@ function makeDeps(
     findApplicationsByJobUrl: vi.fn().mockResolvedValue([]),
   };
   const page: PageClient = {
-    // `null` — no account from the page, so the step falls back to the values it drafted. Tests
-    // that care about the page's own report override this.
-    fill: vi.fn().mockResolvedValue(null),
-    // No re-scan by default, so each test states for itself whether the live page answers — the
-    // `null` path (no content script in the tab) falls back to the run's own detection.
-    scan: vi.fn().mockResolvedValue(null),
+    fill: vi.fn().mockImplementation((_tabId: number, command: FillPageCommand) =>
+      Promise.resolve({
+        ok: true as const,
+        filledFieldIds: Object.keys(command.values),
+        resumeAttached: command.resume !== undefined,
+      }),
+    ),
+    // The frame is alive by default but contributes no fresher fields, so the step keeps the run's
+    // own detection while preserving its addressed target. Tests for an absent/stale frame return
+    // `null` explicitly.
+    scan: vi.fn().mockResolvedValue({ fields: [] }),
   };
 
   for (const [key, value] of Object.entries(overrides)) {
@@ -295,6 +318,7 @@ describe('runAnalysis', () => {
       answers,
       unresolvedRequiredFields: [],
       filledFieldCount: 0,
+      fillOutcome: null,
       applicationId: null,
       failure: null,
       duplicateOf: null,
@@ -495,11 +519,17 @@ describe('runFill', () => {
     await runFill(7, profile, deps);
 
     expect(deps.backend.renderResumePdf).not.toHaveBeenCalled();
-    expect(deps.page.fill).toHaveBeenCalledWith(7, {
-      fields: [emailField, questionField],
-      values: { 'f-email': 'jane@example.com', 'f-why': 'Draft answer.' },
-      resume: undefined,
-    });
+    // The trailing `0` is the frame the form was reported from. Broadcasting instead — which this
+    // used to do — lets any other frame in the tab answer first with an empty result.
+    expect(deps.page.fill).toHaveBeenCalledWith(
+      7,
+      {
+        fields: [emailField, questionField],
+        values: { 'f-email': 'jane@example.com', 'f-why': 'Draft answer.' },
+        resume: undefined,
+      },
+      0,
+    );
     expect(deps.backend.saveApplication).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({ status: 'filled' });
   });
@@ -515,11 +545,15 @@ describe('runFill', () => {
 
     await runFill(7, profile, deps);
 
-    expect(deps.page.fill).toHaveBeenCalledWith(7, {
-      fields: [emailField],
-      values: { 'f-email': 'jane@example.com' },
-      resume: undefined,
-    });
+    expect(deps.page.fill).toHaveBeenCalledWith(
+      7,
+      {
+        fields: [emailField],
+        values: { 'f-email': 'jane@example.com' },
+        resume: undefined,
+      },
+      0,
+    );
     expect(await getPipelineRun(7)).toMatchObject({ filledFieldCount: 1 });
   });
 
@@ -537,6 +571,7 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ values: { 'f-why-2': 'Draft answer.' } }),
+      0,
     );
   });
 
@@ -550,7 +585,57 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ fields: [emailField] }),
+      undefined,
     );
+  });
+
+  it('addresses the frame that reported the form, not every frame in the tab', async () => {
+    stubChrome();
+    // Frame 0 is the host page with a stray file input of its own; frame 4 holds the real form.
+    // `getDetectedFrame` picks by field count, and the Fill Step has to address *that* frame — a
+    // broadcast is answered by whichever frame is quickest, which is never the one doing the work.
+    await reportDetectedPage(7, 0, { fields: [resumeField] });
+    await reportDetectedPage(7, 4, { fields: [emailField, questionField] });
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', makeDeps());
+    const deps = makeDeps();
+
+    await runFill(7, profile, deps);
+
+    expect(deps.page.scan).toHaveBeenCalledWith(7, 4);
+    expect(deps.page.fill).toHaveBeenCalledWith(7, expect.anything(), 4);
+  });
+
+  it('falls back to a broadcast scan and fill when navigation destroyed the stored frame', async () => {
+    stubChrome();
+    await reportDetectedPage(7, 4, { fields: [emailField, questionField] });
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', makeDeps());
+    const scan = vi.fn((_tabId: number, frameId?: number) =>
+      Promise.resolve(frameId === 4 ? null : { fields: [emailField] }),
+    );
+    const deps = makeDeps({ scan });
+
+    await runFill(7, profile, deps);
+
+    expect(scan).toHaveBeenNthCalledWith(1, 7, 4);
+    expect(scan).toHaveBeenNthCalledWith(2, 7);
+    expect(deps.page.fill).toHaveBeenCalledTimes(1);
+    expect(deps.page.fill).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ fields: [emailField] }),
+      undefined,
+    );
+  });
+
+  it('broadcasts when no frame ever reported, since there is no frame to address', async () => {
+    stubChrome();
+    // The pasted-job-description path: analyzed before any form rendered, so nothing was reported.
+    await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', makeDeps());
+    const deps = makeDeps({ scan: vi.fn().mockResolvedValue({ fields: [emailField] }) });
+
+    await runFill(7, profile, deps);
+
+    expect(deps.page.scan).toHaveBeenCalledWith(7, undefined);
+    expect(deps.page.fill).toHaveBeenCalledWith(7, expect.anything(), undefined);
   });
 
   it('checkpoints the re-scanned fields onto the run, so the panel reports what was actually filled', async () => {
@@ -606,6 +691,21 @@ describe('runFill', () => {
     expect(await getPipelineRun(7)).toMatchObject({
       unresolvedRequiredFields: [required],
       filledFieldCount: 0,
+      fillOutcome: 'nothing-filled',
+    });
+  });
+
+  it('marks the fill unverified when no frame answers instead of treating drafted values as success', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const deps = makeDeps({ fill: vi.fn().mockResolvedValue(null) });
+
+    await runFill(7, profile, deps);
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'filled',
+      filledFieldCount: 1,
+      fillOutcome: 'unverified',
     });
   });
 
@@ -635,12 +735,15 @@ describe('runFill', () => {
     await reportDetectedPage(7, 0, { fields: [] });
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', makeDeps());
 
-    await runFill(7, profile, makeDeps());
+    const deps = makeDeps();
+    await runFill(7, profile, deps);
 
     expect(await getPipelineRun(7)).toMatchObject({
       filledFieldCount: 0,
       unresolvedRequiredFields: [],
+      fillOutcome: 'no-fields-detected',
     });
+    expect(deps.page.fill).not.toHaveBeenCalled();
   });
 
   it('renders the tailored resume once any resume_upload field is detected, leaving which input receives it to the content script', async () => {
@@ -664,11 +767,15 @@ describe('runFill', () => {
 
     expect(deps.backend.renderResumePdf).toHaveBeenCalledTimes(1);
     expect(deps.backend.renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
-    expect(deps.page.fill).toHaveBeenCalledWith(7, {
-      fields: [decoyField, resumeField],
-      values: {},
-      resume: { name: 'jane_doe_resume.pdf', type: 'application/pdf', bytes: pdfBytes.buffer },
-    });
+    expect(deps.page.fill).toHaveBeenCalledWith(
+      7,
+      {
+        fields: [decoyField, resumeField],
+        values: {},
+        resume: { name: 'jane_doe_resume.pdf', type: 'application/pdf', bytes: pdfBytes.buffer },
+      },
+      0,
+    );
     expect(await getPipelineRun(7)).toMatchObject({ unresolvedRequiredFields: [] });
   });
 
@@ -803,13 +910,20 @@ describe('the backend adapter', () => {
 
     await runFill(7, profile);
 
-    expect(tabsSendMessage).toHaveBeenCalledWith(7, { type: 'SCAN_PAGE' }, expect.any(Function));
+    // Four arguments, not three: both commands are addressed to the frame that reported the form.
+    expect(tabsSendMessage).toHaveBeenCalledWith(
+      7,
+      { type: 'SCAN_PAGE' },
+      { frameId: 0 },
+      expect.any(Function),
+    );
     expect(tabsSendMessage).toHaveBeenCalledWith(
       7,
       expect.objectContaining({
         type: 'FILL_FORM',
         values: { 'f-email': 'jane@example.com' },
       }),
+      { frameId: 0 },
       expect.any(Function),
     );
   });

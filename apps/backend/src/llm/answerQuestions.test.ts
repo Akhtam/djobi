@@ -228,4 +228,29 @@ describe('answerQuestions', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('drops an answer that ambiguously matches duplicate normalized options', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'field-location',
+            question: 'Where will you work?',
+            answer: 'Remote',
+            sourceStoryIds: [],
+          },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      {
+        fieldId: 'field-location',
+        question: 'Where will you work?',
+        options: ['Remote', ' remote '],
+      },
+    ]);
+
+    expect(result).toEqual([]);
+  });
 });

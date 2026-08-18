@@ -1,4 +1,3 @@
-import type { StructuredCallFailure } from '@djobi/shared';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { anthropic } from './client.js';
@@ -19,22 +18,24 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
   schema: Schema;
 }
 
+/** Backend-local classification used to decide whether this exact model call may be retried. */
+export type StructuredCallFailure = 'no-tool-call' | 'invalid-input';
+
 /**
  * A structured call that didn't produce a usable result.
  *
- * The distinction above used to exist only inside the two message strings, and those strings were
- * the entire interface: they were thrown, flattened into `{ error }` by `app.ts`, dug back out by
- * `callBackend`'s `reasonFrom`, re-wrapped with a status prefix, stored on the run, and rendered
- * verbatim in the panel — six modules, and asserted verbatim across both packages' test suites.
- * Nothing anywhere could tell the retryable case from the non-retryable one without matching on
- * substrings of English. `message` is unchanged so what the user reads stays the same; `kind` is
- * what anything downstream should branch on.
+ * The distinction stays local to the operation that can act on it: a missing tool call gets one
+ * retry, while invalid input and provider failures escape immediately. `message` remains suitable
+ * for the generic `{ error }` HTTP response after the local decision has been made.
  */
 export class StructuredCallError extends Error {
   constructor(
     readonly kind: StructuredCallFailure,
     readonly toolName: string,
     message: string,
+    readonly requestId?: string,
+    readonly retryable = false,
+    readonly stopReason?: string | null,
   ) {
     super(message);
     this.name = 'StructuredCallError';
@@ -54,37 +55,71 @@ export class StructuredCallError extends Error {
 export async function callStructured<Schema extends z.ZodTypeAny>(
   options: StructuredToolCallOptions<Schema>,
 ): Promise<z.infer<Schema>> {
-  const response = await anthropic.messages.create({
-    model: options.model,
-    max_tokens: options.maxTokens,
-    tools: [
+  const callOnce = async (): Promise<z.infer<Schema>> => {
+    const response = await anthropic.messages.create(
       {
-        name: options.toolName,
-        description: options.toolDescription,
-        input_schema: zodToJsonSchema(options.schema, { $refStrategy: 'none' }) as never,
+        model: options.model,
+        max_tokens: options.maxTokens,
+        tools: [
+          {
+            name: options.toolName,
+            description: options.toolDescription,
+            input_schema: zodToJsonSchema(options.schema, { $refStrategy: 'none' }) as never,
+          },
+        ],
+        tool_choice: { type: 'tool', name: options.toolName },
+        messages: [{ role: 'user', content: options.userContent }],
       },
-    ],
-    tool_choice: { type: 'tool', name: options.toolName },
-    messages: [{ role: 'user', content: options.userContent }],
-  });
-
-  const toolUse = response.content.find((block) => block.type === 'tool_use');
-  if (!toolUse || toolUse.type !== 'tool_use') {
-    throw new StructuredCallError(
-      'no-tool-call',
-      options.toolName,
-      `${options.toolName} did not produce a tool call.`,
+      // The SDK otherwise retries selected transport/status failures itself. Keep the total request
+      // budget explicit here: one normal attempt, plus one semantic retry only for no-tool-call.
+      { maxRetries: 0 },
     );
-  }
 
-  const parsed = options.schema.safeParse(toolUse.input);
-  if (!parsed.success) {
-    throw new StructuredCallError(
-      'invalid-input',
-      options.toolName,
-      `${options.toolName} produced input that failed validation: ${parsed.error.message}`,
-    );
-  }
+    const toolUse = response.content.find((block) => block.type === 'tool_use');
+    if (!toolUse || toolUse.type !== 'tool_use') {
+      const retryable = response.stop_reason === 'end_turn' || response.stop_reason == null;
+      throw new StructuredCallError(
+        'no-tool-call',
+        options.toolName,
+        `${options.toolName} did not produce a tool call.`,
+        response._request_id ?? undefined,
+        retryable,
+        response.stop_reason,
+      );
+    }
 
-  return parsed.data;
+    const parsed = options.schema.safeParse(toolUse.input);
+    if (!parsed.success) {
+      throw new StructuredCallError(
+        'invalid-input',
+        options.toolName,
+        `${options.toolName} produced input that failed validation: ${parsed.error.message}`,
+        response._request_id ?? undefined,
+      );
+    }
+
+    return parsed.data;
+  };
+
+  try {
+    return await callOnce();
+  } catch (error) {
+    if (
+      !(error instanceof StructuredCallError) ||
+      error.kind !== 'no-tool-call' ||
+      !error.retryable
+    )
+      throw error;
+
+    console.warn('[djobi] structured_call_retry', {
+      kind: error.kind,
+      toolName: error.toolName,
+      model: options.model,
+      attempt: 2,
+      maxAttempts: 2,
+      requestId: error.requestId,
+      stopReason: error.stopReason,
+    });
+    return callOnce();
+  }
 }

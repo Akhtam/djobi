@@ -28,6 +28,7 @@ const run: PipelineRunState = {
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,
+  fillOutcome: null,
   applicationId: null,
   duplicateOf: null,
 };

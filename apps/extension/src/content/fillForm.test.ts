@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DetectedField } from '@djobi/shared';
-import { attachResumeFile, fillForm, resolveField } from './fillForm';
+import { attachResumeFile, fillForm, fillPage, resolveField } from './fillForm';
 
 function field(overrides: Partial<DetectedField>): DetectedField {
   return {
@@ -182,6 +182,80 @@ describe('fillForm', () => {
     expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('opt_yes');
   });
 
+  it('leaves a select untouched when multiple live options have the same normalized label', async () => {
+    document.body.innerHTML = `
+      <select id="f1">
+        <option value="">Select...</option>
+        <option value="remote-a">Remote</option>
+        <option value="remote-b"> remote </option>
+      </select>
+    `;
+
+    const filled = await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1', inputType: 'select' })],
+      { f1: 'REMOTE' },
+      FAST,
+    );
+
+    expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('');
+    expect(filled).toEqual([]);
+  });
+
+  it('uses a recorded option selector before an ambiguous live-label fallback', async () => {
+    document.body.innerHTML = `
+      <select id="f1">
+        <option value="remote-a">Remote</option>
+        <option id="recorded" value="remote-b"> remote </option>
+      </select>
+    `;
+
+    await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          inputType: 'select',
+          options: [{ label: 'Remote', selector: '#recorded' }],
+        }),
+      ],
+      { f1: 'Remote' },
+      FAST,
+    );
+
+    expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('remote-b');
+  });
+
+  it('does not fall back to the DOM when the recorded options are already ambiguous', async () => {
+    document.body.innerHTML = `
+      <select id="f1">
+        <option value="">Select...</option>
+        <option value="remote">Remote</option>
+      </select>
+    `;
+
+    const filled = await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          inputType: 'select',
+          options: [
+            { label: 'Remote', selector: '#stale-a' },
+            { label: ' remote ', selector: '#stale-b' },
+          ],
+        }),
+      ],
+      { f1: 'REMOTE' },
+      FAST,
+    );
+
+    expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('');
+    expect(filled).toEqual([]);
+  });
+
   it("checks the radio the option's recorded selector points at, without re-deriving any label text", () => {
     document.body.innerHTML = `
       <fieldset id="f1">
@@ -325,6 +399,30 @@ describe('fillForm', () => {
     expect(document.querySelector<HTMLInputElement>('#opt-py')!.checked).toBe(false);
   });
 
+  it.each(['radiogroup', 'checkboxgroup'] as const)(
+    'does not guess between duplicate labels in a %s fallback',
+    async (elementRole) => {
+      const inputType = elementRole === 'radiogroup' ? 'radio' : 'checkbox';
+      document.body.innerHTML = `
+        <fieldset id="f1">
+          <label><input type="${inputType}" id="opt-a" />Remote</label>
+          <label><input type="${inputType}" id="opt-b" /> remote </label>
+        </fieldset>
+      `;
+
+      const filled = await fillForm(
+        document,
+        [field({ id: 'f1', selector: '#f1', elementRole, options: undefined })],
+        { f1: 'REMOTE' },
+        FAST,
+      );
+
+      expect(document.querySelector<HTMLInputElement>('#opt-a')!.checked).toBe(false);
+      expect(document.querySelector<HTMLInputElement>('#opt-b')!.checked).toBe(false);
+      expect(filled).toEqual([]);
+    },
+  );
+
   it('clicks a combobox trigger open, then clicks the matching option once it renders', async () => {
     document.body.innerHTML = `
       <div id="portal"></div>
@@ -399,6 +497,35 @@ describe('fillForm', () => {
     );
 
     expect(clickedId).toBe('opt-yes');
+  });
+
+  it('does not guess between matching options from two unlinked open comboboxes', async () => {
+    document.body.innerHTML = `
+      <input id="f1" role="combobox" />
+      <ul role="listbox"><li role="option" id="yes-a">Yes</li></ul>
+      <ul role="listbox"><li role="option" id="yes-b"> yes </li></ul>
+    `;
+    const clicked: string[] = [];
+    document.querySelectorAll('[role="option"]').forEach((option) => {
+      option.addEventListener('click', () => clicked.push(option.id));
+    });
+
+    const filled = await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'combobox',
+          options: [{ label: 'Yes', selector: null }],
+        }),
+      ],
+      { f1: 'Yes' },
+      FAST,
+    );
+
+    expect(clicked).toEqual([]);
+    expect(filled).toEqual([]);
   });
 
   it('does not throw when a combobox option never renders, and continues filling other fields', async () => {
@@ -579,5 +706,88 @@ describe('attachResumeFile', () => {
     const items = dropped!.items;
     expect(items).toHaveLength(1);
     expect(Array.from(items as unknown as ArrayLike<DataTransferItem>)[0]!.kind).toBe('file');
+  });
+});
+
+describe('fillPage', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns null synchronously when this frame owns none of the requested fields', () => {
+    document.body.innerHTML = `<input id="other" />`;
+
+    expect(
+      fillPage(document, [field({ selector: '#missing' })], { f1: 'x' }, undefined, FAST),
+    ).toBe(null);
+  });
+
+  it('returns an honest empty result from a frame that owns the form but received no values', async () => {
+    document.body.innerHTML = `<input id="f1" />`;
+
+    const pending = fillPage(document, [field({})], {}, undefined, FAST);
+
+    expect(pending).toBeInstanceOf(Promise);
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      filledFieldIds: [],
+      resumeAttached: false,
+    });
+  });
+
+  it('assembles filledFieldIds from the values that survive the verification settle', async () => {
+    document.body.innerHTML = `<input id="f1" /><input id="f2" />`;
+    const reverting = document.querySelector<HTMLInputElement>('#f1')!;
+    reverting.addEventListener('input', () => setTimeout(() => (reverting.value = ''), 0));
+
+    await expect(
+      fillPage(
+        document,
+        [field({ id: 'f1', selector: '#f1' }), field({ id: 'f2', selector: '#f2' })],
+        { f1: 'first', f2: 'second' },
+        undefined,
+        FAST,
+      ),
+    ).resolves.toMatchObject({ filledFieldIds: ['f2'] });
+  });
+
+  it('prefers a required resume upload and reports the attachment from the input state', async () => {
+    document.body.innerHTML = `
+      <input id="decoy" type="file" />
+      <input id="resume" type="file" />
+    `;
+    const file = new File(['%PDF'], 'resume.pdf', { type: 'application/pdf' });
+    const fields = [
+      field({ id: 'decoy', selector: '#decoy', category: 'resume_upload' }),
+      field({ id: 'resume', selector: '#resume', category: 'resume_upload', required: true }),
+    ];
+
+    await expect(fillPage(document, fields, {}, file, FAST)).resolves.toEqual({
+      ok: true,
+      filledFieldIds: [],
+      resumeAttached: true,
+    });
+    expect(document.querySelector<HTMLInputElement>('#decoy')!.files).toHaveLength(0);
+    expect(document.querySelector<HTMLInputElement>('#resume')!.files?.[0]).toBe(file);
+  });
+
+  it('reports a resume rejected by the page as unattached', async () => {
+    document.body.innerHTML = `<input id="resume" type="file" />`;
+    const input = document.querySelector<HTMLInputElement>('#resume')!;
+    input.addEventListener('change', () => {
+      const empty = Object.assign([], { item: () => null });
+      Object.defineProperty(input, 'files', { value: empty, configurable: true });
+    });
+    const file = new File(['%PDF'], 'resume.pdf', { type: 'application/pdf' });
+
+    await expect(
+      fillPage(
+        document,
+        [field({ id: 'resume', selector: '#resume', category: 'resume_upload' })],
+        {},
+        file,
+        FAST,
+      ),
+    ).resolves.toMatchObject({ resumeAttached: false });
   });
 });

@@ -179,6 +179,17 @@ describe('optionFor', () => {
   it('returns undefined for a field with no options at all', () => {
     expect(optionFor(field(), 'Yes')).toBeUndefined();
   });
+
+  it('returns undefined when multiple recorded options have the same normalized label', () => {
+    const ambiguous = field({
+      options: [
+        { label: 'Remote', selector: '#remote-a' },
+        { label: ' remote ', selector: '#remote-b' },
+      ],
+    });
+
+    expect(optionFor(ambiguous, 'REMOTE')).toBeUndefined();
+  });
 });
 
 describe('matchAnswerToField', () => {

@@ -8,6 +8,7 @@ vi.mock('../llm/answerQuestions.js', () => ({
 }));
 
 const { app } = await import('../app.js');
+const { StructuredCallError } = await import('../llm/structuredCall.js');
 
 const sampleProfile: Profile = {
   fullName: 'Jane Doe',
@@ -46,7 +47,9 @@ const sampleAnswers: QuestionAnswer[] = [
 
 describe('POST /answer-questions', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     mockAnswerQuestions.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('returns the drafted answers for a valid request', async () => {
@@ -128,7 +131,14 @@ describe('POST /answer-questions', () => {
 
   it("returns a JSON body carrying the real reason when answerQuestions throws, rather than a plain-text 500 the extension can't parse", async () => {
     mockAnswerQuestions.mockRejectedValueOnce(
-      new Error('report_answers did not produce a tool call.'),
+      new StructuredCallError(
+        'no-tool-call',
+        'report_answers',
+        'report_answers did not produce a tool call.',
+        'req-final',
+        false,
+        'refusal',
+      ),
     );
 
     const res = await app.request('/answer-questions', {
@@ -145,6 +155,14 @@ describe('POST /answer-questions', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
     await expect(res.json()).resolves.toEqual({
       error: 'report_answers did not produce a tool call.',
+    });
+    expect(console.error).toHaveBeenCalledWith('[djobi] POST /answer-questions failed', {
+      name: 'StructuredCallError',
+      message: 'report_answers did not produce a tool call.',
+      kind: 'no-tool-call',
+      toolName: 'report_answers',
+      requestId: 'req-final',
+      stopReason: 'refusal',
     });
   });
 

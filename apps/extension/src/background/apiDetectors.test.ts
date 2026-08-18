@@ -140,6 +140,25 @@ describe('enrichWithApiOracle', () => {
       ]);
     });
 
+    it('does not attach an arbitrary selector when duplicate DOM labels match one API choice', async () => {
+      const fields = [
+        question('Are you authorized to work in the US?', {
+          options: [
+            { label: 'Yes', selector: '#opt-yes-a' },
+            { label: ' yes ', selector: '#opt-yes-b' },
+          ],
+        }),
+      ];
+
+      const result = await enrichWithApiOracle(
+        'https://boards.greenhouse.io/acme/jobs/1',
+        fields,
+        stubFetch(response),
+      );
+
+      expect(result[0].options?.[0]).toEqual({ label: 'Yes', selector: null });
+    });
+
     it('leaves a field untouched when no question matches its label', async () => {
       const fields = [field({ label: 'Referral code' })];
 

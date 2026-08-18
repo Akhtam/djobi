@@ -21,9 +21,11 @@ const resumeField: DetectedField = {
 
 /** Stubs `chrome.tabs.sendMessage`, replying with `reply` (or not at all when it's `undefined`). */
 function stubTabs(reply?: unknown) {
-  const sendMessage = vi.fn(
-    (_tabId: number, _message: unknown, callback: (response?: unknown) => void) => callback(reply),
-  );
+  // The callback is the last argument, since an optional `{ frameId }` bag may sit before it.
+  const sendMessage = vi.fn((_tabId: number, _message: unknown, ...rest: unknown[]) => {
+    const callback = rest[rest.length - 1] as (response?: unknown) => void;
+    return callback(reply);
+  });
   const readLastError = vi.fn(() => undefined);
   vi.stubGlobal('chrome', { tabs: { sendMessage }, runtime: {} });
   Object.defineProperty(chrome.runtime, 'lastError', { get: readLastError, configurable: true });
@@ -37,6 +39,31 @@ describe('chromePageClient.scan', () => {
     const { sendMessage } = stubTabs({ fields: [resumeField] });
 
     await expect(chromePageClient.scan(7)).resolves.toEqual({ fields: [resumeField] });
+    expect(sendMessage).toHaveBeenCalledWith(7, { type: 'SCAN_PAGE' }, expect.any(Function));
+  });
+
+  it('addresses the frame holding the form when one is known, instead of broadcasting to the tab', async () => {
+    // Without `{ frameId }` the runtime delivers to every frame and resolves with whichever answers
+    // first. The content script runs in all of them, third-party iframes included, so on a page
+    // carrying an invisible hCaptcha the wrong frame's empty answer wins the race.
+    const { sendMessage } = stubTabs({ fields: [resumeField] });
+
+    await chromePageClient.scan(7, 3);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      7,
+      { type: 'SCAN_PAGE' },
+      { frameId: 3 },
+      expect.any(Function),
+    );
+  });
+
+  it('broadcasts when no frame has reported yet, since there is nobody to address', async () => {
+    const { sendMessage } = stubTabs({ fields: [resumeField] });
+
+    await chromePageClient.scan(7);
+
+    // Three arguments, not four — `{ frameId: undefined }` is not the same message to the runtime.
     expect(sendMessage).toHaveBeenCalledWith(7, { type: 'SCAN_PAGE' }, expect.any(Function));
   });
 
@@ -104,6 +131,19 @@ describe('chromePageClient.fill', () => {
         values: { 'f-email': 'jane@example.com' },
         resumeFile: undefined,
       },
+      expect.any(Function),
+    );
+  });
+
+  it('addresses the frame holding the form when one is known', async () => {
+    const { sendMessage } = stubTabs({ ok: true, filledFieldIds: [], resumeAttached: false });
+
+    await chromePageClient.fill(7, { fields: [], values: {} }, 3);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ type: 'FILL_FORM' }),
+      { frameId: 3 },
       expect.any(Function),
     );
   });

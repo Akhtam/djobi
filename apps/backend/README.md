@@ -13,10 +13,9 @@ Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**,
 `app.ts` builds and returns the Hono app with all six route modules mounted, and installs an
 `onError` handler that renders every uncaught failure as a `BackendErrorBody` (from
 `@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack trace or a bare non-JSON
-body to the extension. A failure from `structuredCall.ts` carries a `kind` alongside the message, so
-the extension can branch on _why_ a structured call failed without matching substrings of English.
-It's a separate module from the entrypoint precisely so route tests can import the app without
-starting a server.
+body to the extension. `structuredCall.ts` handles its one retryable case locally, logs the safe
+attempt metadata, and exposes only the final message through the generic error body. It's a separate
+module from the entrypoint precisely so route tests can import the app without starting a server.
 
 `index.ts` is the entrypoint: starts `app.ts` via `@hono/node-server` bound to `127.0.0.1` (never
 `0.0.0.0`) on `$PORT`, defaulting to 5391. It mounts `app` under a wrapper instance carrying

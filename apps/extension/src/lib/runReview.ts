@@ -1,4 +1,6 @@
-import type { PipelineRunState } from './tabStore';
+import type { FillOutcome, PipelineRunState } from './tabStore';
+
+export type { FillOutcome } from './tabStore';
 
 /**
  * What an Application Pipeline run means to the person watching it.
@@ -19,8 +21,18 @@ import type { PipelineRunState } from './tabStore';
  * A run reaches `'filled'` whenever every step "succeeded" — including the case where it was handed
  * no fields at all and therefore wrote nothing. That is a failure wearing a success status, and it
  * reads as success to anything looking only at `status`.
+ *
+ * `'no-fields-detected'` and `'nothing-filled'` are both "zero fields written", and they were one
+ * member until the banner for it had to say something true about both. They are opposite problems:
+ * the first is a page this extension never got a look at (an orphaned content script, a form that
+ * never rendered), where reloading is the fix; the second is a page whose form was read correctly
+ * and then rejected every value written into it, where reloading changes nothing and the field list
+ * is what the user needs. Telling someone to reload a page that was detected perfectly well sends
+ * them after the wrong problem.
+ *
+ * `'unverified'` is different again: no frame answered, so counts describe what was attempted, not
+ * what the page kept. It must never be reconstructed as success.
  */
-export type FillOutcome = 'nothing-filled' | 'complete' | 'incomplete';
 
 /** The header pill: what it says, and how it should look. */
 export interface StatusPill {
@@ -50,13 +62,9 @@ export interface RunReview {
 /** The review with nothing to show — no run yet, or one that has produced nothing worth reporting. */
 const IDLE: RunReview = { pill: null, canReview: false, outcome: null };
 
-/** How the Fill Step went, from the two counts the run records. */
-function outcomeOf(run: PipelineRunState): FillOutcome {
-  if (run.filledFieldCount === 0) return 'nothing-filled';
-  return run.unresolvedRequiredFields.length > 0 ? 'incomplete' : 'complete';
-}
-
 const OUTCOME_PILL: Record<FillOutcome, StatusPill> = {
+  unverified: { label: 'Fill unverified', tone: 'error' },
+  'no-fields-detected': { label: 'No form found', tone: 'error' },
   'nothing-filled': { label: 'Nothing filled', tone: 'error' },
   incomplete: { label: 'Incomplete', tone: 'error' },
   complete: { label: 'Done', tone: 'success' },
@@ -91,7 +99,9 @@ export function reviewOf(run: PipelineRunState | null): RunReview {
     case 'saving':
     case 'save-error':
     case 'saved': {
-      const outcome = outcomeOf(run);
+      // Store reads normalize legacy completed runs to `unverified`; this fallback also keeps a
+      // malformed or hand-built run from becoming a blank pill.
+      const outcome = run.fillOutcome ?? 'unverified';
       const pill =
         run.status === 'saving'
           ? { label: 'Saving...', tone: 'busy' as const }

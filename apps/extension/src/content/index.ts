@@ -4,10 +4,10 @@
  * changes (see `detect.ts`); answers `SCAN_PAGE` with a fresh scan on demand, and `FILL_FORM` by
  * filling the page.
  */
-import type { ContentCommandMessage, FillFormResult, JobPageData } from '../lib/messages';
+import type { ContentCommandMessage, JobPageData } from '../lib/messages';
 import { detectFields } from './detectFields';
 import { watchForJobApplicationPage } from './detect';
-import { attachResumeFile, fillForm, resolveField } from './fillForm';
+import { fillPage } from './fillForm';
 
 /** Scans the live page into the shape the background stores and the Application Pipeline consumes. */
 function scan(): JobPageData {
@@ -89,35 +89,17 @@ chrome.runtime.onMessage.addListener(
 
     if (message.type !== 'FILL_FORM') return false;
 
-    void (async () => {
-      const filledFieldIds = await fillForm(document, message.fields, message.values);
-      let resumeAttached = false;
+    const resumeFile = message.resumeFile
+      ? new File([new Uint8Array(message.resumeFile.bytes)], message.resumeFile.name, {
+          type: message.resumeFile.type,
+        })
+      : undefined;
+    const pending = fillPage(document, message.fields, message.values, resumeFile);
 
-      if (message.resumeFile) {
-        // Some ATS platforms (e.g. Ashby) render more than one resume_upload-classified file
-        // input — prefer the required one so the file lands on the field that's actually
-        // validated, not an unlabeled/decoy one that happens to come first.
-        const uploadField =
-          message.fields.find((field) => field.category === 'resume_upload' && field.required) ??
-          message.fields.find((field) => field.category === 'resume_upload');
-        const input = uploadField ? resolveField<HTMLInputElement>(document, uploadField) : null;
-
-        if (input) {
-          const file = new File(
-            [new Uint8Array(message.resumeFile.bytes)],
-            message.resumeFile.name,
-            { type: message.resumeFile.type },
-          );
-          attachResumeFile(input, file);
-          // The input holding a file is the page's own confirmation that the attach landed —
-          // a widget that rejected it (wrong MIME type, size cap) leaves `files` empty.
-          resumeAttached = (input.files?.length ?? 0) > 0;
-        }
-      }
-
-      const result: FillFormResult = { ok: true, filledFieldIds, resumeAttached };
-      sendResponse(result);
-    })();
+    // A non-owner must decline synchronously. Sending `null` or holding its channel open would let
+    // an empty third-party frame beat the real form's asynchronous verified response.
+    if (pending === null) return false;
+    void pending.then(sendResponse);
 
     return true; // keep the message channel open for the async sendResponse above
   },

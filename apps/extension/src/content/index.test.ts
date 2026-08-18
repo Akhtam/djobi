@@ -217,6 +217,56 @@ describe('content script', () => {
     expect(sendResponse).not.toHaveBeenCalled();
   });
 
+  it('stays silent on FILL_FORM in a frame holding none of the fields, so the real frame is the one that answers', async () => {
+    // A third-party iframe — an invisible hCaptcha, a tag-manager pixel — gets its own copy of this
+    // content script, resolves none of the fields, and used to answer `filledFieldIds: []`
+    // immediately. `chrome.tabs.sendMessage` resolves with whichever frame replies first, and this
+    // one always beat the frame that actually owns the form, since that one waits out `fillForm`'s
+    // verification settle. The Fill Step then reported "nothing filled" for a form it had just
+    // filled correctly.
+    document.body.innerHTML = `<main><h1>hCaptcha challenge</h1></main>`;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+    const sendResponse = vi.fn();
+
+    expect(
+      listener(
+        {
+          type: 'FILL_FORM',
+          fields: [
+            {
+              id: 'f1',
+              label: 'Email',
+              inputType: 'text',
+              selector: '#email-field',
+              category: 'email',
+              required: false,
+              elementRole: 'native',
+            },
+          ],
+          values: { f1: 'jane@example.com' },
+        },
+        {},
+        sendResponse,
+      ),
+      // `false`, not `true`: no async reply is coming, so the message channel must not be held open.
+    ).toBe(false);
+    // Given a moment in case a reply were on its way — the point is that none ever is.
+    await Promise.resolve();
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
   it('fills the form when it receives a FILL_FORM message', async () => {
     document.body.innerHTML = `<main><input id="email-field" type="text" /></main>`;
     let listener: (
@@ -233,25 +283,27 @@ describe('content script', () => {
 
     await loadContentScript();
     const sendResponse = vi.fn();
-    listener(
-      {
-        type: 'FILL_FORM',
-        fields: [
-          {
-            id: 'f1',
-            label: 'Email',
-            inputType: 'text',
-            selector: '#email-field',
-            category: 'email',
-            required: false,
-            elementRole: 'native',
-          },
-        ],
-        values: { f1: 'jane@example.com' },
-      },
-      {},
-      sendResponse,
-    );
+    expect(
+      listener(
+        {
+          type: 'FILL_FORM',
+          fields: [
+            {
+              id: 'f1',
+              label: 'Email',
+              inputType: 'text',
+              selector: '#email-field',
+              category: 'email',
+              required: false,
+              elementRole: 'native',
+            },
+          ],
+          values: { f1: 'jane@example.com' },
+        },
+        {},
+        sendResponse,
+      ),
+    ).toBe(true);
     // `fillForm` verifies what it wrote after letting the page settle, so the reply is a timer
     // away rather than a microtask away — see `content/fillForm.ts`.
     await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled());
@@ -307,7 +359,17 @@ describe('content script', () => {
 
     const input = document.querySelector<HTMLInputElement>('#resume-field')!;
     expect(input.files).toHaveLength(1);
-    expect(input.files?.[0].name).toBe('resume.pdf');
+    const attached = input.files?.[0];
+    expect(attached?.name).toBe('resume.pdf');
+    expect(attached?.type).toBe('application/pdf');
+    expect(attached?.size).toBe(4);
+    const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(reader.result as ArrayBuffer));
+      reader.addEventListener('error', () => reject(reader.error));
+      reader.readAsArrayBuffer(attached!);
+    });
+    expect(Array.from(new Uint8Array(bytes))).toEqual([37, 80, 68, 70]);
   });
 
   it("attaches the resume to the required resume_upload field when more than one is detected (e.g. Ashby's extra unlabeled, non-required file input)", async () => {

@@ -75,6 +75,8 @@ export function App() {
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
   const failure = run?.failure ?? null;
+  /** How many fields the run's own re-scan saw — what separates the two zero-filled outcomes. */
+  const detectedFieldCount = jobPageData?.fields.length ?? 0;
   const duplicateOf = run?.duplicateOf ?? null;
   // The pasted job description: the run's copy once analysis has started, the panel-local draft
   // before that. It is the only input the Analysis Step has — nothing is read off the page.
@@ -311,7 +313,18 @@ export function App() {
 
         {/* The Fill Step's outcome sits above the review, not below it: the review is long, and a
             result the user has to scroll past it to find is a result they won't see. */}
-        {outcome === 'nothing-filled' && (
+        {outcome === 'unverified' && (
+          <div className="state error">
+            <span className="state-icon error">⚠️</span>
+            <p>
+              The fill could not be verified because this page did not answer. Check the form before
+              submitting or saving, and reload the page before trying again if fields are still
+              empty.
+            </p>
+          </div>
+        )}
+
+        {outcome === 'no-fields-detected' && (
           <div className="state error">
             <span className="state-icon error">⚠️</span>
             <p>
@@ -319,6 +332,20 @@ export function App() {
               taken just now. You'll need to fill the form yourself before saving this application.
               If the form is visibly there, reload the page and try again: this extension can't
               reach a page that was already open when it was last reloaded.
+            </p>
+          </div>
+        )}
+
+        {/* The other zero-filled outcome, and a different problem: the form was read fine and then
+            kept none of what was written into it. Reloading is not the advice here — the list of
+            fields to fill by hand is. */}
+        {outcome === 'nothing-filled' && (
+          <div className="state error">
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Nothing was filled — this page's form was found ({detectedFieldCount} field
+              {detectedFieldCount === 1 ? '' : 's'}), but it kept none of the values written into
+              it. You'll need to fill it in yourself before saving this application.
             </p>
           </div>
         )}

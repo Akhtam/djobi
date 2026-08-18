@@ -27,7 +27,9 @@ function toolUseResponse(input: unknown) {
 
 describe('callStructured', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     mockCreate.mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   it('derives the tool input_schema from the given zod schema, flat with no $ref', async () => {
@@ -64,6 +66,7 @@ describe('callStructured', () => {
       properties: { note: { type: 'string' } },
     });
     expect(inputSchema.required).toEqual(expect.arrayContaining(['title', 'tags', 'detail']));
+    expect(mockCreate.mock.calls[0][1]).toEqual({ maxRetries: 0 });
   });
 
   const call = () =>
@@ -79,7 +82,31 @@ describe('callStructured', () => {
   // The two failures below are meaningfully different — a model that answered in prose usually
   // succeeds on a retry, one whose input didn't fit the schema usually doesn't — and telling them
   // apart used to require matching substrings of the message text.
-  it('reports a prose answer as a retryable no-tool-call failure', async () => {
+  it('retries one prose answer and returns the second valid tool call', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'Sure, here you go!' }],
+        _request_id: 'req-first',
+      })
+      .mockResolvedValueOnce(
+        toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+      );
+
+    await expect(call()).resolves.toMatchObject({ title: 'Hello' });
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_retry', {
+      kind: 'no-tool-call',
+      toolName: 'report_sample',
+      model: 'claude-haiku-4-5',
+      attempt: 2,
+      maxAttempts: 2,
+      requestId: 'req-first',
+      stopReason: undefined,
+    });
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('sample prompt');
+  });
+
+  it('reports a no-tool-call failure after exactly one retry', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'Sure, here you go!' }] });
 
     await expect(call()).rejects.toMatchObject({
@@ -87,6 +114,7 @@ describe('callStructured', () => {
       toolName: 'report_sample',
       message: 'report_sample did not produce a tool call.',
     });
+    expect(mockCreate).toHaveBeenCalledTimes(2);
   });
 
   it('reports a schema violation as invalid-input, distinct from the model not calling the tool', async () => {
@@ -96,5 +124,34 @@ describe('callStructured', () => {
 
     expect(error).toBeInstanceOf(StructuredCallError);
     expect(error).toMatchObject({ kind: 'invalid-input', toolName: 'report_sample' });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(console.warn).not.toHaveBeenCalled();
   });
+
+  it('does not semantically retry an SDK or network failure', async () => {
+    const failure = new Error('connection failed');
+    mockCreate.mockRejectedValue(failure);
+
+    await expect(call()).rejects.toBe(failure);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it.each(['max_tokens', 'refusal', 'pause_turn'])(
+    'does not retry a no-tool response stopped by %s',
+    async (stopReason) => {
+      mockCreate.mockResolvedValue({
+        content: [{ type: 'text', text: 'No tool call' }],
+        stop_reason: stopReason,
+      });
+
+      await expect(call()).rejects.toMatchObject({
+        kind: 'no-tool-call',
+        retryable: false,
+        stopReason,
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(console.warn).not.toHaveBeenCalled();
+    },
+  );
 });

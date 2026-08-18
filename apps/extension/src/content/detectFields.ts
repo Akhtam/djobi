@@ -932,8 +932,8 @@ const NON_DATA_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'im
  * - **So it must not be called from an attribute `MutationObserver`** watching the same document,
  *   which its own tagging would retrigger forever. `detect.ts` filters accordingly; a new caller
  *   has to do the same.
- * - **Return order is `[native…, comboboxes…, groups…]`, not document order.** `content/index.ts`
- *   relies on it when choosing which `resume_upload` input receives the file. Asserted below.
+ * - **Return order is `[native…, comboboxes…, groups…]`, not document order.** Consumers should not
+ *   infer widget priority from it; `fillPage` applies the upload-selection policy explicitly.
  * - **Ids are stable across scans of the same document, not globally unique over time.** A tag
  *   survives re-scans, but an element's *own* `id` wins when it has one — and React widgets that
  *   remount regenerate theirs, so for exactly the custom widgets this module works hardest to

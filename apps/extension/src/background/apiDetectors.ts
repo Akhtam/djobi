@@ -1,4 +1,10 @@
-import { normalizeLabel, type DetectedField, type FieldOption } from '@djobi/shared';
+import {
+  labelsMatch,
+  normalizeLabel,
+  uniqueMatch,
+  type DetectedField,
+  type FieldOption,
+} from '@djobi/shared';
 
 /**
  * Platform API oracles: given a job posting URL, fetch that ATS's own published schema for the form
@@ -57,14 +63,10 @@ function parseUrl(url: string): URL | null {
  * only mounts when opened) get `selector: null` and fall back to label matching.
  */
 function mergeOptions(existing: FieldOption[] | undefined, apiLabels: string[]): FieldOption[] {
-  const selectorByLabel = new Map(
-    (existing ?? []).map((option) => [normalizeLabel(option.label), option.selector]),
-  );
-
-  return apiLabels.map((label) => ({
-    label,
-    selector: selectorByLabel.get(normalizeLabel(label)) ?? null,
-  }));
+  return apiLabels.map((label) => {
+    const match = uniqueMatch(existing ?? [], (option) => labelsMatch(option.label, label));
+    return { label, selector: match?.selector ?? null };
+  });
 }
 
 /**

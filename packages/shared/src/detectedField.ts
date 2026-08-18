@@ -136,7 +136,7 @@ export function parseDetectedFields(value: unknown): DetectedField[] {
  * round-trip exactly, with no second derivation to disagree with the first.
  */
 export function optionFor(field: DetectedField, answer: string): FieldOption | undefined {
-  return field.options?.find((option) => labelsMatch(option.label, answer));
+  return uniqueMatch(field.options ?? [], (option) => labelsMatch(option.label, answer));
 }
 
 /**

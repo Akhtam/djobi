@@ -35,6 +35,10 @@ export type PipelineStatus =
 // (has a profile loaded yet, has an active tab been found yet), not Application Pipeline progress.
 // A null `run` means "ready".
 
+/** The Fill Step's authoritative reading of what the page confirmed. */
+export type FillOutcome =
+  'unverified' | 'no-fields-detected' | 'nothing-filled' | 'complete' | 'incomplete';
+
 /**
  * Why an Analysis or Fill Step failed. Without this the run's `status` could say *that* something
  * failed but never *why*, so the runner had nowhere to put the cause it had caught and the panel
@@ -80,6 +84,8 @@ export interface PipelineRunState {
   failure: PipelineFailure | null;
   /** Required fields the Fill Step couldn't resolve a value for. Populated once it completes. */
   unresolvedRequiredFields: DetectedField[];
+  /** Set by the Fill Step from the page's response; `null` before it completes. */
+  fillOutcome: FillOutcome | null;
   /**
    * How many fields the Fill Step actually wrote, resume included. Zero is the signature of a run
    * that had no detected fields to work with, which `unresolvedRequiredFields` alone reports as an
@@ -127,6 +133,13 @@ export interface TabState {
   run: PipelineRunState | null;
 }
 
+type StoredPipelineRun = Omit<PipelineRunState, 'fillOutcome'> & {
+  /** Absent on runs written before FillOutcome was persisted. */
+  fillOutcome?: FillOutcome | null;
+};
+
+type StoredTabState = Omit<TabState, 'run'> & { run: StoredPipelineRun | null };
+
 const EMPTY: TabState = { frames: {}, run: null };
 
 /** Exported so `chrome.storage.onChanged` subscribers can pick their tab's key out of a change set. */
@@ -146,11 +159,13 @@ export function storageKey(tabId: number): string {
  *
  * Only the fields are re-parsed. The rest of the run is extension-internal state whose shape moves
  * with the code that reads it, and a stricter parse there would throw away a live run over a field
- * nobody was about to use.
+ * nobody was about to use. New state members still need conservative defaults here: an older build
+ * did not persist whether the page answered its fill request, so a completed legacy run is
+ * `unverified` rather than reconstructing certainty from its counts.
  */
 async function read(tabId: number): Promise<TabState> {
   const key = storageKey(tabId);
-  const stored = await chrome.storage.session.get<Record<string, TabState>>(key);
+  const stored = await chrome.storage.session.get<Record<string, StoredTabState>>(key);
   const state = stored[key];
   if (!state) return EMPTY;
 
@@ -167,6 +182,12 @@ async function read(tabId: number): Promise<TabState> {
           ...state.run,
           jobPageData: { fields: parseDetectedFields(state.run.jobPageData?.fields) },
           unresolvedRequiredFields: parseDetectedFields(state.run.unresolvedRequiredFields),
+          fillOutcome:
+            state.run.fillOutcome !== undefined
+              ? state.run.fillOutcome
+              : ['filled', 'saving', 'save-error', 'saved'].includes(state.run.status)
+                ? 'unverified'
+                : null,
         }
       : null,
   };
@@ -242,18 +263,39 @@ export async function enrichDetectedFields(
   });
 }
 
+/** A detected frame together with the id needed to address it. */
+export interface DetectedFrameRef {
+  frameId: number;
+  data: JobPageData;
+}
+
 /**
- * The tab's job application page: the frame that detected the most fields, since that's the one
- * actually holding the form. A host page wrapping an ATS iframe often has a stray file input of its
- * own, and picking by field count stops that from shadowing the iframe's real form.
+ * The frame holding the tab's job application form, *and its id* — the frame that detected the most
+ * fields. A host page wrapping an ATS iframe often has a stray file input of its own, and picking by
+ * field count stops that from shadowing the iframe's real form.
+ *
+ * The id is the part that matters to the Fill Step. `chrome.tabs.sendMessage` with no `frameId`
+ * delivers to *every* frame and resolves with whichever answers first, and the content script runs
+ * in all of them — so a third-party iframe (an invisible hCaptcha, a tag-manager pixel) answers
+ * `FILL_FORM` with an empty result before the real frame has finished verifying its own writes, and
+ * the pipeline reads "nothing landed" no matter what actually happened. Addressing the frame is the
+ * fix; `content/index.ts` staying silent in frames that hold none of the fields is the backstop.
  */
-export async function getDetectedPage(tabId: number): Promise<JobPageData | null> {
-  const frames = Object.values((await read(tabId)).frames);
+export async function getDetectedFrame(tabId: number): Promise<DetectedFrameRef | null> {
+  const frames = Object.entries((await read(tabId)).frames);
   if (frames.length === 0) return null;
 
-  return frames.reduce((best, frame) =>
-    frame.data.fields.length > best.data.fields.length ? frame : best,
-  ).data;
+  const [frameId, frame] = frames.reduce((best, entry) =>
+    entry[1].data.fields.length > best[1].data.fields.length ? entry : best,
+  );
+  // Keys round-trip through JSON as strings; the id has to go back over `chrome.tabs.sendMessage`
+  // as the number it started as.
+  return { frameId: Number(frameId), data: frame.data };
+}
+
+/** The detected form itself, for callers that don't need to address the frame it lives in. */
+export async function getDetectedPage(tabId: number): Promise<JobPageData | null> {
+  return (await getDetectedFrame(tabId))?.data ?? null;
 }
 
 export async function getPipelineRun(tabId: number): Promise<PipelineRunState | null> {
