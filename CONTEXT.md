@@ -52,6 +52,19 @@ _Avoid_: response
 One thing on a job application page a candidate fills in, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic. Usually one input, textarea or select — but a whole group of choices answering a single question (a fieldset, a `role="radiogroup"`, or radios sharing a `name`) is _one_ Detected Field, with the choices as its options.
 _Avoid_: form field, input (both suggest a single element, which a choice group isn't)
 
+**Board Token**:
+The identifier an ATS keys its own job board by — Greenhouse's `brex` in
+`boards-api.greenhouse.io/v1/boards/brex/jobs/{id}`. Stated outright by a URL on the ATS's own host,
+and _guessed from the company's hostname_ on a white-labeled board, where the page carries the
+Posting Id but never the token.
+_Avoid_: board id (it is not the board's numeric id), company slug
+
+**Posting Id**:
+The ATS's own numeric id for one job posting — the `gh_jid` parameter, or the `/jobs/{id}` path
+segment. Together with a Board Token it addresses a posting's schema; alone it addresses nothing.
+_Avoid_: job id (ambiguous with the Application's own id), requisition id (the employer's separate
+internal reference, e.g. `JR101359`)
+
 **Application**:
 One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a Status, a Stage, and a Notes log.
 _Avoid_: job application (ambiguous with the act of applying itself)

@@ -275,6 +275,51 @@ function ariaRequired(el: Element): boolean {
 const REQUIRED_MARKER = /[*✱＊∗⁎]|\(\s*required\s*\)/;
 
 /**
+ * A required marker sitting at the *end* of a label, where ATS platforms render it.
+ *
+ * Stripped from the reported `label` (never from the text {@link getRequired} reads, which is what
+ * the marker is *for*). Greenhouse renders `<label>First Name<span class="required">*</span></label>`,
+ * so the label reached the rest of the pipeline as `"First Name*"` — and `normalizeLabel` only
+ * trims and lowercases, so it matched the Greenhouse API's `"First Name"` nowhere. Every required
+ * question on a Greenhouse posting therefore missed API enrichment, which is precisely the set of
+ * fields enrichment exists to serve: the required comboboxes whose choices are not in the DOM.
+ *
+ * Anchored at the end so an asterisk inside real label text ("Rate 1-5 (5 = best*)") survives.
+ */
+const TRAILING_REQUIRED_MARKER = /\s*(?:[*✱＊∗⁎]|\(\s*required\s*\))\s*$/;
+
+/** `signal` without a trailing required marker — see {@link TRAILING_REQUIRED_MARKER}. */
+function stripRequiredMarker(signal: string): string {
+  return signal.replace(TRAILING_REQUIRED_MARKER, '');
+}
+
+/**
+ * The two readings every {@link DetectedField} needs of the text that names it.
+ *
+ * They differ by the required marker, and both are load-bearing: `label` is what the pipeline
+ * reports, classifies and label-matches on, and must not carry a `*`; `marked` is where a marker
+ * would be written, and is the `signal` {@link getRequired} reads. Derived as a pair, at one place,
+ * because deriving either alone is precisely how this goes wrong — twice already, once by reading
+ * the marker off text it had just been stripped from, and once by reading it off a group's name
+ * instead of the input's own label.
+ */
+interface FieldNaming {
+  /** Marker-free: the reported `label`, and what {@link classify} matches on. */
+  label: string;
+  /** The text a required marker would be written into — {@link getRequired}'s `signal`. */
+  marked: string;
+}
+
+/**
+ * Splits naming text into the pair above. `markerSource` defaults to `naming` and is passed
+ * separately only where the two genuinely differ — a file input named by the group around it, whose
+ * marker still belongs to its own label.
+ */
+function fieldNaming(naming: string, markerSource: string = naming): FieldNaming {
+  return { label: stripRequiredMarker(naming), marked: markerSource };
+}
+
+/**
  * Class tokens that mark a required indicator whose asterisk is drawn by CSS `content` rather than
  * written into the markup (MUI's `FormLabel-asterisk` slot works this way).
  *
@@ -426,8 +471,78 @@ const FILE_KEYWORD_RULES: Array<[FieldCategory, RegExp]> = [
   ['resume_upload', /re[sz]ume|\bcv\b/i],
 ];
 
-/** A `?`, or an imperative/question-style opener, marks an unmatched textarea as a free-response question. */
+/** The accessible name of the nearest ancestor `role="group"`, if it has one. */
+function enclosingGroupName(doc: Document, el: Element): string {
+  const group = el.closest('[role="group"]');
+  if (!group) return '';
+
+  const labelledBy = group.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const resolved = resolveIdRefs(doc, labelledBy);
+    if (resolved) return resolved;
+  }
+  return collapseWhitespace(group.getAttribute('aria-label') ?? '');
+}
+
+/**
+ * A file input's signal, falling back to the name of the `role="group"` around it.
+ *
+ * Greenhouse binds *both* of a posting's file inputs to a visually-hidden `<label>Attach</label>`
+ * (`docs/ats-platform-detection.md` §Greenhouse ¶4) — the text a human reads, "Resume/CV" or
+ * "Cover Letter", is a plain `<div>` referenced by `aria-labelledby` on the enclosing
+ * `<div role="group">`. Both inputs therefore signalled the identical, contentless "Attach", both
+ * classified `resume_upload` by the default, and the cover-letter slot became a second candidate for
+ * the resume.
+ *
+ * Only consulted when the input's own signal names no file kind of its own, so a field already
+ * labelled "Resume" or "Cover letter" is never overruled by a coarser group name around it.
+ */
+function fileFieldSignal(doc: Document, el: Element, signal: string): string {
+  if (categoryFor(FILE_KEYWORD_RULES, signal)) return signal;
+  return enclosingGroupName(doc, el) || signal;
+}
+
+/** A `?`, or an imperative/question-style opener, marks an unmatched free-text field as a free-response question. */
 const QUESTION_SHAPE = /\?|^(why|how|what|describe|tell us|explain)\b/i;
+
+/**
+ * A label that opens with an auxiliary verb or a condition is a screening question, whatever else
+ * it mentions — and so is never a profile field, however many profile keywords appear inside it.
+ *
+ * This runs *before* the keyword rules, and that ordering is the point. The rules match their
+ * keyword anywhere in the signal, which is right for a field label ("Location (City)") and wrong for
+ * prose that merely refers to one: Greenhouse postings ask "Are you authorized to work in the stated
+ * location of this role?" and "Do you currently live in, or plan to relocate to, the specified
+ * location…", both yes/no choices, and both were classified `location` and filled with the
+ * candidate's city instead of being answered.
+ *
+ * Deliberately only the auxiliary/conditional openers. "Where are you currently located?" and "What
+ * country are you based in?" open with an interrogative that introduces the fact being asked for, so
+ * they stay profile fields; "Are…/Do…/Have…/If…" ask the candidate to judge something instead.
+ */
+const SCREENING_QUESTION_SHAPE =
+  /^(are|is|was|were|do|does|did|have|has|had|will|would|can|could|should|may|might|if)\b/i;
+
+/**
+ * The `if` idiom that qualifies a field rather than asking anything — "If applicable, LinkedIn URL".
+ *
+ * {@link SCREENING_QUESTION_SHAPE} accepts `if` because Greenhouse's screening questions lead with
+ * it ("If you heard about us through a referral, please state…"), and it has to outrank the keyword
+ * rules to do its job. That would otherwise also demote "If applicable, please provide your LinkedIn
+ * profile URL" to a drafted-prose question, so the field would receive a sentence where a profile URL
+ * belongs. These openers are the qualifier, not a condition on anything the candidate must judge.
+ */
+const CONDITIONAL_QUALIFIER = /^if\s+(applicable|any|none|so|not|known|relevant|available)\b/i;
+
+/**
+ * Free-text field types, where a question-shaped label means a free-response question.
+ *
+ * `search` is deliberately absent. `detectFields` scans the whole document, and `SCAN_PAGE` is not
+ * gated on the page-shape heuristic (see `content/index.ts`), so a site header's
+ * `<input type="search" placeholder="What are you looking for?">` is in scope — and its placeholder
+ * is question-shaped. A search box is for querying the site, never for answering it.
+ */
+const FREE_TEXT_INPUT_TYPES = new Set(['textarea', 'text', 'tel', 'url', 'email']);
 
 /** The category `rules` gives `signal`, or `undefined` if none matches. */
 function categoryFor(
@@ -508,11 +623,19 @@ function classify(el: Element, signal: string, inputType: string): FieldCategory
   const declared = autocompleteCategory(el);
   if (declared) return declared;
 
+  // Before the keyword rules, not after — see {@link SCREENING_QUESTION_SHAPE}.
+  if (SCREENING_QUESTION_SHAPE.test(signal) && !CONDITIONAL_QUALIFIER.test(signal)) {
+    return 'question';
+  }
+
   const keyword = categoryFor(KEYWORD_RULES, signal);
   if (keyword) return keyword;
 
   if (inputType === 'combobox') return 'question';
-  if (inputType === 'textarea' && QUESTION_SHAPE.test(signal)) return 'question';
+  // Every free-text type, not `textarea` alone. Greenhouse renders its free-response screening
+  // questions ("What are your preferred gender pronouns?") as `<input type="text">`, so gating on
+  // `textarea` left them `unknown` — never drafted, never filled, including required ones.
+  if (FREE_TEXT_INPUT_TYPES.has(inputType) && QUESTION_SHAPE.test(signal)) return 'question';
 
   return 'unknown';
 }
@@ -562,16 +685,16 @@ function resolveSelectOptions(el: Element, tagger: FieldTagger): FieldOption[] |
  */
 function detectComboboxes(doc: Document, tagger: FieldTagger): DetectedField[] {
   return Array.from(doc.querySelectorAll('[role="combobox"]')).map((el) => {
-    const signal = getSignal(doc, el);
+    const { label, marked } = fieldNaming(getSignal(doc, el));
     const { id, selector } = tagger.locate(el);
 
     return {
       id,
-      label: signal,
+      label,
       inputType: 'combobox',
       selector,
-      category: classify(el, signal, 'combobox'),
-      required: getRequired(doc, el, signal),
+      category: classify(el, label, 'combobox'),
+      required: getRequired(doc, el, marked),
       elementRole: 'combobox',
       options: resolveComboboxOptions(doc, el, tagger),
     };
@@ -681,7 +804,7 @@ function toGroupField(
   );
   const elementRole: ElementRole = isCheckbox ? 'checkboxgroup' : 'radiogroup';
   const { id, selector } = tagger.locate(container);
-  const label = groupSignal(doc, container);
+  const { label, marked } = fieldNaming(groupSignal(doc, container));
 
   return {
     id,
@@ -695,7 +818,7 @@ function toGroupField(
     // them (`docs/ats-platform-detection.md` §Lever ¶3), so a required screening question — work
     // authorization, sponsorship — was passed along as one the candidate could skip.
     required:
-      getRequired(doc, container, label) ||
+      getRequired(doc, container, marked) ||
       choices.some((choice) => getRequired(doc, choice, choiceLabel(doc, choice))),
     elementRole,
     // Each option keeps a selector to its own element, so the Fill Step never has to repeat this
@@ -846,17 +969,26 @@ export function detectFields(doc: Document): DetectedField[] {
         !isRequiredProxy(el),
     )
     .map((el): DetectedField => {
-      const signal = getSignal(doc, el);
       const inputType = el.type;
+      const signal = getSignal(doc, el);
+      // The two readings part company for a file input alone: it may be *named* by the group around
+      // it (see {@link fileFieldSignal}) while the required marker stays on its own label, so
+      // reading the marker off the group's name would report a required upload optional. Nothing is
+      // lost by keeping the group out of it — `ariaRequired` walks the ancestors, and `role="group"`
+      // is one of the groupings it accepts `aria-required` from.
+      const { label, marked } = fieldNaming(
+        inputType === 'file' ? fileFieldSignal(doc, el, signal) : signal,
+        signal,
+      );
       const { id, selector } = tagger.locate(el);
 
       return {
         id,
-        label: signal,
+        label,
         inputType,
         selector,
-        category: classify(el, signal, inputType),
-        required: getRequired(doc, el, signal),
+        category: classify(el, label, inputType),
+        required: getRequired(doc, el, marked),
         elementRole: 'native',
         options: resolveSelectOptions(el, tagger),
       };

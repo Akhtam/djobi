@@ -506,6 +506,44 @@ describe('detectFields', () => {
     expect(fields.map((f) => f.category)).toEqual(['unknown', 'unknown']);
   });
 
+  it("keeps a required marker written into a file input's own label, not the group's name", () => {
+    // The group names the field; the required marker is on the input's own label. Reading only the
+    // group name for required-ness would report this resume upload optional.
+    document.body.innerHTML = `
+      <form>
+        <div role="group" aria-labelledby="upload-label"><div id="upload-label">Resume</div>
+          <label for="cv">Attach *</label>
+          <input id="cv" type="file" />
+        </div>
+      </form>
+    `;
+
+    expect(detectFields(document)[0]).toMatchObject({
+      label: 'Resume',
+      category: 'resume_upload',
+      required: true,
+    });
+  });
+
+  it("reads a conditional qualifier as part of a profile field's label, not as a question", () => {
+    document.body.innerHTML = `
+      <form>
+        <label for="li">If applicable, please provide your LinkedIn profile URL</label>
+        <input id="li" type="text" />
+        <label for="ref">If you heard about us through a referral, please state their name</label>
+        <input id="ref" type="text" />
+        <label for="q">What are you looking for?</label>
+        <input id="q" type="search" />
+      </form>
+    `;
+
+    expect(detectFields(document).map((field) => field.category)).toEqual([
+      'linkedin_url',
+      'question',
+      'unknown',
+    ]);
+  });
+
   it('groups a fieldset of checkboxes into one field instead of reporting each checkbox separately', () => {
     document.body.innerHTML = `
       <form>
@@ -522,7 +560,7 @@ describe('detectFields', () => {
 
     expect(fields).toHaveLength(1);
     expect(fields[0]).toMatchObject({
-      label: 'Which languages do you know?*',
+      label: 'Which languages do you know?',
       category: 'question',
       elementRole: 'checkboxgroup',
       required: true,

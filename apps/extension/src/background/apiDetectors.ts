@@ -107,19 +107,108 @@ interface GreenhouseResponse {
   }[];
 }
 
+/**
+ * Subdomains that name the *page's role* rather than the company, so they can't be a Board Token.
+ *
+ * Only consulted by {@link whiteLabelBoardToken}, where the company name is being guessed from the host.
+ * Incomplete by nature — there is no closed set of words a company might put in front of its own
+ * name — which is why a miss has to stay cheap rather than be prevented.
+ */
+const GENERIC_SUBDOMAINS = new Set([
+  'www',
+  'careers',
+  'career',
+  'jobs',
+  'job',
+  'boards',
+  'apply',
+  'work',
+  'talent',
+  'hire',
+  'hiring',
+  'recruiting',
+  'recruitment',
+  'join',
+  'people',
+  'life',
+  'about',
+]);
+
+/**
+ * A Board Token guessed from a company's own careers hostname — `www.brex.com` → `brex`.
+ *
+ * A guess, and deliberately so. Greenhouse lets a company white-label its board onto its own domain
+ * (`www.brex.com/careers/8459783002?gh_jid=8459783002`), and at that point the URL carries the job
+ * id but not the board token the Job Board API is keyed by. The company's own domain label is the
+ * token far more often than not, and a wrong guess costs exactly one 404 that
+ * {@link enrichWithApiOracle} already treats as "no enrichment" — versus the status quo, where a
+ * white-labeled posting reached no oracle at all and every one of its comboboxes stayed
+ * choice-less, because Greenhouse mounts its option lists in a portal that isn't in the DOM until
+ * the dropdown is opened.
+ *
+ * The first non-generic label rather than the registrable domain, which needs a public-suffix list
+ * to find: `careers.acme.co.uk` reads as `acme` here and as `co` from the right-hand end. The two
+ * rules fail on opposite inputs (this one on an unlisted subdomain like `emea.acme.com`) and neither
+ * dominates; this one is at least wrong in a way a reader can see from {@link GENERIC_SUBDOMAINS}.
+ */
+function whiteLabelBoardToken(hostname: string): string | null {
+  const labels = hostname.toLowerCase().split('.').filter(Boolean);
+  const named = labels.find((label) => !GENERIC_SUBDOMAINS.has(label));
+  // A bare TLD is not a company name: `www.com` would otherwise yield the board token `com`.
+  return named && named !== labels.at(-1) ? named : null;
+}
+
+/** A Greenhouse Posting Id — always numeric, and validated as such before it reaches a request URL. */
+function asPostingId(value: string | null): string | null {
+  return value && /^\d+$/.test(value) ? value : null;
+}
+
+/**
+ * The Board Token and Posting Id `url` names, or `null` if it names no Greenhouse posting.
+ *
+ * Board and id are resolved together because which of them is authoritative depends on the same
+ * question — is this Greenhouse's own host, or a company's? On `greenhouse.io` the path states both.
+ * Off it, only the `gh_jid` parameter does, and reading the path there is actively wrong: the
+ * company's own routing may well spell `/en/jobs/482`, whose `482` would be taken for the posting id
+ * over the `gh_jid` that actually identifies it.
+ */
+function greenhousePosting(url: URL): { boardToken: string; postingId: string } | null {
+  if (/(^|\.)greenhouse\.io$/.test(url.hostname)) {
+    // Covers both `job-boards.greenhouse.io/{board}/jobs/{id}` and the legacy `boards.` host.
+    const path = url.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
+    if (path) return { boardToken: path[1], postingId: path[2] };
+
+    // The `job_app`/`job_board` embed iframes, which name both outright as parameters.
+    const boardToken = url.searchParams.get('for');
+    const postingId = asPostingId(url.searchParams.get('token') ?? url.searchParams.get('gh_jid'));
+    return boardToken && postingId ? { boardToken, postingId } : null;
+  }
+
+  // A company's own domain only counts as a Greenhouse board when the URL says it is one.
+  const postingId = asPostingId(url.searchParams.get('gh_jid'));
+  if (!postingId) return null;
+
+  const boardToken = whiteLabelBoardToken(url.hostname);
+  return boardToken ? { boardToken, postingId } : null;
+}
+
 const greenhouse: AtsOracle = {
   name: 'Greenhouse',
 
   request(url) {
     const parsed = parseUrl(url);
-    if (!parsed || !/(^|\.)greenhouse\.io$/.test(parsed.hostname)) return null;
+    if (!parsed) return null;
 
-    // Covers both `job-boards.greenhouse.io/{board}/jobs/{id}` and the legacy `boards.` host.
-    const match = parsed.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
-    if (!match) return null;
+    const posting = greenhousePosting(parsed);
+    if (!posting) return null;
 
+    // The token is escaped and the id is already validated as digits by `asPostingId`, so neither can
+    // reshape the request's path or query — the guarantee the old `\d+`-anchored path match gave for
+    // free, and which is worth keeping now that both can come from arbitrary query parameters.
     return {
-      url: `https://boards-api.greenhouse.io/v1/boards/${match[1]}/jobs/${match[2]}?questions=true`,
+      url:
+        `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(posting.boardToken)}` +
+        `/jobs/${posting.postingId}?questions=true`,
     };
   },
 

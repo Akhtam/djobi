@@ -2,3 +2,6 @@ node_modules
 dist
 pnpm-lock.yaml
 apps/backend/src/db/migrations
+
+# Captured live ATS markup and API responses — regression fixtures, kept byte-exact.
+apps/extension/src/content/__fixtures__/
