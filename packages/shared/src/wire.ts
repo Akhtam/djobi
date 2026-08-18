@@ -15,7 +15,13 @@
  * One schema per body is what makes that class of drift a type error rather than a silent deletion.
  */
 import { z } from 'zod';
-import { JobInfoSchema, ProfileSchema, TailoredResumeSchema } from './schemas.js';
+import {
+  ApplicationStageSchema,
+  JobInfoSchema,
+  NewNoteSchema,
+  ProfileSchema,
+  TailoredResumeSchema,
+} from './schemas.js';
 
 /** Body of any non-route-specific error raised by `app.onError`. */
 export const BackendErrorBodySchema = z.object({
@@ -91,3 +97,40 @@ export const RenderResumePdfRequestSchema = z.object({
 });
 /** Inferred type of {@link RenderResumePdfRequestSchema}. */
 export type RenderResumePdfRequest = z.infer<typeof RenderResumePdfRequestSchema>;
+
+/**
+ * Body of `PATCH /applications/:id/stage`.
+ *
+ * A route of its own rather than a field on `PATCH /applications/:id`, because that one takes an
+ * `ApplicationSnapshot` — which deliberately *excludes* stage and notes so a re-save of an autofill
+ * can't stomp interview tracking. Moving a stage is a different operation on the same row, and
+ * giving it its own path keeps that separation enforceable rather than conventional.
+ */
+export const UpdateApplicationStageRequestSchema = z.object({
+  stage: ApplicationStageSchema,
+});
+/** Inferred type of {@link UpdateApplicationStageRequestSchema}. */
+export type UpdateApplicationStageRequest = z.infer<typeof UpdateApplicationStageRequestSchema>;
+
+/**
+ * Body of `POST /applications/:id/notes` — a note minus the fields the server assigns.
+ *
+ * `NewNoteSchema` rather than a fresh object: `id` and `createdAt` are generated server-side, and
+ * accepting them from the client would let a sender choose its own history. Aliased here so the
+ * wire contract names every route body in one place, even when the shape is already defined.
+ */
+export const AddApplicationNoteRequestSchema = NewNoteSchema;
+/** Inferred type of {@link AddApplicationNoteRequestSchema}. */
+export type AddApplicationNoteRequest = z.infer<typeof AddApplicationNoteRequestSchema>;
+
+/**
+ * Body of `POST /profile` — the whole Profile, which is what the route stores.
+ *
+ * `ProfileSchema` rather than a fresh object, and aliased here for the same reason
+ * {@link AddApplicationNoteRequestSchema} is: this module names every route body, so a reader
+ * looking for "what does `/profile` accept" finds an answer here rather than an absence. The
+ * absence is what let the panel and options page build this body without a contract at all.
+ */
+export const SaveProfileRequestSchema = ProfileSchema;
+/** Inferred type of {@link SaveProfileRequestSchema}. */
+export type SaveProfileRequest = z.infer<typeof SaveProfileRequestSchema>;

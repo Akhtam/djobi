@@ -32,6 +32,7 @@ import {
   type DuplicateApplication,
   type FillOutcome,
   type PipelineRunState,
+  type PipelineStatus,
 } from '../lib/tabStore';
 
 /**
@@ -274,7 +275,6 @@ export async function runSaveApplication(
     jobInfo: run.jobInfo,
     tailoredResume: run.tailoredResume,
     answers: run.answers,
-    status: 'draft' as const,
   };
 
   await patchPipelineRun(tabId, { status: 'saving', failure: null });
@@ -398,13 +398,40 @@ export async function runAnalysis(
   }
 }
 
+/**
+ * The statuses a Fill Step may start from — every status the panel's Fill button is reachable and
+ * enabled in, which is `reviewOf`'s `canReview` set minus the two it disables the button for.
+ *
+ * `asAnalyzedRun` alone is not this check: it proves the run *has* an analysis, not that the run is
+ * idle. So a `START_FILL` arriving while a fill or a save was already in flight — a duplicate of
+ * the step already running, or one dispatched out of sequence — passed straight through and started
+ * a second Fill Step against the same tab. `runSaveApplication` has always had the equivalent
+ * guard; this is the missing half.
+ *
+ * Re-filling from `filled` and `saved` is deliberate, not an oversight: a candidate may re-fill
+ * after editing an answer, and the Save Step updates the same record rather than creating a second.
+ *
+ * This constrains *sequencing*, not concurrency — it is a check before an await, so two commands
+ * arriving in the same tick would both read the same status and both pass. Nothing dispatches them
+ * that way today (the panel disables the button on the optimistic `filling`, before the round
+ * trip), and closing that window needs a compare-and-transition inside `withTabLock` rather than a
+ * read here.
+ */
+const FILLABLE_FROM: readonly PipelineStatus[] = [
+  'review',
+  'fill-error',
+  'filled',
+  'save-error',
+  'saved',
+];
+
 export async function runFill(
   tabId: number,
   profile: Profile,
   deps: PipelineDeps = productionDeps,
 ): Promise<void> {
   const run = asAnalyzedRun(await getPipelineRun(tabId));
-  if (!run) return;
+  if (!run || !FILLABLE_FROM.includes(run.status)) return;
 
   await patchPipelineRun(tabId, { status: 'filling', failure: null });
 

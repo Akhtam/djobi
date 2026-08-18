@@ -8,7 +8,12 @@ import type {
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import type { JobPageData } from '../lib/messages';
-import { getPipelineRun, reportDetectedPage } from '../lib/tabStore';
+import {
+  getPipelineRun,
+  patchPipelineRun,
+  reportDetectedPage,
+  type PipelineStatus,
+} from '../lib/tabStore';
 import type { BackendClient } from '../lib/backendClient';
 import type { FillPageCommand, PageClient } from '../lib/pageClient';
 import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
@@ -150,6 +155,10 @@ function makeDeps(
     tailorResume: vi.fn().mockResolvedValue(tailoredResume),
     answerQuestions: vi.fn().mockResolvedValue(answers),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
+    // The Profile routes are the panel's and options page's, not the pipeline's — present because
+    // the fake has to satisfy the whole interface, never called from here.
+    getProfile: vi.fn().mockResolvedValue(null),
+    saveProfile: vi.fn().mockResolvedValue(undefined),
     saveApplication: vi.fn().mockResolvedValue(undefined),
     updateApplication: vi.fn().mockResolvedValue(undefined),
     // No past application for this URL by default, so the duplicate guard lets every other test
@@ -810,7 +819,6 @@ describe('runFill', () => {
       jobInfo,
       tailoredResume,
       answers: [],
-      status: 'draft',
     });
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'saved',
@@ -867,6 +875,64 @@ describe('runFill', () => {
  * The default adapter — what the steps above stub out. Everything the pipeline knows about HTTP and
  * `chrome.tabs` messaging lives here, so this is the only place the wire formats are asserted.
  */
+describe('runFill source-status guard', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Leaves a run with analyzed data present and `status` forced, as a mid-flight run would look. */
+  async function seedRunAt(status: PipelineStatus) {
+    await seedReviewRun(7, [emailField]);
+    await patchPipelineRun(7, { status });
+  }
+
+  // `filling` and `saving` are the two statuses the panel's Fill button is disabled for. A second
+  // command arriving in one of them is either a duplicate of the step already running or an
+  // out-of-sequence one; both used to pass, because the only check was that analyzed data existed.
+  it.each(['filling', 'saving'] as const)('ignores a fill commanded while %s', async (status) => {
+    stubChrome();
+    await seedRunAt(status);
+    const deps = makeDeps();
+
+    await runFill(7, profile, deps);
+
+    expect(deps.page.fill).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status });
+  });
+
+  // Every other status the panel can dispatch Fill from — a first fill, a retry after either
+  // failure, and a deliberate re-fill after one that landed or was saved. Re-filling is supported
+  // by design: the Save Step updates the same record rather than creating a second.
+  it.each(['review', 'fill-error', 'filled', 'save-error', 'saved'] as const)(
+    'fills when commanded from %s',
+    async (status) => {
+      stubChrome();
+      await seedRunAt(status);
+      const deps = makeDeps();
+
+      await runFill(7, profile, deps);
+
+      expect(deps.page.fill).toHaveBeenCalled();
+      expect(await getPipelineRun(7)).toMatchObject({ status: 'filled' });
+    },
+  );
+
+  it('ignores a duplicate fill dispatched while the first is still filling', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const deps = makeDeps();
+
+    // Sequential dispatch, which is how the service worker delivers two messages: the first fill
+    // has already checkpointed `filling` by the time the second arrives.
+    const first = runFill(7, profile, deps);
+    await first;
+    await patchPipelineRun(7, { status: 'filling' });
+    await runFill(7, profile, deps);
+
+    expect(deps.page.fill).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('the backend adapter', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();

@@ -6,8 +6,12 @@ import { App } from './App';
 
 // The options page's one external seam. It used to reach the backend by messaging the service
 // worker, so these tests stubbed `chrome.runtime.sendMessage` and spoke the relay's `{ path, body }`
-// shape; the page calls `lib/callBackend.ts` directly now.
-vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn() }));
+// shape; the page goes through `lib/backendClient.ts` now, which forwards to this transport.
+//
+// `callBackendBinary` is mocked despite the options page never rendering a resume: the factory
+// replaces the whole module, so omitting an export `backendClient.ts` imports fails at import time
+// with an error pointing at the page rather than at this mock.
+vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn(), callBackendBinary: vi.fn() }));
 
 const emptyProfile: Profile = {
   fullName: '',

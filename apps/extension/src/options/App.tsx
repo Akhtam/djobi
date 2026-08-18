@@ -10,7 +10,7 @@ import {
 import { useEffect, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { callBackend } from '../lib/callBackend';
+import { httpBackendClient } from '../lib/backendClient';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 
 /**
@@ -155,7 +155,8 @@ export function App() {
   }
 
   useEffect(() => {
-    callBackend<Profile | null>('/profile', undefined, 'GET')
+    httpBackendClient
+      .getProfile()
       // `parseProfile` completes a stored profile against the empty one and validates it, so a
       // profile saved before a field existed can't crash the form that binds to that key.
       .then((loaded) => setProfileState(parseProfile(loaded)))
@@ -215,7 +216,8 @@ export function App() {
         bullets: we.bullets.filter((bullet) => bullet.trim() !== ''),
       })),
     };
-    callBackend<Profile>('/profile', toSave)
+    httpBackendClient
+      .saveProfile(toSave)
       .then((saved) => {
         setProfileState(parseProfile(saved));
         setDirty(false);

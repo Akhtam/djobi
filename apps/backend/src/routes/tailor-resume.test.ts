@@ -53,7 +53,6 @@ const priorApplication: Application = {
   jobInfo: sampleJobInfo,
   tailoredResume: sampleTailoredResume,
   answers: [],
-  status: 'submitted',
   createdAt: '2026-07-01T00:00:00.000Z',
 };
 

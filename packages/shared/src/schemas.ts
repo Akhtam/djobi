@@ -214,17 +214,18 @@ export const QuestionAnswerSchema = z.object({
 /** Inferred type of {@link QuestionAnswerSchema}. */
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
 
-/** Lifecycle status of an `applications` row. */
-export const ApplicationStatusSchema = z.enum(['draft', 'submitted']);
-/** Inferred type of {@link ApplicationStatusSchema}. */
-export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
-
 /**
- * Where an application sits in the interview pipeline. Deliberately separate from
- * {@link ApplicationStatusSchema}: status answers "was this actually sent to the employer", stage
- * answers "how far has it got since". A `draft` application still carries a stage — it defaults to
- * `'applied'` rather than being nullable, so nothing downstream has to null-check it. Listed in
- * pipeline order, which is the order a stage picker should offer them in.
+ * Where an application sits in the interview pipeline. Defaults to `'applied'` rather than being
+ * nullable, so nothing downstream has to null-check it. Listed in pipeline order, which is the
+ * order a stage picker should offer them in.
+ *
+ * There used to be a separate `status` field (`draft` / `submitted`) alongside this, meant to
+ * answer "was this actually sent to the employer" as distinct from "how far has it got". It was
+ * removed: nothing ever set it to `submitted`, so all 28 stored rows read `draft` and the field
+ * carried no information. The reason it was never set is that saving is already a manual step the
+ * candidate takes *after* submitting — so a saved Application is a submitted one by construction,
+ * and `stage` covers everything after that. Don't reintroduce a status field without first having
+ * a moment in the flow that would set it.
  */
 export const ApplicationStageSchema = z.enum([
   'applied',
@@ -281,7 +282,6 @@ export const ApplicationSchema = z.object({
   jobInfo: JobInfoSchema,
   tailoredResume: TailoredResumeSchema,
   answers: z.array(QuestionAnswerSchema),
-  status: ApplicationStatusSchema,
   stage: ApplicationStageSchema,
   notes: z.array(NoteSchema),
   createdAt: z.string(),
@@ -291,16 +291,14 @@ export type Application = z.infer<typeof ApplicationSchema>;
 
 /**
  * Body shape for `POST /applications` — an {@link ApplicationSchema} minus the fields the database
- * assigns (`id`, `createdAt`); `status` defaults to `draft` when omitted, matching a fill that
- * hasn't been submitted yet.
+ * assigns (`id`, `createdAt`).
  *
- * `stage` and `notes` default too, and must keep doing so: the extension posts a body with neither
+ * `stage` and `notes` default, and must keep doing so: the extension posts a body with neither
  * (`background/applicationPipeline.ts`), so making either required 400s every fill.
  */
 export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
   // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
   jobUrl: z.string().url(),
-  status: ApplicationStatusSchema.default('draft'),
   stage: ApplicationStageSchema.default('applied'),
   notes: z.array(NoteSchema).default([]),
 });

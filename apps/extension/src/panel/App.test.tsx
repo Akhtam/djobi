@@ -162,6 +162,10 @@ async function stubChrome(options: StubOptions) {
       tailorResume: () => Promise.resolve(tailoredResume),
       answerQuestions: () => Promise.resolve(answers),
       renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
+      // Satisfying the whole interface. The panel reads its Profile through `httpBackendClient`,
+      // whose transport is mocked above — these are the pipeline's copy and go unused.
+      getProfile: () => Promise.resolve(null),
+      saveProfile: () => Promise.reject(new Error('unexpected saveProfile')),
       saveApplication: () => {
         const failure = nth(options.saveFailures, fillCallIndex++);
         return failure

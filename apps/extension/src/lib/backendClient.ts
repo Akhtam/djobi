@@ -9,8 +9,11 @@
  * correctly, and when that stopped being true (a `knownAnswer` the route's private schema didn't
  * declare, silently stripped by zod) nothing on either side could notice.
  *
- * `callBackend` still exists underneath for the routes that aren't part of the Application
- * Pipeline — the panel and options page read and write the Profile through it directly.
+ * `callBackend` is the transport underneath and is no longer called directly by anything that names
+ * a path. It used to be: the panel and options page built `/profile` and `/render-resume-pdf` by
+ * hand, so `/render-resume-pdf` existed twice — once here against `RenderResumePdfRequest`, once in
+ * the panel against nothing. The guarantee this module exists to give is only as wide as the set of
+ * call sites that go through it, so the Profile routes live here too and the claim above holds.
  */
 import type {
   AnswerQuestionsRequest,
@@ -23,6 +26,7 @@ import type {
   QuestionAnswer,
   QuestionForModel,
   RenderResumePdfRequest,
+  SaveProfileRequest,
   TailorResumeRequest,
   TailoredResume,
 } from '@djobi/shared';
@@ -38,6 +42,10 @@ export interface BackendClient {
     questions: QuestionForModel[],
   ): Promise<QuestionAnswer[]>;
   renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
+  /** The single stored Profile, or `null` before the candidate has saved one. */
+  getProfile(): Promise<Profile | null>;
+  /** Stores the Profile whole and resolves with what was stored. */
+  saveProfile(profile: Profile): Promise<Profile>;
   saveApplication(payload: NewApplication): Promise<Application>;
   updateApplication(id: string, payload: ApplicationSnapshot): Promise<Application>;
   /** Past applications to this exact job URL, most recent first. Empty when it's a new posting. */
@@ -64,6 +72,10 @@ export const httpBackendClient: BackendClient = {
       profile,
       tailoredResume,
     } satisfies RenderResumePdfRequest),
+
+  getProfile: () => callBackend<Profile | null>('/profile', undefined, 'GET'),
+
+  saveProfile: (profile) => callBackend<Profile>('/profile', profile satisfies SaveProfileRequest),
 
   saveApplication: (payload) => callBackend<Application>('/applications', payload),
 

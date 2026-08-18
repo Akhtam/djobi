@@ -1,0 +1,820 @@
+/*
+ * The dashboard's stylesheet.
+ *
+ * The token block below is copied verbatim from `apps/extension/src/options/App.css` so the two
+ * surfaces are visibly one product. The extension already duplicates this block across its own two
+ * pages; a third copy matches that rather than introducing a shared-CSS package for one consumer.
+ * Everything after the token block is specific to this app.
+ */
+:root {
+  color-scheme: light;
+  /* Palette anchored to the extension icon's blue-violet gradient (assets/icons), sampled
+     directly from the PNG: top-left #425BD8 -> bottom-right #8450D8, ~135deg. */
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-muted: #f1f2f8;
+  --border: #e3e5ef;
+  --text: #14151f;
+  --text-muted: #6b6f80;
+  --primary: #6356d8;
+  --primary-hover: #5245c4;
+  --primary-contrast: #ffffff;
+  --primary-gradient: linear-gradient(135deg, #425bd8, #8450d8);
+  --danger: #e0435c;
+  --danger-hover: #c92e48;
+  --danger-bg: #fdeced;
+  --success: #1a9d6c;
+  --success-bg: #e7f7f0;
+  --ring: rgb(99 86 216 / 32%);
+  /* The two anchors of the brand gradient, used to colour the two live-but-early stages. Applied
+     takes the blue end, phone screen the violet, so both read as djobi without reading as each
+     other. Interviewing and rejected keep the semantic green/red they share with the rest of the UI. */
+  --stage-applied-fg: #3b5cd8;
+  --stage-applied-bg: rgb(59 92 216 / 12%);
+  --stage-phone-fg: #8450d8;
+  --stage-phone-bg: rgb(132 80 216 / 12%);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgb(20 21 31 / 5%);
+  --shadow-md: 0 4px 16px rgb(20 21 31 / 6%);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #101117;
+  --surface: #191a22;
+  --surface-muted: #21222c;
+  --border: #2c2e3a;
+  --text: #f0f1f6;
+  --text-muted: #a7aabd;
+  --primary: #8f83f2;
+  --primary-hover: #a79cff;
+  --primary-contrast: #101117;
+  --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
+  --danger: #ff7890;
+  --danger-hover: #ff98a8;
+  --danger-bg: rgb(255 107 131 / 14%);
+  --success: #46dc9e;
+  --success-bg: rgb(61 219 155 / 14%);
+  --ring: rgb(143 131 242 / 38%);
+  --stage-applied-fg: #8ea3f7;
+  --stage-applied-bg: rgb(109 127 240 / 16%);
+  --stage-phone-fg: #bd97f5;
+  --stage-phone-bg: rgb(166 132 240 / 16%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  background-image:
+    radial-gradient(
+      circle at 12% 0%,
+      color-mix(in srgb, var(--primary) 8%, transparent),
+      transparent 28rem
+    ),
+    radial-gradient(
+      circle at 88% 18%,
+      color-mix(in srgb, #8450d8 6%, transparent),
+      transparent 24rem
+    );
+  background-attachment: fixed;
+  color: var(--text);
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 24px 96px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+/*
+ * Full-bleed bar; only its contents are constrained. Previously this lived inside `.page` and
+ * inherited its 960px cap, so the translucent background stopped short of the viewport edges and
+ * the header read as a box floating on the page rather than as a bar fixed to the top.
+ */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.page-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+}
+
+.brand__logo {
+  display: block;
+  border-radius: 7px;
+}
+
+.wordmark {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Sits at the top of the detail view rather than in the header bar. */
+.back-link {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--text);
+}
+
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+}
+
+.theme-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* ── Shared bits ────────────────────────────────────────────────────────── */
+
+.banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.banner--error {
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.empty-state {
+  padding: 48px 0;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-state--error {
+  color: var(--danger);
+}
+
+.empty-hint {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.button {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.button--primary {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.bullets {
+  margin: 6px 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}
+
+.bullets li {
+  margin-bottom: 4px;
+}
+
+/* ── Stage colours ──────────────────────────────────────────────────────── */
+
+/* `applied` is the default, so it needs no modifier class of its own. */
+.stage-badge {
+  --stage-fg: var(--stage-applied-fg);
+  --stage-bg: var(--stage-applied-bg);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--stage-bg);
+  color: var(--stage-fg);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stage--phone-screen {
+  --stage-fg: var(--stage-phone-fg);
+  --stage-bg: var(--stage-phone-bg);
+}
+
+.stage--interviewing {
+  --stage-fg: var(--success);
+  --stage-bg: var(--success-bg);
+}
+
+.stage--rejected {
+  --stage-fg: var(--danger);
+  --stage-bg: var(--danger-bg);
+}
+
+/*
+ * Sits above the card's stretched link so the dropdown opens instead of navigating.
+ *
+ * Fixed width, wide enough for the longest stage name, rather than sized to the current one:
+ * otherwise picking a shorter stage shrinks the control and reflows the card under the pointer.
+ * The caret pins to the right edge, so the control keeps one silhouette whatever it reads.
+ */
+.stage-badge--editable {
+  z-index: 1;
+  width: 146px;
+  justify-content: space-between;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.stage-badge__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stage-badge--large {
+  gap: 7px;
+  width: 178px;
+  padding: 9px 16px;
+  font-size: 14px;
+}
+
+.stage-badge--large .stage-badge__caret {
+  width: 15px;
+  height: 15px;
+}
+
+.stage-badge__caret {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.stage-badge__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.stage-badge--editable:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* ── Filter pills ───────────────────────────────────────────────────────── */
+
+.filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.filter-pill:hover {
+  color: var(--text);
+}
+
+.filter-pill.is-selected {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
+.filter-pill__count {
+  opacity: 0.7;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── List view ──────────────────────────────────────────────────────────── */
+
+.list-header {
+  margin-bottom: 20px;
+}
+
+.list-header h1 {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+.list-header__summary {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.search {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--ring);
+  border-color: var(--primary);
+}
+
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  position: relative;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 120ms,
+    box-shadow 120ms;
+}
+
+.card:hover {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+
+.card__top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.card__company {
+  min-width: 120px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/*
+ * The stretched link: one real anchor per card, expanded to cover it. This is why the card is a
+ * plain <li> and not an <a> — the stage <select> is interactive and cannot legally nest inside a
+ * link.
+ */
+.card__link {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.card__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+}
+
+.card__link:focus-visible::after {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.card__bottom {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/*
+ * Layered above the card's stretched link (`z-index: 1`, as the stage control is) so it opens the
+ * posting rather than being swallowed by the link covering the card.
+ */
+.card__posting {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.card__posting:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  color: var(--primary);
+}
+
+.card__posting:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.card__posting svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.card__date {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Detail view ────────────────────────────────────────────────────────── */
+
+.detail__header {
+  margin-bottom: 24px;
+}
+
+.detail__header h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+.detail__subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.detail__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.detail__job-url {
+  display: inline-block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.detail__section {
+  margin-bottom: 28px;
+}
+
+.detail__section h2 {
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.detail__collapsible {
+  margin-bottom: 10px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.detail__collapsible summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detail__collapsible h3 {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 12px 0 0;
+}
+
+.facts dt {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.role {
+  margin-top: 14px;
+}
+
+.role__dates {
+  margin: 2px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.answers {
+  margin: 12px 0 0;
+  padding-left: 20px;
+}
+
+.answer {
+  margin-bottom: 14px;
+}
+
+.answer__question {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.answer__text {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* ── Notes ──────────────────────────────────────────────────────────────── */
+
+.notes-log__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.note__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.note__category {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.note__category--technical {
+  color: var(--primary);
+}
+
+.note__category--behavioral {
+  color: var(--success);
+}
+
+.note__text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.add-note {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.add-note__categories {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.add-note__category {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.add-note__category.is-selected {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
+.add-note__category input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.add-note__category:focus-within {
+  outline: 2px solid var(--ring);
+}
+
+.add-note__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.add-note__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.add-note__text:focus-visible {
+  outline: 2px solid var(--ring);
+  border-color: var(--primary);
+}
+
+/* ── Narrow ─────────────────────────────────────────────────────────────── */
+
+@media (width <= 720px) {
+  .page {
+    padding: 20px 16px 64px;
+  }
+
+  .page-header__inner {
+    padding: 12px 16px;
+  }
+
+  .card__top,
+  .card__bottom {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .card__company {
+    min-width: 0;
+  }
+
+  .add-note__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

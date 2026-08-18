@@ -34,10 +34,15 @@ All schemas, in the order data flows through the app:
 - **`QuestionAnswerSchema`** — one drafted answer to one `question` field. `sourceStoryIds[]`
   records which `Story.id`s the model drew on, so the review UI can say "this used your 'billing
   migration' story" instead of showing an opaque block of text.
-- **`ApplicationStatusSchema`** — `'draft' | 'submitted'`: was this actually sent to the employer.
-- **`ApplicationStageSchema`** — `'applied' | 'phone_screen' | 'interviewing' | 'offer' |
-'rejected' | 'withdrawn'`: how far a sent Application has got. Separate from status, and listed
-  in pipeline order — which is the order a stage picker should offer them in.
+- **`ApplicationStageSchema`** — `'applied' | 'phone_screen' | 'interviewing' | 'rejected'`: how far
+  an Application has got. Listed in pipeline order — which is the order a stage picker offers them
+  in, and which `apps/dashboard` reads off `.options` rather than restating.
+
+  There was also an `ApplicationStatusSchema` (`'draft' | 'submitted'`) meant to answer "was this
+  actually sent to the employer". It was removed: nothing ever set `submitted`, so every stored row
+  read `draft`. Saving is already a manual step taken _after_ submitting, so a stored Application
+  is a submitted one by construction.
+
 - **`NoteSchema` / `NoteCategorySchema` / `NewNoteSchema`** — one timestamped entry in an
   Application's notes log, filed as `technical` / `behavioral` / `general`. The log is appended to,
   never overwritten, so interview questions recorded against one application stay usable as
@@ -46,9 +51,9 @@ All schemas, in the order data flows through the app:
 - **`ApplicationSchema` / `NewApplicationSchema` / `ApplicationSnapshotSchema`** — one persisted
   Application, in three shapes for the three things that touch it:
   - `Application` is the whole record, `stage` and `notes` included.
-  - `NewApplication` is it minus `id`/`createdAt` (the server assigns those), with `status`
-    defaulting to `'draft'`, `stage` to `'applied'` and `notes` to `[]` — the extension's Save Step
-    posts none of the three. It's what `POST /applications` validates.
+  - `NewApplication` is it minus `id`/`createdAt` (the server assigns those), with `stage`
+    defaulting to `'applied'` and `notes` to `[]` — the extension's Save Step posts neither. It's
+    what `POST /applications` validates.
   - `ApplicationSnapshot` is `NewApplication` minus `stage`/`notes`, and is what `PATCH
 /applications/:id` validates. Stage and notes belong to tracking the application, not to the
     autofill run, so a re-save must never overwrite them.

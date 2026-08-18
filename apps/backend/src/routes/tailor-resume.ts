@@ -1,5 +1,6 @@
 import { TailorResumeRequestSchema, type Application } from '@djobi/shared';
 import { Hono } from 'hono';
+import { parseBody } from '../requestBody.js';
 import { listApplicationsByCompany } from '../db/applicationsRepository.js';
 import { tailorResume } from '../llm/tailorResume.js';
 
@@ -19,13 +20,9 @@ function buildPriorApplicationsSummary(pastApplications: Application[]): string 
 export const tailorResumeRoute = new Hono();
 
 tailorResumeRoute.post('/tailor-resume', async (c) => {
-  const body = await c.req.json();
-  const parsed = TailorResumeRequestSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.message }, 400);
-  }
+  const parsed = await parseBody(c, TailorResumeRequestSchema);
 
-  const { profile, jobInfo } = parsed.data;
+  const { profile, jobInfo } = parsed;
   const pastApplications = await listApplicationsByCompany(jobInfo.company);
   const priorApplicationsSummary = buildPriorApplicationsSummary(pastApplications);
   const tailoredResume = await tailorResume(profile, jobInfo, priorApplicationsSummary);

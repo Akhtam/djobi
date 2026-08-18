@@ -1,0 +1,53 @@
+/**
+ * The one description of an {@link ApplicationStage} for display, shared by the three places a
+ * stage is rendered: the list card's editable badge, the detail page's segmented picker, and the
+ * list's filter pills.
+ *
+ * `ApplicationStageSchema.options` is the source of order, not a hand-written array. The schema
+ * declares its values in pipeline order specifically so a picker can iterate them, and copying that
+ * order here would create a second thing to remember when a stage is added.
+ */
+import {
+  ApplicationStageSchema,
+  type ApplicationStage,
+  NoteCategorySchema,
+  type NoteCategory,
+} from '@djobi/shared';
+
+/** Every stage, in pipeline order. */
+export const STAGES: readonly ApplicationStage[] = ApplicationStageSchema.options;
+
+/**
+ * The stages that mean an application is still live — the list header's "in progress" count.
+ *
+ * Hand-listed, and it has to be: "still live" is a judgement about which stages are which, not
+ * something the enum's order can answer. It lives here beside `STAGES` rather than in the view
+ * that renders it so that adding a stage puts every decision about that stage in one file.
+ */
+export const IN_PROGRESS_STAGES: readonly ApplicationStage[] = ['phone_screen', 'interviewing'];
+
+/** Human-readable stage names. The enum values are snake_case and must not reach the screen. */
+export const STAGE_LABELS: Record<ApplicationStage, string> = {
+  applied: 'Applied',
+  phone_screen: 'Phone screen',
+  interviewing: 'Interviewing',
+  rejected: 'Rejected',
+};
+
+/**
+ * The CSS modifier class for a stage's colour. The colours themselves live in `App.css` against
+ * the same token set the extension uses, so dark mode needs no separate mapping here.
+ */
+export function stageClass(stage: ApplicationStage): string {
+  return `stage--${stage.replaceAll('_', '-')}`;
+}
+
+/** Every note category, in the order the schema declares them. */
+export const NOTE_CATEGORIES: readonly NoteCategory[] = NoteCategorySchema.options;
+
+/** Human-readable note category names. */
+export const NOTE_CATEGORY_LABELS: Record<NoteCategory, string> = {
+  technical: 'Technical',
+  behavioral: 'Behavioral',
+  general: 'General',
+};

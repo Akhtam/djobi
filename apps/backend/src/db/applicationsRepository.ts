@@ -7,7 +7,7 @@ import {
   type NewNote,
   type Note,
 } from '@djobi/shared';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from './client.js';
 import { applications } from './schema.js';
 
@@ -116,6 +116,35 @@ export async function updateApplicationStage(
   const [row] = await db
     .update(applications)
     .set({ stage })
+    .where(eq(applications.id, id))
+    .returning();
+
+  return row ? toApplication(row) : null;
+}
+
+/**
+ * Appends one note to an application's log, or `null` if no application has that id.
+ *
+ * `id` and `createdAt` are generated here, never taken from the caller — a note whose timestamp the
+ * sender chose isn't trustworthy history, which is the rule `NoteSchema` states and this is where
+ * it has to be enforced.
+ *
+ * The append is a single `notes || …` statement rather than a read, a push and a write. Two notes
+ * added close together — the dashboard open in two tabs, or a double-submitted form — both read the
+ * same array under read-modify-write and the second write silently discards the first. That is
+ * exactly the loss an append-only log exists to prevent, so the concatenation happens in Postgres
+ * where it is atomic.
+ */
+export async function addApplicationNote(id: string, note: NewNote): Promise<Application | null> {
+  const appended: Note = {
+    ...note,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+  };
+
+  const [row] = await db
+    .update(applications)
+    .set({ notes: sql`${applications.notes} || ${JSON.stringify([appended])}::jsonb` })
     .where(eq(applications.id, id))
     .returning();
 

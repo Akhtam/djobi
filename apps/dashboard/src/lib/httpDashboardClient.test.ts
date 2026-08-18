@@ -1,0 +1,105 @@
+/**
+ * The HTTP client against a stubbed `fetch`.
+ *
+ * The fixture client makes every view testable without a network, which means nothing else in this
+ * suite would notice if the real adapter called the wrong path, the wrong method, or dropped the
+ * body. These tests cover exactly that seam — the paths and bodies are checked against what
+ * `apps/backend/src/routes/applications.ts` actually registers.
+ */
+import type { Application } from '@djobi/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DashboardBackendError, httpDashboardClient } from './dashboardClient';
+import { fixtureApplications } from './fixtures';
+
+const sample: Application = fixtureApplications[0];
+
+function stubFetch(response: { ok?: boolean; status?: number; jsonBody?: unknown }) {
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+    ok: response.ok ?? true,
+    status: response.status ?? 200,
+    json: async () => response.jsonBody,
+    text: async () => JSON.stringify(response.jsonBody ?? {}),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('listApplications', () => {
+  it('GETs /applications and validates the rows', async () => {
+    const fetchMock = stubFetch({ jsonBody: [sample] });
+
+    await expect(httpDashboardClient.listApplications()).resolves.toEqual([sample]);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', undefined);
+  });
+
+  it('rejects a row that is not an Application instead of handing it to the views', async () => {
+    stubFetch({ jsonBody: [{ id: 'x' }] });
+    await expect(httpDashboardClient.listApplications()).rejects.toThrow();
+  });
+});
+
+describe('updateStage', () => {
+  it('PATCHes the stage route with a bare { stage } body', async () => {
+    const fetchMock = stubFetch({ jsonBody: { ...sample, stage: 'rejected' } });
+
+    await httpDashboardClient.updateStage('app-brex', 'rejected');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications/app-brex/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'rejected' }),
+    });
+  });
+
+  it('escapes an id rather than letting it change the path', async () => {
+    const fetchMock = stubFetch({ jsonBody: sample });
+
+    await httpDashboardClient.updateStage('a/b', 'applied');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:5391/applications/a%2Fb/stage');
+  });
+});
+
+describe('addNote', () => {
+  it('POSTs the note route with only the fields the server accepts', async () => {
+    const fetchMock = stubFetch({ jsonBody: sample });
+
+    await httpDashboardClient.addNote('app-brex', {
+      category: 'technical',
+      text: 'Race condition.',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications/app-brex/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
+    });
+  });
+});
+
+describe('failures', () => {
+  it('reports the backend’s own error message, not a parse error', async () => {
+    stubFetch({ ok: false, status: 404, jsonBody: { error: 'Application not found' } });
+
+    await expect(httpDashboardClient.updateStage('nope', 'applied')).rejects.toThrow(
+      /Application not found/,
+    );
+  });
+
+  it('turns an unreachable backend into something that names the cause', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
+    );
+
+    // "Failed to fetch" on its own tells the user nothing actionable.
+    await expect(httpDashboardClient.listApplications()).rejects.toThrow(/Is it running/);
+    await expect(httpDashboardClient.listApplications()).rejects.toBeInstanceOf(
+      DashboardBackendError,
+    );
+  });
+});

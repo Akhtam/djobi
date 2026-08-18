@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ApplicationSchema,
   ApplicationStageSchema,
-  ApplicationStatusSchema,
   EducationSchema,
   JobInfoSchema,
   NewApplicationSchema,
@@ -82,7 +81,6 @@ const validApplication = {
   jobInfo: validJobInfo,
   tailoredResume: validTailoredResume,
   answers: [validQuestionAnswer],
-  status: 'draft' as const,
   stage: 'applied' as const,
   notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
@@ -230,17 +228,6 @@ describe('QuestionAnswerSchema', () => {
   });
 });
 
-describe('ApplicationStatusSchema', () => {
-  it('accepts draft and submitted', () => {
-    expect(ApplicationStatusSchema.safeParse('draft').success).toBe(true);
-    expect(ApplicationStatusSchema.safeParse('submitted').success).toBe(true);
-  });
-
-  it('rejects an arbitrary status', () => {
-    expect(ApplicationStatusSchema.safeParse('archived').success).toBe(false);
-  });
-});
-
 describe('ApplicationStageSchema', () => {
   it('accepts every stage in the interview pipeline', () => {
     for (const stage of ['applied', 'phone_screen', 'interviewing', 'rejected']) {
@@ -300,8 +287,8 @@ describe('ApplicationSchema', () => {
     expect(ApplicationSchema.safeParse(withoutJobInfo).success).toBe(false);
   });
 
-  it('rejects an invalid status', () => {
-    expect(ApplicationSchema.safeParse({ ...validApplication, status: 'archived' }).success).toBe(
+  it('rejects an invalid stage', () => {
+    expect(ApplicationSchema.safeParse({ ...validApplication, stage: 'ghosted' }).success).toBe(
       false,
     );
   });
@@ -312,15 +299,6 @@ describe('NewApplicationSchema', () => {
 
   it('accepts an application without id/createdAt', () => {
     expect(NewApplicationSchema.safeParse(validNewApplication).success).toBe(true);
-  });
-
-  it('defaults status to draft when omitted', () => {
-    const { status: _status, ...withoutStatus } = validNewApplication;
-    const result = NewApplicationSchema.safeParse(withoutStatus);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.status).toBe('draft');
-    }
   });
 
   it('defaults stage to applied and notes to empty when omitted', () => {

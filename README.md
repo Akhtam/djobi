@@ -2,18 +2,21 @@
 
 A Chrome extension that autofills job applications on ATS sites (Greenhouse, Ashby, Lever, Workday,
 ...) with an AI-tailored resume and drafted answers to freeform questions, backed by a local
-server and a persisted history of past applications. See `PROGRESS.md` for what's built and
-`CONTEXT.md` for domain terminology.
+server, a persisted history of past applications, and a web dashboard for tracking them. See
+`PROGRESS.md` for what's built and `CONTEXT.md` for domain terminology.
 
 ## Architecture
 
-- `packages/shared` — zod schemas shared by both apps (`Profile`, `JobInfo`, `TailoredResume`, etc.)
+- `packages/shared` — zod schemas shared by every app (`Profile`, `JobInfo`, `TailoredResume`, etc.)
 - `apps/backend` — local Hono server: LLM calls (Anthropic), Postgres persistence (Neon + Drizzle),
   resume PDF rendering. Runs on `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
   an options page (profile setup), and a side panel (paste/review/fill). There is no popup — the
   toolbar icon opens the side panel, which survives tab switches and clicking away.
+- `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications and
+  tracking each one's stage and notes. A separate app rather than an extension page: it needs no
+  `chrome.*` API, so it talks to the backend over CORS like any other origin.
 
 ## Prerequisites
 
@@ -110,12 +113,25 @@ background service worker, so closing the panel mid-run doesn't lose them.
 The panel and options page share a light/dark theme, toggled from the icon in either header and
 persisted in `chrome.storage.local`.
 
+## 7. Browse past applications
+
+```bash
+pnpm dev:dashboard
+```
+
+Serves the dashboard on `http://localhost:5174`. With the backend running, it lists every saved
+application (filter by stage, search by title or company) and opens each one to edit its stage,
+append notes, and review the job info, tailored resume and drafted answers that went out. Notes are
+append-only. The backend's CORS allowlist covers the dashboard's dev origins only — see
+`apps/backend/README.md`.
+
 ## Tests
 
 ```bash
 pnpm test                        # every package
 pnpm --filter backend test       # backend only
 pnpm --filter extension test     # extension only
+pnpm --filter dashboard test     # dashboard only
 pnpm --filter @djobi/shared test # shared schemas only
 ```
 

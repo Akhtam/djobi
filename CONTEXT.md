@@ -1,6 +1,6 @@
 # djobi
 
-A Chrome extension that autofills job applications on ATS platforms with an AI-tailored resume and drafted answers to freeform questions, backed by a local server and a persisted history of past applications.
+A Chrome extension that autofills job applications on ATS platforms with an AI-tailored resume and drafted answers to freeform questions, backed by a local server, a persisted history of past applications, and a Dashboard for tracking them afterwards.
 
 ## Language
 
@@ -24,7 +24,7 @@ _Avoid_: submission (nothing is sent to the employer by this step), saving (a se
 
 **Save Step**:
 Recording a filled run as an Application, on an explicit action after the Fill Step. Creates the record the first time and updates that same record on every later save for the run, so re-filling or re-editing doesn't leave duplicates.
-_Avoid_: submission (the Application is saved in `draft` status; the employer is not involved)
+_Avoid_: submission (nothing is sent to the employer by this step — the candidate submits on the ATS themselves, and saves afterwards)
 
 **Duplicate Guard**:
 The check that runs before the Analysis Step: if an Application already exists for this exact job URL, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
@@ -66,17 +66,23 @@ _Avoid_: job id (ambiguous with the Application's own id), requisition id (the e
 internal reference, e.g. `JR101359`)
 
 **Application**:
-One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a Status, a Stage, and a Notes log.
+One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a Stage and a Notes log. Saving is a manual step the candidate takes after actually submitting, so a stored Application is a submitted one; there is no separate "was this sent" flag.
 _Avoid_: job application (ambiguous with the act of applying itself)
 
-**Status**:
-Whether an Application was actually sent to the employer: `draft` or `submitted`. Answers "did this go out", not "how far has it got".
-_Avoid_: state, stage (Stage is the separate field below)
-
 **Stage**:
-Where a sent Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `rejected`. Kept separate from Status; a `draft` still carries a Stage, defaulting to `applied`.
-_Avoid_: status, step
+Where an Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it.
+_Avoid_: status (there is no longer a separate status field — see Application), step
 
 **Note**:
 One timestamped, categorized entry (`technical` / `behavioral` / `general`) in an Application's notes log. Appended, never overwritten, so interview questions recorded against one Application stay usable as preparation for the next.
 _Avoid_: comment, note field (there is no single overwritable text field)
+
+### Tracking
+
+**Dashboard**:
+The web app where the candidate reviews saved Applications and tracks each one's Stage and Notes. A separate origin talking to the same backend, not an extension page — it needs no `chrome.*` API and no open ATS tab. Reads and edits what the Application Pipeline already saved; it never runs a step of that pipeline.
+_Avoid_: admin, tracker page, extension dashboard (it is neither an extension surface nor an administrative one)
+
+**In Progress**:
+The Stages that mean an Application is still live — `phone_screen` and `interviewing`. A judgement about which Stages count, not something the Stage order can answer: `applied` is not in progress because nothing has come back yet, and `rejected` is over.
+_Avoid_: active, open (both read as "not deleted")

@@ -15,6 +15,13 @@
       "when": 1786590662964,
       "tag": "0001_living_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787081160827,
+      "tag": "0002_outstanding_black_tom",
+      "breakpoints": true
     }
   ]
 }

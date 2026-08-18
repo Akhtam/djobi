@@ -7,12 +7,16 @@ const {
   mockGetApplicationById,
   mockSaveApplication,
   mockUpdateApplication,
+  mockUpdateApplicationStage,
+  mockAddApplicationNote,
 } = vi.hoisted(() => ({
   mockListApplications: vi.fn(),
   mockListApplicationsByJobUrl: vi.fn(),
   mockGetApplicationById: vi.fn(),
   mockSaveApplication: vi.fn(),
   mockUpdateApplication: vi.fn(),
+  mockUpdateApplicationStage: vi.fn(),
+  mockAddApplicationNote: vi.fn(),
 }));
 
 vi.mock('../db/applicationsRepository.js', () => ({
@@ -21,6 +25,8 @@ vi.mock('../db/applicationsRepository.js', () => ({
   getApplicationById: mockGetApplicationById,
   saveApplication: mockSaveApplication,
   updateApplication: mockUpdateApplication,
+  updateApplicationStage: mockUpdateApplicationStage,
+  addApplicationNote: mockAddApplicationNote,
 }));
 
 const { app } = await import('../app.js');
@@ -44,7 +50,6 @@ const sampleApplication: Application = {
     workExperience: [],
   },
   answers: [],
-  status: 'draft',
   stage: 'applied',
   notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
@@ -148,20 +153,6 @@ describe('POST /applications', () => {
     expect(mockSaveApplication).toHaveBeenCalledWith(newApplication);
   });
 
-  it('defaults status to draft when omitted', async () => {
-    mockSaveApplication.mockResolvedValue(sampleApplication);
-    const { status: _status, ...withoutStatus } = newApplication;
-
-    const res = await app.request('/applications', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(withoutStatus),
-    });
-
-    expect(res.status).toBe(200);
-    expect(mockSaveApplication).toHaveBeenCalledWith({ ...withoutStatus, status: 'draft' });
-  });
-
   it('defaults stage and notes when the extension omits them', async () => {
     // The Fill Step posts neither field; requiring either would 400 every fill.
     mockSaveApplication.mockResolvedValue(sampleApplication);
@@ -243,5 +234,139 @@ describe('PATCH /applications/:id', () => {
 
     expect(res.status).toBe(400);
     expect(mockUpdateApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /applications/:id/stage', () => {
+  beforeEach(() => {
+    mockUpdateApplicationStage.mockReset();
+    mockUpdateApplication.mockReset();
+  });
+
+  it('moves an application to a new stage', async () => {
+    const moved = { ...sampleApplication, stage: 'interviewing' as const };
+    mockUpdateApplicationStage.mockResolvedValue(moved);
+
+    const res = await app.request('/applications/application-1/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'interviewing' }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual(moved);
+    expect(mockUpdateApplicationStage).toHaveBeenCalledWith('application-1', 'interviewing');
+  });
+
+  it('rejects a stage outside the enum rather than writing it', async () => {
+    const res = await app.request('/applications/application-1/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'ghosted' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockUpdateApplicationStage).not.toHaveBeenCalled();
+  });
+
+  it('404s for an application that does not exist', async () => {
+    mockUpdateApplicationStage.mockResolvedValue(null);
+
+    const res = await app.request('/applications/nope/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'applied' }),
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('does not reach the snapshot route, whose body would reject a bare stage', async () => {
+    mockUpdateApplicationStage.mockResolvedValue(sampleApplication);
+
+    await app.request('/applications/application-1/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'applied' }),
+    });
+
+    expect(mockUpdateApplication).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /applications/:id/notes', () => {
+  beforeEach(() => {
+    mockAddApplicationNote.mockReset();
+  });
+
+  it('appends a note', async () => {
+    const withNote = {
+      ...sampleApplication,
+      notes: [
+        {
+          id: 'note-1',
+          category: 'technical' as const,
+          text: 'Asked about idempotency keys.',
+          createdAt: '2026-03-18T14:14:00.000Z',
+        },
+      ],
+    };
+    mockAddApplicationNote.mockResolvedValue(withNote);
+
+    const res = await app.request('/applications/application-1/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'technical', text: 'Asked about idempotency keys.' }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual(withNote);
+    expect(mockAddApplicationNote).toHaveBeenCalledWith('application-1', {
+      category: 'technical',
+      text: 'Asked about idempotency keys.',
+    });
+  });
+
+  it('ignores a client-supplied id and createdAt — history the sender chose is not history', async () => {
+    mockAddApplicationNote.mockResolvedValue(sampleApplication);
+
+    await app.request('/applications/application-1/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        category: 'general',
+        text: 'Recruiter call.',
+        id: 'chosen-by-the-client',
+        createdAt: '1999-01-01T00:00:00.000Z',
+      }),
+    });
+
+    expect(mockAddApplicationNote).toHaveBeenCalledWith('application-1', {
+      category: 'general',
+      text: 'Recruiter call.',
+    });
+  });
+
+  it('rejects an unknown category', async () => {
+    const res = await app.request('/applications/application-1/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'vibes', text: 'Hmm.' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockAddApplicationNote).not.toHaveBeenCalled();
+  });
+
+  it('404s for an application that does not exist', async () => {
+    mockAddApplicationNote.mockResolvedValue(null);
+
+    const res = await app.request('/applications/nope/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'general', text: 'Anything.' }),
+    });
+
+    expect(res.status).toBe(404);
   });
 });

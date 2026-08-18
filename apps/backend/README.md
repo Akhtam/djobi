@@ -17,6 +17,25 @@ body to the extension. `structuredCall.ts` handles its one retryable case locall
 attempt metadata, and exposes only the final message through the generic error body. It's a separate
 module from the entrypoint precisely so route tests can import the app without starting a server.
 
+It also installs `hono/cors` for `apps/dashboard`, which runs on its own dev server and is therefore
+a different origin. That `app.use` sits **above** every `app.route` for the same reason the logger
+below can't: Hono composes in registration order, so middleware registered after the routes never
+runs for a request a route answers. The allowed origin is an explicit list, not `*` — this server
+holds an Anthropic key and a live database connection, and any page in the browser can reach
+`127.0.0.1`. `src/cors.test.ts` covers both of those, deliberately asserting against a real route
+rather than an unknown path, since a broken registration still answers a 404 correctly.
+
+Behind the allowlist sits a second `app.use`: every state-changing method (`POST`, `PATCH`, `PUT`,
+`DELETE`) must declare `content-type: application/json`, or the request is refused with a **415**
+carrying the same `BackendErrorBody` shape as every other error. This is a CSRF guard, not a parsing
+convenience. CORS middleware is header-based — for a non-`OPTIONS` request it omits the allow-origin
+header and calls `next()` anyway — so a request the browser never preflights reaches the handler and
+its side effect lands even though the attacker can't read the reply. A `POST` skips the preflight
+only when its content-type is `text/plain`, `application/x-www-form-urlencoded`, or
+`multipart/form-data`, and `c.req.json()` parses the body regardless of the header; requiring
+`application/json` (never a simple content-type) forces the preflight the allowlist gets to refuse.
+Both real clients already send it, so 415 is a status no correct client sees.
+
 `index.ts` is the entrypoint: starts `app.ts` via `@hono/node-server` bound to `127.0.0.1` (never
 `0.0.0.0`) on `$PORT`, defaulting to 5391. It mounts `app` under a wrapper instance carrying
 `hono/logger`, rather than calling `app.use(logger())` — Hono composes handlers in registration
@@ -111,23 +130,27 @@ fixed. `curl` against a running server works too, for a payload you already have
 ## `src/routes/` — the HTTP surface
 
 Each route validates its body with zod and delegates; each has a test asserting the 200 / 400
-(validation) / 500 (downstream throw) triple.
+(validation) / 500 (downstream throw) triple. A fourth status never reaches a route: the
+content-type guard in `app.ts` answers a state-changing request with the wrong `content-type` with
+a 415 before any route runs, so route tests always send `content-type: application/json`.
 
 Every Application Pipeline body is validated against the shared schema in `@djobi/shared`'s
 `wire.ts` — the same one `lib/backendClient.ts` builds the request against — rather than a schema
 private to the route. See that package's README for why.
 
-| Route                     | Body                     | Delegates to                |
-| ------------------------- | ------------------------ | --------------------------- |
-| `POST /extract-job`       | `ExtractJobRequest`      | `llm/extractJob`            |
-| `POST /tailor-resume`     | `TailorResumeRequest`    | `llm/tailorResume`          |
-| `POST /answer-questions`  | `AnswerQuestionsRequest` | `llm/answerQuestions`       |
-| `POST /render-resume-pdf` | `RenderResumePdfRequest` | `pdf/renderResume`          |
-| `GET`/`POST /profile`     | `Profile`                | `db/profileRepository`      |
-| `GET /applications`       | — (optional `?jobUrl=`)  | `db/applicationsRepository` |
-| `GET /applications/:id`   | —                        | `db/applicationsRepository` |
-| `POST /applications`      | `NewApplication`         | `db/applicationsRepository` |
-| `PATCH /applications/:id` | `ApplicationSnapshot`    | `db/applicationsRepository` |
+| Route                           | Body                            | Delegates to                |
+| ------------------------------- | ------------------------------- | --------------------------- |
+| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`            |
+| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`          |
+| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`       |
+| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`          |
+| `GET`/`POST /profile`           | `Profile`                       | `db/profileRepository`      |
+| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationsRepository` |
+| `GET /applications/:id`         | —                               | `db/applicationsRepository` |
+| `POST /applications`            | `NewApplication`                | `db/applicationsRepository` |
+| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationsRepository` |
+| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationsRepository` |
+| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationsRepository` |
 
 `GET /applications` takes `?jobUrl=` to narrow the list to one posting — the extension's duplicate
 guard calls it before every analysis. It's a query parameter rather than its own path because
@@ -137,6 +160,13 @@ depend on registration order to not be read as an id.
 `PATCH /applications/:id` is the Save Step re-saving a run it already saved once, so it takes an
 `ApplicationSnapshot` — `NewApplication` minus `stage` and `notes`. Those belong to tracking the
 application rather than to the autofill run, and a re-save must not overwrite them.
+
+`PATCH /applications/:id/stage` and `POST /applications/:id/notes` are the dashboard's interview
+tracking. They are separate paths rather than fields on `PATCH /applications/:id` precisely because
+that route's body excludes `stage` and `notes` — folding them back in would give a re-saved autofill
+a way to overwrite tracking history, which is the thing `ApplicationSnapshot` exists to prevent. A
+note's `id` and `createdAt` are assigned by `addApplicationNote` and stripped from the request body:
+history whose timestamp the sender chose isn't history.
 
 `tailor-resume.ts` is the only route with logic of its own: it calls
 `listApplicationsByCompany(jobInfo.company)` and builds a one-line-per-application summary to pass
@@ -159,10 +189,13 @@ Two tables:
 - **`applications`** — one row per job you autofill. `company`/`roleTitle`/`jobUrl` are plain columns
   (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
   jsonb snapshots of what was generated for that specific application, so past applications stay
-  readable even if `Profile` or the tailoring prompt changes later. `status` (`draft`/`submitted`)
-  and `stage` (`applied` → … → `offer`/`rejected`/`withdrawn`) are separate columns answering
-  separate questions — whether it went out, and how far it got. `notes` is a jsonb array appended to
-  over the life of the application, never overwritten.
+  readable even if `Profile` or the tailoring prompt changes later. `stage`
+  (`applied` → `phone_screen` → `interviewing` → `rejected`) tracks how far it got. `notes` is a
+  jsonb array appended to over the life of the application, never overwritten.
+
+  A `status` column (`draft`/`submitted`) sat beside `stage` until migration `0002`. Nothing ever
+  wrote `submitted`, so all 28 rows read `draft` and the column held no information — saving is a
+  manual step the candidate takes after submitting, so there was never a moment that would set it.
 
 ### `client.ts`
 
@@ -194,6 +227,7 @@ one bad row from an older build doesn't hide the entire history behind it.
 
 `drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both tables;
 `0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
+`0002_outstanding_black_tom.sql` drops `applications.status` — see the note above.
 
 ## `drizzle.config.ts`
 

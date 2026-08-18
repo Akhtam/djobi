@@ -13,8 +13,8 @@ history belongs in git, not in this file.
 
 ## Current state
 
-Everything below is built, tested and works end to end. Suite green at **465 tests** (104 shared /
-51 backend / 310 extension), `pnpm test` from the repo root.
+Everything below is built, tested and works end to end. Suite green at **585 tests** (108 shared /
+76 backend / 340 extension / 61 dashboard), `pnpm test` from the repo root.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
   (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
@@ -25,6 +25,10 @@ Everything below is built, tested and works end to end. Suite green at **465 tes
   `answerQuestions`) through `structuredCall.ts`, a one-page-fitting resume PDF renderer, and
   Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
 build` compiles the shared package and emits a plain-Node production server to `dist/`.
+- **`apps/dashboard`** — Vite + React on `localhost:5174`, browsing past Applications and tracking
+  their Stage and Notes against the live backend. Two views behind a hand-rolled hash router; one
+  `DashboardClient` seam (`lib/dashboardClient.ts`) whose fixture implementation is test-only, so
+  every view is exercised without a network while the running app always talks to Postgres.
 - **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
   (`detect.ts`) and classify its fields (`detectFields.ts`) and fill them (`fillForm.ts`); the
   service worker runs the pipeline (`applicationPipeline.ts`); the options page edits the Profile;
@@ -62,14 +66,20 @@ checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses no
   LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.
-- **Application tracking:** `status` (draft/submitted) and `stage` (applied → phone_screen →
-  interviewing → rejected) are separate fields. Notes are a timestamped, categorized
-  log (`technical` / `behavioral` / `general`) you append to, not a single overwritable text field —
-  so old interview-question notes stay around as reference for future applications.
+- **Application tracking is `stage` alone** (applied → phone_screen → interviewing → rejected).
+  There was also a `status` field (draft/submitted) for "did this actually go out"; it was dropped
+  in migration `0002` because nothing ever set `submitted` — saving is a manual step the candidate
+  takes _after_ submitting, so a stored Application is a submitted one and the field was `draft` on
+  all 28 rows. Notes are a timestamped, categorized log (`technical` / `behavioral` / `general`)
+  you append to, not a single overwritable text field — so old interview-question notes stay around
+  as reference for future applications.
 - **Process:** this project is built test-first (red → green, one vertical slice at a time) — see
   the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
-- **Repo:** pnpm workspace — `packages/shared` + `apps/backend` + `apps/extension`, with
-  `apps/dashboard` planned (Phase 8). GitHub remote: `Akhtam/djobi`.
+- **Repo:** pnpm workspace — `packages/shared` + `apps/backend` + `apps/extension` +
+  `apps/dashboard`. GitHub remote: `Akhtam/djobi`.
+- **The dashboard is a separate app, not an extension page.** It needs no `chrome.*` API, and
+  keeping it out of the MV3 bundle means it can be developed with plain Vite HMR and, later,
+  deployed somewhere the extension can't go.
 
 ## Constraints that look like mistakes
 
@@ -79,6 +89,34 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   `Object.defineProperty`) purely because **jsdom has no `DataTransfer` constructor** and no public
   `FileList` constructor either. Production takes the real `DataTransfer` path. This is a test
   environment constraint living in product code — don't simplify it away.
+- **Both stage controls are one native `<select>` (`StageSelect`), never a custom widget.** The
+  detail page briefly used a hand-built ARIA radiogroup, whose roving tabindex put only the
+  selected option in the tab order — with no arrow-key handler that left the control focusable and
+  impossible to operate by keyboard. A `<select>` cannot get that wrong. It is also a **fixed
+  width**: stage names differ in length, so an intrinsically-sized control reflows the card under
+  the pointer at the moment of the click.
+- **`addApplicationNote` appends in SQL (`notes || …::jsonb`), not read-modify-write.** Two notes
+  added close together — the dashboard open in two tabs, a double-submitted form — both read the
+  same array under read-modify-write and the second write silently discards the first. Losing an
+  entry is precisely what an append-only log exists to prevent, so the concatenation happens in
+  Postgres where it is atomic. `id` and `createdAt` are generated in that function, never accepted
+  from the request body.
+- **The dashboard's optimistic writes revert one record, and report whether they landed.**
+  `useApplicationStore.mutate` restores only the record that failed — snapshotting the whole array
+  also undoes any _other_ write that succeeded while this one was in flight. It also resolves
+  `true`/`false` rather than just `void`, because it swallows the rejection: a form that clears
+  itself on an `await` returning would throw the user's typing away on every failure, and a
+  stopped backend is the everyday case. Both are covered in `App.test.tsx`.
+- **`apps/dashboard`'s theme reads `localStorage` and `matchMedia` through guards.** Neither exists
+  in the jsdom environment its component tests run in, and a browser with site data blocked
+  _throws_ on `localStorage` property access rather than returning null. The theme is read before
+  anything else is drawn, so an unguarded read takes down the whole app at first render rather than
+  degrading. Same shape as the extension's `localThemeStorage()` guard, different missing API.
+- **The dashboard's list card is a `<li>` with a stretched link, not an `<a>`.** The stage
+  `<select>` on the card is interactive and cannot legally nest inside a link — its clicks navigate
+  instead of opening the dropdown. `.card__link::after` covers the card and the badge is layered
+  above it, which keeps exactly one real link per row for keyboard and screen-reader users. Turning
+  the card back into an anchor silently breaks the stage control.
 - **Cover-letter fields (`cover_letter_text` / `cover_letter_upload`) are detected but deliberately
   not filled.** `answerQuestions` is wired only to `question`-category fields. A scope decision,
   not an oversight.
@@ -92,6 +130,20 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   keystroke event sequence (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), since
   form libraries commonly commit to the form model on blur; a value write plus `input` leaves the
   DOM looking right and the model empty, which an ATS reports on submit as a missing required field.
+- **`runFill`'s `FILLABLE_FROM` list is the panel's own rule, restated where it is enforceable.**
+  It is `reviewOf`'s `canReview` set minus the two statuses the Fill button is disabled for, so
+  `review`/`fill-error`/`filled`/`save-error`/`saved` are in and `filling`/`saving` are out.
+  `filled` and `saved` are in on purpose — re-filling after an edit is supported, and the Save Step
+  updates the same record rather than creating a second. Narrowing the list to "only `review`"
+  looks tidier and breaks both the retry buttons and every re-fill.
+- **A rejected request body is a 400 and is deliberately _not_ logged.** `parseBody`
+  (`src/requestBody.ts`) throws `RequestValidationError`, which `app.onError` answers with a 400 and
+  no `console.error`. Both halves are load-bearing. Before it, a body that wasn't JSON threw out of
+  `c.req.json()`, fell through to `onError`, and became a **500** with a stack trace — so a truncated
+  request and an unreachable Postgres printed the same line, and the one signal that means "go look
+  at the backend" fired for a fault that was never in the backend. It is app-owned rather than Hono's
+  `HTTPException` because that class's `getResponse()` returns a plain-text body, which would put a
+  second error shape on a wire the extension parses as `{ error }`.
 - **`renderResume.tsx` compiles under `apps/backend/tsconfig.json`'s `"jsx": "react-jsx"`.** That
   tsconfig is what replaced its explicit `import React`; delete or retarget the file and the backend
   build stops compiling JSX, with the error pointing at the component rather than at the config.
@@ -120,37 +172,22 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
 
 ## Planned
 
-### Phase 7 — Application tracking data model (in progress)
+### Phase 7 — Application tracking data model (done)
 
-Landed:
+Stage/Note schemas, migration `0001_living_captain_stacy.sql`, `updateApplicationStage`,
+`addApplicationNote`, `PATCH /applications/:id/stage` and `POST /applications/:id/notes`.
 
-- [x] `ApplicationStageSchema`, `NoteSchema` / `NoteCategorySchema` / `NewNoteSchema`, and
-      `stage`/`notes` on `ApplicationSchema`/`NewApplicationSchema` — with `ApplicationSnapshotSchema`
-      (`NewApplication` minus stage/notes) as what a re-save is allowed to overwrite
-- [x] Migration `0001_living_captain_stacy.sql` adding the `stage`/`notes` columns
-- [x] `applicationsRepository.updateApplicationStage(id, stage)`
+Tracking writes have their own routes rather than riding on `PATCH /applications/:id`, whose body is
+an `ApplicationSnapshot` that deliberately excludes stage and notes — folding them in would let a
+re-saved autofill stomp interview history.
 
-Left:
+### Phase 8 — Frontend dashboard (done)
 
-- [ ] `applicationsRepository.addApplicationNote(id, note)` — appends to the log, server-generated
-      `id`/`createdAt`
-- [ ] `PATCH /applications/:id/stage` route — body `{ stage }`
-- [ ] `POST /applications/:id/notes` route — body `{ category, text }` (`NewNote`)
-- Build test-first, same as the routes that already exist
-
-### Phase 8 — Frontend dashboard (not started)
-
-A local web app to browse past applications, see which resume/answers went to which job, and
-track/update stage + notes. Depends on Phase 7's remaining routes.
-
-- [ ] `apps/dashboard` — separate Vite + React app (own dev server, e.g. `localhost:5173`),
-      **not** part of the extension — talks to the same backend on `127.0.0.1:5391`
-- [ ] Backend needs CORS middleware added (`hono/cors`) — none exists, and the dashboard is a
-      different origin than the backend
-- [ ] Applications list view — table of company / role / stage (badge) / date, filterable by stage
-- [ ] Application detail view — job info, tailored resume, drafted answers, notes log (filterable
-      by category), stage selector, add-note form
-- [ ] No LLM calls from the dashboard itself — pure read/write against existing + Phase 7 endpoints
+`apps/dashboard` on `localhost:5174`, wired to the backend: applications list with client-side
+stage/search filtering and per-card stage editing, and a detail view with a stage picker, the notes
+log and composer, and collapsed job info / tailored resume / drafted answers. `hono/cors` added to
+`apps/backend/src/app.ts`, registered before the routes with the origin restricted to the
+dashboard's dev URLs.
 
 ### Phase 9 — Ask tab: answer a pasted question from the Profile (not started)
 
@@ -230,6 +267,12 @@ which one owns the backend turn should be settled before either is built.
 ## Open cleanups
 
 From the architecture-review runs. Everything **Strong** has been actioned; this is what's left.
+
+- [ ] **Speculative:** `FILLABLE_FROM` constrains the _sequence_ a Fill Step may start from, not
+      concurrency — it reads the status before an await, so two `START_FILL`s arriving in the same
+      tick would both pass. Nothing dispatches them that way (the panel disables Fill on the
+      optimistic `filling`, before the round trip), so this is parked rather than open. Closing it
+      needs a compare-and-transition inside `withTabLock`, not a wider read in the pipeline.
 
 - [ ] Every new Story is created with `id: ''`, but `QuestionAnswer.sourceStoryIds` references
       `Story.id` — so those references are useless whenever the candidate didn't type an id by hand.

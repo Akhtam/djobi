@@ -1,5 +1,6 @@
 import { ProfileSchema } from '@djobi/shared';
 import { Hono } from 'hono';
+import { parseBody } from '../requestBody.js';
 import { getProfile, saveProfile } from '../db/profileRepository.js';
 
 /** `GET /profile` / `POST /profile` — reads and saves the single stored profile. */
@@ -11,12 +12,8 @@ profileRoute.get('/profile', async (c) => {
 });
 
 profileRoute.post('/profile', async (c) => {
-  const body = await c.req.json();
-  const parsed = ProfileSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.message }, 400);
-  }
+  const parsed = await parseBody(c, ProfileSchema);
 
-  const saved = await saveProfile(parsed.data);
+  const saved = await saveProfile(parsed);
   return c.json(saved);
 });

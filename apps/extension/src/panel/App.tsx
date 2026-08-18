@@ -24,7 +24,7 @@ import type {
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { callBackend, callBackendBinary } from '../lib/callBackend';
+import { httpBackendClient } from '../lib/backendClient';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import { reviewOf } from '../lib/runReview';
@@ -115,7 +115,7 @@ export function App() {
   }, [tabId, changeToken]);
 
   useEffect(() => {
-    void callBackend<Profile | null>('/profile', undefined, 'GET').then((loadedProfile) => {
+    void httpBackendClient.getProfile().then((loadedProfile) => {
       setProfile(loadedProfile);
       setProfileLoaded(true);
     });
@@ -200,7 +200,8 @@ export function App() {
     if (!profile || !tailoredResume || resumePreview.kind === 'loading') return;
     clearResumePreview();
     setResumePreview({ kind: 'loading' });
-    void callBackendBinary('/render-resume-pdf', { profile, tailoredResume })
+    void httpBackendClient
+      .renderResumePdf(profile, tailoredResume)
       .then((bytes) => {
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
         resumeUrlRef.current = url;
