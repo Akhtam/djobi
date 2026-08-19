@@ -1,0 +1,817 @@
+/**
+ * The Autofill Tab — the Application Pipeline as the candidate drives it.
+ *
+ * These cases moved here wholesale when the flow moved out of `panel/App.tsx`; they were always
+ * about this flow rather than about the shell that used to host it.
+ *
+ * `AutofillHarness` supplies the two things the shell supplies in production — a Profile and an
+ * `ActiveRun` — and nothing else. It calls the real `useActiveRun`, so each case still covers the
+ * whole round trip the tab depends on: message -> `background/applicationPipeline.ts` -> `lib
+ * /tabStore.ts` -> `chrome.storage.onChanged` -> hook -> render.
+ */
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AutofillTab } from './AutofillTab';
+import { useActiveRun } from './useActiveRun';
+import {
+  JOB_DESCRIPTION,
+  answers,
+  callsOfType,
+  clickAnalyze,
+  deferred,
+  jobPageData,
+  panelClient,
+  profile,
+  questionField,
+  resetPanelTestEnv,
+  stubChrome,
+  tailoredResume,
+} from './panelTestHarness';
+import type { DetectedField } from '@djobi/shared';
+import { fakeSessionStorage } from '../lib/fakeSessionStorage';
+import { getPipelineRun, patchPipelineRun, storageKey } from '../lib/tabStore';
+
+/** The tab as the shell mounts it: a Profile, the real run handle, and nothing else. */
+function AutofillHarness({
+  onRefineAnswer = () => {},
+}: {
+  onRefineAnswer?: (fieldId: string, question: string, currentAnswer: string) => void;
+}) {
+  const activeRun = useActiveRun(true);
+  return (
+    <AutofillTab
+      client={panelClient()}
+      profile={profile}
+      activeRun={activeRun}
+      onRefineAnswer={onRefineAnswer}
+      hidden={false}
+    />
+  );
+}
+
+describe('AutofillTab', () => {
+  beforeEach(resetPanelTestEnv);
+
+  it('shows a paste box and an "Analyze" button immediately on open, even before/without any job page being detected', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://example.com',
+      profile,
+      jobPageData: null,
+    });
+
+    render(<AutofillHarness />);
+
+    await screen.findByRole('button', { name: 'Analyze' });
+    expect(screen.getByPlaceholderText(/paste the job description/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Job description')).toBeInTheDocument();
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it('leaves the paste box empty even when a form is detected, and keeps Analyze disabled until something is pasted', async () => {
+    // Detecting the form says nothing about the posting: the application page is a different page
+    // from the job ad, which is why the scrape it used to be pre-filled from was dropped.
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<AutofillHarness />);
+
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
+    expect(screen.getByPlaceholderText(/paste the job description/i)).toHaveValue('');
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it('keeps Analyze disabled when Chrome has not exposed the active tab URL', async () => {
+    const { sendMessage } = await stubChrome({ tabUrl: null, profile, jobPageData: null });
+
+    render(<AutofillHarness />);
+    const textarea = await screen.findByPlaceholderText(/paste the job description/i);
+    fireEvent.change(textarea, { target: { value: JOB_DESCRIPTION } });
+
+    expect(screen.getByRole('button', { name: 'Analyze' })).toBeDisabled();
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it("analyzes pasted text even when no job page was ever detected on the page, so pasting doesn't depend on auto-detection succeeding", async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://example.com',
+      tabId: 1,
+      profile,
+      jobPageData: null,
+    });
+
+    render(<AutofillHarness />);
+    const textarea = await screen.findByPlaceholderText(/paste the job description/i);
+    fireEvent.change(textarea, { target: { value: 'Pasted job description text.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
+    expect(sendMessage).toHaveBeenCalledWith(
+      {
+        type: 'START_ANALYSIS',
+        tabId: 1,
+        tabUrl: 'https://example.com',
+        profile,
+        jobDescription: 'Pasted job description text.',
+        force: false,
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('disables "Analyze" when there is nothing to analyze yet (no paste, no detected job page)', async () => {
+    await stubChrome({ tabUrl: 'https://example.com', profile, jobPageData: null });
+
+    render(<AutofillHarness />);
+
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
+  });
+
+  it('sends the pasted job description with START_ANALYSIS', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      tabId: 1,
+      profile,
+      jobPageData,
+    });
+
+    render(<AutofillHarness />);
+    await screen.findByRole('button', { name: 'Analyze' });
+
+    await clickAnalyze('Pasted job description text.');
+
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'START_ANALYSIS',
+        jobDescription: 'Pasted job description text.',
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('shows an editable review once analysis succeeds', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText('Senior Engineer at Acme');
+    expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fill form' })).toBeInTheDocument();
+  });
+
+  it('reveals a job-description editor holding the analyzed text when "Edit job description" is clicked on the review screen', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+
+    expect(screen.getByLabelText('Job description')).toHaveValue(JOB_DESCRIPTION);
+  });
+
+  it('disables "Re-analyze" when the review-screen editor is cleared to empty, rather than silently analyzing blank text', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    fireEvent.change(screen.getByDisplayValue(JOB_DESCRIPTION), { target: { value: '' } });
+
+    expect(screen.getByRole('button', { name: 'Re-analyze' })).toBeDisabled();
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1);
+  });
+
+  it('re-analyzes with the manually-edited job description text from the review screen', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    fireEvent.change(screen.getByDisplayValue(JOB_DESCRIPTION), {
+      target: { value: 'Pasted job description text.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
+
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({
+      jobDescription: 'Pasted job description text.',
+    });
+  });
+
+  it('shows an error and retries analysis when the user clicks "Try again"', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      analysisFailures: ['backend unreachable', null],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Senior Engineer at Acme');
+  });
+
+  it('stops on a job already applied to, naming when it was applied for', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      existingApplications: [
+        {
+          id: 'application-1',
+          company: 'Acme',
+          roleTitle: 'Senior Engineer',
+          createdAt: '2026-08-03T10:00:00.000Z',
+        },
+      ],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText(/you already applied to this job on august 3, 2026/i);
+    // The review never appears — the point of the guard is that no analysis ran at all.
+    expect(screen.queryByRole('button', { name: 'Edit job description' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze and apply anyway' }));
+
+    await screen.findByText('Senior Engineer at Acme');
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({ force: true });
+  });
+
+  it('says how many times a repeatedly-applied-to job was applied for', async () => {
+    const application = { id: 'a', company: 'Acme', roleTitle: 'Senior Engineer' };
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      existingApplications: [
+        { ...application, createdAt: '2026-08-03T10:00:00.000Z' },
+        { ...application, createdAt: '2026-07-02T10:00:00.000Z' },
+      ],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    // A single date would hide the repeat entirely.
+    await screen.findByText(
+      /already applied to this job 2 times, most recently on august 3, 2026/i,
+    );
+  });
+
+  it('shows the underlying cause of a failed analysis, not just a generic message', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      analysisFailures: [
+        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+      ],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(
+      screen.getByText(
+        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the underlying cause of a failed fill', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      saveFailures: ['POST /applications failed (500): db unreachable'],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
+
+    await screen.findByText('POST /applications failed (500): db unreachable');
+  });
+
+  it('fills the form without saving until "Save application" is clicked', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/Save the application when you're ready/);
+    expect(sendMessage).toHaveBeenCalledWith(
+      { type: 'START_FILL', tabId: 1, profile },
+      expect.any(Function),
+    );
+    expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save application' }));
+    await screen.findByText('Application saved.');
+    expect(sendMessage).toHaveBeenCalledWith(
+      { type: 'START_SAVE_APPLICATION', tabId: 1 },
+      expect.any(Function),
+    );
+  });
+
+  it('keeps the drafted answers, resume preview and job-description editor available after a successful fill', async () => {
+    // Filling is rarely the end of the task — the page's own validation can reject a value, or an
+    // answer can simply read badly once it's sitting in the form. Tearing the review down on
+    // success stranded the user with a green check and no route back to the content short of
+    // re-running the whole Analysis Step.
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    await screen.findByText(/Save the application when you're ready/);
+
+    expect(screen.getByText('Why do you want to work here?')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Preview tailored resume' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit job description' })).toBeInTheDocument();
+  });
+
+  it('lets the user edit an answer after filling and fill again, sending the edit to the Fill Step', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    await screen.findByText(/Save the application when you're ready/);
+
+    fireEvent.change(screen.getByDisplayValue('Draft answer.'), {
+      target: { value: 'Revised answer.' },
+    });
+
+    const refill = await screen.findByRole('button', { name: 'Fill form again' });
+    fireEvent.click(refill);
+
+    await screen.findByText(/Save the application when you're ready/);
+    expect(screen.getByDisplayValue('Revised answer.')).toBeInTheDocument();
+    expect(
+      sendMessage.mock.calls.filter(([message]) => message.type === 'START_FILL'),
+    ).toHaveLength(2);
+  });
+
+  it("warns about required fields that couldn't be resolved, instead of reporting a plain success when the fill is actually incomplete", async () => {
+    const unresolvedField: DetectedField = {
+      id: 'f-mystery',
+      label: 'Referral code',
+      inputType: 'text',
+      selector: '#mystery-field',
+      category: 'unknown',
+      required: true,
+      elementRole: 'native',
+    };
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData: { ...jobPageData, fields: [...jobPageData.fields, unresolvedField] },
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/didn't take a value/);
+    expect(screen.getByText('Referral code')).toBeInTheDocument();
+    expect(screen.queryByText(/Filled 3 fields/)).not.toBeInTheDocument();
+  });
+
+  it('reports a fill that wrote nothing as a failure, not as a success with an empty warning list', async () => {
+    // The pasted-job-description path can reach the Fill Step with no detected fields at all. Every
+    // step then "succeeds" having done nothing, `unresolvedRequiredFields` filters an empty array
+    // to an empty array, and the panel used to render an unqualified green check over an untouched
+    // form — the reason this failure mode went unreported for so long.
+    await stubChrome({
+      tabUrl: 'https://jobs.ashbyhq.com/outset/55d672a5/application',
+      profile,
+      // The pasted-text path: a job description analyzed with no detected form behind it.
+      jobPageData: { ...jobPageData, fields: [] },
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/no form fields were found on this page/);
+    expect(screen.queryByText(/saved the application\./)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a form it never found from one that kept nothing it was given', async () => {
+    // Both are zero fields written, and they used to share one banner telling the user to reload
+    // the page. That advice is wrong here: the form was detected perfectly well and the *page*
+    // rejected every write, so reloading changes nothing and the reload advice sends the user
+    // after the wrong problem.
+    await stubChrome({
+      tabUrl: 'https://jobs.lever.co/acme/1/apply',
+      profile,
+      jobPageData,
+      pageKeepsNothing: true,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/kept none of the values written into it/);
+    expect(screen.queryByText(/no form fields were found on this page/)).not.toBeInTheDocument();
+  });
+
+  it('warns when no frame answered instead of rendering a confident success', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      pageDoesNotAnswer: true,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/fill could not be verified because this page did not answer/i);
+    expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
+  });
+
+  it('ignores extra clicks on "Fill form" while a fill is already in flight', async () => {
+    const { sendMessage, resolveFill } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      holdFill: true,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    const fillButton = await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(fillButton);
+    fireEvent.click(fillButton);
+
+    expect(callsOfType(sendMessage, 'START_FILL')).toHaveLength(1);
+
+    resolveFill();
+    await screen.findByText(/Save the application when you're ready/);
+  });
+
+  it('shows an error and retries filling when the user clicks "Try again"', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      saveFailures: ['backend unreachable', null],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
+
+    await screen.findByText('Something went wrong saving the application.');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Application saved.');
+  });
+
+  it('resets to the bootstrap screen when the active tab changes, so the panel (which survives tab switches) never shows a stale review for the previous tab', async () => {
+    const { activate } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    activate(2);
+
+    await screen.findByRole('button', { name: 'Analyze' });
+    expect(screen.queryByText('Senior Engineer at Acme')).not.toBeInTheDocument();
+  });
+
+  it('removes the old review and Fill/Save controls immediately on same-tab navigation, before storage cleanup resolves', async () => {
+    const { navigate, sessionStorage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fill form' }));
+    await screen.findByRole('button', { name: 'Save application' });
+
+    const storageClear = deferred<void>();
+    sessionStorage.session.remove = vi.fn(() => storageClear.promise);
+    void sessionStorage.session.remove(storageKey(1));
+    act(() => navigate(1, 'https://boards.greenhouse.io/acme/jobs/2'));
+
+    expect(screen.queryByText('Senior Engineer at Acme')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Fill form/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save application' })).not.toBeInTheDocument();
+    expect(sessionStorage.session.remove).not.toHaveResolved();
+    storageClear.resolve();
+  });
+
+  it('checkpoints review progress (including edited answers) to the pipeline run store, so a reopened panel on the same tab restores it instead of starting over', async () => {
+    const sessionStorage = fakeSessionStorage();
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+      sessionStorage,
+    });
+
+    const first = render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+    fireEvent.change(screen.getByDisplayValue('Draft answer.'), {
+      target: { value: 'Edited answer.' },
+    });
+    // Wait for the edit to reach the store, or reopening races the write it's meant to restore.
+    await vi.waitFor(async () =>
+      expect((await getPipelineRun(1))?.answers[0].answer).toBe('Edited answer.'),
+    );
+    first.unmount(); // simulates the panel closing
+
+    const { sendMessage: secondSendMessage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+      sessionStorage, // same underlying chrome.storage.session — simulates reopening the panel
+    });
+    render(<AutofillHarness />); // simulates reopening the panel
+
+    await screen.findByText('Senior Engineer at Acme');
+    expect(screen.getByDisplayValue('Edited answer.')).toBeInTheDocument();
+    expect(callsOfType(secondSendMessage, 'START_ANALYSIS')).toHaveLength(0); // rehydrated, not re-analyzed
+  });
+
+  it('disables persisted-data editors while saving so the saved snapshot cannot lag the display', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fill form' }));
+    await screen.findByRole('button', { name: 'Save application' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    const current = await getPipelineRun(1);
+
+    await act(async () => {
+      await patchPipelineRun(1, current!.runId, { status: 'saving' });
+    });
+
+    expect(screen.getByDisplayValue('Draft answer.')).toBeDisabled();
+    expect(screen.getByLabelText('Job description')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Re-analyze' })).toBeDisabled();
+  });
+
+  it('reflects a pipeline run update written from elsewhere (e.g. the background service worker) via chrome.storage.onChanged, while the panel stays mounted', async () => {
+    const sessionStorage = fakeSessionStorage();
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+      sessionStorage,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+    expect(screen.getByDisplayValue('Draft answer.')).toBeInTheDocument();
+
+    // Simulates background/applicationPipeline.ts patching the store directly, independent of this
+    // mounted panel's own writes.
+    const run = await getPipelineRun(1);
+    await patchPipelineRun(1, run!.runId, {
+      answers: [{ ...answers[0], answer: 'Updated from elsewhere.' }],
+    });
+
+    await screen.findByDisplayValue('Updated from elsewhere.');
+  });
+
+  it('shows a "Preview tailored resume" button on the review screen once analysis succeeds', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    expect(screen.getByRole('button', { name: 'Preview tailored resume' })).toBeInTheDocument();
+  });
+
+  it('renders the tailored resume PDF in a preview when "Preview tailored resume" is clicked', async () => {
+    const renderResumePdf = vi.fn(async () => new Uint8Array([37, 80, 68, 70]).buffer);
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+
+    const frame = await screen.findByTitle('Tailored resume');
+    expect(frame).toHaveAttribute('src', 'blob:resume-preview');
+    // What the tab asked for, not which URL carried it: projecting the Profile down to the fields
+    // the PDF needs is `httpBackendClient`'s job, and is asserted where that adapter is tested.
+    expect(renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+  });
+
+  it('shows an error message when the resume PDF fails to render', async () => {
+    const renderResumePdf = () => Promise.reject(new Error('render failed'));
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't render/i);
+  });
+
+  it('ignores a pending resume preview completion after same-tab navigation', async () => {
+    const preview = deferred<ArrayBuffer>();
+    const renderResumePdf = () => preview.promise;
+    const { navigate } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    act(() => navigate(1, 'https://boards.greenhouse.io/acme/jobs/2'));
+    await act(async () => preview.resolve(new Uint8Array([37, 80, 68, 70]).buffer));
+
+    expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('revokes a preview blob if it becomes stale while the completion is being applied', async () => {
+    const renderResumePdf = async () => new Uint8Array([37, 80, 68, 70]).buffer;
+    const { navigate } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    // Navigating from inside `createObjectURL` is the point: it lands the invalidation in the one
+    // window between the blob existing and the state that owns it being set.
+    vi.mocked(URL.createObjectURL).mockImplementation(() => {
+      navigate(1, 'https://boards.greenhouse.io/acme/jobs/2');
+      return 'blob:stale-resume-preview';
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+
+    await vi.waitFor(() =>
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:stale-resume-preview'),
+    );
+    expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
+  });
+
+  it('ignores a pending resume preview rejection after navigation', async () => {
+    const preview = deferred<ArrayBuffer>();
+    const renderResumePdf = () => preview.promise;
+    const { navigate } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    act(() => navigate(1, 'https://boards.greenhouse.io/acme/jobs/2'));
+    await act(async () => preview.reject(new Error('stale failure')));
+
+    expect(screen.queryByText(/couldn't render/i)).not.toBeInTheDocument();
+  });
+
+  it('ignores a pending resume preview completion after unmount', async () => {
+    const preview = deferred<ArrayBuffer>();
+    const renderResumePdf = () => preview.promise;
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf,
+    });
+
+    const panel = render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    panel.unmount();
+    await act(async () => preview.resolve(new Uint8Array([37, 80, 68, 70]).buffer));
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The Log tab itself is covered by `LogApplication.test.tsx`; what's tested here is only the
+   * switch — that the two flows are reachable and that neither renders over the other.
+   */
+
+  it('offers no refinement for a constrained-choice question, which cannot take freeform prose', async () => {
+    const sponsorshipField: DetectedField = {
+      id: 'f-sponsorship',
+      label: 'Will you require sponsorship?',
+      inputType: 'select',
+      selector: '#sponsorship-field',
+      category: 'question',
+      required: false,
+      elementRole: 'native',
+      options: [
+        { label: 'Yes', selector: null },
+        { label: 'No', selector: null },
+      ],
+    };
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData: { fields: [sponsorshipField] },
+      tabId: 1,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+
+    expect(screen.queryByRole('button', { name: 'Refine with AI' })).toBeNull();
+  });
+});

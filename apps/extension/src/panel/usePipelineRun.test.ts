@@ -1,6 +1,7 @@
 import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeChrome } from '../lib/fakeChrome';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import {
   getPipelineRun,
@@ -42,24 +43,18 @@ const run: PipelineRunState = {
 
 /** The shared in-memory `chrome.storage.session`, which fires `onChanged` on write as Chrome does. */
 function stubChrome() {
-  const storage = fakeSessionStorage();
-  const sendMessage = vi.fn(
-    (
-      message: {
-        type: string;
-        tabId: number;
-        runId: string;
-        updates: Partial<PipelineRunState>;
-      },
-      callback: () => void,
-    ) => {
+  const { sendMessage, storage } = fakeChrome({
+    sendMessage: (message, callback) => {
       if (message.type === 'UPDATE_RUN') {
-        void patchPipelineRun(message.tabId, message.runId, message.updates);
+        void patchPipelineRun(
+          message.tabId as number,
+          message.runId as string,
+          message.updates as Partial<PipelineRunState>,
+        );
       }
-      callback();
+      callback(undefined);
     },
-  );
-  vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
+  });
 
   /**
    * Simulates `background/applicationPipeline.ts` checkpointing progress from outside this hook.
@@ -133,10 +128,8 @@ describe('usePipelineRun', () => {
         resolveRead = resolve;
       });
       storage.session.get = vi.fn(() => initialRead);
-      vi.stubGlobal('chrome', {
-        storage,
-        runtime: { sendMessage: vi.fn(), lastError: undefined },
-      });
+      // The same fake, handed the store this case controls — the point here is the deferred read.
+      fakeChrome({ storage });
       const incoming = {
         ...run,
         runId: 'run-2',

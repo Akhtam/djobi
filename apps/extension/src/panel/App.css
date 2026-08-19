@@ -211,6 +211,13 @@ body {
   padding: 18px;
 }
 
+/* The Ask pane scrolls its own transcript and pins its composer, so it takes the body's padding
+   and scrolling off it — otherwise the composer scrolls away with the conversation. */
+.panel-body.ask-pane {
+  padding: 0;
+  overflow: hidden;
+}
+
 .state {
   display: flex;
   flex-direction: column;
@@ -578,4 +585,329 @@ button:disabled {
   border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
+}
+
+/* A question card plus the actions that belong to it — today, the hand-off to the Ask tab. The
+   actions sit outside the <label> so clicking one doesn't focus the answer textarea. */
+.question-card-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/*
+ * The Ask tab: a transcript with one composer pinned under it.
+ *
+ * Not message bubbles. The side panel is ~360px wide, so an alternating-bubble layout spends its
+ * scarcest resource — horizontal space — on saying who is talking, something a label says for free.
+ * Turns run full width and are separated by whose they are: the candidate's are tinted and
+ * indented slightly, djobi's sit flush with a rule down the left.
+ */
+.ask {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The question the conversation is about, kept in view while the transcript scrolls under it. */
+.ask-subject {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+
+.ask-subject-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ask-subject-text .eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ask-subject-text p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ask-subject .btn-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ask-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.ask-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  margin: auto 0;
+  padding: 16px 8px;
+}
+
+.ask-intro p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 28em;
+}
+
+.ask-intro .hint {
+  font-size: 12px;
+}
+
+/* The draft a seeded thread is about — context for the conversation, not a turn in it. */
+.ask-context {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--surface-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  flex: 0 0 auto;
+}
+
+.ask-context .eyebrow,
+.ask-answer .eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ask-context p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.ask-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.ask-msg-role {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ask-msg-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ask-msg.assistant .ask-msg-body {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.ask-msg.user .ask-msg-body {
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
+}
+
+.ask-msg.user .ask-msg-role {
+  color: var(--primary);
+}
+
+/* The part of a turn that can be applied — separated from the reply, because only one of the two
+   is the answer. */
+.ask-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.ask-answer p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ask-answer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+/* Three dots while a turn is in flight — the transcript's own "still writing", in the place the
+   reply will appear. */
+.ask-typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px 2px;
+}
+
+.ask-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: ask-typing-pulse 1.1s ease-in-out infinite;
+}
+
+.ask-typing i:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.ask-typing i:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@keyframes ask-typing-pulse {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/*
+ * Pinned under the transcript, so there is one place to type on every turn.
+ *
+ * The bottom padding is deliberately larger than the top: this sits against the very bottom edge
+ * of the side panel, where a symmetric gap reads as no gap at all.
+ */
+.ask-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 14px 18px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.ask-composer textarea {
+  flex: 1 1 auto;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  resize: none;
+  /* Two lines' worth before anything is typed, so the composer reads as somewhere to write rather
+     than as a search box. `AskTab.tsx` grows it from there; the cap stops a long paste eating the
+     panel, and this floor stops its `scrollHeight` measurement shrinking it below a usable size. */
+  min-height: 56px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.ask-composer textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.ask-composer textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.ask-composer textarea:disabled {
+  opacity: 0.6;
+}
+
+.ask-send {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  /* Matches the composer's resting height, so the two line up as one control at rest. */
+  width: 38px;
+  height: 38px;
+  /* Centres the button on the composer's resting height (56px) rather than on its bottom edge:
+     56/2 - 38/2 = 9. It grows downward from there as the field grows, staying on the last line. */
+  margin-bottom: 9px;
+  line-height: 0;
+  color: var(--primary-contrast);
+  background: var(--primary-gradient);
+  border: none;
+  /* Load-bearing: a button's UA default padding (`1px 6px` in Chrome) is what pushed the icon 5.5px
+     right of the circle's centre. `place-items: center` centres within the *content* box, so any
+     padding a reset hasn't cleared decentres the glyph inside a round button. */
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.ask-send svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ask-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Visually hidden, still read out — the composer's label, which the placeholder can't replace. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

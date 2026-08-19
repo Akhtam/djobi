@@ -19,7 +19,7 @@ import {
   type Profile,
 } from '@djobi/shared';
 import { useEffect, useState } from 'react';
-import { httpBackendClient } from '../lib/backendClient';
+import type { BackendClient } from '../lib/backendClient';
 import { formatAppliedDate } from '../lib/format';
 
 /** What the review screen is about: the extracted details, plus whatever the Duplicate Guard found. */
@@ -73,9 +73,12 @@ function isUsableUrl(value: string): boolean {
 }
 
 export function LogApplication({
+  client,
   profile,
   activeTabUrl,
 }: {
+  /** The backend seam, handed down by the shell — see `panel/App.tsx`. */
+  client: BackendClient;
   profile: Profile;
   /** Prefills the URL field — usually the posting the candidate is looking at while logging it. */
   activeTabUrl: string | null;
@@ -114,8 +117,8 @@ export function LogApplication({
       // Both requests go out together: the duplicate check doesn't depend on the extraction, and
       // serializing them would put a database round-trip behind a model call for no reason.
       const [jobInfo, duplicates] = await Promise.all([
-        httpBackendClient.extractJob(jobDescription),
-        httpBackendClient.findApplicationDuplicates(jobUrl.trim()),
+        client.extractJob(jobDescription),
+        client.findApplicationDuplicates(jobUrl.trim()),
       ]);
       setCompany(jobInfo.company);
       setRoleTitle(jobInfo.roleTitle);
@@ -133,7 +136,7 @@ export function LogApplication({
     // put its old `kind` back and the screen would never leave `extracted`.
     setState({ ...reviewed, kind: 'saving' });
     try {
-      await httpBackendClient.saveApplication({
+      await client.saveApplication({
         company: company.trim(),
         roleTitle: roleTitle.trim(),
         jobUrl: jobUrl.trim(),

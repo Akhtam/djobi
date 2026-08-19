@@ -184,3 +184,56 @@ describe('httpBackendClient', () => {
     expect(callBackend).toHaveBeenCalledWith('/applications?response=compact', expect.anything());
   });
 });
+
+describe('httpBackendClient.answerChat', () => {
+  it('sends a cold ask with the answer-grounding profile projection and an empty thread', async () => {
+    await httpBackendClient.answerChat({
+      profile,
+      question: 'Why do you want to work here?',
+      messages: [],
+    });
+
+    expect(callBackend).toHaveBeenCalledWith('/answer-chat', {
+      profile: {
+        workExperience: profile.workExperience,
+        education: profile.education,
+        skills: profile.skills,
+        stories: profile.stories,
+      },
+      question: 'Why do you want to work here?',
+      messages: [],
+    });
+  });
+
+  it('sends the job and the seeded draft when the thread came from a question card', async () => {
+    await httpBackendClient.answerChat({
+      profile,
+      question: 'Why do you want to work here?',
+      jobInfo,
+      currentAnswer: 'A first draft.',
+      messages: [{ role: 'user', content: 'Make it shorter.' }],
+    });
+
+    expect(callBackend).toHaveBeenCalledWith(
+      '/answer-chat',
+      expect.objectContaining({
+        jobInfo,
+        currentAnswer: 'A first draft.',
+        messages: [{ role: 'user', content: 'Make it shorter.' }],
+      }),
+    );
+  });
+
+  it("omits the job key entirely when there's no run to take one from", async () => {
+    // The wire contract's absent job is a missing key, not `null` — sending the panel's `null`
+    // straight through would fail validation at the route with nothing on screen explaining why.
+    await httpBackendClient.answerChat({
+      profile,
+      question: 'Why us?',
+      jobInfo: null,
+      messages: [],
+    });
+
+    expect(vi.mocked(callBackend).mock.calls[0][1]).not.toHaveProperty('jobInfo');
+  });
+});

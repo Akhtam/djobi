@@ -12,6 +12,7 @@ import {
 } from '@djobi/shared';
 import { z } from 'zod';
 import { MODELS } from './client.js';
+import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /** Wraps `QuestionAnswer[]` in an object, since the forced tool call needs a top-level object shape. */
@@ -160,13 +161,7 @@ export async function answerQuestions(
     schema: AnswerQuestionsOutputSchema,
     userContent: `Draft answers to the following job application questions, written in the candidate's voice as implied by their profile. Ground every answer in the candidate's actual work experience and stories — pick the 1-3 most relevant stories per question by matching the question against each story's tags and content, and set sourceStoryIds accordingly (empty array if no story fits and you drew on general profile info instead). Do not fabricate experience not present in the profile. Keep answers concise and concrete — prefer specific outcomes over generic claims.
 
-<base_profile>
-${JSON.stringify(relevantProfile)}
-</base_profile>
-
-<job_info>
-${JSON.stringify(jobInfo)}
-</job_info>
+${groundingContext(relevantProfile, jobInfo)}
 
 <questions>
 ${JSON.stringify(questions)}

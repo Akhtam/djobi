@@ -30,6 +30,24 @@ _Avoid_: submission (nothing is sent to the employer or verified by this step)
 The check that runs before the Analysis Step: if an Application already exists for this exact job URL, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
 _Avoid_: deduplication (nothing is merged or removed)
 
+**Autofill Tab**:
+The panel's first flow: the Application Pipeline as the candidate drives it — paste a Job
+Description, Analyze, review, Fill, Save. A module beside the Log Tab and Ask Tab rather than the
+body of the panel shell, which owns only the Profile bootstrap, the tab switch and the hand-off to
+the Ask Tab. It is the one tab that renders a run; the shell's single use of that run is the header
+pill.
+_Avoid_: the panel (the shell is not the flow), autofill mode
+
+**Ask Tab**:
+The panel's third flow: one conversation about one application question, grounded in the Profile
+(and the run's Job Info when there is one). Asking cold — a question the detector missed, or one
+from a form the extension can't see — and refining an answer the Analysis Step drafted are the same
+conversation with a different starting state, so they are one tab, one route and one LLM module,
+seeded differently. It never writes to the page: with a seed it writes back to the run's Question
+Answer, without one it offers a copy button.
+_Avoid_: chat tab (the surface is named for what the candidate does with it), refine mode (refining
+is a starting state, not a mode)
+
 **Log Tab**:
 The panel's second flow, alongside the Application Pipeline: records an Application the candidate made _themselves_ — their own resume, or LinkedIn Easy Apply — so it lands in the same history. Deliberately not a step of the pipeline and not a mode toggle on it: it has no Detected Fields, page writes or pipeline run state. Its URL field follows the active tab until the candidate edits it. It extracts Job Info from a pasted Job Description and writes an Application with Application Source `manual`, running the same Duplicate Guard lookup first — warning, but never blocking.
 _Avoid_: manual mode, log mode (it is a tab; a mode would imply the pipeline has two meanings)

@@ -1,3 +1,4 @@
+import type { ChatMessage } from '@djobi/shared';
 import type { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { anthropic } from './client.js';
@@ -8,8 +9,19 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
   model: string;
   /** Max output tokens for the request. */
   maxTokens: number;
-  /** The full user-turn prompt content. */
+  /** The full first user-turn prompt content — the grounding scaffold and the instructions. */
   userContent: string;
+  /**
+   * Conversation turns that follow the `userContent` turn, for the one operation that is a
+   * conversation rather than a single request (`answerChat.ts`).
+   *
+   * They start with the assistant, because the candidate's opening message is folded into
+   * `userContent` rather than sent after it: the Messages API rejects two consecutive turns of the
+   * same role, so a scaffold turn followed by the candidate's own first turn would be a 400 from
+   * the provider. Folding keeps the scaffold and the question the candidate asked in one turn, and
+   * leaves the alternation the API requires intact.
+   */
+  followUpTurns?: ChatMessage[];
   /** Name of the tool the model is forced to call. */
   toolName: string;
   /** Description shown to the model for the forced tool. */
@@ -70,7 +82,10 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
           },
         ],
         tool_choice: { type: 'tool', name: options.toolName },
-        messages: [{ role: 'user', content: options.userContent }],
+        messages: [
+          { role: 'user', content: options.userContent },
+          ...(options.followUpTurns ?? []),
+        ],
       },
       // The SDK otherwise retries selected transport/status failures itself. Keep the total request
       // budget explicit here: one normal attempt, plus one semantic retry only for no-tool-call.

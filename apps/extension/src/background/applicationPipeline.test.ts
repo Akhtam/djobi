@@ -155,6 +155,8 @@ function makeDeps(
     tailorResume: vi.fn().mockResolvedValue(tailoredResume),
     answerQuestions: vi.fn().mockResolvedValue(answers),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
+    // The Ask tab's route, likewise never reached from the pipeline.
+    answerChat: vi.fn().mockResolvedValue({ reply: 'unused' }),
     // The Profile routes are the panel's and options page's, not the pipeline's — present because
     // the fake has to satisfy the whole interface, never called from here.
     getProfile: vi.fn().mockResolvedValue(null),

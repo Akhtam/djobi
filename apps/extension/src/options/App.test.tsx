@@ -1,17 +1,35 @@
 import type { Profile } from '@djobi/shared';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { callBackend } from '../lib/callBackend';
+import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { App } from './App';
 
-// The options page's one external seam. It used to reach the backend by messaging the service
-// worker, so these tests stubbed `chrome.runtime.sendMessage` and spoke the relay's `{ path, body }`
-// shape; the page goes through `lib/backendClient.ts` now, which forwards to this transport.
-//
-// `callBackendBinary` is mocked despite the options page never rendering a resume: the factory
-// replaces the whole module, so omitting an export `backendClient.ts` imports fails at import time
-// with an error pointing at the page rather than at this mock.
-vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn(), callBackendBinary: vi.fn() }));
+/**
+ * The options page's one external seam, replaced whole.
+ *
+ * `createFakeBackendClient` satisfies the same `BackendClient` that `options/main.tsx` hands the
+ * HTTP adapter to, so these tests cross the seam the page actually has. They used to replace the
+ * transport *under* the client and assert on `'/profile'` paths and HTTP methods — which passes
+ * whenever the page sends the right URL, whatever it asked for.
+ */
+let getProfile: ReturnType<typeof vi.fn>;
+let saveProfile: ReturnType<typeof vi.fn>;
+let client: BackendClient;
+
+/** Builds the fake from the two operations this page uses, and keeps the spies to assert on. */
+function fakeBackend(handlers: {
+  get: () => unknown;
+  save: (profile: unknown) => unknown;
+}): BackendClient {
+  // `async` rather than `Promise.resolve(...)`: a handler that throws must reach the page as a
+  // rejected promise, which is how the real adapter reports a backend failure.
+  getProfile = vi.fn(async () => handlers.get());
+  saveProfile = vi.fn(async (profile: unknown) => handlers.save(profile));
+  return createFakeBackendClient({
+    getProfile,
+    saveProfile,
+  } as Partial<BackendClient>);
+}
 
 const emptyProfile: Profile = {
   fullName: '',
@@ -29,13 +47,15 @@ const emptyProfile: Profile = {
 
 /** Answers every call with `response`, or rejects when given `{ error }`. */
 function stubBackendResponse(response: { data?: unknown; error?: string }) {
-  vi.mocked(callBackend).mockImplementation(() =>
-    response.error ? Promise.reject(new Error(response.error)) : Promise.resolve(response.data),
-  );
+  const answer = () => {
+    if (response.error) throw new Error(response.error);
+    return response.data;
+  };
+  client = fakeBackend({ get: answer, save: answer });
 }
 
 /**
- * Stubs GET /profile with `get()` and POST /profile with either `post(body)` (echoing `body` by
+ * Stubs the stored profile with `get()` and the save with either `post(profile)` (echoing it by
  * default) or a `postError` message.
  */
 function stubBackend(handlers: {
@@ -43,17 +63,19 @@ function stubBackend(handlers: {
   post?: (body: unknown) => unknown;
   postError?: string;
 }) {
-  vi.mocked(callBackend).mockImplementation((_path, body, method) => {
-    if (method === 'GET') return Promise.resolve(handlers.get());
-    if (handlers.postError) return Promise.reject(new Error(handlers.postError));
-    return Promise.resolve((handlers.post ?? ((echoed: unknown) => echoed))(body));
+  client = fakeBackend({
+    get: handlers.get,
+    save: (profile) => {
+      if (handlers.postError) throw new Error(handlers.postError);
+      return (handlers.post ?? ((echoed: unknown) => echoed))(profile);
+    },
   });
 }
 
 describe('options App', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
-    vi.mocked(callBackend).mockReset();
+    client = fakeBackend({ get: () => null, save: (profile) => profile });
   });
 
   it('fetches the stored profile via GET /profile and renders its full name', async () => {
@@ -61,16 +83,16 @@ describe('options App', () => {
       data: { ...emptyProfile, fullName: 'Jane Doe', email: 'jane@example.com' },
     });
 
-    render(<App />);
+    render(<App client={client} />);
 
     expect(await screen.findByLabelText('Full name')).toHaveValue('Jane Doe');
-    expect(callBackend).toHaveBeenCalledWith('/profile', undefined, 'GET');
+    expect(getProfile).toHaveBeenCalled();
   });
 
   it('renders an empty form when no profile has been saved yet', async () => {
     stubBackendResponse({ data: null });
 
-    render(<App />);
+    render(<App client={client} />);
 
     expect(await screen.findByLabelText('Full name')).toHaveValue('');
   });
@@ -79,7 +101,7 @@ describe('options App', () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', email: 'jane@old.com' };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Jane A. Doe' } });
@@ -98,7 +120,7 @@ describe('options App', () => {
 
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       fullName: 'Jane A. Doe',
       email: 'jane@new.com',
@@ -122,7 +144,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByDisplayValue('Jane Doe');
 
     fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '' } });
@@ -131,7 +153,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       phone: null,
       links: { ...loaded.links, linkedin: null },
@@ -142,7 +164,7 @@ describe('options App', () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', skills: ['TypeScript'] };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     expect(screen.getByText('TypeScript')).toBeInTheDocument();
@@ -159,14 +181,14 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', { ...loaded, skills: ['React'] });
+    expect(saveProfile).toHaveBeenLastCalledWith({ ...loaded, skills: ['React'] });
   });
 
   it('adds a work experience entry, edits its fields, and saves it', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', workExperience: [] };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add work experience' }));
@@ -184,7 +206,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       workExperience: [
         {
@@ -202,7 +224,7 @@ describe('options App', () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', workExperience: [] };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add work experience' }));
@@ -220,7 +242,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       workExperience: [
         {
@@ -243,7 +265,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     expect(screen.getByLabelText('Company 1')).toHaveValue('Acme');
@@ -257,7 +279,7 @@ describe('options App', () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', education: [] };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add education' }));
@@ -272,7 +294,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       education: [
         { school: 'State U', degree: 'BSc', field: 'Computer Science', graduationYear: '2020' },
@@ -287,7 +309,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     expect(screen.getByLabelText('School 1')).toHaveValue('State U');
@@ -301,7 +323,7 @@ describe('options App', () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', stories: [] };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add story' }));
@@ -323,7 +345,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       stories: [
         {
@@ -342,7 +364,7 @@ describe('options App', () => {
   it('assigns a stable id when a story is added', async () => {
     stubBackend({ get: () => ({ ...emptyProfile, stories: [] }) });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
     fireEvent.click(screen.getByRole('button', { name: 'Add story' }));
 
@@ -379,7 +401,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Story id 1');
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
@@ -395,7 +417,7 @@ describe('options App', () => {
     expect(new Set(savedIds).size).toBe(3);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
-    await vi.waitFor(() => expect(callBackend).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(saveProfile).toHaveBeenCalledTimes(2));
     expect(randomUUID).toHaveBeenCalledTimes(3);
     expect(screen.getByLabelText('Story id 1')).toHaveValue(savedIds[0]);
   });
@@ -417,12 +439,12 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Story id 1');
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await screen.findByText('Profile saved.');
 
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', loaded);
+    expect(saveProfile).toHaveBeenLastCalledWith(loaded);
     expect(screen.getByLabelText('Story id 1')).toHaveValue(' existing-unique-id ');
   });
 
@@ -446,7 +468,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     for (const name of ['work experience 1', 'education 1', 'prepared answer 1', 'story 1']) {
@@ -472,7 +494,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     expect(screen.getByLabelText('Story id 1')).toHaveValue('billing-migration');
@@ -489,7 +511,7 @@ describe('options App', () => {
     delete legacy.customAnswers;
     stubBackend({ get: () => legacy });
 
-    render(<App />);
+    render(<App client={client} />);
 
     expect(await screen.findByLabelText('Full name')).toHaveValue('Jane Doe');
     expect(
@@ -501,7 +523,7 @@ describe('options App', () => {
     const loaded = { ...emptyProfile, fullName: 'Jane Doe' };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.change(
@@ -511,7 +533,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await screen.findByText('Profile saved.');
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       screeningAnswers: { sponsorship_required: 'No' },
     });
@@ -525,7 +547,7 @@ describe('options App', () => {
     };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.change(
@@ -535,14 +557,14 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await screen.findByText('Profile saved.');
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', { ...loaded, screeningAnswers: {} });
+    expect(saveProfile).toHaveBeenLastCalledWith({ ...loaded, screeningAnswers: {} });
   });
 
   it('adds a custom prepared answer', async () => {
     const loaded = { ...emptyProfile, fullName: 'Jane Doe' };
     stubBackend({ get: () => loaded });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
 
     fireEvent.click(screen.getByRole('button', { name: 'Add prepared answer' }));
@@ -553,7 +575,7 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await screen.findByText('Profile saved.');
-    expect(callBackend).toHaveBeenLastCalledWith('/profile', {
+    expect(saveProfile).toHaveBeenLastCalledWith({
       ...loaded,
       customAnswers: [{ question: 'How did you hear about us?', answer: 'LinkedIn' }],
     });
@@ -565,7 +587,7 @@ describe('options App', () => {
       postError: 'Backend unreachable',
     });
 
-    render(<App />);
+    render(<App client={client} />);
     await screen.findByLabelText('Full name');
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 

@@ -1,6 +1,6 @@
 import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeSessionStorage } from './fakeSessionStorage';
+import { fakeChrome } from './fakeChrome';
 import {
   asAnalyzedRun,
   clearTabState,
@@ -59,30 +59,8 @@ function textField(id: string) {
 
 /** The shared in-memory `chrome.storage.session`, plus the `chrome.tabs.onRemoved` cleanup hooks into. */
 function stubChrome() {
-  const onRemovedListeners: ((tabId: number) => void)[] = [];
-  const onUpdatedListeners: ((tabId: number, changeInfo: { url?: string }) => void)[] = [];
-
-  vi.stubGlobal('chrome', {
-    storage: fakeSessionStorage(),
-    tabs: {
-      onRemoved: {
-        addListener: vi.fn((listener: (tabId: number) => void) => {
-          onRemovedListeners.push(listener);
-        }),
-      },
-      onUpdated: {
-        addListener: vi.fn((listener: (tabId: number, changeInfo: { url?: string }) => void) => {
-          onUpdatedListeners.push(listener);
-        }),
-      },
-    },
-  });
-
-  return {
-    fireTabRemoved: (tabId: number) => onRemovedListeners.forEach((listener) => listener(tabId)),
-    fireTabUpdated: (tabId: number, url: string) =>
-      onUpdatedListeners.forEach((listener) => listener(tabId, { url })),
-  };
+  const { closeTab, navigate } = fakeChrome();
+  return { fireTabRemoved: closeTab, fireTabUpdated: navigate };
 }
 
 describe('tabStore', () => {

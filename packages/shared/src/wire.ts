@@ -206,3 +206,78 @@ export type AddApplicationNoteResult = z.infer<typeof AddApplicationNoteResultSc
 export const SaveProfileRequestSchema = ProfileSchema;
 /** Inferred type of {@link SaveProfileRequestSchema}. */
 export type SaveProfileRequest = z.infer<typeof SaveProfileRequestSchema>;
+
+/**
+ * One turn in an answer-chat thread, as the panel holds it and the route replays it.
+ *
+ * Only the two roles a thread shows: the scaffold the backend builds around them (Profile, Job
+ * Info, the question under discussion) is never a message, so a client cannot smuggle a `system`
+ * turn — or a rewritten grounding paragraph — past the non-fabrication rules by sending one.
+ */
+export const ChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1),
+});
+/** Inferred type of {@link ChatMessageSchema}. */
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+/** Profile fields used to ground a chat about one answer — the same grounding as drafted answers. */
+export const AnswerChatProfileSchema = AnswerQuestionsProfileSchema;
+export type AnswerChatProfile = z.infer<typeof AnswerChatProfileSchema>;
+
+/**
+ * Body of `POST /answer-chat` — every turn of the Ask tab, cold ask and refinement alike.
+ *
+ * The two differ only in what's set here: a cold ask has empty `messages` and no `currentAnswer`;
+ * refining an existing draft seeds `currentAnswer` from the question card. The server never
+ * branches on which flow it is, which is the point of having one route.
+ *
+ * `jobInfo` is optional because the Ask tab is reachable with no run at all — a question from a
+ * form the extension can't see still gets an answer, grounded in the Profile alone.
+ *
+ * `messages` is the thread the panel shows, and it is validated as a conversation rather than as a
+ * list: the turns alternate, and the last one is the candidate's — the turn this request is asking
+ * the model to answer. Nothing is said about the *first* turn's role, because both are real. A
+ * seeded thread opens with the candidate's instruction ("make it shorter"); a cold ask's thread
+ * opens with the assistant, since the opening user turn there is the backend's own scaffold and
+ * never a message. The Messages API rejects two turns of the same role outright, so without this a
+ * malformed thread would surface as an opaque provider 500 instead of the 400 it is.
+ */
+export const AnswerChatRequestSchema = z.object({
+  profile: AnswerChatProfileSchema,
+  /** The application question under discussion. Non-empty: there is nothing to answer without it. */
+  question: z.string().min(1),
+  jobInfo: JobInfoSchema.optional(),
+  /** The draft being refined, when the thread was seeded from a question card. */
+  currentAnswer: z.string().optional(),
+  messages: z.array(ChatMessageSchema).superRefine((messages, ctx) => {
+    // Checked from the end, because that is where the rule is anchored: the last turn is the one
+    // being answered, and everything before it alternates back from there.
+    messages.forEach((message, index) => {
+      const expected = (messages.length - 1 - index) % 2 === 0 ? 'user' : 'assistant';
+      if (message.role !== expected) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, 'role'],
+          message: `messages must alternate and end with the user turn being answered; expected ${expected}`,
+        });
+      }
+    });
+  }),
+});
+/** Inferred type of {@link AnswerChatRequestSchema}. */
+export type AnswerChatRequest = z.infer<typeof AnswerChatRequestSchema>;
+
+/**
+ * Response of `POST /answer-chat`.
+ *
+ * `reply` is what the thread shows; `revisedAnswer` is what "Use this answer" would write back. A
+ * turn may be pure conversation — "which of these two stories do you want?" — so a reply without an
+ * answer is a valid outcome, except on a cold turn, where a fresh ask has nothing else to display.
+ */
+export const AnswerChatResponseSchema = z.object({
+  reply: z.string(),
+  revisedAnswer: z.string().optional(),
+});
+/** Inferred type of {@link AnswerChatResponseSchema}. */
+export type AnswerChatResponse = z.infer<typeof AnswerChatResponseSchema>;

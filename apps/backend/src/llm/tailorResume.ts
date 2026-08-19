@@ -6,6 +6,7 @@ import {
   type TailoredResume,
 } from '@djobi/shared';
 import { MODELS } from './client.js';
+import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 type ResumeEntry = TailoredResume['workExperience'][number];
@@ -101,13 +102,7 @@ export async function tailorResume(
     schema: TailoredResumeSchema,
     userContent: `You are tailoring a resume to a specific job posting. Reorder and reword the candidate's existing experience bullets to emphasize what's relevant to this job's requirements and keywords. Never invent experience, skills, or achievements that are not present in the base profile. Return every work-experience entry exactly once. Copy company, title, startDate, and endDate verbatim; only bullets may be rewritten. Skills must be copied verbatim from base_profile.skills and may only be reordered or omitted.
 
-<base_profile>
-${JSON.stringify(relevantProfile)}
-</base_profile>
-
-<job_info>
-${JSON.stringify(jobInfo)}
-</job_info>
+${groundingContext(relevantProfile, jobInfo)}
 `,
   });
 

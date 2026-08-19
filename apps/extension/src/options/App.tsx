@@ -1,4 +1,10 @@
-/** Options page root — profile onboarding form (`PROGRESS.md` Phase 5). */
+/**
+ * Options page root — profile onboarding form (`PROGRESS.md` Phase 5).
+ *
+ * `client` is a prop for the same reason it is one in `panel/App.tsx`: the page is tested through
+ * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
+ * named.
+ */
 import {
   EMPTY_PROFILE,
   parseProfile,
@@ -10,7 +16,7 @@ import {
 import { useEffect, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { httpBackendClient } from '../lib/backendClient';
+import type { BackendClient } from '../lib/backendClient';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 
 /**
@@ -162,7 +168,7 @@ function ListSection<T>({
   );
 }
 
-export function App() {
+export function App({ client }: { client: BackendClient }) {
   const { theme, toggleTheme } = useThemePreference();
   const [profile, setProfileState] = useState<Profile | null>(null);
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
@@ -177,7 +183,7 @@ export function App() {
   }
 
   useEffect(() => {
-    httpBackendClient
+    client
       .getProfile()
       // `parseProfile` completes a stored profile against the empty one and validates it, so a
       // profile saved before a field existed can't crash the form that binds to that key.
@@ -238,7 +244,7 @@ export function App() {
       })),
       stories: normalizeStoryIds(profile.stories),
     };
-    httpBackendClient
+    client
       .saveProfile(toSave)
       .then((saved) => {
         setProfileState(parseProfile(saved));

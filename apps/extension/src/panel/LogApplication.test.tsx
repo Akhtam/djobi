@@ -1,5 +1,5 @@
 /**
- * The Log tab, driven through the same `callBackend` seam the rest of the panel's tests use.
+ * The Log tab, driven through the same `BackendClient` seam the rest of the panel's tests use.
  *
  * Nothing here goes near `applicationPipeline` or `tabStore` on purpose — that this flow needs
  * neither is the whole reason it's a separate tab, so a test that had to stub them would be
@@ -8,10 +8,11 @@
 import type { Application, JobInfo, Profile } from '@djobi/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { callBackend } from '../lib/callBackend';
+import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { LogApplication } from './LogApplication';
 
-vi.mock('../lib/callBackend', () => ({ callBackend: vi.fn(), callBackendBinary: vi.fn() }));
+/** The client this tab is handed, rebuilt per case by {@link stubBackend}. */
+let client: BackendClient;
 
 const profile: Profile = {
   fullName: 'Jane Doe',
@@ -56,20 +57,19 @@ interface StubOptions {
   saveResult?: Promise<unknown>;
 }
 
-/** Answers the three paths this tab calls, and hands back the recorded calls to assert on. */
+/** Answers the three operations this tab performs, and hands back what it asked to save. */
 function stubBackend(options: StubOptions = {}) {
   const saved: unknown[] = [];
 
-  vi.mocked(callBackend).mockImplementation((path: string, body?: unknown) => {
-    if (path === '/extract-job') {
-      return options.extractFailure
-        ? Promise.reject(new Error(options.extractFailure))
-        : Promise.resolve(jobInfo as never);
-    }
-    if (path.startsWith('/applications?jobUrl=')) {
+  client = createFakeBackendClient({
+    extractJob: vi.fn(async () => {
+      if (options.extractFailure) throw new Error(options.extractFailure);
+      return jobInfo;
+    }),
+    findApplicationDuplicates: async () => {
       const existing = options.existing ?? [];
       const latest = existing[0];
-      return Promise.resolve({
+      return {
         count: existing.length,
         latest: latest
           ? {
@@ -79,22 +79,21 @@ function stubBackend(options: StubOptions = {}) {
               createdAt: latest.createdAt,
             }
           : null,
-      } as never);
-    }
-    if (path === '/applications?response=compact') {
-      if (options.saveFailure) return Promise.reject(new Error(options.saveFailure));
-      saved.push(body);
+      };
+    },
+    saveApplication: async (payload) => {
+      if (options.saveFailure) throw new Error(options.saveFailure);
+      saved.push(payload);
       if (options.saveResult) return options.saveResult as never;
-      return Promise.resolve({ id: 'application-1' } as never);
-    }
-    return Promise.reject(new Error(`unexpected callBackend path: ${path}`));
-  });
+      return { id: 'application-1' };
+    },
+  } as Partial<BackendClient>);
 
   return { saved };
 }
 
 function renderTab(activeTabUrl: string | null = JOB_URL) {
-  return render(<LogApplication profile={profile} activeTabUrl={activeTabUrl} />);
+  return render(<LogApplication client={client} profile={profile} activeTabUrl={activeTabUrl} />);
 }
 
 function type(field: HTMLElement, value: string) {
@@ -109,7 +108,7 @@ async function extract() {
 }
 
 beforeEach(() => {
-  vi.mocked(callBackend).mockReset();
+  stubBackend();
 });
 
 describe('the Log tab', () => {
@@ -155,7 +154,9 @@ describe('the Log tab', () => {
     stubBackend();
     const { rerender } = renderTab();
 
-    rerender(<LogApplication profile={profile} activeTabUrl="https://acme.com/jobs/456" />);
+    rerender(
+      <LogApplication client={client} profile={profile} activeTabUrl="https://acme.com/jobs/456" />,
+    );
 
     expect(screen.getByPlaceholderText('https://…')).toHaveValue('https://acme.com/jobs/456');
   });
@@ -165,7 +166,9 @@ describe('the Log tab', () => {
     const { rerender } = renderTab();
 
     type(screen.getByPlaceholderText('https://…'), 'https://acme.com/jobs/mine');
-    rerender(<LogApplication profile={profile} activeTabUrl="https://acme.com/jobs/456" />);
+    rerender(
+      <LogApplication client={client} profile={profile} activeTabUrl="https://acme.com/jobs/456" />,
+    );
 
     expect(screen.getByPlaceholderText('https://…')).toHaveValue('https://acme.com/jobs/mine');
   });
@@ -176,7 +179,9 @@ describe('the Log tab', () => {
     const { rerender } = renderTab();
 
     await extract();
-    rerender(<LogApplication profile={profile} activeTabUrl="https://acme.com/jobs/456" />);
+    rerender(
+      <LogApplication client={client} profile={profile} activeTabUrl="https://acme.com/jobs/456" />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Log application' }));
     await screen.findByText('Logged Senior Engineer at Acme.');
@@ -193,7 +198,7 @@ describe('the Log tab', () => {
 
     expect(screen.getByRole('button', { name: 'Extract job details' })).toBeDisabled();
     expect(screen.getByText(/doesn't look like a URL/)).toBeInTheDocument();
-    expect(callBackend).not.toHaveBeenCalled();
+    expect(client.extractJob).not.toHaveBeenCalled();
   });
 
   it('will not extract without a job description', async () => {

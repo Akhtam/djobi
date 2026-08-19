@@ -1,40 +1,22 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakeChrome } from '../lib/fakeChrome';
 import { useActiveTab } from './useActiveTab';
 
 /**
  * These four `chrome.tabs` touchpoints used to live inline in `panel/App.tsx`, where reaching them
  * meant rendering the whole panel with a profile loaded. The extraction is what makes the
  * tab-following rules assertable on their own.
+ *
+ * The fake itself is `lib/fakeChrome.ts` — the same one the panel's harness installs, so a change
+ * to how Chrome is faked lands in one place. {@link stubDeferredChrome} below is the exception it
+ * documents.
  */
 function stubChrome(initial: { id?: number; url?: string } = { id: 1, url: 'https://acme.com/a' }) {
-  const activated: ((info: chrome.tabs.OnActivatedInfo) => void)[] = [];
-  const updated: ((tabId: number, changeInfo: chrome.tabs.OnUpdatedInfo) => void)[] = [];
-  const tabsById = new Map<number, { id: number; url: string }>();
-
-  vi.stubGlobal('chrome', {
-    tabs: {
-      query: vi.fn((_q: unknown, callback: (tabs: unknown[]) => void) => callback([initial])),
-      get: vi.fn((tabId: number, callback: (tab: unknown) => void) =>
-        callback(tabsById.get(tabId) ?? { id: tabId }),
-      ),
-      onActivated: {
-        addListener: vi.fn((l: (typeof activated)[number]) => activated.push(l)),
-        removeListener: vi.fn(),
-      },
-      onUpdated: {
-        addListener: vi.fn((l: (typeof updated)[number]) => updated.push(l)),
-        removeListener: vi.fn(),
-      },
-    },
+  const { knowTab, activate, navigate } = fakeChrome({
+    tab: { id: initial.id ?? 1, url: initial.url },
   });
-
-  return {
-    knowTab: (id: number, url: string) => tabsById.set(id, { id, url }),
-    activate: (tabId: number) => activated.forEach((l) => l({ tabId, windowId: 1 })),
-    navigate: (tabId: number, url: string) =>
-      updated.forEach((l) => l(tabId, { url } as chrome.tabs.OnUpdatedInfo)),
-  };
+  return { knowTab, activate, navigate };
 }
 
 function stubDeferredChrome() {

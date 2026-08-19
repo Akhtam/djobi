@@ -18,8 +18,11 @@
 import {
   ApplicationWriteResultSchema,
   DuplicateApplicationSummarySchema,
+  type AnswerChatRequest,
+  type AnswerChatResponse,
   type AnswerQuestionsRequest,
   type ApplicationSnapshot,
+  type ChatMessage,
   type ApplicationWriteResult,
   type DuplicateApplicationSummary,
   type ExtractJobRequest,
@@ -35,6 +38,21 @@ import {
 } from '@djobi/shared';
 import { callBackend, callBackendBinary } from './callBackend';
 
+/**
+ * What the Ask tab has to say to ask one turn. `jobInfo` is nullable rather than optional because
+ * that is how the panel holds it — there is no run to take one from until analysis has produced
+ * one, and a chat about a question is possible before then.
+ */
+export interface AnswerChatTurn {
+  profile: Profile;
+  question: string;
+  jobInfo?: JobInfo | null;
+  /** The draft being refined, when the thread was seeded from a question card. */
+  currentAnswer?: string;
+  /** The thread so far, empty on a cold ask, ending with the candidate's new message. */
+  messages: ChatMessage[];
+}
+
 /** The backend-facing half of the Application Pipeline's outside world. */
 export interface BackendClient {
   extractJob(jobDescription: string): Promise<JobInfo>;
@@ -44,6 +62,8 @@ export interface BackendClient {
     jobInfo: JobInfo,
     questions: QuestionForModel[],
   ): Promise<QuestionAnswer[]>;
+  /** One turn of the Ask tab's conversation — cold ask and refinement alike. */
+  answerChat(turn: AnswerChatTurn): Promise<AnswerChatResponse>;
   renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
   /** The single stored Profile, or `null` before the candidate has saved one. */
   getProfile(): Promise<Profile | null>;
@@ -77,6 +97,22 @@ export const httpBackendClient: BackendClient = {
       jobInfo,
       questions,
     } satisfies AnswerQuestionsRequest),
+
+  answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
+    callBackend('/answer-chat', {
+      profile: {
+        workExperience: profile.workExperience,
+        education: profile.education,
+        skills: profile.skills,
+        stories: profile.stories,
+      },
+      question,
+      // `null` is the panel's "no run yet"; the wire contract's absent job is `undefined`, and
+      // `JSON.stringify` drops the key rather than sending a job whose every field is unknown.
+      ...(jobInfo ? { jobInfo } : {}),
+      ...(currentAnswer ? { currentAnswer } : {}),
+      messages,
+    } satisfies AnswerChatRequest),
 
   renderResumePdf: (profile, tailoredResume) =>
     callBackendBinary('/render-resume-pdf', {
@@ -118,3 +154,52 @@ export const httpBackendClient: BackendClient = {
       ),
     ),
 };
+
+/**
+ * A `BackendClient` for tests: every route answered from memory, each answer overridable.
+ *
+ * The extension's counterpart to `apps/dashboard`'s `createFixtureDashboardClient`, and it exists
+ * for the same reason — the panel and options pages are exercised end to end with no network, at
+ * the same seam production uses. Before it, their tests replaced `callBackend` instead and matched
+ * on backend *paths* (`path === '/answer-chat'`), which is a test written against the transport:
+ * it passes when the client sends the right URL and says nothing about whether the module asked for
+ * the right thing.
+ *
+ * Not wired into either `main.tsx`, deliberately, for the reason the dashboard's comment gives: a
+ * runtime flag that swaps the real backend for fake data is a flag that can be left on.
+ */
+export function createFakeBackendClient(overrides: Partial<BackendClient> = {}): BackendClient {
+  const fake: BackendClient = {
+    extractJob: () =>
+      Promise.resolve({
+        company: 'Acme',
+        team: null,
+        roleTitle: 'Engineer',
+        seniority: null,
+        location: null,
+        requirements: [],
+        keywords: [],
+      }),
+    tailorResume: (profile) =>
+      Promise.resolve({ skills: profile.skills, workExperience: profile.workExperience }),
+    answerQuestions: (_profile, _jobInfo, questions) =>
+      Promise.resolve(
+        questions.map((question) => ({
+          fieldId: question.fieldId,
+          question: question.question,
+          answer: question.knownAnswer ?? 'Draft answer.',
+          sourceStoryIds: [],
+        })),
+      ),
+    answerChat: () => Promise.resolve({ reply: 'Here you go.' }),
+    // Four bytes of `%PDF`, which is all any caller here does anything with.
+    renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
+    getProfile: () => Promise.resolve(null),
+    saveProfile: (profile) => Promise.resolve(profile),
+    saveApplication: () => Promise.resolve({ id: 'application-1' }),
+    updateApplication: () => Promise.resolve({ id: 'application-1' }),
+    findApplicationDuplicates: () => Promise.resolve({ count: 0, latest: null }),
+  };
+
+  return { ...fake, ...overrides };
+}

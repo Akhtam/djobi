@@ -234,7 +234,7 @@ that URL. Reading a posting from a link, or off an open LinkedIn Easy Apply moda
 proposed feature sketched in
 `docs/application-info-extraction-mode.md`.
 
-### Phase 9 — Answer chat (proposed, not started)
+### Phase 9 — Answer chat (done)
 
 Merges what were separately proposed as Phase 9 (Ask tab) and Phase 10 (refine a drafted answer).
 One chat surface, one route, one LLM module. Asking cold and refining an existing draft are the same
@@ -272,31 +272,63 @@ Decisions:
 - **Seeding is scoped to `question`-category fields only** — not select/combobox/radiogroup, which
   are constrained-choice and a poor fit for freeform rewriting.
 
-- [ ] `packages/shared/src/wire.ts`: `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`)
+- [x] `packages/shared/src/wire.ts`: `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`)
       and the `/answer-chat` contract — body of `profile`, `question`, optional `jobInfo`, optional
       `currentAnswer`, and `messages: ChatMessage[]` (empty on a cold ask); response
-      `{ reply, revisedAnswer? }`. A wire schema, so `lib/backendClient.ts` can build the body
-      against it via `satisfies`, matching the other shared route contracts
-- [ ] Extract the `<base_profile>`/`<job_info>` prompt scaffold that `tailorResume.ts` and
-      `answerQuestions.ts` each hand-build into a shared helper, and build this phase on it. This is
-      the third call site the open "speculative" cleanup was waiting for — it is no longer
-      speculative
-- [ ] `apps/backend/src/llm/answerChat.ts` — one turn through `structuredCall.ts`; `MODELS.writing`
-      (Sonnet), same tier and grounding rules as `answerQuestions`. Prior `messages` become real
-      conversation turns; `currentAnswer` is the draft under discussion
-- [ ] `POST /answer-chat` route — zod-validated against the wire schema
-- [ ] `lib/backendClient.ts`: add the method to `BackendClient` and `httpBackendClient`
-- [ ] `panel/App.tsx`: add "Ask" to the existing "Autofill" / "Log" tab switcher, and let the review
-      card hand it a seed (question + current answer + the field it came from) when switching
-- [ ] `panel/AskTab.tsx` — the one chat UI: question box, message thread, follow-up input, in-flight
-      and error states, a copy button, and "Use this answer" when the thread carries a seed. Calls
-      the backend directly via `callBackend`, as the panel already does for `/profile` and
-      `/render-resume-pdf`
-- [ ] Decide whether the thread survives a panel reopen. A seeded thread is about a specific answer
-      in a specific run, so it plausibly belongs on `PipelineRunState` in `lib/tabStore.ts` alongside
-      the answers; a cold ask has no run to hang off, which is the wrong shape for that store.
-      Default the cold case to React-local (lost on close) unless a reason to persist appears
-- Build test-first, same as the rest
+      `{ reply, revisedAnswer? }`, built against by `lib/backendClient.ts` via `satisfies`
+- [x] `groundingContext` in `apps/backend/src/llm/promptContext.ts` — the `<base_profile>` /
+      `<job_info>` scaffold `tailorResume.ts` and `answerQuestions.ts` each hand-built, now one
+      helper all three call sites use. `jobInfo` is optional there, which is what this phase needed
+- [x] `apps/backend/src/llm/answerChat.ts` — one turn through `structuredCall.ts`; `MODELS.writing`
+      (Sonnet), same tier and grounding rules as `answerQuestions`
+- [x] `POST /answer-chat` route — zod-validated against the wire schema
+- [x] `lib/backendClient.ts`: `answerChat` on `BackendClient` and `httpBackendClient`
+- [x] `panel/App.tsx`: "Ask" alongside "Autofill" / "Log", and the review card's "Refine with AI"
+      hand-off (question + current answer + field id, plus a token so re-seeding the same card
+      starts a fresh thread)
+- [x] `panel/AskTab.tsx` — question box, message thread, follow-up input, in-flight and error
+      states, a copy button, and "Use this answer" for a seeded thread
+
+Two things settled while building:
+
+- **The thread the panel sends alternates and ends with the candidate's turn — nothing is said
+  about its first turn.** The scaffold (Profile, Job Info, the question, the draft) _is_ the
+  conversation's opening user turn, so a cold ask's thread starts with the assistant, while a
+  seeded one starts with the candidate's instruction. `answerChat` folds a leading user turn into
+  the scaffold rather than sending it after — the Messages API refuses two user turns in a row.
+  The rule is enforced in the wire schema, so a malformed thread is a 400 here and not an opaque
+  provider 500.
+- **The thread does not survive a panel reopen** (the open question above). Persisting only seeded
+  threads would make "is my conversation still here" depend on where it started; the rule the
+  candidate can actually hold is that the _answer_ applied to the run survives and the conversation
+  doesn't. `PipelineRunState` is keyed by tab, which a cold ask has no business being.
+- Built test-first, same as the rest
+
+### Architecture pass — the panel's seams (done)
+
+Four candidates from an architecture review of the panel, after the Ask Tab landed and `panel/App.tsx`
+had grown to 694 lines.
+
+- [x] **The Autofill Tab is a module.** `panel/AutofillTab.tsx` holds the flow; `panel/App.tsx` is a
+      shell owning the Profile bootstrap, the tab switch, the Ask hand-off and the header pill.
+      `panel/useActiveRun.ts` owns the run for the page being shown — including the navigation-race
+      rule that used to sit between two hook calls in the shell, and `updateAnswer`, which two tabs
+      perform. `panel/AutofillTab.test.tsx` carries the flow's cases;
+      `panel/panelTestHarness.ts` is the fake both halves share.
+- [x] **The panel goes through `BackendClient`.** `main.tsx` (panel and options) is now the only
+      place either page names `httpBackendClient`; every module below takes the client it is given.
+      `createFakeBackendClient` in `lib/backendClient.ts` is the test adapter — the extension's
+      counterpart to the Dashboard's `createFixtureDashboardClient`. No UI test names a backend path
+      any more, which is what they used to assert on.
+- [x] **`panel/useResumePreview.ts`.** The blob-URL lifecycle — render, show, revoke exactly once,
+      and ignore a completion that has been superseded — behind three names.
+- [x] **`lib/fakeChrome.ts`.** One fake for `chrome.tabs` / `runtime` / `storage.session`,
+      composing `fakeSessionStorage`. Used by the panel harness, `useActiveTab`, `usePipelineRun`
+      and `tabStore` tests. Deliberately not universal: `useActiveTab`'s _deferred_ fake (which
+      interleaves callbacks to pin activation/navigation races) and the page-side fakes in
+      `content/index.test.ts` and `lib/pageClient.test.ts` (`runtime.onMessage`, `tabs.sendMessage`,
+      `scripting`) stay their own, because folding them in would widen the interface past what any
+      caller wants.
 
 ### Phase 10 — Bullet selection: an unbounded bullet bank, capped per resume (proposed, not started)
 
@@ -354,7 +386,7 @@ Decisions:
 
 - [ ] `packages/shared/src/schemas.ts`: `Profile.maxBulletsPerRole` (optional, schema default) and
       `WorkExperience.maxBullets` (nullable, `null` = inherit); add both to `EMPTY_PROFILE`
-- [ ] Keep `maxBullets` out of the *resume*. Adding it to `WorkExperienceSchema` puts it on two
+- [ ] Keep `maxBullets` out of the _resume_. Adding it to `WorkExperienceSchema` puts it on two
       paths that hand a Profile's entries straight to a `TailoredResume`: `baseResumeOf` returns
       `profile.workExperience` as-is, and `reconcileResume` spreads the whole profile entry
       (`{ ...profileByKey.get(key)!, bullets }`). Neither re-parses, so the cap would ride into
