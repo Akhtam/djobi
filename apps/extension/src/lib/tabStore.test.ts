@@ -12,6 +12,7 @@ import {
   reportDetectedPage,
   setPipelineRun,
   storageKey,
+  transitionPipelineRun,
   type PipelineRunState,
 } from './tabStore';
 
@@ -28,6 +29,7 @@ const jobInfo: JobInfo = {
 const tailoredResume: TailoredResume = { skills: [], workExperience: [] };
 
 const run: PipelineRunState = {
+  runId: 'run-1',
   status: 'review',
   tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
   jobPageData: { fields: [] },
@@ -58,6 +60,7 @@ function textField(id: string) {
 /** The shared in-memory `chrome.storage.session`, plus the `chrome.tabs.onRemoved` cleanup hooks into. */
 function stubChrome() {
   const onRemovedListeners: ((tabId: number) => void)[] = [];
+  const onUpdatedListeners: ((tabId: number, changeInfo: { url?: string }) => void)[] = [];
 
   vi.stubGlobal('chrome', {
     storage: fakeSessionStorage(),
@@ -67,10 +70,19 @@ function stubChrome() {
           onRemovedListeners.push(listener);
         }),
       },
+      onUpdated: {
+        addListener: vi.fn((listener: (tabId: number, changeInfo: { url?: string }) => void) => {
+          onUpdatedListeners.push(listener);
+        }),
+      },
     },
   });
 
-  return { fireTabRemoved: (tabId: number) => onRemovedListeners.forEach((l) => l(tabId)) };
+  return {
+    fireTabRemoved: (tabId: number) => onRemovedListeners.forEach((listener) => listener(tabId)),
+    fireTabUpdated: (tabId: number, url: string) =>
+      onUpdatedListeners.forEach((listener) => listener(tabId, { url })),
+  };
 }
 
 describe('tabStore', () => {
@@ -170,7 +182,7 @@ describe('tabStore', () => {
       stubChrome();
       await setPipelineRun(1, run);
 
-      await patchPipelineRun(1, { status: 'filled' });
+      expect(await patchPipelineRun(1, run.runId, { status: 'filled' })).toBe(true);
 
       expect(await getPipelineRun(1)).toEqual({ ...run, status: 'filled' });
     });
@@ -178,9 +190,31 @@ describe('tabStore', () => {
     it('does nothing when patching a tab with no run', async () => {
       stubChrome();
 
-      await patchPipelineRun(1, { status: 'filled' });
+      expect(await patchPipelineRun(1, run.runId, { status: 'filled' })).toBe(false);
 
       expect(await getPipelineRun(1)).toBeNull();
+    });
+
+    it('does nothing when patching a different run', async () => {
+      stubChrome();
+      await setPipelineRun(1, run);
+
+      expect(await patchPipelineRun(1, 'superseded-run', { status: 'filled' })).toBe(false);
+
+      expect(await getPipelineRun(1)).toEqual(run);
+    });
+
+    it('lets only one concurrent operation claim an allowed status', async () => {
+      stubChrome();
+      await setPipelineRun(1, { ...run, status: 'review' });
+
+      const [first, second] = await Promise.all([
+        transitionPipelineRun(1, ['review'], { status: 'filling' }),
+        transitionPipelineRun(1, ['review'], { status: 'filling' }),
+      ]);
+
+      expect([first, second].filter(Boolean)).toHaveLength(1);
+      expect(await getPipelineRun(1)).toMatchObject({ status: 'filling' });
     });
 
     it('stores a run and a detected page side by side, without either clobbering the other', async () => {
@@ -310,5 +344,17 @@ describe('tabStore', () => {
     await Promise.resolve();
 
     expect(await getPipelineRun(1)).toBeNull();
+  });
+
+  it('clears frames and a review run when the same tab navigates to a new URL', async () => {
+    const { fireTabUpdated } = stubChrome();
+    registerTabStateCleanup();
+    await reportDetectedPage(1, 0, { fields: [textField('email')] });
+    await setPipelineRun(1, run);
+
+    fireTabUpdated(1, 'https://example.com/another-job');
+    await vi.waitFor(async () => expect(await getPipelineRun(1)).toBeNull());
+
+    expect(await getDetectedPage(1)).toBeNull();
   });
 });

@@ -68,21 +68,19 @@ describe('tailorResume', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     const request = mockCreate.mock.calls[0][0];
+    const content = request.messages[0].content;
     expect(request.model).toBe('claude-sonnet-5');
     expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_tailored_resume' });
-    expect(request.messages[0].content).toContain(profile.fullName);
-    expect(request.messages[0].content).toContain(jobInfo.company);
-    expect(request.messages[0].content).not.toContain('prior_applications_to_this_company');
-  });
-
-  it('includes the prior-applications summary in the prompt when provided', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse(sampleTailoredResume));
-
-    await tailorResume(profile, jobInfo, 'Previously emphasized the on-call rotation experience.');
-
-    const request = mockCreate.mock.calls[0][0];
-    expect(request.messages[0].content).toContain('prior_applications_to_this_company');
-    expect(request.messages[0].content).toContain('on-call rotation experience');
+    expect(content).toContain(
+      JSON.stringify({
+        workExperience: profile.workExperience,
+        skills: profile.skills,
+      }),
+    );
+    expect(content).toContain(JSON.stringify(jobInfo));
+    expect(content).not.toContain(profile.fullName);
+    expect(content).not.toContain('"education"');
+    expect(content).not.toContain('\n  "workExperience"');
   });
 
   it('throws when the tool input fails schema validation', async () => {
@@ -91,5 +89,115 @@ describe('tailorResume', () => {
     await expect(tailorResume(profile, jobInfo)).rejects.toThrow(
       'report_tailored_resume produced input that failed validation',
     );
+  });
+
+  it('rejects bullets from a fabricated entry and filters fabricated skills', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skills: ['Rust', ' typescript '],
+        workExperience: [
+          {
+            company: 'Fabricated Inc',
+            title: 'Chief Architect',
+            startDate: '1999-01',
+            endDate: '2099-12',
+            bullets: ['Emphasized the real billing migration for this role'],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(profile, jobInfo);
+
+    expect(result).toEqual({
+      skills: ['TypeScript'],
+      workExperience: [
+        {
+          ...profile.workExperience[0],
+          bullets: profile.workExperience[0].bullets,
+        },
+      ],
+    });
+  });
+
+  it('never attaches invented-employer bullets to the one unmatched profile entry', async () => {
+    const twoJobProfile: Profile = {
+      ...profile,
+      workExperience: [
+        ...profile.workExperience,
+        {
+          company: 'Beta Corp',
+          title: 'Software Engineer',
+          startDate: '2020-01',
+          endDate: '2021-12',
+          bullets: ['Built authoritative internal developer tooling'],
+        },
+      ],
+    };
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skills: profile.skills,
+        workExperience: [
+          {
+            ...twoJobProfile.workExperience[0],
+            bullets: ['Tailored the real Acme billing migration'],
+          },
+          {
+            company: 'Invented LLC',
+            title: 'Founder',
+            startDate: '2010-01',
+            endDate: null,
+            bullets: ['Fabricated an unrelated company achievement'],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoJobProfile, jobInfo);
+
+    expect(result.workExperience).toEqual([
+      {
+        ...twoJobProfile.workExperience[0],
+        bullets: ['Tailored the real Acme billing migration'],
+      },
+      twoJobProfile.workExperience[1],
+    ]);
+  });
+
+  it('drops invented entries while retaining safely keyed model reordering', async () => {
+    const twoJobProfile: Profile = {
+      ...profile,
+      workExperience: [
+        ...profile.workExperience,
+        {
+          company: 'Beta Corp',
+          title: 'Software Engineer',
+          startDate: '2020-01',
+          endDate: '2021-12',
+          bullets: ['Built internal developer tooling'],
+        },
+      ],
+    };
+    const reordered = [twoJobProfile.workExperience[1], twoJobProfile.workExperience[0]];
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skills: profile.skills,
+        workExperience: [
+          ...reordered,
+          {
+            company: 'Invented LLC',
+            title: 'Founder',
+            startDate: '2010-01',
+            endDate: null,
+            bullets: ['Founded an invented company'],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoJobProfile, jobInfo);
+
+    expect(result.workExperience).toEqual(reordered);
+    expect(result.workExperience).toHaveLength(2);
   });
 });

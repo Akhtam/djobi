@@ -3,16 +3,21 @@
  * or going through something like LinkedIn Easy Apply — so it still lands in the same history the
  * autofill flow writes to.
  *
- * Deliberately not part of the Application Pipeline. This flow has no tab-scoped state: it never
- * needs a detected form, never touches the page, and never runs on the active tab, so it doesn't go
- * through `lib/tabStore.ts` (which keys everything by `tabId` and drops it when that tab closes) or
- * `PipelineStatus`. It is a form and two backend calls, and its state is local for that reason.
+ * Deliberately not part of the Application Pipeline. This flow needs no detected form and never
+ * reads page content; it only follows the active tab's URL as a prefill until the candidate edits it.
+ * It therefore doesn't go through `lib/tabStore.ts` or `PipelineStatus`. Its form and request state
+ * are local.
  *
  * The two calls are the ones that already exist: `POST /extract-job` for the job details, then
  * `POST /applications` with `source: 'manual'` and the base profile as the stored resume (see
  * `baseResumeOf`). No tailoring, no answers — the candidate wrote those themselves.
  */
-import { baseResumeOf, type Application, type JobInfo, type Profile } from '@djobi/shared';
+import {
+  baseResumeOf,
+  type DuplicateApplicationSummary,
+  type JobInfo,
+  type Profile,
+} from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import { httpBackendClient } from '../lib/backendClient';
 import { formatAppliedDate } from '../lib/format';
@@ -25,7 +30,7 @@ interface Reviewed {
    * hits. Empty is the normal case. Warns, never blocks: logging the same posting twice is the
    * candidate's call to make.
    */
-  duplicates: Application[];
+  duplicates: DuplicateApplicationSummary;
 }
 
 /**
@@ -44,7 +49,7 @@ type LogState =
   | ({ kind: 'extracted' } & Reviewed)
   | ({ kind: 'saving' } & Reviewed)
   | ({ kind: 'save-error'; message: string } & Reviewed)
-  | { kind: 'saved'; application: Application };
+  | { kind: 'saved'; company: string; roleTitle: string };
 
 /** What went wrong, for the inline error line — a `BackendError` names the path and status. */
 function failureMessage(error: unknown): string {
@@ -110,7 +115,7 @@ export function LogApplication({
       // serializing them would put a database round-trip behind a model call for no reason.
       const [jobInfo, duplicates] = await Promise.all([
         httpBackendClient.extractJob(jobDescription),
-        httpBackendClient.findApplicationsByJobUrl(jobUrl.trim()),
+        httpBackendClient.findApplicationDuplicates(jobUrl.trim()),
       ]);
       setCompany(jobInfo.company);
       setRoleTitle(jobInfo.roleTitle);
@@ -128,7 +133,7 @@ export function LogApplication({
     // put its old `kind` back and the screen would never leave `extracted`.
     setState({ ...reviewed, kind: 'saving' });
     try {
-      const application = await httpBackendClient.saveApplication({
+      await httpBackendClient.saveApplication({
         company: company.trim(),
         roleTitle: roleTitle.trim(),
         jobUrl: jobUrl.trim(),
@@ -139,7 +144,7 @@ export function LogApplication({
         answers: [],
         source: 'manual',
       });
-      setState({ kind: 'saved', application });
+      setState({ kind: 'saved', company: company.trim(), roleTitle: roleTitle.trim() });
     } catch (error) {
       setState({ ...reviewed, kind: 'save-error', message: failureMessage(error) });
     }
@@ -157,10 +162,10 @@ export function LogApplication({
 
   if (state.kind === 'saved') {
     return (
-      <div className="state success">
+      <div className="state success" role="status">
         <span className="state-icon success">✅</span>
         <p>
-          Logged {state.application.roleTitle} at {state.application.company}.
+          Logged {state.roleTitle} at {state.company}.
         </p>
         <button type="button" className="btn-primary" onClick={reset}>
           Log another
@@ -171,7 +176,7 @@ export function LogApplication({
 
   if (state.kind === 'extracting') {
     return (
-      <div className="state">
+      <div className="state" role="status" aria-live="polite">
         <span className="spinner" />
         <p>Reading the job posting…</p>
       </div>
@@ -182,8 +187,7 @@ export function LogApplication({
   // than as three near-identical blocks.
   if (state.kind === 'extracted' || state.kind === 'saving' || state.kind === 'save-error') {
     const saving = state.kind === 'saving';
-    const { duplicates } = state;
-    const mostRecent = duplicates[0];
+    const { count, latest: mostRecent } = state.duplicates;
 
     return (
       <div className="review">
@@ -193,11 +197,11 @@ export function LogApplication({
         </div>
 
         {mostRecent && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">📮</span>
             <p>
-              {duplicates.length > 1
-                ? `You've already logged this job ${duplicates.length} times, most recently on ${formatAppliedDate(mostRecent.createdAt)}.`
+              {count > 1
+                ? `You've already logged this job ${count} times, most recently on ${formatAppliedDate(mostRecent.createdAt)}.`
                 : `You already logged this job on ${formatAppliedDate(mostRecent.createdAt)}.`}
             </p>
           </div>
@@ -205,11 +209,15 @@ export function LogApplication({
 
         <label className="question-card">
           <span>Company</span>
-          <input value={company} onChange={(e) => setCompany(e.target.value)} />
+          <input value={company} disabled={saving} onChange={(e) => setCompany(e.target.value)} />
         </label>
         <label className="question-card">
           <span>Role</span>
-          <input value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} />
+          <input
+            value={roleTitle}
+            disabled={saving}
+            onChange={(e) => setRoleTitle(e.target.value)}
+          />
         </label>
 
         <p className="hint">
@@ -221,7 +229,7 @@ export function LogApplication({
         </p>
 
         {state.kind === 'save-error' && (
-          <div className="inline-error">
+          <div className="inline-error" role="alert">
             <div className="inline-error-body">
               <p>Something went wrong logging the application.</p>
               <p className="failure-detail">{state.message}</p>
@@ -276,7 +284,11 @@ export function LogApplication({
         <p className="failure-detail">That doesn't look like a URL — it needs the https:// too.</p>
       )}
 
+      <label className="field-label" htmlFor="manual-job-description">
+        Manual job description
+      </label>
       <textarea
+        id="manual-job-description"
         className="page-text-input"
         placeholder="Paste the posting here…"
         value={jobDescription}
@@ -284,7 +296,7 @@ export function LogApplication({
       />
 
       {state.kind === 'extract-error' && (
-        <div className="inline-error">
+        <div className="inline-error" role="alert">
           <div className="inline-error-body">
             <p>Something went wrong reading this job posting.</p>
             <p className="failure-detail">{state.message}</p>

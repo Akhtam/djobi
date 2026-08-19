@@ -1,91 +1,66 @@
 /**
- * `saveProfile`'s upsert, driven against a stubbed Drizzle client.
- *
- * The route test mocks this whole module away, so which of the two statements runs — and how many
- * round trips that costs — had no coverage at all. The stub below is deliberately thin: it records
- * the calls and returns what the real driver returns (an array of `returning()` rows), which is the
- * only part of Drizzle's behaviour this function's control flow reads.
+ * Singleton profile persistence, driven against a stubbed Drizzle client.
  */
 import { EMPTY_PROFILE, type Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockUpdate, mockInsert, mockSelect } = vi.hoisted(() => ({
-  mockUpdate: vi.fn(),
+const { mockInsert, mockSelect } = vi.hoisted(() => ({
   mockInsert: vi.fn(),
   mockSelect: vi.fn(),
 }));
 
 vi.mock('./client.js', () => ({
-  db: { update: mockUpdate, insert: mockInsert, select: mockSelect },
+  db: { insert: mockInsert, select: mockSelect },
 }));
 
-const { getProfile, saveProfile } = await import('./profileRepository.js');
+const { getProfile, PROFILE_ID, saveProfile } = await import('./profileRepository.js');
 
 const profile: Profile = { ...EMPTY_PROFILE, fullName: 'Jane Doe', email: 'jane@example.com' };
 
-/** `db.update(...).set(...).returning(...)`, resolving with the rows the statement touched. */
-function stubUpdate(returnedRows: { id: string }[]) {
-  const returning = vi.fn().mockResolvedValue(returnedRows);
-  const set = vi.fn().mockReturnValue({ returning });
-  mockUpdate.mockReturnValue({ set });
-  return { set, returning };
-}
-
-/** `db.insert(...).values(...)`. */
 function stubInsert() {
-  const values = vi.fn().mockResolvedValue(undefined);
+  const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+  const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
   mockInsert.mockReturnValue({ values });
-  return { values };
+  return { values, onConflictDoUpdate };
 }
 
 beforeEach(() => {
-  mockUpdate.mockReset();
   mockInsert.mockReset();
   mockSelect.mockReset();
 });
 
 describe('saveProfile', () => {
-  it('updates the existing row without asking whether one exists first', async () => {
-    const { set } = stubUpdate([{ id: 'profile-1' }]);
-    const { values } = stubInsert();
+  it('uses one atomic upsert statement with the fixed profile ID', async () => {
+    const { values, onConflictDoUpdate } = stubInsert();
 
     await expect(saveProfile(profile)).resolves.toEqual(profile);
 
-    expect(set).toHaveBeenCalledWith(expect.objectContaining({ data: profile }));
-    expect(values).not.toHaveBeenCalled();
-    // The point of the change: one statement on the path that applies after the first ever save.
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(values).toHaveBeenCalledWith({ id: PROFILE_ID, data: profile });
+    expect(onConflictDoUpdate).toHaveBeenCalledWith({
+      target: expect.anything(),
+      set: { data: profile, updatedAt: expect.any(Date) },
+    });
     expect(mockSelect).not.toHaveBeenCalled();
-  });
-
-  it('inserts the first row when the update touched nothing', async () => {
-    stubUpdate([]);
-    const { values } = stubInsert();
-
-    await expect(saveProfile(profile)).resolves.toEqual(profile);
-
-    expect(values).toHaveBeenCalledWith({ data: profile });
-  });
-
-  it('stamps updatedAt on the update', async () => {
-    const { set } = stubUpdate([{ id: 'profile-1' }]);
-    stubInsert();
-
-    await saveProfile(profile);
-
-    expect(set.mock.calls[0][0].updatedAt).toBeInstanceOf(Date);
   });
 });
 
 describe('getProfile', () => {
-  /** `db.select().from(...).limit(1)`. */
   function stubSelect(rows: { data: unknown }[]) {
-    const limit = vi.fn().mockResolvedValue(rows);
-    mockSelect.mockReturnValue({ from: vi.fn().mockReturnValue({ limit }) });
+    const where = vi.fn().mockResolvedValue(rows);
+    mockSelect.mockReturnValue({ from: vi.fn().mockReturnValue({ where }) });
+    return { where };
   }
 
-  it('resolves null before anything has been saved', async () => {
-    stubSelect([]);
+  it('selects only the fixed profile ID and resolves null when it is absent', async () => {
+    const { where } = stubSelect([]);
     await expect(getProfile()).resolves.toBeNull();
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(
+      where.mock.calls[0][0].queryChunks.some(
+        (chunk: { value?: unknown }) => chunk.value === PROFILE_ID,
+      ),
+    ).toBe(true);
   });
 
   /** The reason this parses rather than casts: jsonb comes back exactly as it was written. */

@@ -69,6 +69,8 @@ export interface DuplicateApplication {
 }
 
 export interface PipelineRunState {
+  /** Identifies this attempt so async work cannot update a newer run for the same tab. */
+  runId: string;
   status: PipelineStatus;
   tabUrl: string | null;
   jobPageData: JobPageData;
@@ -87,9 +89,9 @@ export interface PipelineRunState {
   /** Set by the Fill Step from the page's response; `null` before it completes. */
   fillOutcome: FillOutcome | null;
   /**
-   * How many fields the Fill Step actually wrote, resume included. Zero is the signature of a run
-   * that had no detected fields to work with, which `unresolvedRequiredFields` alone reports as an
-   * empty list — i.e. as success.
+   * How many fields the Fill Step wrote when a frame confirmed the result, resume included. For an
+   * `unverified` outcome this is the optimistic attempted count. Zero can mean no fields were
+   * detected, which `unresolvedRequiredFields` alone cannot distinguish from success.
    */
   filledFieldCount: number;
   /** The permanent record created by the first explicit save, if any. */
@@ -133,7 +135,9 @@ export interface TabState {
   run: PipelineRunState | null;
 }
 
-type StoredPipelineRun = Omit<PipelineRunState, 'fillOutcome'> & {
+type StoredPipelineRun = Omit<PipelineRunState, 'fillOutcome' | 'runId'> & {
+  /** Absent on runs written before asynchronous updates were scoped to one run. */
+  runId?: string;
   /** Absent on runs written before FillOutcome was persisted. */
   fillOutcome?: FillOutcome | null;
 };
@@ -180,6 +184,9 @@ async function read(tabId: number): Promise<TabState> {
     run: state.run
       ? {
           ...state.run,
+          // Session storage survives extension reloads. Give a legacy run a deterministic identity
+          // so captured operations remain comparable for the rest of that tab's lifetime.
+          runId: state.run.runId ?? `legacy:${tabId}`,
           jobPageData: { fields: parseDetectedFields(state.run.jobPageData?.fields) },
           unresolvedRequiredFields: parseDetectedFields(state.run.unresolvedRequiredFields),
           fillOutcome:
@@ -203,9 +210,8 @@ async function write(tabId: number, state: TabState): Promise<void> {
  * frame and they report at nearly the same instant, so two concurrent reports would both read the
  * pre-write state and the second write would silently drop the first frame's detection.
  *
- * The queue is in-memory, so it only orders writes originating in the same context. Background and
- * panel writes can still interleave with each other — they touch different parts of the entry
- * (detection vs. run) so it hasn't bitten, but it is not a general-purpose lock.
+ * The queue is in-memory and therefore orders one JavaScript context. All mutations are routed
+ * through the service worker so detection, run progress, edits, and invalidation share this queue.
  */
 const writeQueues = new Map<number, Promise<unknown>>();
 
@@ -310,28 +316,51 @@ export async function setPipelineRun(tabId: number, run: PipelineRunState): Prom
 }
 
 /**
- * Merges `patch` onto the tab's existing run. A no-op when no run has been started — callers use
- * this for progress updates on a run `setPipelineRun` already created, not to lazily create one
- * (there's no sensible default for `jobPageData`).
+ * Merges `patch` onto the tab's existing run only when its identity matches. A missing or newer run
+ * is a no-op, so completions captured before navigation or re-analysis cannot mutate current state.
  */
 export async function patchPipelineRun(
   tabId: number,
-  patch: Partial<PipelineRunState>,
-): Promise<void> {
+  expectedRunId: string,
+  patch: Partial<Omit<PipelineRunState, 'runId'>>,
+): Promise<boolean> {
   return withTabLock(tabId, async () => {
     const state = await read(tabId);
-    if (!state.run) return;
+    if (!state.run || state.run.runId !== expectedRunId) return false;
     await write(tabId, { ...state, run: { ...state.run, ...patch } });
+    return true;
+  });
+}
+
+/**
+ * Atomically claims the current run for an operation by changing its status only when it is still
+ * in one of `allowedStatuses`. Returning the updated snapshot lets the caller perform work against
+ * exactly the run it claimed; a concurrent command sees the new status and receives `null`.
+ */
+export async function transitionPipelineRun(
+  tabId: number,
+  allowedStatuses: readonly PipelineStatus[],
+  patch: Partial<Omit<PipelineRunState, 'runId'>>,
+): Promise<PipelineRunState | null> {
+  return withTabLock(tabId, async () => {
+    const state = await read(tabId);
+    if (!state.run || !allowedStatuses.includes(state.run.status)) return null;
+    const run = { ...state.run, ...patch };
+    await write(tabId, { ...state, run });
+    return run;
   });
 }
 
 export async function clearTabState(tabId: number): Promise<void> {
-  await chrome.storage.session.remove(storageKey(tabId));
+  return withTabLock(tabId, () => chrome.storage.session.remove(storageKey(tabId)));
 }
 
-/** Wires cleanup so a closed tab leaves nothing behind. Call once at startup. */
+/** Wires service-worker invalidation: closing or navigating a tab makes all stored state stale. */
 export function registerTabStateCleanup(): void {
   chrome.tabs.onRemoved.addListener((tabId) => {
     void clearTabState(tabId);
+  });
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.url !== undefined) void clearTabState(tabId);
   });
 }

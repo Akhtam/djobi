@@ -30,15 +30,16 @@ describe('createFixtureDashboardClient', () => {
     const before = (await client.listApplications()).find((a) => a.id === 'app-sonar')!;
     expect(before.notes).toHaveLength(0);
 
-    const updated = await client.addNote('app-sonar', {
+    const result = await client.addNote('app-sonar', {
       category: 'technical',
       text: 'Asked about JVM GC.',
     });
 
-    expect(updated.notes).toHaveLength(1);
-    expect(updated.notes[0].text).toBe('Asked about JVM GC.');
-    expect(updated.notes[0].id).toBeTruthy();
-    expect(Number.isNaN(Date.parse(updated.notes[0].createdAt))).toBe(false);
+    expect(result.note.text).toBe('Asked about JVM GC.');
+    expect(result.note.id).toBeTruthy();
+    expect(Number.isNaN(Date.parse(result.note.createdAt))).toBe(false);
+    const updated = (await client.listApplications()).find((a) => a.id === 'app-sonar')!;
+    expect(updated.notes).toEqual([result.note]);
   });
 
   it('leaves the seed untouched, so one test cannot leak into the next', async () => {

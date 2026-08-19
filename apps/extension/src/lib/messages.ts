@@ -1,4 +1,4 @@
-import type { DetectedField, Profile } from '@djobi/shared';
+import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
 
 /**
  * What the content script reports once it's detected an ATS job application form: the fields it
@@ -54,6 +54,19 @@ export interface StartSaveApplicationMessage {
   tabId: number;
 }
 
+/** Panel -> background: persist optimistic review edits against the run they were made on. */
+export interface UpdateRunMessage {
+  type: 'UPDATE_RUN';
+  tabId: number;
+  runId: string;
+  updates: {
+    answers: QuestionAnswer[];
+    jobDescription: string;
+    /** Editing a saved snapshot makes it pending until it is saved again. */
+    status?: 'filled';
+  };
+}
+
 export interface FillFormPayload {
   fields: DetectedField[];
   values: Record<string, string>;
@@ -105,11 +118,11 @@ export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMess
  * The coordination protocol: content script and panel telling the background that something
  * happened. **Notification-only — none of these has a response.**
  *
- * That's a real design decision, not an omission. Each of these three either has nothing to say
- * back (`REPORT_JOB_PAGE`) or kicks off work whose whole point is outliving the sender
- * (`START_ANALYSIS`/`START_FILL`/`START_SAVE_APPLICATION`) — holding the message channel open until an Analysis Step
- * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
- * panel that opened it. Progress is read from `lib/tabStore.ts` instead.
+ * That's a real design decision, not an omission. Reports and edits have nothing to return, while
+ * START messages kick off work whose whole point is outliving the sender. Holding the message
+ * channel open until an Analysis Step resolves is exactly the failure this protocol was built to
+ * avoid, since the channel dies with the panel that opened it. Progress is read from
+ * `lib/tabStore.ts` instead.
  *
  * The two messages that *do* have responses (`SCAN_PAGE`, `FILL_FORM`) are not in this union. They
  * live in `lib/pageClient.ts`, where the response is the point.
@@ -120,7 +133,11 @@ export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMess
  * interface that describes capabilities the implementation doesn't have is worse than no types.
  */
 export type TypedMessage =
-  ReportJobPageMessage | StartAnalysisMessage | StartFillMessage | StartSaveApplicationMessage;
+  | ReportJobPageMessage
+  | StartAnalysisMessage
+  | StartFillMessage
+  | StartSaveApplicationMessage
+  | UpdateRunMessage;
 
 /**
  * Sends a coordination message to the background and returns immediately. There is no reply to

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getPipelineRun,
-  patchPipelineRun,
   storageKey as tabStorageKey,
   type PipelineRunState,
   type PipelineStatus,
   type TabState,
 } from '../lib/tabStore';
+import { notify } from '../lib/messages';
 
 /**
  * Keeps one tab's Application Pipeline run in sync with `lib/tabStore.ts`, and owns the status the
@@ -18,10 +18,10 @@ import {
  * files, and omitting one of the three sites still compiled. Here the run moves as one value and a
  * new field costs nothing.
  *
- * Ownership is deliberately lopsided: **the background service worker owns the run's progress**
- * (status, Analysis Step results, failure, fill counts) and this owns only what the user types.
- * Writing status back from here would let an optimistic value land after the background's real
- * result and overwrite it, losing a completed analysis.
+ * Ownership is deliberately lopsided: **the background service worker serializes every persisted
+ * mutation and owns operational progress** (Analysis results, failures and fill counts). This hook
+ * owns optimistic typed edits and may request the associated `saved` → `filled` reset, but never
+ * writes storage directly.
  *
  * `status` is nonetheless computed here rather than in the component, because it is assembled from
  * three sources — the stored run, an optimistic value, and the fact that a store update has arrived
@@ -55,7 +55,9 @@ export interface PipelineRunHandle {
    */
   begin: (status: PipelineStatus) => void;
   /** Persists the user's edits, updating `run` immediately so typing stays responsive. */
-  edit: (edits: Pick<PipelineRunState, 'answers' | 'jobDescription'>) => void;
+  edit: (
+    edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
+  ) => void;
 }
 
 /** The subset this hook is allowed to write — see the ownership note on {@link PipelineRunHandle}. */
@@ -63,27 +65,38 @@ function editsOf(run: PipelineRunState): Pick<PipelineRunState, 'answers' | 'job
   return { answers: run.answers, jobDescription: run.jobDescription };
 }
 
-export function usePipelineRun(tabId: number | null): PipelineRunHandle {
+export function usePipelineRun(
+  tabId: number | null,
+  scopeToken: unknown = tabId,
+): PipelineRunHandle {
   const [run, setRun] = useState<PipelineRunState | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [pending, setPending] = useState<PipelineStatus | null>(null);
+  const scopeTokenRef = useRef(scopeToken);
+  // Advances whenever a store event supersedes the snapshot captured by an in-flight initial read.
+  const revisionRef = useRef(0);
 
   // The edits last persisted, serialized. Storage echoes every write back through `onChanged`,
   // including this hook's own; without this the echo would be applied and written straight back out.
   const lastSyncedEditsRef = useRef<string | null>(null);
+  // The newest optimistic edit can be ahead of an older UPDATE_RUN echo in the background queue.
+  const pendingEditsRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (tabId === null) return;
 
     let current = true;
+    const revision = ++revisionRef.current;
+    scopeTokenRef.current = scopeToken;
     setHydrated(false);
     setRun(null);
     setPending(null);
     lastSyncedEditsRef.current = null;
+    pendingEditsRef.current = null;
 
     void getPipelineRun(tabId).then((stored) => {
-      // A tab switch mid-read must not apply the previous tab's run over the new one.
-      if (!current) return;
+      // A scope change or newer storage event must not let this older snapshot replace live state.
+      if (!current || revision !== revisionRef.current) return;
       if (stored) lastSyncedEditsRef.current = JSON.stringify(editsOf(stored));
       setRun(stored);
       setHydrated(true);
@@ -92,7 +105,7 @@ export function usePipelineRun(tabId: number | null): PipelineRunHandle {
     return () => {
       current = false;
     };
-  }, [tabId]);
+  }, [scopeToken, tabId]);
 
   // Keeps the run live as `background/applicationPipeline.ts` checkpoints progress into the store.
   useEffect(() => {
@@ -102,11 +115,26 @@ export function usePipelineRun(tabId: number | null): PipelineRunHandle {
     function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
       if (areaName !== 'session' || !(key in changes)) return;
 
-      const incoming = (changes[key].newValue as TabState | undefined)?.run;
-      if (!incoming) return; // no run yet, or the tab's entry was cleared — nothing to reflect
+      ++revisionRef.current;
+      const incoming = (changes[key].newValue as TabState | undefined)?.run ?? null;
+      const incomingEdits = incoming ? JSON.stringify(editsOf(incoming)) : null;
+      const pendingEdits = pendingEditsRef.current;
 
-      lastSyncedEditsRef.current = JSON.stringify(editsOf(incoming));
-      setRun(incoming);
+      setRun((currentRun) => {
+        // Preserve a newer local value while an older edit echo works through the background queue.
+        if (
+          incoming &&
+          currentRun?.runId === incoming.runId &&
+          pendingEdits !== null &&
+          incomingEdits !== pendingEdits
+        ) {
+          return { ...incoming, ...editsOf(currentRun) };
+        }
+        return incoming;
+      });
+      if (incomingEdits === pendingEdits) pendingEditsRef.current = null;
+      lastSyncedEditsRef.current = incomingEdits;
+      setHydrated(true);
       // The store has spoken, so the optimistic status has served its purpose — stand it down here,
       // where the update actually arrives. Doing this by comparing statuses instead would not work:
       // a second Fill Step returns the run to the status it already had, so the value alone can't
@@ -117,24 +145,44 @@ export function usePipelineRun(tabId: number | null): PipelineRunHandle {
 
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
-  }, [tabId]);
+  }, [scopeToken, tabId]);
 
   const edit = useCallback(
-    (edits: Pick<PipelineRunState, 'answers' | 'jobDescription'>) => {
-      if (tabId === null) return;
+    (edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' }) => {
+      if (tabId === null || !run) return;
 
       // Apply locally first so a controlled textarea doesn't lag a storage round-trip.
       setRun((prev) => (prev ? { ...prev, ...edits } : prev));
 
-      const serialized = JSON.stringify(edits);
-      if (serialized === lastSyncedEditsRef.current) return;
-      lastSyncedEditsRef.current = serialized;
-      void patchPipelineRun(tabId, edits);
+      const serialized = JSON.stringify({
+        answers: edits.answers,
+        jobDescription: edits.jobDescription,
+      });
+      // An undo can equal the last server echo while a different local edit is still pending. It
+      // must still be sent, otherwise that older pending edit eventually wins on the server.
+      if (
+        serialized === lastSyncedEditsRef.current &&
+        pendingEditsRef.current === null &&
+        edits.status === undefined
+      ) {
+        return;
+      }
+      pendingEditsRef.current = serialized;
+      notify({ type: 'UPDATE_RUN', tabId, runId: run.runId, updates: edits });
     },
-    [tabId],
+    [run, tabId],
   );
 
   const begin = useCallback((status: PipelineStatus) => setPending(status), []);
 
-  return { run, status: pending ?? run?.status ?? null, hydrated, begin, edit };
+  // Effects reset the state after a scope change; hide it during that render as well.
+  const scopeIsCurrent = scopeTokenRef.current === scopeToken;
+  const visibleRun = scopeIsCurrent ? run : null;
+  return {
+    run: visibleRun,
+    status: scopeIsCurrent ? (pending ?? visibleRun?.status ?? null) : null,
+    hydrated: scopeIsCurrent && hydrated,
+    begin,
+    edit,
+  };
 }

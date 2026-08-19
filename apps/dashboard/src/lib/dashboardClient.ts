@@ -13,6 +13,8 @@
  */
 import {
   type AddApplicationNoteRequest,
+  AddApplicationNoteResultSchema,
+  type AddApplicationNoteResult,
   type Application,
   ApplicationSchema,
   type ApplicationStage,
@@ -20,6 +22,8 @@ import {
   type NewNote,
   type Note,
   type UpdateApplicationStageRequest,
+  UpdateApplicationStageResultSchema,
+  type UpdateApplicationStageResult,
 } from '@djobi/shared';
 
 /**
@@ -31,10 +35,10 @@ import {
  */
 export interface DashboardClient {
   listApplications(): Promise<Application[]>;
-  /** Resolves with the updated record, so a caller can reconcile after an optimistic write. */
-  updateStage(id: string, stage: ApplicationStage): Promise<Application>;
+  /** Resolves with the authoritative Stage after an optimistic write. */
+  updateStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult>;
   /** Appends to the notes log. `id`/`createdAt` are assigned by the server, never sent. */
-  addNote(id: string, note: NewNote): Promise<Application>;
+  addNote(id: string, note: NewNote): Promise<AddApplicationNoteResult>;
 }
 
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
@@ -114,10 +118,9 @@ function send(path: string, method: 'POST' | 'PATCH', body: unknown): Promise<un
 /**
  * The production adapter: the same local Hono server the extension talks to.
  *
- * Every response is parsed through `ApplicationSchema` rather than cast. These rows come back from
- * jsonb columns, so one written before a field existed comes back without it — `as Application`
- * would have the compiler vouch for fields that are `undefined` at runtime. The backend's own
- * repository parses for exactly this reason; casting here would reintroduce the hazard one layer up.
+ * Full list rows are parsed through `ApplicationSchema` rather than cast. Write paths explicitly
+ * request compact acknowledgements and parse their operation-specific schemas, avoiding a second
+ * full-row database read after each write.
  *
  * Write bodies are built against the shared wire schemas via `satisfies`, the same way
  * `apps/extension/src/lib/backendClient.ts` does it: a drift between what this sends and what the
@@ -127,16 +130,16 @@ export const httpDashboardClient: DashboardClient = {
   listApplications: async () => ApplicationSchema.array().parse(await request('/applications')),
 
   updateStage: async (id, stage) =>
-    ApplicationSchema.parse(
-      await send(`/applications/${encodeURIComponent(id)}/stage`, 'PATCH', {
+    UpdateApplicationStageResultSchema.parse(
+      await send(`/applications/${encodeURIComponent(id)}/stage?response=compact`, 'PATCH', {
         stage,
       } satisfies UpdateApplicationStageRequest),
     ),
 
   addNote: async (id, note) =>
-    ApplicationSchema.parse(
+    AddApplicationNoteResultSchema.parse(
       await send(
-        `/applications/${encodeURIComponent(id)}/notes`,
+        `/applications/${encodeURIComponent(id)}/notes?response=compact`,
         'POST',
         note satisfies AddApplicationNoteRequest,
       ),
@@ -176,7 +179,10 @@ export function createFixtureDashboardClient(seed: Application[]): DashboardClie
   return {
     listApplications: () => Promise.resolve(structuredClone(applications)),
 
-    updateStage: (id, stage) => Promise.resolve(replace({ ...mustFind(id), stage })),
+    updateStage: (id, stage) => {
+      replace({ ...mustFind(id), stage });
+      return Promise.resolve({ id, stage });
+    },
 
     addNote: (id, note) => {
       const application = mustFind(id);
@@ -185,7 +191,8 @@ export function createFixtureDashboardClient(seed: Application[]): DashboardClie
         id: `note-${Math.random().toString(36).slice(2, 10)}`,
         createdAt: new Date().toISOString(),
       };
-      return Promise.resolve(replace({ ...application, notes: [...application.notes, appended] }));
+      replace({ ...application, notes: [...application.notes, appended] });
+      return Promise.resolve({ id, note: structuredClone(appended) });
     },
   };
 }

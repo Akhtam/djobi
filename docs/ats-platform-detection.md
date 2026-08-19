@@ -1,9 +1,11 @@
 # ATS platform detection — research for generalizing field detection
 
-> **Status: research current, strategy implemented (2026-08-12).** The per-platform sections below
-> are live-verified primary evidence and still stand — that's what this doc is for. The
-> "Detection strategy" section at the end has since been built; it now records what landed and
-> where, rather than what to do.
+> **Status: research snapshot; generic strategy implemented (updated 2026-08-18).** The
+> per-platform sections record researched or intended coverage, not a claim that every platform is
+> verified or has dedicated runtime support. Greenhouse is the only API oracle confirmed against a
+> live posting. SmartRecruiters and Workable oracles ship from documented shapes but remain
+> unverified; Ashby, Lever, Workday, iCIMS, and BambooHR have no shipped oracle. Generic DOM detection
+> can still operate on any of them when the page shape is recognized.
 >
 > One correction to the framing below: the ATS **host allowlist described in this doc no longer
 > exists**. `lib/atsHosts.ts` was deleted. `manifest.ts` now matches `http(s)://*/*` with
@@ -27,8 +29,8 @@ required-ness is signalled, how labels are associated, how file upload works, an
 API exposes the form schema. **That evidence is what this doc is for, and it is what remains
 useful** — it was gathered by live `curl` and real API calls, and re-acquiring it is expensive.
 
-Platforms covered: Greenhouse, Lever, Workday, iCIMS, Ashby, SmartRecruiters, Workable, BambooHR —
-the eight djobi was researched against.
+Platforms researched: Greenhouse, Lever, Workday, iCIMS, Ashby, SmartRecruiters, Workable, BambooHR —
+the eight platforms considered here. This is research coverage, not eight-platform verified support.
 
 ---
 
@@ -159,7 +161,8 @@ question/form schema**: "does not... expose custom questions built into your job
 Submission accepts standard fields (name, email, phone, resume, links, comments) but
 company-specific screening questions must be discovered from the rendered form itself. **No
 API-based detection shortcut for custom questions on Lever — DOM scraping is the only option**,
-unlike Greenhouse/Ashby/SmartRecruiters/Workable.
+unlike Greenhouse and the documented or researched API paths for Ashby, SmartRecruiters, and
+Workable. Only Greenhouse's shipped oracle is live-verified.
 
 ---
 
@@ -239,19 +242,19 @@ SPA shell**: `<div id="root">`, `id="vite-preload"`, `id="csp-nonce"` (Vite-bund
 matching the task's expectation — DOM widget details (native vs. custom select, required
 signaling, label association, file upload mechanism) are **needs live verification**.
 
-**6. Public API — this is the standout finding for Ashby.** Ashby's
-[Job Board API](https://developers.ashbyhq.com/docs/public-job-posting-api) /
-[`jobPosting.info`](https://developers.ashbyhq.com/reference/jobpostinginfo) endpoint returns an
-**`applicationFormDefinition`** object (`OverlayFormDefinition`) — confirmed via fetch of the
-reference doc — containing `sections[].fields[]`, each with `type` (e.g. `"String"`),
-`isRequired` (boolean), `selectableValues` (`[{label, value}]` for choice fields), `title`,
-`path`, `humanReadablePath`. This is a **complete, typed schema of the entire application form**,
-including required flags and every dropdown/multi-select's options — the richest of any platform
-checked. Ashby also documents submitting applications via
-`applicationForm.submit` with `multipart/form-data` (for résumé upload) — i.e. Ashby's API can
-plausibly be used for both _reading_ the form schema and (if we ever go that route)
-_submitting_ without touching the DOM at all. **This makes Ashby the strongest candidate for an
-API-first (non-DOM) detection+fill strategy** — see "Detection strategy" below.
+**6. APIs — corrected after implementation.** Ashby's documented
+[`jobPosting.info`](https://developers.ashbyhq.com/reference/jobpostinginfo) endpoint does expose an
+**`applicationFormDefinition`** object (`OverlayFormDefinition`) with typed fields, required flags,
+and selectable values. It is not a public candidate-side shortcut, however: it is an authenticated
+employer API requiring Basic Auth and the `jobsRead` permission, so an extension cannot use it.
+Ashby's public board endpoint returns listing data but no application-form schema.
+
+A separate source was verified live: Ashby's unauthenticated internal GraphQL endpoint at
+`jobs.ashbyhq.com/api/non-user-graphql` returns `applicationForm.sections[].fieldEntries[]`, including
+the field and entry-level `isRequired`. The working query and response shape are preserved in the
+comments in `apps/extension/src/background/apiDetectors.ts`. It is an internal, undocumented API
+with no compatibility guarantee and requires a POST plus an Ashby host permission. **No Ashby oracle
+currently ships.** This is researched future coverage, not verified product support.
 
 ---
 
@@ -274,7 +277,8 @@ session — **needs live verification**.
 `GET /postings/{uuid}/configuration` returns a `questions[]` array with `fields[]` entries each
 carrying `type` (`INPUT_TEXT`, `SINGLE_SELECT`, `MULTI_SELECT`, `RADIO`, `CHECKBOX`, `TEXTAREA`,
 `INFORMATION`), `required` (boolean), and `values: [{id, label}]` for choice fields — same shape
-of usefulness as Greenhouse/Ashby. **Preferred detection path exists**, but since customers can
+of usefulness as Greenhouse and Ashby's researched schema sources. **A documented detection path
+exists**, but since customers can
 fully custom-build their career site (point 1), the API-reported field types won't always
 correspond 1:1 to predictable DOM element `name`/`id` attributes the way Greenhouse's do —
 **needs live verification** whether SmartRecruiters' own hosted-widget mode preserves that
@@ -356,9 +360,12 @@ further platform work:
   _prototype's_ setter, and the fill must drive the full keystroke sequence
   (`focus` → `input` → `change` → `blur`) — form libraries commonly commit to the form model on
   blur, so a fill that never blurs leaves the DOM looking right and the model empty.
-- **A fill must be verified, not assumed.** `fillForm` re-reads each field after a settle delay and
-  reports only the ids that verifiably still hold their value; the Fill Step's counts come from
-  that reply rather than from the values it sent.
+- **A fill should be verified, with an explicit unverified fallback.** When the content script
+  replies, `fillForm` re-reads each field after a settle delay and reports only ids that verifiably
+  still hold their value; the Fill Step derives counts from that reply. If no frame answers at all,
+  the pipeline conservatively records `fillOutcome: 'unverified'` while using attempted values for
+  optimistic counts, because treating every field as definitely unresolved would also be false. The
+  panel tells the candidate to check the form.
 
 ### Platform priority
 

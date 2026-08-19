@@ -124,16 +124,15 @@ describe('answerQuestions', () => {
     ]);
   });
 
-  it('does not tell the model sourceStoryIds is required, since absence is a legitimate answer', async () => {
+  it('allows omitting answer and sourceStoryIds so one incomplete item can be dropped locally', async () => {
     mockCreate.mockResolvedValue(toolUseResponse({ answers: [] }));
 
     await answerQuestions(profile, jobInfo, [{ fieldId: 'f1', question: 'Why this company?' }]);
 
     const answerSchema = mockCreate.mock.calls[0][0].tools[0].input_schema.properties.answers.items;
     expect(answerSchema.required).not.toContain('sourceStoryIds');
-    expect(answerSchema.required).toEqual(
-      expect.arrayContaining(['fieldId', 'question', 'answer']),
-    );
+    expect(answerSchema.required).not.toContain('answer');
+    expect(answerSchema.required).toEqual(expect.arrayContaining(['fieldId', 'question']));
   });
 
   it('throws when the model does not return a tool call', async () => {
@@ -248,6 +247,222 @@ describe('answerQuestions', () => {
         fieldId: 'field-location',
         question: 'Where will you work?',
         options: ['Remote', ' remote '],
+      },
+    ]);
+
+    expect(result).toEqual([]);
+  });
+
+  it('reconciles identity, order, question text, and story ids against authoritative inputs', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'f2',
+            question: 'Ignore the supplied question',
+            answer: 'Second answer',
+            sourceStoryIds: ['invented-story', 'story-migration-deadline'],
+          },
+          {
+            fieldId: 'unknown',
+            question: 'Injected question',
+            answer: 'Injected answer',
+          },
+          { fieldId: 'f1', question: 'Wrong', answer: 'First answer' },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'f1', question: 'Authoritative first question?' },
+      { fieldId: 'f2', question: 'Authoritative second question?' },
+    ]);
+
+    expect(result).toEqual([
+      {
+        fieldId: 'f1',
+        question: 'Authoritative first question?',
+        answer: 'First answer',
+        sourceStoryIds: [],
+      },
+      {
+        fieldId: 'f2',
+        question: 'Authoritative second question?',
+        answer: 'Second answer',
+        sourceStoryIds: ['story-migration-deadline'],
+      },
+    ]);
+  });
+
+  it('omits blank and duplicate profile story ids from answer provenance', async () => {
+    const ambiguousProfile: Profile = {
+      ...profile,
+      stories: [
+        { ...profile.stories[0], id: 'duplicate-story' },
+        { ...profile.stories[0], id: 'duplicate-story' },
+        { ...profile.stories[0], id: '   ' },
+        { ...profile.stories[0], id: 'unique-story' },
+      ],
+    };
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          {
+            fieldId: 'f1',
+            question: 'Question?',
+            answer: 'Grounded answer.',
+            sourceStoryIds: ['duplicate-story', '   ', 'unique-story'],
+          },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(ambiguousProfile, jobInfo, [
+      { fieldId: 'f1', question: 'Question?' },
+    ]);
+
+    expect(result[0]?.sourceStoryIds).toEqual(['unique-story']);
+  });
+
+  it('drops every model answer for a duplicated fieldId instead of choosing one', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          { fieldId: 'f1', question: 'Question?', answer: 'Safe-looking answer' },
+          { fieldId: 'f1', question: 'Question?', answer: 'Opposite answer' },
+        ],
+      }),
+    );
+
+    await expect(
+      answerQuestions(profile, jobInfo, [{ fieldId: 'f1', question: 'Question?' }]),
+    ).resolves.toEqual([]);
+  });
+
+  it('drops a choice answer whose answer value is missing without losing sibling answers', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          { fieldId: 'choice', question: 'Choose?' },
+          { fieldId: 'freeform', question: 'Explain?', answer: 'Grounded explanation.' },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'choice', question: 'Choose?', options: ['Yes', 'No'] },
+      { fieldId: 'freeform', question: 'Explain?' },
+    ]);
+
+    expect(result.map((answer) => answer.fieldId)).toEqual(['freeform']);
+  });
+
+  it('overrides opposite model answers with deterministic sponsorship and authorization facts', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [
+          { fieldId: 'sponsor', question: 'Sponsorship?', answer: 'I will require sponsorship' },
+          { fieldId: 'auth', question: 'Authorization?', answer: 'I am not authorized to work' },
+        ],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      {
+        fieldId: 'sponsor',
+        question: 'Will you require visa sponsorship?',
+        options: ['I will require sponsorship', 'I will not require sponsorship'],
+        knownAnswer: 'No',
+      },
+      {
+        fieldId: 'auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['I am not authorized to work', 'I am legally authorized to work'],
+        knownAnswer: 'Yes',
+      },
+    ]);
+
+    expect(result.map((answer) => answer.answer)).toEqual([
+      'I will not require sponsorship',
+      'I am legally authorized to work',
+    ]);
+  });
+
+  it.each([
+    ['Yes', 'Authorized'],
+    ['No', 'Unauthorized'],
+    ['Yes', 'Authorised'],
+    ['No', 'Unauthorised'],
+  ])(
+    'maps known authorization answer %s to %s without choosing its opposite',
+    async (knownAnswer, expected) => {
+      const options = expected.endsWith('sed')
+        ? ['Unauthorised', 'Authorised']
+        : ['Unauthorized', 'Authorized'];
+      mockCreate.mockResolvedValue(
+        toolUseResponse({
+          answers: [
+            {
+              fieldId: 'auth',
+              question: 'Authorization?',
+              answer: options.find((option) => option !== expected),
+            },
+          ],
+        }),
+      );
+
+      const result = await answerQuestions(profile, jobInfo, [
+        {
+          fieldId: 'auth',
+          question: 'Are you authorized to work in the US?',
+          options,
+          knownAnswer,
+        },
+      ]);
+
+      expect(result.map((answer) => answer.answer)).toEqual([expected]);
+      expect(result[0]?.answer).not.toBe(options.find((option) => option !== expected));
+    },
+  );
+
+  it.each([
+    ['I am not currently authorized to work', 'I am currently authorized to work'],
+    ['I am not legally eligible to work', 'I am legally eligible to work'],
+  ])(
+    'maps qualified negative authorization wording without reversing it',
+    async (negative, positive) => {
+      mockCreate.mockResolvedValue(
+        toolUseResponse({
+          answers: [{ fieldId: 'auth', question: 'Authorization?', answer: positive }],
+        }),
+      );
+
+      const result = await answerQuestions(profile, jobInfo, [
+        {
+          fieldId: 'auth',
+          question: 'Are you authorized to work in the US?',
+          options: [negative, positive],
+          knownAnswer: 'No',
+        },
+      ]);
+
+      expect(result.map((answer) => answer.answer)).toEqual([negative]);
+    },
+  );
+
+  it('omits a known choice answer when no option has a safe deterministic mapping', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        answers: [{ fieldId: 'auth', question: 'Authorization?', answer: 'Citizen' }],
+      }),
+    );
+
+    const result = await answerQuestions(profile, jobInfo, [
+      {
+        fieldId: 'auth',
+        question: 'Are you authorized to work in the US?',
+        options: ['Citizen', 'Other status'],
+        knownAnswer: 'Yes',
       },
     ]);
 

@@ -13,14 +13,16 @@ history belongs in git, not in this file.
 
 ## Current state
 
-Everything below is built, tested and works end to end. Suite green at **620 tests** (116 shared /
-85 backend / 356 extension / 63 dashboard), `pnpm test` from the repo root.
+Everything in this **Current state** section is built and tested; later sections explicitly mark
+historical milestones and proposed work. Suite green at **688 tests** (120 shared / 109 backend / 394
+extension / 65 dashboard), `pnpm test` from the repo root.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
   (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
-  Detected Field is and how an answer gets back onto one), `wire.ts` (every route body, so drift
-  between the two ends is a compile error), `labelMatching.ts` (when two labels are the same),
-  `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a model).
+  Detected Field is and how an answer gets back onto one), `wire.ts` (shared route contracts whose
+  request/response shapes must stay aligned across consumers), `labelMatching.ts` (when two labels
+  are the same), `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a
+  model).
 - **`apps/backend`** — Hono on `127.0.0.1:5391`. Three LLM calls (`extractJob`, `tailorResume`,
   `answerQuestions`) through `structuredCall.ts`, a one-page-fitting resume PDF renderer, and
   Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
@@ -38,18 +40,24 @@ build` compiles the shared package and emits a plain-Node production server to `
 The Application Pipeline as it runs today: **paste a job description → duplicate guard → Analysis
 Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
 checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses nothing.
+Every run has a unique id; asynchronous completions patch only that id, navigation clears the tab's
+frames/run, and panel edits route through the service worker so every storage mutation shares one
+per-tab queue. Fill and Save claim statuses atomically before starting.
 
 The panel has two tabs. **Autofill** is that pipeline. **Log** records a job the candidate applied
 to themselves — their own resume, or LinkedIn Easy Apply — so it still lands in the same history:
 paste the posting and its URL, `POST /extract-job` for the details, then `POST /applications` with
 `source: 'manual'` and the base profile in place of a tailored resume. No pipeline, no tab-scoped
-state, no page access.
+run state, no Detected Fields and no page writes. Its URL field follows the active tab until the
+candidate edits it.
 
 ## Key decisions
 
 - **Models:** `claude-haiku-4-5` for job-info extraction, `claude-sonnet-5` for resume tailoring
   and question answering.
 - **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
+  Duplicate Guard lookups use a `(job_url, created_at DESC)` index. PGlite integration tests execute
+  the optimized query and singleton/index migrations against a PostgreSQL-compatible engine.
 - **Structured output workaround:** the installed `@anthropic-ai/sdk` (0.68.0) has no
   `.messages.parse()` / `zodOutputFormat`. Every LLM call forces a tool call instead and validates
   the result with zod — see `apps/backend/src/llm/structuredCall.ts`. Each tool's `input_schema` is
@@ -67,18 +75,19 @@ state, no page access.
   mid-run doesn't drop the result.
 - **Saving is explicit and separate from filling.** The Fill Step writes the page; the Save Step
   records the Application. The first save creates the record and every later one updates it via
-  `PATCH /applications/:id`, so re-filling or re-editing a run can't leave two rows behind.
+  `PATCH /applications/:id`, so re-filling or re-editing a run can't leave two rows behind. Saving
+  neither submits the employer's form nor proves that the candidate submitted it separately.
 - **The duplicate guard fails open.** A job URL already saved stops a run at `duplicate` before any
   LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.
 - **Application tracking is `stage` alone** (applied → phone_screen → interviewing → rejected).
   There was also a `status` field (draft/submitted) for "did this actually go out"; it was dropped
-  in migration `0002` because nothing ever set `submitted` — saving is a manual step the candidate
-  takes _after_ submitting, so a stored Application is a submitted one and the field was `draft` on
-  all 28 rows. Notes are a timestamped, categorized log (`technical` / `behavioral` / `general`)
-  you append to, not a single overwritable text field — so old interview-question notes stay around
-  as reference for future applications.
+  in migration `0002` because nothing ever set `submitted` and the field was `draft` on all 28
+  rows. The current Save Step does not establish whether employer submission happened. Notes are a
+  timestamped, categorized log (`technical` / `behavioral` / `general`) you append to, not a single
+  overwritable text field — so old interview-question notes stay around as reference for future
+  applications.
 - **Process:** this project is built test-first (red → green, one vertical slice at a time) — see
   the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
 - **Repo:** pnpm workspace — `packages/shared` + `apps/backend` + `apps/extension` +
@@ -136,6 +145,8 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   keystroke event sequence (`focus` → `InputEvent('input')` → `change` → `blur`/`focusout`), since
   form libraries commonly commit to the form model on blur; a value write plus `input` leaves the
   DOM looking right and the model empty, which an ATS reports on submit as a missing required field.
+  These verified counts exist only when the content script responds. If no frame answers, the run
+  retains optimistic attempted counts but its outcome is `unverified`, never success.
 - **`runFill`'s `FILLABLE_FROM` list is the panel's own rule, restated where it is enforceable.**
   It is `reviewOf`'s `canReview` set minus the two statuses the Fill button is disabled for, so
   `review`/`fill-error`/`filled`/`save-error`/`saved` are in and `filling`/`saving` are out.
@@ -176,9 +187,9 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   holding none of the fields is the backstop, and mirrors the same rule `SCAN_PAGE` already
   followed. Collapsing either back to a broadcast reintroduces the bug silently.
 
-## Planned
+## Milestones and plans
 
-### Phase 7 — Application tracking data model (done)
+### Phase 7 — Application tracking data model (historical, done)
 
 Stage/Note schemas, migration `0001_living_captain_stacy.sql`, `updateApplicationStage`,
 `addApplicationNote`, `PATCH /applications/:id/stage` and `POST /applications/:id/notes`.
@@ -187,7 +198,7 @@ Tracking writes have their own routes rather than riding on `PATCH /applications
 an `ApplicationSnapshot` that deliberately excludes stage and notes — folding them in would let a
 re-saved autofill stomp interview history.
 
-### Phase 8 — Frontend dashboard (done)
+### Phase 8 — Frontend dashboard (historical, done)
 
 `apps/dashboard` on `localhost:5174`, wired to the backend: applications list with client-side
 stage/search filtering and per-card stage editing, and a detail view with a stage picker, the notes
@@ -195,7 +206,7 @@ log and composer, and collapsed job info / tailored resume / drafted answers. `h
 `apps/backend/src/app.ts`, registered before the routes with the origin restricted to the
 dashboard's dev URLs.
 
-### Phase 9a — Log tab: record an application made by hand (done)
+### Phase 9a — Log tab: record an application made by hand (historical, done)
 
 A second tab in the side panel for jobs the candidate applied to without djobi. Migration
 `0003_abandoned_sir_ram.sql` adds `applications.source` (`'autofill' | 'manual'`, defaulting to
@@ -207,9 +218,9 @@ and relabels the resume section, since "Tailored resume" would be a false claim 
 Decisions:
 
 - **A tab, not a mode toggle on the existing flow.** The Log flow shares no state with the pipeline —
-  no tracked tab, no detected form, no `PipelineStatus` — so folding it in would mean threading a
-  second meaning through every branch of `reviewOf`. It is a form and two backend calls, and its
-  state is local to the component for that reason.
+  no Detected Fields, page writes or `PipelineStatus` — so folding it in would mean threading a
+  second meaning through every branch of `reviewOf`. Its form state is local, while its untouched URL
+  prefill follows the active tab.
 - **No new endpoints and no new LLM call.** `POST /extract-job` and `POST /applications` already do
   the work; only the `source` column is new.
 - **`source` is omitted from `ApplicationSnapshotSchema`**, alongside `stage` and `notes`: a re-save
@@ -218,113 +229,167 @@ Decisions:
   makes it a required field rather than inventing a placeholder — and it runs the same
   already-applied check before writing, warning without blocking.
 
-Carried in the same change, though not part of Phase 9a: `listApplicationsByCompany` became
-`listPriorApplicationsByCompany`, returning a two-column projection instead of whole rows on the
-Analyze path; the dashboard's job-URL rendering moved into a shared `PostingLink`; and
-`saveProfile`'s upsert was rewritten (see the checklist below).
-
-Not done: the URL is typed or prefilled from the active tab, never fetched. Reading a posting from a
-link, or off an open LinkedIn Easy Apply modal, is the larger feature sketched in
+The URL is typed or follows the active tab until edited; the Log flow does not fetch the posting from
+that URL. Reading a posting from a link, or off an open LinkedIn Easy Apply modal, is the larger
+proposed feature sketched in
 `docs/application-info-extraction-mode.md`.
 
-### Phase 9 — Ask tab: answer a pasted question from the Profile (not started)
+### Phase 9 — Answer chat (proposed, not started)
 
-A second tab in the side panel where the candidate pastes **any** question from an application
-they're filling in and gets an answer drafted from their Profile. Answer drafting only ever fires
-for `question`-category fields the detector found on the page, so a question the detector missed,
-one on a page the extension can't see, or one from a form the candidate is filling elsewhere has no
-path to an answer today. This is that path: paste, get a draft, copy it out.
+Merges what were separately proposed as Phase 9 (Ask tab) and Phase 10 (refine a drafted answer).
+One chat surface, one route, one LLM module. Asking cold and refining an existing draft are the same
+conversation with a different starting state — building them apart would have put two chat
+implementations in one panel.
+
+The gap it closes: answer drafting only ever fires for `question`-category fields the detector found
+on the page. A question the detector missed, one on a page the extension can't see, or one from a
+form the candidate is filling elsewhere has no path to an answer today. And a drafted answer that is
+_nearly_ right can only be hand-edited in a textarea.
 
 Decisions:
 
-- **Grounded in the Profile, and nothing else is required.** `jobInfo` is optional here — the whole
-  point is that this works without a detected job page. When the panel does have a run with
-  `jobInfo`, pass it so the answer is tailored; when it doesn't, the Profile alone is the input.
+- **One chat UI: the Ask tab.** `panel/App.tsx` already switches between **Autofill** and **Log**;
+  Ask becomes a third tab, reachable at any point in a run — including `ready`, when there is no run
+  at all. The review card does not grow its own thread. Its "Refine with AI" button switches to the
+  Ask tab seeded with that question and its current draft, and the tab offers "Use this answer",
+  which writes back to the run's answer (still hand-editable afterward, same as today).
+- **One route.** `POST /answer-chat` serves every turn. Cold ask and refinement differ only in the
+  request body — whether `currentAnswer` is set and whether `messages` is empty — never in the
+  server.
+- **Grounded in the Profile; nothing else is required.** `jobInfo` is optional, because the Ask tab
+  must work with no detected job page. When the panel has a run with `jobInfo`, pass it so the answer
+  is tailored.
 - **Same non-fabrication rule as everywhere else.** The answer may only use what the Profile
-  supports — this surface must not become the one place the model is allowed to invent experience.
-- **Copy-out, not auto-fill.** The answer lands in a copyable box. This phase adds no new path from
-  a drafted answer into a form field; filling stays the Fill Step's job, from detected fields.
-- **The panel becomes tabbed.** Today `panel/App.tsx` renders one flow keyed off `status`. This
-  needs a tab switcher above it, with the existing pipeline UI as the first tab, so the Ask tab is
-  reachable at any point in a run — including `ready`, when there's no run at all.
+  supports. This surface must not become the one place the model is allowed to invent experience.
+- **`revisedAnswer` is what the user applies; `reply` is what the thread shows.** A turn may be pure
+  conversation ("which of these two stories do you want?"), so `revisedAnswer` is optional — except
+  on a cold turn (no prior messages, no `currentAnswer`), where the prompt requires one, since a
+  fresh ask has nothing else to display.
+- **Write-back only exists for a seeded thread.** "Use this answer" appears when the thread was
+  opened from a question card; a cold ask has no field to write to and gets a copy button instead.
+  This phase adds no new path from a drafted answer onto the page — filling stays the Fill Step's
+  job, from detected fields.
+- **Seeding is scoped to `question`-category fields only** — not select/combobox/radiogroup, which
+  are constrained-choice and a poor fit for freeform rewriting.
 
-**Overlaps with Phase 10** (live chat to refine a drafted answer), which is also a chat surface
-grounded in `profile`/`jobInfo`. Decide before building: either this phase's route is a single-turn
-special case of Phase 10's `/chat-answer` and they share one backend module, or Phase 10 is folded
-into this tab and the review UI links into it. Building both independently would put two chat
-implementations in one panel.
-
-- [ ] `packages/shared/src/wire.ts`: request/response shape for one ask — a body of `profile`,
-      `question` and an optional `jobInfo`, answered with `{ answer }`. A wire schema, so
-      `lib/backendClient.ts` can build the body against it via `satisfies` like every other route
-- [ ] `apps/backend/src/llm/answerFreeQuestion.ts` — one drafted answer from Profile (+ optional
-      `jobInfo`), through `structuredCall.ts`; `MODELS.writing` (Sonnet), same tier and same
-      grounding rules as `answerQuestions`. Reuse its `<base_profile>`/`<job_info>` prompt scaffold
-      rather than hand-building a third copy (see the open "speculative" item on that duplication)
-- [ ] `POST /ask` route — zod-validated against the wire schema, returns the drafted answer
+- [ ] `packages/shared/src/wire.ts`: `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`)
+      and the `/answer-chat` contract — body of `profile`, `question`, optional `jobInfo`, optional
+      `currentAnswer`, and `messages: ChatMessage[]` (empty on a cold ask); response
+      `{ reply, revisedAnswer? }`. A wire schema, so `lib/backendClient.ts` can build the body
+      against it via `satisfies`, matching the other shared route contracts
+- [ ] Extract the `<base_profile>`/`<job_info>` prompt scaffold that `tailorResume.ts` and
+      `answerQuestions.ts` each hand-build into a shared helper, and build this phase on it. This is
+      the third call site the open "speculative" cleanup was waiting for — it is no longer
+      speculative
+- [ ] `apps/backend/src/llm/answerChat.ts` — one turn through `structuredCall.ts`; `MODELS.writing`
+      (Sonnet), same tier and grounding rules as `answerQuestions`. Prior `messages` become real
+      conversation turns; `currentAnswer` is the draft under discussion
+- [ ] `POST /answer-chat` route — zod-validated against the wire schema
 - [ ] `lib/backendClient.ts`: add the method to `BackendClient` and `httpBackendClient`
-- [ ] `panel/App.tsx`: a tab switcher — "Application" (everything that renders today) and "Ask"
-- [ ] `panel/AskTab.tsx` — question textarea, submit, answer box with a copy button, in-flight and
-      error states. Calls the backend directly via `callBackend`, as the panel already does for
-      `/profile` and `/render-resume-pdf`; this needs no service-worker involvement since there is
-      no run to checkpoint and nothing to survive the panel closing
-- [ ] Decide whether an ask history survives a panel reopen. Default to React-local state (lost on
-      close) unless there's a reason to persist — `PipelineRunState` in `lib/tabStore.ts` is keyed
-      per tab and per run, which is the wrong shape for a surface that works with no run at all
+- [ ] `panel/App.tsx`: add "Ask" to the existing "Autofill" / "Log" tab switcher, and let the review
+      card hand it a seed (question + current answer + the field it came from) when switching
+- [ ] `panel/AskTab.tsx` — the one chat UI: question box, message thread, follow-up input, in-flight
+      and error states, a copy button, and "Use this answer" when the thread carries a seed. Calls
+      the backend directly via `callBackend`, as the panel already does for `/profile` and
+      `/render-resume-pdf`
+- [ ] Decide whether the thread survives a panel reopen. A seeded thread is about a specific answer
+      in a specific run, so it plausibly belongs on `PipelineRunState` in `lib/tabStore.ts` alongside
+      the answers; a cold ask has no run to hang off, which is the wrong shape for that store.
+      Default the cold case to React-local (lost on close) unless a reason to persist appears
 - Build test-first, same as the rest
 
-### Phase 10 — Live chat to refine drafted answers (not started)
+### Phase 10 — Bullet selection: an unbounded bullet bank, capped per resume (proposed, not started)
 
-In the side panel's review UI, let the user open a chat with the AI _about a specific drafted
-answer_ and iterate on it conversationally ("make this shorter", "lead with the migration story
-instead", "sound less formal") instead of only hand-editing the textarea. Scoped to
-`question`-category fields only (the freeform drafted answers already in the review UI) — not
-select/combobox/radiogroup fields, which are constrained-choice and not a good fit for freeform
-rewriting. Manual textarea editing stays as-is; this is an additive alternative, not a replacement.
+Let the candidate keep **every** bullet they have ever written for a role, and make `tailorResume`
+choose which of them belong on _this_ resume by weighing each against the posting's requirements —
+up to a bullet count the candidate controls.
 
-See the overlap warning in Phase 9: both are chat surfaces grounded in `profile`/`jobInfo`, and
-which one owns the backend turn should be settled before either is built.
+Today the model rewords and reorders bullets but is never told to _drop_ any, so every bullet on a
+role lands on every resume. That makes the base profile a document the candidate has to keep
+pruned by hand, and it is what pushes a resume off one page: `renderResume.tsx` walks a density
+ladder to fit, and when the tightest step still spills it returns two pages, with its own comment
+naming the real fix as a content problem belonging upstream in `llm/tailorResume.ts`. This is that
+fix.
 
-- [ ] `packages/shared`: add `ChatMessageSchema` (`role: 'user' | 'assistant'`, `content`) and a
-      request/response shape for one chat turn (profile, jobInfo, question, current answer, prior
-      `messages: ChatMessage[]` → assistant reply, plus an optional `revisedAnswer` string when the
-      assistant's reply represents a concrete new draft rather than just conversation)
-- [ ] `apps/backend/src/llm/chatAboutAnswer.ts` — one turn of the conversation; same model tier as
-      `answerQuestions` (`MODELS.writing`, Sonnet), grounded in `profile`/`jobInfo` with the same
-      non-fabrication rule as the rest of the answer-drafting prompts
-- [ ] `POST /chat-answer` route — zod-validated body, returns `{ reply, revisedAnswer? }`
-- [ ] Panel: a "Refine with AI" affordance per question card opening a small message-thread UI
-      (history + input); when a reply includes `revisedAnswer`, a "Use this" action applies it to
-      the existing answer textarea (still editable by hand afterward, same as today)
-- [ ] Decide whether chat history survives a _panel reopen_ — i.e. whether it belongs on
-      `PipelineRunState` in `lib/tabStore.ts` alongside the answers, or stays React-local. (The
-      harder half of this question is already settled: the side panel was built for unrelated
-      reasons, so the surface itself is persistent.)
+Decisions:
+
+- **The bullet cap is a maximum, never a target.** A role with three bullets under a cap of six
+  stays at three. Padding to reach a number is fabrication, which the tailoring prompt already
+  forbids — the two rules must not be allowed to fight.
+- **The model returns the index of the source bullet it chose, not just prose.** Selection and
+  rewording in one step are otherwise unverifiable: given only strings back, the backend cannot tell
+  a legitimately reworded selection from a silently invented bullet or a miscounted one. With
+  `{ sourceIndex, text }`, `reconcileResume` verifies every kept bullet traces to a real profile
+  bullet, drops any out-of-range index, and **enforces the cap in code** rather than trusting the
+  prompt to have obeyed it.
+- **`sourceIndex` is a detail of the model call and is not persisted.** `reconcileResume` resolves
+  it away and still returns plain `string[]`, so `TailoredResumeSchema`, the stored
+  `Application.tailoredResume`, the PDF renderer and the dashboard all stay exactly as they are.
+  Only the tool schema inside `tailorResume.ts` carries the indices.
+- **The cap does not replace the density ladder.** The cap governs how much content there is; the
+  ladder governs the typography for whatever survives. Both stay. The two-page fallback should
+  simply become rare.
+- **Dropped bullets are shown as dropped.** The review UI reports what was left off (at minimum a
+  count per role) rather than silently presenting a shortened resume as the whole of it. Losing
+  content the candidate wrote without telling them is the failure mode the PDF renderer already
+  refuses to commit; a deliberate drop is fine, an invisible one is not.
+- **A manually logged application is not capped.** `baseResumeOf` projects the Profile with nothing
+  dropped, because a `source: 'manual'` record documents what the candidate actually sent. Capping
+  is a tailoring decision and belongs only on the tailoring path.
+- **Nothing today blocks an unbounded bullet bank.** `WorkExperienceSchema.bullets` is an uncapped
+  `z.array(z.string())` and the options page's "+ Add bullet" is unbounded, so the storage half of
+  this phase already works. The work is the selection and the cap — plus whatever the options page
+  needs to stay usable once a role holds fifteen bullets instead of four.
+
+- **One Profile-level default, overridable per role.** `Profile.maxBulletsPerRole` sets the cap for
+  every role; a `WorkExperience.maxBullets` of `null` inherits it and a number overrides it. Recent
+  roles usually deserve more lines than a job from a decade ago, and a single flat number cannot
+  express that — but making every role carry its own required number is a fussier form for no gain
+  on the common case.
+- **The cap lives on the Profile, not on the run — for now.** It is a persisted preference applying
+  to every application, added as an optional field with a schema default exactly as
+  `screeningAnswers` was, so stored profiles keep parsing with no migration. A per-application
+  override in the panel is a plausible later addition and is deliberately not built here; nothing in
+  this shape blocks it.
+
+- [ ] `packages/shared/src/schemas.ts`: `Profile.maxBulletsPerRole` (optional, schema default) and
+      `WorkExperience.maxBullets` (nullable, `null` = inherit); add both to `EMPTY_PROFILE`
+- [ ] Keep `maxBullets` out of the *resume*. Adding it to `WorkExperienceSchema` puts it on two
+      paths that hand a Profile's entries straight to a `TailoredResume`: `baseResumeOf` returns
+      `profile.workExperience` as-is, and `reconcileResume` spreads the whole profile entry
+      (`{ ...profileByKey.get(key)!, bullets }`). Neither re-parses, so the cap would ride into
+      `applications.tailoredResume` jsonb as a stored field of a resume, where it means nothing.
+      Project the entry explicitly in both places instead of spreading
+- [ ] `apps/backend/src/llm/tailorResume.ts`: tool schema returns `{ sourceIndex, text }` per bullet;
+      prompt instructs selection against `jobInfo.requirements`/`keywords`, states the cap as a
+      maximum, and forbids padding
+- [ ] `reconcileResume`: resolve `sourceIndex` against the profile entry's own bullets, drop
+      unresolvable ones, truncate to the cap, and return plain `string[]` — the existing entry-level
+      reconciliation is unchanged
+- [ ] Options page: the cap control(s), and a bullet editor that stays workable at fifteen bullets
+      per role
+- [ ] Panel review UI: surface what was dropped per role
+- [ ] Confirm the two-page case actually recedes — a fixture that previously spilled should now fit
 - Build test-first, same as the rest
 
 ## Open cleanups
 
 From the architecture-review runs. Everything **Strong** has been actioned; this is what's left.
 
-- [ ] **Speculative:** `FILLABLE_FROM` constrains the _sequence_ a Fill Step may start from, not
-      concurrency — it reads the status before an await, so two `START_FILL`s arriving in the same
-      tick would both pass. Nothing dispatches them that way (the panel disables Fill on the
-      optimistic `filling`, before the round trip), so this is parked rather than open. Closing it
-      needs a compare-and-transition inside `withTabLock`, not a wider read in the pipeline.
+- [x] Fill and Save claim their run through `transitionPipelineRun`, an atomic status
+      compare-and-transition inside `withTabLock`, so concurrent commands cannot both start.
 
-- [ ] Every new Story is created with `id: ''`, but `QuestionAnswer.sourceStoryIds` references
-      `Story.id` — so those references are useless whenever the candidate didn't type an id by hand.
-      A behaviour change rather than a refactor, hence left alone; see `options/App.tsx`.
-- [x] `profileRepository.saveProfile`'s upsert now has direct coverage
-      (`db/profileRepository.test.ts`, against a stubbed Drizzle client), and both repositories parse
-      jsonb rather than casting it — the two policies noted here are one. The upsert was also
-      **rewritten**, which this item didn't ask for: it now runs a `WHERE`-less `UPDATE ... RETURNING`
-      and inserts only when that touched nothing, instead of selecting first. One round trip rather
-      than two on Neon's driver, and it relies on `profiles` holding exactly one row — the premise
-      `getProfile`'s `limit(1)` already reads on. See the docblock for why no `WHERE`.
-- [ ] **Speculative:** `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
-      `<base_profile>`/`<job_info>` prompt scaffold — extract a shared helper if a third
-      writing-model call site appears (Phase 9 would be it).
+- [x] New Stories receive a generated UUID by default, so `QuestionAnswer.sourceStoryIds` remains
+      useful even when the candidate does not replace the editable id.
+- [x] `profileRepository.saveProfile` has direct coverage (`db/profileRepository.test.ts`, against a
+      stubbed Drizzle client). It atomically inserts the singleton's fixed ID and uses
+      `ON CONFLICT (id) DO UPDATE`; `getProfile` selects that same ID. Profile jsonb is parsed rather
+      than cast, so fields with explicit schema defaults are repaired on read and malformed required
+      data fails at the repository boundary.
+- [ ] `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
+      `<base_profile>`/`<job_info>` prompt scaffold. This was held as speculative pending a third
+      writing-model call site; Phase 9's `answerChat.ts` is that site, so the extraction is now a
+      step of that phase rather than an open question.
 
 ## Known loose ends
 

@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { ProfileSchema } from './schemas.js';
-import { BackendErrorBodySchema, SaveProfileRequestSchema } from './wire.js';
+import {
+  BackendErrorBodySchema,
+  DuplicateApplicationSummarySchema,
+  SaveProfileRequestSchema,
+} from './wire.js';
+
+const latestApplication = {
+  id: 'application-1',
+  company: 'Acme',
+  roleTitle: 'Engineer',
+  createdAt: '2026-08-18T00:00:00.000Z',
+};
 
 describe('BackendErrorBodySchema', () => {
   it('accepts the backend error contract', () => {
@@ -45,5 +56,45 @@ describe('SaveProfileRequestSchema', () => {
 
   it('rejects a body that is not a Profile', () => {
     expect(SaveProfileRequestSchema.safeParse({ fullName: 42 }).success).toBe(false);
+  });
+});
+
+describe('DuplicateApplicationSummarySchema', () => {
+  it.each([
+    { count: 0, latest: null },
+    { count: 2, latest: latestApplication },
+  ])('accepts a consistent duplicate summary: %o', (summary) => {
+    expect(DuplicateApplicationSummarySchema.parse(summary)).toEqual(summary);
+  });
+
+  it('rejects latest metadata when count is 0 with a clear error', () => {
+    const result = DuplicateApplicationSummarySchema.safeParse({
+      count: 0,
+      latest: latestApplication,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual([
+        expect.objectContaining({
+          path: ['latest'],
+          message: 'latest must be null when count is 0',
+        }),
+      ]);
+    }
+  });
+
+  it('rejects null latest metadata when count is positive with a clear error', () => {
+    const result = DuplicateApplicationSummarySchema.safeParse({ count: 1, latest: null });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual([
+        expect.objectContaining({
+          path: ['latest'],
+          message: 'latest must be non-null when count is greater than 0',
+        }),
+      ]);
+    }
   });
 });

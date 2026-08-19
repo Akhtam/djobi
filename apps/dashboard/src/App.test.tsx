@@ -3,7 +3,7 @@
  * component is mocked — the seam the fixture client sits on is the only substitution, which is
  * what it exists for.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
@@ -12,6 +12,16 @@ import { fixtureApplications } from './lib/fixtures';
 
 function renderApp(client: DashboardClient = createFixtureDashboardClient(fixtureApplications)) {
   return { user: userEvent.setup(), ...render(<App client={client} />) };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 /**
@@ -330,6 +340,78 @@ describe('application detail', () => {
 });
 
 describe('failures', () => {
+  it('persists rapid stage changes in user action order while keeping the latest optimistic UI', async () => {
+    type StageResult = Awaited<ReturnType<DashboardClient['updateStage']>>;
+    const fixture = createFixtureDashboardClient(fixtureApplications);
+    const first = deferred<StageResult>();
+    const second = deferred<StageResult>();
+    const calls: string[] = [];
+    const client: DashboardClient = {
+      ...fixture,
+      updateStage: (_id, stage) => {
+        calls.push(stage);
+        return stage === 'applied' ? first.promise : second.promise;
+      },
+    };
+    window.location.hash = '#/applications/app-brex';
+
+    const { user } = renderApp(client);
+    const picker = await screen.findByRole('combobox', { name: 'Application stage' });
+
+    await user.selectOptions(picker, 'applied');
+    await user.selectOptions(picker, 'rejected');
+
+    expect(picker).toHaveValue('rejected');
+    expect(calls).toEqual(['applied']);
+
+    first.resolve({ id: 'app-brex', stage: 'applied' });
+    await waitFor(() => expect(calls).toEqual(['applied', 'rejected']));
+    expect(picker).toHaveValue('rejected');
+
+    await act(async () => {
+      second.resolve({ id: 'app-brex', stage: 'rejected' });
+    });
+
+    expect(picker).toHaveValue('rejected');
+    expect(calls.at(-1)).toBe('rejected');
+  });
+
+  it('starts a newer queued stage after the first fails without reverting the latest UI', async () => {
+    type StageResult = Awaited<ReturnType<DashboardClient['updateStage']>>;
+    const fixture = createFixtureDashboardClient(fixtureApplications);
+    const first = deferred<StageResult>();
+    const second = deferred<StageResult>();
+    const calls: string[] = [];
+    const client: DashboardClient = {
+      ...fixture,
+      updateStage: (_id, stage) => {
+        calls.push(stage);
+        return stage === 'applied' ? first.promise : second.promise;
+      },
+    };
+    window.location.hash = '#/applications/app-brex';
+
+    const { user } = renderApp(client);
+    const picker = await screen.findByRole('combobox', { name: 'Application stage' });
+
+    await user.selectOptions(picker, 'applied');
+    await user.selectOptions(picker, 'rejected');
+    expect(calls).toEqual(['applied']);
+
+    first.reject(new Error('stale failure'));
+    await waitFor(() => expect(calls).toEqual(['applied', 'rejected']));
+
+    expect(picker).toHaveValue('rejected');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await act(async () => {
+      second.resolve({ id: 'app-brex', stage: 'rejected' });
+    });
+
+    expect(picker).toHaveValue('rejected');
+    expect(calls.at(-1)).toBe('rejected');
+  });
+
   it('reverts an optimistic stage change and says why', async () => {
     const fixture = createFixtureDashboardClient(fixtureApplications);
     const failing: DashboardClient = {
@@ -368,13 +450,15 @@ describe('failures', () => {
 
   it('does not undo a different write that already succeeded', async () => {
     const fixture = createFixtureDashboardClient(fixtureApplications);
-    // Fails only for app-brex, and only after app-sonar has had time to land.
+    type StageResult = Awaited<ReturnType<DashboardClient['updateStage']>>;
+    const brexWrite = deferred<StageResult>();
+    const calls: string[] = [];
     const failing: DashboardClient = {
       ...fixture,
-      updateStage: (id, stage) =>
-        id === 'app-brex'
-          ? new Promise((_resolve, reject) => setTimeout(() => reject(new Error('nope')), 50))
-          : fixture.updateStage(id, stage),
+      updateStage: (id, stage) => {
+        calls.push(id);
+        return id === 'app-brex' ? brexWrite.promise : fixture.updateStage(id, stage);
+      },
     };
 
     const { user } = renderApp(failing);
@@ -386,6 +470,11 @@ describe('failures', () => {
     await user.selectOptions(brex, 'rejected');
     await user.selectOptions(sonar, 'interviewing');
 
+    // A pending write for one application does not block another application's queue.
+    expect(calls).toEqual(['app-brex', 'app-sonar']);
+    await waitFor(() => expect(sonar).toHaveValue('interviewing'));
+
+    brexWrite.reject(new Error('nope'));
     // The failing write reverts its own record...
     await waitFor(() => expect(brex).toHaveValue('interviewing'));
     // ...and leaves the one that succeeded alone.

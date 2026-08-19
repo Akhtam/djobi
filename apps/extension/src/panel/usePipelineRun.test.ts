@@ -2,7 +2,13 @@ import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
-import { getPipelineRun, setPipelineRun, storageKey, type PipelineRunState } from '../lib/tabStore';
+import {
+  getPipelineRun,
+  patchPipelineRun,
+  setPipelineRun,
+  storageKey,
+  type PipelineRunState,
+} from '../lib/tabStore';
 import { usePipelineRun } from './usePipelineRun';
 
 const jobInfo: JobInfo = {
@@ -18,6 +24,7 @@ const jobInfo: JobInfo = {
 const tailoredResume: TailoredResume = { skills: [], workExperience: [] };
 
 const run: PipelineRunState = {
+  runId: 'run-1',
   status: 'review',
   tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
   jobPageData: { fields: [] },
@@ -36,7 +43,23 @@ const run: PipelineRunState = {
 /** The shared in-memory `chrome.storage.session`, which fires `onChanged` on write as Chrome does. */
 function stubChrome() {
   const storage = fakeSessionStorage();
-  vi.stubGlobal('chrome', { storage });
+  const sendMessage = vi.fn(
+    (
+      message: {
+        type: string;
+        tabId: number;
+        runId: string;
+        updates: Partial<PipelineRunState>;
+      },
+      callback: () => void,
+    ) => {
+      if (message.type === 'UPDATE_RUN') {
+        void patchPipelineRun(message.tabId, message.runId, message.updates);
+      }
+      callback();
+    },
+  );
+  vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
 
   /**
    * Simulates `background/applicationPipeline.ts` checkpointing progress from outside this hook.
@@ -47,7 +70,7 @@ function stubChrome() {
     void storage.session.set({ [storageKey(tabId)]: { frames: {}, run: next } });
   };
 
-  return { writeFromBackground };
+  return { sendMessage, writeFromBackground };
 }
 
 describe('usePipelineRun', () => {
@@ -98,6 +121,51 @@ describe('usePipelineRun', () => {
     expect(result.current.run).toMatchObject({ status: 'filled', filledFieldCount: 3 });
   });
 
+  it.each([
+    ['null', {}],
+    ['old', { [storageKey(1)]: { frames: {}, run } }],
+  ])(
+    'does not let a late %s initial read overwrite a newer storage event',
+    async (_name, snapshot) => {
+      const storage = fakeSessionStorage();
+      let resolveRead!: (value: Record<string, unknown>) => void;
+      const initialRead = new Promise<Record<string, unknown>>((resolve) => {
+        resolveRead = resolve;
+      });
+      storage.session.get = vi.fn(() => initialRead);
+      vi.stubGlobal('chrome', {
+        storage,
+        runtime: { sendMessage: vi.fn(), lastError: undefined },
+      });
+      const incoming = {
+        ...run,
+        runId: 'run-2',
+        jobInfo: { ...jobInfo, company: 'Globex' },
+      };
+      const { result } = renderHook(() => usePipelineRun(1, 1));
+
+      act(() => void storage.session.set({ [storageKey(1)]: { frames: {}, run: incoming } }));
+      expect(result.current.run).toEqual(incoming);
+      expect(result.current.hydrated).toBe(true);
+
+      await act(async () => resolveRead(snapshot));
+
+      expect(result.current.run).toEqual(incoming);
+    },
+  );
+
+  it('reflects storage removal instead of retaining a stale run after navigation', async () => {
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.run).toEqual(run));
+
+    act(() => void chrome.storage.session.remove(storageKey(1)));
+
+    expect(result.current.run).toBeNull();
+    expect(result.current.status).toBeNull();
+  });
+
   it('shows an optimistic status immediately, so a click gets feedback before the background answers', async () => {
     stubChrome();
     await setPipelineRun(1, run);
@@ -142,6 +210,22 @@ describe('usePipelineRun', () => {
     expect(result.current.status).toBeNull();
   });
 
+  it('hides a run and pending status immediately when its same-tab scope changes', async () => {
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result, rerender } = renderHook(({ scopeToken }) => usePipelineRun(1, scopeToken), {
+      initialProps: { scopeToken: 1 },
+    });
+    await waitFor(() => expect(result.current.run).toEqual(run));
+    act(() => result.current.begin('filling'));
+
+    rerender({ scopeToken: 2 });
+
+    expect(result.current.run).toBeNull();
+    expect(result.current.status).toBeNull();
+    expect(result.current.hydrated).toBe(false);
+  });
+
   it('applies an edit locally at once, so a controlled textarea never lags a storage round-trip', async () => {
     stubChrome();
     await setPipelineRun(1, run);
@@ -180,6 +264,63 @@ describe('usePipelineRun', () => {
       answers: [expect.objectContaining({ answer: 'Edited.' })],
       jobDescription: 'pasted',
     });
+  });
+
+  it('routes edits to the background with the run identity', async () => {
+    const { sendMessage } = stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'edited' }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      {
+        type: 'UPDATE_RUN',
+        tabId: 1,
+        runId: 'run-1',
+        updates: { answers: run.answers, jobDescription: 'edited' },
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('sends a B-to-A undo while B is pending, even though A matches the last server echo', async () => {
+    const storage = fakeSessionStorage();
+    const queued: {
+      type: string;
+      tabId: number;
+      runId: string;
+      updates: Partial<PipelineRunState>;
+    }[] = [];
+    const sendMessage = vi.fn((message, callback: () => void) => {
+      queued.push(message);
+      callback();
+    });
+    vi.stubGlobal('chrome', {
+      storage,
+      runtime: { sendMessage, lastError: undefined },
+    });
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'B' }));
+    act(() => result.current.edit({ answers: run.answers, jobDescription: run.jobDescription }));
+
+    expect(queued.map((message) => message.updates.jobDescription)).toEqual([
+      'B',
+      run.jobDescription,
+    ]);
+
+    await act(async () => {
+      await patchPipelineRun(1, queued[0].runId, queued[0].updates);
+    });
+    expect(result.current.run?.jobDescription).toBe(run.jobDescription);
+    await act(async () => {
+      await patchPipelineRun(1, queued[1].runId, queued[1].updates);
+    });
+    expect((await getPipelineRun(1))?.jobDescription).toBe(run.jobDescription);
   });
 
   it("never writes the background's fields back, so an in-flight run can't be overwritten by this panel", async () => {

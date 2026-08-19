@@ -64,7 +64,7 @@ export function ApplicationDetail({
         <AddNoteForm onAdd={(note) => onAddNote(application.id, note)} />
       </section>
 
-      <details className="detail__collapsible">
+      <details className="detail__collapsible" open>
         <summary>Job info</summary>
         <dl className="facts">
           <dt>Company</dt>

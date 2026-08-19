@@ -53,6 +53,7 @@ interface StubOptions {
   existing?: Application[];
   extractFailure?: string;
   saveFailure?: string;
+  saveResult?: Promise<unknown>;
 }
 
 /** Answers the three paths this tab calls, and hands back the recorded calls to assert on. */
@@ -66,12 +67,25 @@ function stubBackend(options: StubOptions = {}) {
         : Promise.resolve(jobInfo as never);
     }
     if (path.startsWith('/applications?jobUrl=')) {
-      return Promise.resolve((options.existing ?? []) as never);
+      const existing = options.existing ?? [];
+      const latest = existing[0];
+      return Promise.resolve({
+        count: existing.length,
+        latest: latest
+          ? {
+              id: latest.id,
+              company: latest.company,
+              roleTitle: latest.roleTitle,
+              createdAt: latest.createdAt,
+            }
+          : null,
+      } as never);
     }
-    if (path === '/applications') {
+    if (path === '/applications?response=compact') {
       if (options.saveFailure) return Promise.reject(new Error(options.saveFailure));
       saved.push(body);
-      return Promise.resolve({ id: 'application-1', ...(body as object) } as never);
+      if (options.saveResult) return options.saveResult as never;
+      return Promise.resolve({ id: 'application-1' } as never);
     }
     return Promise.reject(new Error(`unexpected callBackend path: ${path}`));
   });
@@ -104,6 +118,7 @@ describe('the Log tab', () => {
     renderTab();
 
     expect(screen.getByPlaceholderText('https://…')).toHaveValue(JOB_URL);
+    expect(screen.getByRole('textbox', { name: 'Manual job description' })).toBeInTheDocument();
   });
 
   it('files the application with the base profile and a manual source', async () => {
@@ -205,6 +220,18 @@ describe('the Log tab', () => {
         jobInfo: expect.objectContaining({ company: 'Acme Corp' }),
       }),
     ]);
+  });
+
+  it('disables reviewed fields while logging the snapshot', async () => {
+    const pending = new Promise(() => undefined);
+    stubBackend({ saveResult: pending });
+    renderTab();
+    await extract();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log application' }));
+
+    expect(screen.getByRole('textbox', { name: 'Company' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Role' })).toBeDisabled();
   });
 
   it('warns about a job already logged, without blocking it', async () => {

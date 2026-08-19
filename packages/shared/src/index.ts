@@ -3,7 +3,7 @@
  *
  * - `schemas.ts` — the Profile, Job Info, Tailored Resume, Question Answer and Application shapes.
  * - `detectedField.ts` — a Detected Field and the rules for getting an answer back onto it.
- * - `wire.ts` — the request body of every backend route, so both sides derive from one artifact.
+ * - `wire.ts` — operation-specific transport schemas and aliases shared by both sides.
  * - `labelMatching.ts` — when two labels count as the same, under a name per rule.
  * - `screeningAnswers.ts` / `preparedAnswers.ts` — the facts a Profile answers without a model.
  */

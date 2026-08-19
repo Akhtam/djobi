@@ -339,6 +339,122 @@ describe('options App', () => {
     });
   });
 
+  it('assigns a stable id when a story is added', async () => {
+    stubBackend({ get: () => ({ ...emptyProfile, stories: [] }) });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+    fireEvent.click(screen.getByRole('button', { name: 'Add story' }));
+
+    expect((screen.getByLabelText('Story id 1') as HTMLInputElement).value).toMatch(
+      /^[0-9a-f-]{36}$/,
+    );
+  });
+
+  it('repairs blank and duplicate story ids with stable unique UUIDs on save', async () => {
+    const generatedIds = [
+      '00000000-0000-4000-8000-000000000001',
+      '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003',
+    ];
+    const randomUUID = vi.fn(
+      () => generatedIds.shift() as `${string}-${string}-${string}-${string}-${string}`,
+    );
+    vi.stubGlobal('crypto', { randomUUID });
+    const story = {
+      title: '',
+      tags: [],
+      situation: '',
+      task: '',
+      action: '',
+      result: '',
+    };
+    const loaded: Profile = {
+      ...emptyProfile,
+      stories: [
+        { ...story, id: '' },
+        { ...story, id: 'duplicate' },
+        { ...story, id: 'duplicate' },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Story id 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    const savedIds = [1, 2, 3].map(
+      (index) => (screen.getByLabelText(`Story id ${index}`) as HTMLInputElement).value,
+    );
+    expect(savedIds).toEqual([
+      '00000000-0000-4000-8000-000000000001',
+      '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003',
+    ]);
+    expect(new Set(savedIds).size).toBe(3);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await vi.waitFor(() => expect(callBackend).toHaveBeenCalledTimes(3));
+    expect(randomUUID).toHaveBeenCalledTimes(3);
+    expect(screen.getByLabelText('Story id 1')).toHaveValue(savedIds[0]);
+  });
+
+  it('preserves existing unique nonblank story ids on save', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      stories: [
+        {
+          id: ' existing-unique-id ',
+          title: '',
+          tags: [],
+          situation: '',
+          task: '',
+          action: '',
+          result: '',
+        },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Story id 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(callBackend).toHaveBeenLastCalledWith('/profile', loaded);
+    expect(screen.getByLabelText('Story id 1')).toHaveValue(' existing-unique-id ');
+  });
+
+  it('gives each repeated entry fieldset a direct accessible legend', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      workExperience: [{ company: '', title: '', startDate: '', endDate: null, bullets: [] }],
+      education: [{ school: '', degree: '', field: null, graduationYear: null }],
+      customAnswers: [{ question: '', answer: '' }],
+      stories: [
+        {
+          id: 'story-1',
+          title: '',
+          tags: [],
+          situation: '',
+          task: '',
+          action: '',
+          result: '',
+        },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App />);
+    await screen.findByLabelText('Full name');
+
+    for (const name of ['work experience 1', 'education 1', 'prepared answer 1', 'story 1']) {
+      const fieldset = screen.getByRole('group', { name });
+      expect(fieldset.firstElementChild).toHaveProperty('tagName', 'LEGEND');
+    }
+  });
+
   it('removes a story entry', async () => {
     const loaded: Profile = {
       ...emptyProfile,

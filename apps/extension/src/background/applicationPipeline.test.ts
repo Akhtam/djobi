@@ -159,11 +159,11 @@ function makeDeps(
     // the fake has to satisfy the whole interface, never called from here.
     getProfile: vi.fn().mockResolvedValue(null),
     saveProfile: vi.fn().mockResolvedValue(undefined),
-    saveApplication: vi.fn().mockResolvedValue(undefined),
-    updateApplication: vi.fn().mockResolvedValue(undefined),
+    saveApplication: vi.fn().mockResolvedValue({ id: 'application-1' }),
+    updateApplication: vi.fn().mockResolvedValue({ id: 'application-1' }),
     // No past application for this URL by default, so the duplicate guard lets every other test
     // through untouched.
-    findApplicationsByJobUrl: vi.fn().mockResolvedValue([]),
+    findApplicationDuplicates: vi.fn().mockResolvedValue({ count: 0, latest: null }),
   };
   const page: PageClient = {
     fill: vi.fn().mockImplementation((_tabId: number, command: FillPageCommand) =>
@@ -200,6 +200,30 @@ async function seedReviewRun(
 describe('runAnalysis', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('stops before LLM calls when a stale duplicate-check result cannot patch its run', async () => {
+    stubChrome();
+    let resolveDuplicates!: (value: { count: number; latest: null }) => void;
+    const duplicates = new Promise<{ count: number; latest: null }>((resolve) => {
+      resolveDuplicates = resolve;
+    });
+    const staleDeps = makeDeps({
+      findApplicationDuplicates: vi.fn(() => duplicates),
+    });
+    const staleAnalysis = runAnalysis(7, JOB_URL, profile, 'Old posting', staleDeps);
+    await vi.waitFor(() =>
+      expect(staleDeps.backend.findApplicationDuplicates).toHaveBeenCalledTimes(1),
+    );
+
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    resolveDuplicates({ count: 0, latest: null });
+    await staleAnalysis;
+
+    expect(staleDeps.backend.extractJob).not.toHaveBeenCalled();
+    expect(staleDeps.backend.tailorResume).not.toHaveBeenCalled();
+    expect(staleDeps.backend.answerQuestions).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ jobDescription: 'New posting' });
   });
 
   it('answers a screening question from the profile without asking the model at all', async () => {
@@ -318,6 +342,7 @@ describe('runAnalysis', () => {
       { fieldId: 'f-why', question: 'Why do you want to work here?' },
     ]);
     expect(await getPipelineRun(7)).toEqual({
+      runId: expect.any(String),
       status: 'review',
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       jobPageData: { fields: [questionField] },
@@ -446,16 +471,20 @@ describe('runAnalysis', () => {
   it('stops on a job URL already applied to, before spending a single backend call', async () => {
     stubChrome();
     const deps = makeDeps({
-      findApplicationsByJobUrl: vi.fn().mockResolvedValue([
-        // Newest first, as the backend orders them.
-        { id: 'application-2', company: 'Acme', roleTitle: 'Senior Engineer', createdAt: LATER },
-        { id: 'application-1', company: 'Acme', roleTitle: 'Senior Engineer', createdAt: EARLIER },
-      ]),
+      findApplicationDuplicates: vi.fn().mockResolvedValue({
+        count: 2,
+        latest: {
+          id: 'application-2',
+          company: 'Acme',
+          roleTitle: 'Senior Engineer',
+          createdAt: LATER,
+        },
+      }),
     });
 
     await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.backend.findApplicationsByJobUrl).toHaveBeenCalledWith(JOB_URL);
+    expect(deps.backend.findApplicationDuplicates).toHaveBeenCalledWith(JOB_URL);
     expect(deps.backend.extractJob).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'duplicate',
@@ -468,17 +497,16 @@ describe('runAnalysis', () => {
   it('analyzes a job URL already applied to when the candidate insists', async () => {
     stubChrome();
     const deps = makeDeps({
-      findApplicationsByJobUrl: vi
-        .fn()
-        .mockResolvedValue([
-          { id: 'application-1', company: 'Acme', roleTitle: 'X', createdAt: LATER },
-        ]),
+      findApplicationDuplicates: vi.fn().mockResolvedValue({
+        count: 1,
+        latest: { id: 'application-1', company: 'Acme', roleTitle: 'X', createdAt: LATER },
+      }),
     });
 
     await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps, true);
 
     // Not even asked: forcing means the answer cannot change anything.
-    expect(deps.backend.findApplicationsByJobUrl).not.toHaveBeenCalled();
+    expect(deps.backend.findApplicationDuplicates).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review', duplicateOf: null });
   });
 
@@ -486,7 +514,7 @@ describe('runAnalysis', () => {
     // The guard is advisory — a backend that isn't running must not be why Analyze stops working.
     stubChrome();
     const deps = makeDeps({
-      findApplicationsByJobUrl: vi.fn().mockRejectedValue(new Error('backend unreachable')),
+      findApplicationDuplicates: vi.fn().mockRejectedValue(new Error('backend unreachable')),
     });
 
     await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
@@ -500,7 +528,7 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.backend.findApplicationsByJobUrl).not.toHaveBeenCalled();
+    expect(deps.backend.findApplicationDuplicates).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
   });
 
@@ -512,6 +540,35 @@ describe('runAnalysis', () => {
 
     expect(deps.backend.extractJob).not.toHaveBeenCalled();
     expect(await getPipelineRun(11)).toBeNull();
+  });
+
+  it('keeps the newer run when two analyses resolve in reverse order', async () => {
+    stubChrome();
+    let resolveFirst!: (value: JobInfo) => void;
+    const firstExtract = new Promise<JobInfo>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const firstDeps = makeDeps({ extractJob: vi.fn(() => firstExtract) });
+    const newerJobInfo = { ...jobInfo, company: 'Globex' };
+    const secondDeps = makeDeps({ extractJob: vi.fn().mockResolvedValue(newerJobInfo) });
+
+    const first = runAnalysis(7, JOB_URL, profile, 'First posting', firstDeps);
+    await vi.waitFor(() => expect(firstDeps.backend.extractJob).toHaveBeenCalled());
+    const firstRunId = (await getPipelineRun(7))!.runId;
+
+    await runAnalysis(7, JOB_URL, profile, 'Second posting', secondDeps);
+    const secondRun = await getPipelineRun(7);
+    expect(secondRun?.runId).not.toBe(firstRunId);
+
+    resolveFirst(jobInfo);
+    await first;
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      runId: secondRun!.runId,
+      status: 'review',
+      jobDescription: 'Second posting',
+      jobInfo: newerJobInfo,
+    });
   });
 });
 
@@ -860,6 +917,115 @@ describe('runFill', () => {
     });
   });
 
+  it('drops a stale Fill completion after a newer analysis claims the tab', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    let resolveFill!: (value: {
+      ok: true;
+      filledFieldIds: string[];
+      resumeAttached: false;
+    }) => void;
+    const fillResult = new Promise<{
+      ok: true;
+      filledFieldIds: string[];
+      resumeAttached: false;
+    }>((resolve) => {
+      resolveFill = resolve;
+    });
+    const filling = runFill(7, profile, makeDeps({ fill: vi.fn(() => fillResult) }));
+    await vi.waitFor(async () => expect((await getPipelineRun(7))?.status).toBe('filling'));
+
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps());
+    const newerRun = await getPipelineRun(7);
+    resolveFill({ ok: true, filledFieldIds: [emailField.id], resumeAttached: false });
+    await filling;
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      runId: newerRun!.runId,
+      status: 'review',
+      jobDescription: 'New posting',
+      fillOutcome: null,
+    });
+  });
+
+  it('keeps a newer analysis authoritative when Fill and Analyze race to claim the tab', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const staleDeps = makeDeps();
+
+    const staleFill = runFill(7, profile, staleDeps);
+    const newerAnalysis = runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    await Promise.all([staleFill, newerAnalysis]);
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobDescription: 'New posting',
+    });
+  });
+
+  it('stops a Fill superseded during its scan before rendering or touching the page', async () => {
+    stubChrome();
+    await seedReviewRun(7, [resumeField]);
+    let resolveScan!: (value: JobPageData) => void;
+    const scan = new Promise<JobPageData>((resolve) => {
+      resolveScan = resolve;
+    });
+    const staleDeps = makeDeps({ scan: vi.fn(() => scan) });
+    const staleFill = runFill(7, profile, staleDeps);
+    await vi.waitFor(() => expect(staleDeps.page.scan).toHaveBeenCalled());
+
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    resolveScan({ fields: [resumeField] });
+    await staleFill;
+
+    expect(staleDeps.backend.renderResumePdf).not.toHaveBeenCalled();
+    expect(staleDeps.page.fill).not.toHaveBeenCalled();
+  });
+
+  it('drops a stale Save completion after a newer analysis claims the tab', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const deps = makeDeps();
+    await runFill(7, profile, deps);
+    let resolveSave!: (value: { id: string }) => void;
+    const saveResult = new Promise<{ id: string }>((resolve) => {
+      resolveSave = resolve;
+    });
+    const saving = runSaveApplication(
+      7,
+      makeDeps({ saveApplication: vi.fn(() => saveResult as never) }),
+    );
+    await vi.waitFor(async () => expect((await getPipelineRun(7))?.status).toBe('saving'));
+
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps());
+    const newerRun = await getPipelineRun(7);
+    resolveSave({ id: 'stale-application' });
+    await saving;
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      runId: newerRun!.runId,
+      status: 'review',
+      jobDescription: 'New posting',
+      applicationId: null,
+    });
+  });
+
+  it('keeps a newer analysis authoritative when Save and Analyze race to claim the tab', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    await runFill(7, profile, makeDeps());
+    const staleDeps = makeDeps();
+
+    const staleSave = runSaveApplication(7, staleDeps);
+    const newerAnalysis = runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    await Promise.all([staleSave, newerAnalysis]);
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobDescription: 'New posting',
+    });
+  });
+
   it('does nothing when there is no completed Analysis Step to fill from', async () => {
     stubChrome();
     const deps = makeDeps();
@@ -883,7 +1049,8 @@ describe('runFill source-status guard', () => {
   /** Leaves a run with analyzed data present and `status` forced, as a mid-flight run would look. */
   async function seedRunAt(status: PipelineStatus) {
     await seedReviewRun(7, [emailField]);
-    await patchPipelineRun(7, { status });
+    const run = await getPipelineRun(7);
+    await patchPipelineRun(7, run!.runId, { status });
   }
 
   // `filling` and `saving` are the two statuses the panel's Fill button is disabled for. A second
@@ -926,7 +1093,8 @@ describe('runFill source-status guard', () => {
     // has already checkpointed `filling` by the time the second arrives.
     const first = runFill(7, profile, deps);
     await first;
-    await patchPipelineRun(7, { status: 'filling' });
+    const run = await getPipelineRun(7);
+    await patchPipelineRun(7, run!.runId, { status: 'filling' });
     await runFill(7, profile, deps);
 
     expect(deps.page.fill).toHaveBeenCalledTimes(1);
@@ -1024,11 +1192,14 @@ describe('the backend adapter', () => {
       },
       expect.any(Function),
     );
-    expect(fetch).not.toHaveBeenCalledWith('http://127.0.0.1:5391/applications', expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith(
+      'http://127.0.0.1:5391/applications?response=compact',
+      expect.anything(),
+    );
 
     await runSaveApplication(7);
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/applications',
+      'http://127.0.0.1:5391/applications?response=compact',
       expect.objectContaining({ method: 'POST' }),
     );
     expect(await getPipelineRun(7)).toMatchObject({

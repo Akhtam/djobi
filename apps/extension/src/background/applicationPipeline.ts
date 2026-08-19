@@ -1,5 +1,5 @@
 /**
- * The Application Pipeline: the Analysis Step and the Fill Step, and the checkpointing of both into
+ * The Application Pipeline: Analysis, Fill and explicit Save Steps, checkpointed into
  * `lib/tabStore.ts`.
  *
  * It runs in the background service worker rather than the panel, so an in-flight step survives the
@@ -28,6 +28,7 @@ import {
   getPipelineRun,
   patchPipelineRun,
   setPipelineRun,
+  transitionPipelineRun,
   type AnalyzedRun,
   type DuplicateApplication,
   type FillOutcome,
@@ -147,17 +148,15 @@ async function fillStep(
   profile: Profile,
   tabId: number,
   deps: PipelineDeps,
-): Promise<
-  Pick<
-    PipelineRunState,
-    | 'status'
-    | 'unresolvedRequiredFields'
-    | 'filledFieldCount'
-    | 'fillOutcome'
-    | 'jobPageData'
-    | 'failure'
-  >
-> {
+): Promise<Pick<
+  PipelineRunState,
+  | 'status'
+  | 'unresolvedRequiredFields'
+  | 'filledFieldCount'
+  | 'fillOutcome'
+  | 'jobPageData'
+  | 'failure'
+> | null> {
   const { jobPageData, jobInfo, tailoredResume, answers, tabUrl } = run;
 
   // Fill what the page holds *now*, not what it held when the Analysis Step started. The run's own
@@ -199,6 +198,9 @@ async function fillStep(
   // and picking between them needs the live page, so `content/fillForm.ts` does it. This module used
   // to pick one too, purely to decide this boolean, and the two copies of that rule could disagree.
   const needsResume = fields.some((field) => field.category === 'resume_upload');
+  // Rendering and filling can outlive a navigation or replacement analysis. Re-check after the
+  // awaited scan before either operation can produce an upload or click against the wrong page.
+  if ((await getPipelineRun(tabId))?.runId !== run.runId) return null;
   const resume = needsResume
     ? {
         name: resumeFileName(profile.fullName),
@@ -206,6 +208,10 @@ async function fillStep(
         bytes: await deps.backend.renderResumePdf(profile, tailoredResume),
       }
     : undefined;
+
+  // PDF rendering is another await, so the run may have been superseded while it was in flight.
+  // Keep this adjacent to the irreversible page command; there is no await between the check and it.
+  if ((await getPipelineRun(tabId))?.runId !== run.runId) return null;
 
   // No frame can own an empty command, so sending it would necessarily return `null` and erase the
   // useful distinction between "no form fields" and "a real fill whose response was lost".
@@ -265,8 +271,14 @@ export async function runSaveApplication(
   tabId: number,
   deps: PipelineDeps = productionDeps,
 ): Promise<void> {
-  const run = asAnalyzedRun(await getPipelineRun(tabId));
-  if (!run || (run.status !== 'filled' && run.status !== 'save-error')) return;
+  const run = asAnalyzedRun(
+    await transitionPipelineRun(tabId, ['filled', 'save-error'], {
+      status: 'saving',
+      failure: null,
+    }),
+  );
+  if (!run) return;
+  const { runId } = run;
 
   const payload = {
     company: run.jobInfo.company,
@@ -277,18 +289,17 @@ export async function runSaveApplication(
     answers: run.answers,
   };
 
-  await patchPipelineRun(tabId, { status: 'saving', failure: null });
   try {
     const application = run.applicationId
       ? await deps.backend.updateApplication(run.applicationId, payload)
       : await deps.backend.saveApplication(payload);
-    await patchPipelineRun(tabId, {
+    await patchPipelineRun(tabId, runId, {
       status: 'saved',
       applicationId: application.id,
       failure: null,
     });
   } catch (error) {
-    await patchPipelineRun(tabId, {
+    await patchPipelineRun(tabId, runId, {
       status: 'save-error',
       failure: { step: 'save', message: failureMessage(error) },
     });
@@ -327,8 +338,7 @@ async function findDuplicate(
   if (!tabUrl) return null; // no URL to match on — Chrome hasn't exposed one for this tab
 
   try {
-    const matches = await deps.backend.findApplicationsByJobUrl(tabUrl);
-    const [newest] = matches; // the backend orders these newest-first
+    const { latest: newest, count } = await deps.backend.findApplicationDuplicates(tabUrl);
     if (!newest) return null;
 
     return {
@@ -336,7 +346,7 @@ async function findDuplicate(
       company: newest.company,
       roleTitle: newest.roleTitle,
       createdAt: newest.createdAt,
-      count: matches.length,
+      count,
     };
   } catch (error) {
     console.warn(`[djobi] duplicate check failed, analyzing anyway: ${failureMessage(error)}`);
@@ -365,13 +375,14 @@ export async function runAnalysis(
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
-  const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
-  const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
-
+  // Claim the tab before any detection or backend await. Every completion below is scoped to this
+  // identity, so a later Analyze click or a navigation can supersede it safely.
+  const runId = crypto.randomUUID();
   await setPipelineRun(tabId, {
-    status: duplicateOf ? 'duplicate' : 'analyzing',
+    runId,
+    status: 'analyzing',
     tabUrl,
-    jobPageData,
+    jobPageData: { fields: [] },
     jobDescription,
     jobInfo: null,
     tailoredResume: null,
@@ -381,17 +392,32 @@ export async function runAnalysis(
     fillOutcome: null,
     applicationId: null,
     failure: null,
+    duplicateOf: null,
+  });
+
+  const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
+  const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
+
+  const stillCurrent = await patchPipelineRun(tabId, runId, {
+    status: duplicateOf ? 'duplicate' : 'analyzing',
+    jobPageData,
     duplicateOf,
   });
+
+  if (!stillCurrent) return;
 
   // Stop before any backend work: not spending three LLM calls on a posting the candidate has
   // already applied to is the entire point of the check.
   if (duplicateOf) return;
 
   try {
-    await patchPipelineRun(tabId, await analysisStep(jobDescription, jobPageData, profile, deps));
+    await patchPipelineRun(
+      tabId,
+      runId,
+      await analysisStep(jobDescription, jobPageData, profile, deps),
+    );
   } catch (error) {
-    await patchPipelineRun(tabId, {
+    await patchPipelineRun(tabId, runId, {
       status: 'analyze-error',
       failure: { step: 'analysis', message: failureMessage(error) },
     });
@@ -411,11 +437,8 @@ export async function runAnalysis(
  * Re-filling from `filled` and `saved` is deliberate, not an oversight: a candidate may re-fill
  * after editing an answer, and the Save Step updates the same record rather than creating a second.
  *
- * This constrains *sequencing*, not concurrency — it is a check before an await, so two commands
- * arriving in the same tick would both read the same status and both pass. Nothing dispatches them
- * that way today (the panel disables the button on the optimistic `filling`, before the round
- * trip), and closing that window needs a compare-and-transition inside `withTabLock` rather than a
- * read here.
+ * The transition into `filling` happens atomically in `transitionPipelineRun`, so two commands that
+ * arrive together cannot both claim the same run.
  */
 const FILLABLE_FROM: readonly PipelineStatus[] = [
   'review',
@@ -430,15 +453,17 @@ export async function runFill(
   profile: Profile,
   deps: PipelineDeps = productionDeps,
 ): Promise<void> {
-  const run = asAnalyzedRun(await getPipelineRun(tabId));
-  if (!run || !FILLABLE_FROM.includes(run.status)) return;
-
-  await patchPipelineRun(tabId, { status: 'filling', failure: null });
+  const run = asAnalyzedRun(
+    await transitionPipelineRun(tabId, FILLABLE_FROM, { status: 'filling', failure: null }),
+  );
+  if (!run) return;
+  const { runId } = run;
 
   try {
-    await patchPipelineRun(tabId, await fillStep(run, profile, tabId, deps));
+    const result = await fillStep(run, profile, tabId, deps);
+    if (result) await patchPipelineRun(tabId, runId, result);
   } catch (error) {
-    await patchPipelineRun(tabId, {
+    await patchPipelineRun(tabId, runId, {
       status: 'fill-error',
       failure: { step: 'fill', message: failureMessage(error) },
     });

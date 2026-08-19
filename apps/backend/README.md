@@ -129,14 +129,14 @@ fixed. `curl` against a running server works too, for a payload you already have
 
 ## `src/routes/` — the HTTP surface
 
-Each route validates its body with zod and delegates; each has a test asserting the 200 / 400
-(validation) / 500 (downstream throw) triple. A fourth status never reaches a route: the
-content-type guard in `app.ts` answers a state-changing request with the wrong `content-type` with
-a 415 before any route runs, so route tests always send `content-type: application/json`.
+Each route validates its body with zod and delegates. Route tests cover the success and failure
+cases relevant to that route; not every suite asserts the same 200 / 400 / 500 triple. A 415 never
+reaches a route: the content-type guard in `app.ts` answers a state-changing request with the wrong
+`content-type` before any route runs, so route tests always send `content-type: application/json`.
 
-Every Application Pipeline body is validated against the shared schema in `@djobi/shared`'s
-`wire.ts` — the same one `lib/backendClient.ts` builds the request against — rather than a schema
-private to the route. See that package's README for why.
+Operation-specific transport bodies and aliases live in `@djobi/shared`'s `wire.ts`, so the backend
+and extension use the same contracts instead of private route schemas. Domain write shapes such as
+`NewApplication` and `ApplicationSnapshot` remain in `schemas.ts`. See that package's README for why.
 
 | Route                           | Body                            | Delegates to                |
 | ------------------------------- | ------------------------------- | --------------------------- |
@@ -152,14 +152,24 @@ private to the route. See that package's README for why.
 | `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationsRepository` |
 | `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationsRepository` |
 
-`GET /applications` takes `?jobUrl=` to narrow the list to one posting — the extension's duplicate
-guard calls it before every analysis. It's a query parameter rather than its own path because
+Application routes negotiate their response with the explicit `response=compact` query parameter.
+Without it, they retain the legacy contracts: `GET /applications?jobUrl=...` returns
+`Application[]`, while create, snapshot-update, stage, and note writes return the full updated
+`Application`. Legacy writes may perform a follow-up read by id. Current clients request compact
+responses: create and snapshot-update return `{ id }`, stage returns `{ id, stage }`, notes return
+`{ id, note }`, and `GET /applications?jobUrl=...&response=compact` returns the Duplicate Guard's
+count and newest-row metadata without loading full snapshots. Values other than exactly `compact`
+use the legacy response.
+
+The extension calls the compact job URL lookup before every analysis. It's a query parameter rather
+than its own path because
 `/applications/…` is already claimed by the `:id` route, so a sibling `/applications/lookup` would
 depend on registration order to not be read as an id.
 
 `PATCH /applications/:id` is the Save Step re-saving a run it already saved once, so it takes an
-`ApplicationSnapshot` — `NewApplication` minus `stage` and `notes`. Those belong to tracking the
-application rather than to the autofill run, and a re-save must not overwrite them.
+`ApplicationSnapshot` — `NewApplication` minus `source`, `stage`, and `notes`. Provenance and
+interview tracking belong to the persisted record rather than to the autofill snapshot, and a
+re-save must not overwrite them.
 
 `PATCH /applications/:id/stage` and `POST /applications/:id/notes` are the dashboard's interview
 tracking. They are separate paths rather than fields on `PATCH /applications/:id` precisely because
@@ -168,14 +178,13 @@ a way to overwrite tracking history, which is the thing `ApplicationSnapshot` ex
 note's `id` and `createdAt` are assigned by `addApplicationNote` and stripped from the request body:
 history whose timestamp the sender chose isn't history.
 
-`tailor-resume.ts` is the only route with logic of its own: it calls
-`listApplicationsByCompany(jobInfo.company)` and builds a one-line-per-application summary to pass
-into `tailorResume` as `priorApplicationsSummary`, so tailoring doesn't repeat itself word-for-word
-across applications to the same employer. This is deliberately server-computed — the route does not
-accept a client-supplied summary.
+The three model/PDF routes accept operation-specific Profile projections rather than contact,
+screening, story, and resume data that their operation never reads. This keeps local HTTP payloads
+and paid model context limited to relevant fields.
 
 `render-resume-pdf` returns raw PDF bytes with `content-type: application/pdf`, not JSON, which is
-why the extension has a separate `callBackendBinary` for it.
+why the extension has a separate `callBackendBinary` for it. The route retains one exact-input
+render promise, so Preview and Fill reuse completed or in-flight work without an unbounded cache.
 
 ## `src/db/` — persistence (Neon Postgres via Drizzle)
 
@@ -183,10 +192,11 @@ why the extension has a separate `callBackendBinary` for it.
 
 Two tables:
 
-- **`profiles`** — `id`, `updatedAt`, and a single `data` jsonb column holding the entire `Profile`
-  from `@djobi/shared` as one blob (see that package's README for why). No migration is needed when
-  `Profile`'s shape changes — `data` just accepts whatever's in it.
-- **`applications`** — one row per job you autofill. `company`/`roleTitle`/`jobUrl` are plain columns
+- **`profiles`** — one fixed-id singleton row with `updatedAt` and a `data` jsonb column holding the
+  entire `Profile`. A fixed primary key makes saves one atomic `INSERT ... ON CONFLICT DO UPDATE`
+  statement. No migration is needed when the Profile shape changes — `data` accepts the whole blob.
+- **`applications`** — one row per saved autofill run or manually logged application.
+  `company`/`roleTitle`/`jobUrl` are plain columns
   (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
   jsonb snapshots of what was generated for that specific application, so past applications stay
   readable even if `Profile` or the tailoring prompt changes later. `stage`
@@ -194,8 +204,9 @@ Two tables:
   jsonb array appended to over the life of the application, never overwritten.
 
   A `status` column (`draft`/`submitted`) sat beside `stage` until migration `0002`. Nothing ever
-  wrote `submitted`, so all 28 rows read `draft` and the column held no information — saving is a
-  manual step the candidate takes after submitting, so there was never a moment that would set it.
+  wrote `submitted`, so the column held no information and was removed. Its removal does not prove
+  that a saved application was submitted; the current flow records no authoritative submission
+  event.
 
 ### `client.ts`
 
@@ -206,17 +217,17 @@ connection also works if the backend ever needs multi-statement transactions wit
 
 ### `profileRepository.ts` / `applicationsRepository.ts`
 
-Both parse their jsonb columns rather than casting them: a row written before a schema field existed
-comes back without it, and `row.data as Profile` asserts a shape the row doesn't have — the compiler
-then vouches for fields that are `undefined` at runtime, and the mismatch surfaces as a
-`Cannot read properties of undefined` somewhere far away. Parsing applies the schema's defaults, so
-an older row is upgraded on read.
+Both parse jsonb-backed data rather than casting it: a row written before a schema field existed can
+come back without it, and a cast would make the compiler vouch for fields that are `undefined` at
+runtime. Parsing applies only defaults explicitly declared by the schema. Profile reads therefore
+fill the defaulted prepared-answer fields, but application reads use `ApplicationSchema`, whose
+persisted fields are required; an older or malformed application is not silently upgraded.
 
-`applicationsRepository` also holds the reads and writes the extension's later steps need:
-`listApplicationsByJobUrl` (newest first — the duplicate guard's lookup), `updateApplication` (the
-Save Step replacing a snapshot it already saved), `listApplicationsByCompany` (what
-`/tailor-resume` builds `priorApplicationsSummary` from), and `updateApplicationStage`. That last
-one has no route yet — see `PROGRESS.md`'s Phase 7.
+`applicationsRepository` also holds the reads and writes the extension's later steps need. The
+Duplicate Guard gets only a count and newest-row metadata from one projected query. Create and
+snapshot-update routes return only the id; Stage updates return id + Stage; Note appends return id +
+the generated Note. Full rows are reserved for list and detail reads that consume their snapshots.
+The duplicate lookup is backed by `(job_url, created_at DESC)`.
 
 `applicationsRepository` is deliberately stricter for a single row than for a list. `getApplicationById`
 throws if the row won't parse, because returning `null` would claim the application doesn't exist —
@@ -227,7 +238,9 @@ one bad row from an older build doesn't hide the entire history behind it.
 
 `drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both tables;
 `0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
-`0002_outstanding_black_tom.sql` drops `applications.status` — see the note above.
+`0002_outstanding_black_tom.sql` drops `applications.status`; `0003_abandoned_sir_ram.sql` adds the
+Application source; `0004_shocking_wind_dancer.sql` consolidates the Profile to its fixed singleton
+id and removes the random id default; `0005_curved_jackal.sql` adds the Duplicate Guard index.
 
 ## `drizzle.config.ts`
 
@@ -269,33 +282,35 @@ model it's reading scraped text; told that, it tolerates and mines junk.
 
 ### `tailorResume.ts`
 
-Sonnet call. Takes `Profile` + `JobInfo` and an optional `priorApplicationsSummary` (built by the
-route, see above), returns a validated `TailoredResume`. The prompt explicitly forbids inventing
-experience not present in the Profile.
+Sonnet call. Takes the Profile's skills/work experience plus `JobInfo`, and returns a validated
+`TailoredResume`. Post-processing restores company/title/date metadata from the Profile, drops
+fabricated entries and skills, and applies model-authored bullets only to an unambiguous matching
+experience entry. The prompt also explicitly forbids inventing experience.
 
 ### `answerQuestions.ts`
 
-Sonnet call. Takes `Profile` (particularly `profile.stories`), `JobInfo`, and a list of
-`{ fieldId, question, options?, knownAnswer? }`; returns one `QuestionAnswer` per question, each
-recording which `Story.id`s it drew on. Short-circuits to `[]` without an API call when there are no
-questions.
+Sonnet call. Takes the answer-writing projection of `Profile` (work experience, education, skills,
+and stories), `JobInfo`, and a list of `{ fieldId, question, options?, knownAnswer? }`; returns
+validated `QuestionAnswer`s, each recording which `Story.id`s it drew on. Invalid choice answers are
+omitted during post-processing, so the result is not guaranteed to contain one answer per input.
+Short-circuits to `[]` without an API call when there are no questions.
 
 Two constraints worth knowing:
 
-- **`options`** — when present, the answer must be one of them verbatim. The prompt asks for this,
-  and `constrainToOptions` enforces it afterwards using `matchOptionLabel` from `@djobi/shared` —
-  the same rule `content/fillForm.ts` uses to find the element to click, which is why it has to
-  live in the shared package.
+- **`options`** — when present, reconciliation accepts only one unambiguous option match. It also
+  restores authoritative question text/order, rejects duplicate or unknown field ids, and filters
+  `sourceStoryIds` against the Profile.
 - **`knownAnswer`** — a fact from the Profile that the answer must honor, set when the Profile
   answers a question but its stored wording maps onto none of this form's options unambiguously
   (e.g. a stored "No" against "I do not require sponsorship now or in the future"). The prompt
-  treats it as binding, not as context: these are legal declarations about work authorization, and
-  an answer that reverses the candidate's stated position is worse than no answer.
+  treats it as binding, and post-processing independently maps high-confidence authorization and
+  sponsorship polarity. If no unique safe mapping exists, the answer is omitted.
 
 ## `src/pdf/renderResume.tsx`
 
-A single `@react-pdf/renderer` template. Contact info and education come from the `Profile` (not
-job-specific); summary, skills and work experience come from the `TailoredResume`.
+A single `@react-pdf/renderer` template. Contact info and education come from the
+`RenderResumePdfProfile` projection (not job-specific); skills and work experience come from the
+`TailoredResume`.
 
 The render **fits itself to one page**: it renders at the researched density, counts pages off the
 PDF's own page tree, and re-renders one step tighter down a four-step ladder until it fits. Every
@@ -315,6 +330,9 @@ one that fails validation.
 `renderResume.test.ts` uses no mocking — there's no network involved — and reads the rendered text
 back out with `unpdf`, so a layout regression can actually fail a test.
 
+`db/database.integration.test.ts` uses PGlite's PostgreSQL engine to execute the optimized window
+query and migrations `0004`/`0005`, including duplicate, empty-table, and index cases.
+
 ## `vitest.config.ts`
 
 Same minimal Node-environment config as `packages/shared`.
@@ -324,12 +342,6 @@ Same minimal Node-environment config as `packages/shared`.
 Template for the real `.env` (gitignored): `DATABASE_URL` (Neon connection string),
 `ANTHROPIC_API_KEY`, `PORT`.
 
-## Known gap
-
-There is **no `tsconfig.json` in this package**, so `pnpm --filter backend build` fails. `pnpm
-dev:backend` (via `tsx`) is unaffected. One consequence leaks into the source: JSX in
-`renderResume.tsx` uses the classic transform, so it needs an explicit `import React from 'react'`
-for `React.createElement` to resolve — switch to the automatic runtime once a tsconfig exists.
-
-Run this package's tests with `pnpm --filter backend test`, or the whole workspace's with `pnpm test`
-from the repo root.
+The package has its own `tsconfig.json` and builds JSX with the automatic `react-jsx` runtime. Run
+`pnpm --filter backend build` to compile it, `pnpm --filter backend test` for this package's tests,
+or `pnpm test` for the whole workspace.

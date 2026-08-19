@@ -44,40 +44,58 @@ describe('listApplications', () => {
 
 describe('updateStage', () => {
   it('PATCHes the stage route with a bare { stage } body', async () => {
-    const fetchMock = stubFetch({ jsonBody: { ...sample, stage: 'rejected' } });
+    const fetchMock = stubFetch({ jsonBody: { id: sample.id, stage: 'rejected' } });
 
     await httpDashboardClient.updateStage('app-brex', 'rejected');
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications/app-brex/stage', {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ stage: 'rejected' }),
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:5391/applications/app-brex/stage?response=compact',
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage: 'rejected' }),
+      },
+    );
   });
 
   it('escapes an id rather than letting it change the path', async () => {
-    const fetchMock = stubFetch({ jsonBody: sample });
+    const fetchMock = stubFetch({ jsonBody: { id: 'a/b', stage: 'applied' } });
 
     await httpDashboardClient.updateStage('a/b', 'applied');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:5391/applications/a%2Fb/stage');
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://127.0.0.1:5391/applications/a%2Fb/stage?response=compact',
+    );
   });
 });
 
 describe('addNote', () => {
   it('POSTs the note route with only the fields the server accepts', async () => {
-    const fetchMock = stubFetch({ jsonBody: sample });
+    const fetchMock = stubFetch({
+      jsonBody: {
+        id: sample.id,
+        note: {
+          id: 'note-1',
+          category: 'technical',
+          text: 'Race condition.',
+          createdAt: '2026-08-18T00:00:00.000Z',
+        },
+      },
+    });
 
     await httpDashboardClient.addNote('app-brex', {
       category: 'technical',
       text: 'Race condition.',
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications/app-brex/notes', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:5391/applications/app-brex/notes?response=compact',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
+      },
+    );
   });
 });
 

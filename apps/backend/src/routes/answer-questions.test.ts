@@ -23,6 +23,12 @@ const sampleProfile: Profile = {
   screeningAnswers: {},
   customAnswers: [],
 };
+const answerProfile = {
+  workExperience: sampleProfile.workExperience,
+  education: sampleProfile.education,
+  skills: sampleProfile.skills,
+  stories: sampleProfile.stories,
+};
 
 const sampleJobInfo: JobInfo = {
   company: 'Acme',
@@ -67,7 +73,7 @@ describe('POST /answer-questions', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleAnswers);
-    expect(mockAnswerQuestions).toHaveBeenCalledWith(sampleProfile, sampleJobInfo, sampleQuestions);
+    expect(mockAnswerQuestions).toHaveBeenCalledWith(answerProfile, sampleJobInfo, sampleQuestions);
   });
 
   it('accepts a question with options and passes it through unchanged', async () => {
@@ -88,7 +94,7 @@ describe('POST /answer-questions', () => {
 
     expect(res.status).toBe(200);
     expect(mockAnswerQuestions).toHaveBeenCalledWith(
-      sampleProfile,
+      answerProfile,
       sampleJobInfo,
       questionsWithOptions,
     );
@@ -123,7 +129,7 @@ describe('POST /answer-questions', () => {
 
     expect(res.status).toBe(200);
     expect(mockAnswerQuestions).toHaveBeenCalledWith(
-      sampleProfile,
+      answerProfile,
       sampleJobInfo,
       questionsWithKnownAnswer,
     );

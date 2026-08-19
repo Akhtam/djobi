@@ -55,6 +55,8 @@ export class StructuredCallError extends Error {
 export async function callStructured<Schema extends z.ZodTypeAny>(
   options: StructuredToolCallOptions<Schema>,
 ): Promise<z.infer<Schema>> {
+  const inputSchema = zodToJsonSchema(options.schema, { $refStrategy: 'none' }) as never;
+
   const callOnce = async (): Promise<z.infer<Schema>> => {
     const response = await anthropic.messages.create(
       {
@@ -64,7 +66,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
           {
             name: options.toolName,
             description: options.toolDescription,
-            input_schema: zodToJsonSchema(options.schema, { $refStrategy: 'none' }) as never,
+            input_schema: inputSchema,
           },
         ],
         tool_choice: { type: 'tool', name: options.toolName },

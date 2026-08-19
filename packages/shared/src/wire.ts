@@ -19,6 +19,7 @@ import {
   ApplicationStageSchema,
   JobInfoSchema,
   NewNoteSchema,
+  NoteSchema,
   ProfileSchema,
   TailoredResumeSchema,
 } from './schemas.js';
@@ -68,31 +69,53 @@ export const ExtractJobRequestSchema = z.object({
 /** Inferred type of {@link ExtractJobRequestSchema}. */
 export type ExtractJobRequest = z.infer<typeof ExtractJobRequestSchema>;
 
-/**
- * Body of `POST /tailor-resume`.
- *
- * Deliberately no `priorApplicationsSummary`: the route computes it from the `applications` table
- * for `jobInfo.company`. It is a server-side fact, not a client-supplied one.
- */
+/** Profile fields that can affect tailored resume content. */
+export const TailorResumeProfileSchema = ProfileSchema.pick({
+  workExperience: true,
+  skills: true,
+});
+export type TailorResumeProfile = z.infer<typeof TailorResumeProfileSchema>;
+
+/** Body of `POST /tailor-resume`. */
 export const TailorResumeRequestSchema = z.object({
-  profile: ProfileSchema,
+  profile: TailorResumeProfileSchema,
   jobInfo: JobInfoSchema,
 });
 /** Inferred type of {@link TailorResumeRequestSchema}. */
 export type TailorResumeRequest = z.infer<typeof TailorResumeRequestSchema>;
 
+/** Profile fields used to ground drafted Question Answers. */
+export const AnswerQuestionsProfileSchema = ProfileSchema.pick({
+  workExperience: true,
+  education: true,
+  skills: true,
+  stories: true,
+});
+export type AnswerQuestionsProfile = z.infer<typeof AnswerQuestionsProfileSchema>;
+
 /** Body of `POST /answer-questions`. */
 export const AnswerQuestionsRequestSchema = z.object({
-  profile: ProfileSchema,
+  profile: AnswerQuestionsProfileSchema,
   jobInfo: JobInfoSchema,
   questions: z.array(QuestionForModelSchema),
 });
 /** Inferred type of {@link AnswerQuestionsRequestSchema}. */
 export type AnswerQuestionsRequest = z.infer<typeof AnswerQuestionsRequestSchema>;
 
+/** Profile fields rendered into the PDF header and education section. */
+export const RenderResumePdfProfileSchema = ProfileSchema.pick({
+  fullName: true,
+  email: true,
+  phone: true,
+  location: true,
+  links: true,
+  education: true,
+});
+export type RenderResumePdfProfile = z.infer<typeof RenderResumePdfProfileSchema>;
+
 /** Body of `POST /render-resume-pdf`. Responds with PDF bytes, not JSON. */
 export const RenderResumePdfRequestSchema = z.object({
-  profile: ProfileSchema,
+  profile: RenderResumePdfProfileSchema,
   tailoredResume: TailoredResumeSchema,
 });
 /** Inferred type of {@link RenderResumePdfRequestSchema}. */
@@ -112,24 +135,73 @@ export const UpdateApplicationStageRequestSchema = z.object({
 /** Inferred type of {@link UpdateApplicationStageRequestSchema}. */
 export type UpdateApplicationStageRequest = z.infer<typeof UpdateApplicationStageRequestSchema>;
 
+/** Small acknowledgement returned by compact create and snapshot-update responses. */
+export const ApplicationWriteResultSchema = z.object({ id: z.string() });
+export type ApplicationWriteResult = z.infer<typeof ApplicationWriteResultSchema>;
+
+/** The newest row metadata needed by the Duplicate Guard. */
+export const DuplicateApplicationLatestSchema = z.object({
+  id: z.string(),
+  company: z.string(),
+  roleTitle: z.string(),
+  createdAt: z.string(),
+});
+export type DuplicateApplicationLatest = z.infer<typeof DuplicateApplicationLatestSchema>;
+
+/** Result of `GET /applications?jobUrl=...&response=compact`, without persisted snapshots. */
+export const DuplicateApplicationSummarySchema = z
+  .object({
+    count: z.number().int().nonnegative(),
+    latest: DuplicateApplicationLatestSchema.nullable(),
+  })
+  .superRefine(({ count, latest }, ctx) => {
+    if (count === 0 && latest !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['latest'],
+        message: 'latest must be null when count is 0',
+      });
+    } else if (count > 0 && latest === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['latest'],
+        message: 'latest must be non-null when count is greater than 0',
+      });
+    }
+  });
+export type DuplicateApplicationSummary = z.infer<typeof DuplicateApplicationSummarySchema>;
+
+/** Authoritative compact result of changing one Application's Stage. */
+export const UpdateApplicationStageResultSchema = z.object({
+  id: z.string(),
+  stage: ApplicationStageSchema,
+});
+export type UpdateApplicationStageResult = z.infer<typeof UpdateApplicationStageResultSchema>;
+
 /**
  * Body of `POST /applications/:id/notes` — a note minus the fields the server assigns.
  *
  * `NewNoteSchema` rather than a fresh object: `id` and `createdAt` are generated server-side, and
- * accepting them from the client would let a sender choose its own history. Aliased here so the
- * wire contract names every route body in one place, even when the shape is already defined.
+ * accepting them from the client would let a sender choose its own history. Aliased here so this
+ * operation-specific transport contract is discoverable even though the shape is already defined.
  */
 export const AddApplicationNoteRequestSchema = NewNoteSchema;
 /** Inferred type of {@link AddApplicationNoteRequestSchema}. */
 export type AddApplicationNoteRequest = z.infer<typeof AddApplicationNoteRequestSchema>;
 
+/** Authoritative Note generated by a compact `POST /applications/:id/notes` response. */
+export const AddApplicationNoteResultSchema = z.object({
+  id: z.string(),
+  note: NoteSchema,
+});
+export type AddApplicationNoteResult = z.infer<typeof AddApplicationNoteResultSchema>;
+
 /**
  * Body of `POST /profile` — the whole Profile, which is what the route stores.
  *
  * `ProfileSchema` rather than a fresh object, and aliased here for the same reason
- * {@link AddApplicationNoteRequestSchema} is: this module names every route body, so a reader
- * looking for "what does `/profile` accept" finds an answer here rather than an absence. The
- * absence is what let the panel and options page build this body without a contract at all.
+ * {@link AddApplicationNoteRequestSchema} is: a reader looking for "what does `/profile` accept"
+ * finds the transport contract here rather than inferring it from route implementation details.
  */
 export const SaveProfileRequestSchema = ProfileSchema;
 /** Inferred type of {@link SaveProfileRequestSchema}. */

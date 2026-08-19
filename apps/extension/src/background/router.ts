@@ -1,6 +1,6 @@
 import { parseDetectedFields } from '@djobi/shared';
 import type { TypedMessage } from '../lib/messages';
-import { enrichDetectedFields, reportDetectedPage } from '../lib/tabStore';
+import { enrichDetectedFields, patchPipelineRun, reportDetectedPage } from '../lib/tabStore';
 import { enrichWithApiOracle } from './apiDetectors';
 import { runAnalysis, runFill, runSaveApplication } from './applicationPipeline';
 
@@ -73,6 +73,10 @@ export function handleTypedMessage(
 
     case 'START_SAVE_APPLICATION':
       void runSaveApplication(message.tabId);
+      return;
+
+    case 'UPDATE_RUN':
+      void patchPipelineRun(message.tabId, message.runId, message.updates);
       return;
   }
 }

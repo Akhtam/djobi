@@ -20,17 +20,18 @@ All schemas, in the order data flows through the app:
 - **`ProfileSchema`** — the whole base Profile: contact info, links, `workExperience[]`,
   `education[]`, `skills[]`, `stories[]`, plus the prepared answers described under
   `screeningAnswers.ts` below. Stored whole in the `profiles.data` jsonb column (see
-  `apps/backend/README.md`) and passed into every LLM call as ground truth — the tailoring and
-  answering prompts are explicitly instructed never to invent facts outside it.
-  **Its defaults are the authority on Profile shape**: parse an incomplete stored profile through
-  this schema rather than spreading it over a hand-written empty object.
+  `apps/backend/README.md`). Each operation receives only the Profile projection it uses; tailoring
+  and answering treat those projected facts as ground truth and are instructed not to invent facts.
+  `ProfileSchema.parse` fills only fields with explicit `.default(...)` declarations. Use
+  `parseProfile` when a partial stored value must be completed against `EMPTY_PROFILE`, rather than
+  assuming schema parsing invents defaults for every field.
 - **`JobInfoSchema`** — the structured output of `extractJob`: company, team, role, seniority,
   `requirements[]`, `keywords[]`. Those last two are separate arrays because they're used
   differently downstream — requirements shape which experience gets emphasized, keywords are terms
   worth echoing verbatim for resume scanners.
-- **`TailoredResumeSchema`** — the structured output of `tailorResume`: a job-specific summary,
-  skills subset, and reworded/reordered `workExperience[]`. Intentionally a _subset_ of Profile
-  shape (no `education`, no `links`) — those don't need tailoring per job.
+- **`TailoredResumeSchema`** — the structured output of `tailorResume`: a job-specific skills subset
+  and reworded/reordered `workExperience[]`. Intentionally a _subset_ of Profile shape (no
+  `education`, no `links`) — those don't need tailoring per job.
 - **`QuestionAnswerSchema`** — one drafted answer to one `question` field. `sourceStoryIds[]`
   records which `Story.id`s the model drew on, so the review UI can say "this used your 'billing
   migration' story" instead of showing an opaque block of text.
@@ -39,9 +40,9 @@ All schemas, in the order data flows through the app:
   in, and which `apps/dashboard` reads off `.options` rather than restating.
 
   There was also an `ApplicationStatusSchema` (`'draft' | 'submitted'`) meant to answer "was this
-  actually sent to the employer". It was removed: nothing ever set `submitted`, so every stored row
-  read `draft`. Saving is already a manual step taken _after_ submitting, so a stored Application
-  is a submitted one by construction.
+  actually sent to the employer". It was removed because nothing ever set `submitted`, so it carried
+  no information. The removal does not establish that every stored Application was submitted; the
+  app has no authoritative submission event.
 
 - **`NoteSchema` / `NoteCategorySchema` / `NewNoteSchema`** — one timestamped entry in an
   Application's notes log, filed as `technical` / `behavioral` / `general`. The log is appended to,
@@ -54,9 +55,9 @@ All schemas, in the order data flows through the app:
   - `NewApplication` is it minus `id`/`createdAt` (the server assigns those), with `stage`
     defaulting to `'applied'` and `notes` to `[]` — the extension's Save Step posts neither. It's
     what `POST /applications` validates.
-  - `ApplicationSnapshot` is `NewApplication` minus `stage`/`notes`, and is what `PATCH
-/applications/:id` validates. Stage and notes belong to tracking the application, not to the
-    autofill run, so a re-save must never overwrite them.
+  - `ApplicationSnapshot` is `NewApplication` minus `source`/`stage`/`notes`, and is what `PATCH
+/applications/:id` validates. Provenance and interview tracking belong to the persisted record, not
+    to the autofill run, so a re-save must never overwrite them.
 
 `EMPTY_PROFILE` and `parseProfile` live here too, beside the schema whose defaults they mirror.
 `parseProfile` completes a stored Profile against `EMPTY_PROFILE` — including a nested merge of
@@ -96,9 +97,9 @@ where it was needed.
 
 ### `src/wire.ts`
 
-**The request body of every backend route, owned in one place** so the extension and the backend
-derive from the same artifact instead of restating it. `lib/backendClient.ts` builds each body
-against these via `satisfies`; each route parses with them.
+**Operation-specific transport schemas and route aliases, owned in one place** so the extension and
+backend derive those contracts from the same artifact instead of restating them. Domain write
+shapes such as `NewApplicationSchema` and `ApplicationSnapshotSchema` stay in `schemas.ts`.
 
 This is not cosmetic deduplication. Zod's `.object()` strips unknown keys, so a field the extension
 sends and the route's private schema doesn't declare is deleted in transit with no error on either
@@ -109,6 +110,12 @@ in production. One schema per body makes that class of drift a compile error.
 Also holds `BackendErrorBodySchema`, the deliberately small `{ error }` shape `app.ts` renders and
 `callBackend` reads back. Structured-call retry classification stays inside the backend operation
 that can act on it rather than crossing the wire to a client with no branch for it.
+
+Application response schemas in this file describe the optimized contracts selected with the
+explicit `response=compact` query parameter. Omitting it is intentionally backward-compatible:
+job-URL lookups return `Application[]`, and Application writes return the full `Application`.
+Compact create/update acknowledgements, duplicate summaries, stage results, and note results avoid
+loading or transferring persisted snapshots that current clients do not read.
 
 ### `src/labelMatching.ts`
 
@@ -157,11 +164,13 @@ draft. Three outcomes, and the distinction between the last two is the point of 
   reaches the model.
 - **Known but unmapped** — the Profile holds the answer but the field's options don't clearly name
   it. The fact is certain, only its _wording_ is in question, so the question goes to the model
-  carrying `knownAnswer` as ground truth to be mapped rather than decided.
+  carrying `knownAnswer` as ground truth to be mapped rather than decided. Backend reconciliation
+  then independently enforces direct matches and high-confidence authorization/sponsorship polarity;
+  an unsafe mapping is omitted rather than guessed.
 - **Unknown** — drafted as normal.
 
 Lives here because both sides need it: the extension splits before calling the backend, and the
-backend puts `knownAnswer` into the prompt.
+backend both prompts with and validates `knownAnswer`.
 
 ### `src/resumeFileName.ts`
 

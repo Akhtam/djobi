@@ -1,6 +1,6 @@
 import type { Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDetectedPage } from '../lib/tabStore';
+import { getDetectedPage, getPipelineRun, setPipelineRun } from '../lib/tabStore';
 import { handleTypedMessage } from './router';
 
 const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill, mockRunSaveApplication } =
@@ -237,5 +237,38 @@ describe('handleTypedMessage', () => {
 
     expect(mockRunSaveApplication).toHaveBeenCalledWith(7);
     expect(returned).toBeUndefined();
+  });
+
+  it('routes UPDATE_RUN through the background store queue and scopes it to its run', async () => {
+    await setPipelineRun(7, {
+      runId: 'run-7',
+      status: 'review',
+      tabUrl: null,
+      jobPageData: { fields: [] },
+      jobDescription: 'original',
+      jobInfo: null,
+      tailoredResume: null,
+      answers: [],
+      failure: null,
+      unresolvedRequiredFields: [],
+      filledFieldCount: 0,
+      fillOutcome: null,
+      applicationId: null,
+      duplicateOf: null,
+    });
+
+    handleTypedMessage(
+      {
+        type: 'UPDATE_RUN',
+        tabId: 7,
+        runId: 'run-7',
+        updates: { answers: [], jobDescription: 'edited' },
+      },
+      {} as chrome.runtime.MessageSender,
+    );
+
+    await vi.waitFor(async () =>
+      expect(await getPipelineRun(7)).toMatchObject({ jobDescription: 'edited' }),
+    );
   });
 });

@@ -1,9 +1,9 @@
 /**
  * MV3 background service worker (`manifest.ts` → `background.service_worker`). Listens for the
  * typed content-script/panel coordination messages and hands them to `router.ts`. Also wires
- * cleanup for `lib/tabStore.ts`'s per-tab session-storage entries so a closed tab leaves nothing
- * behind, and makes the toolbar icon open the side panel (there's no `default_popup` to compete
- * with it).
+ * invalidation for `lib/tabStore.ts`'s per-tab session-storage entries so closing or navigating a
+ * tab leaves no stale frames/run behind, and makes the toolbar icon open the side panel (there's no
+ * `default_popup` to compete with it).
  *
  * This used to multiplex a second, untyped `{ path, body, method? }` protocol onto the same
  * listener, relaying it to the backend on the extension pages' behalf. They call

@@ -1,11 +1,16 @@
 import {
   ApplicationSchema,
+  ApplicationStageSchema,
   type Application,
   type ApplicationSnapshot,
   type ApplicationStage,
+  type ApplicationWriteResult,
+  type AddApplicationNoteResult,
+  type DuplicateApplicationSummary,
   type NewApplication,
   type NewNote,
   type Note,
+  type UpdateApplicationStageResult,
 } from '@djobi/shared';
 import { desc, eq, sql } from 'drizzle-orm';
 import { db } from './client.js';
@@ -62,62 +67,7 @@ export async function getApplicationById(id: string): Promise<Application | null
   return toApplication(row);
 }
 
-/**
- * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
- * they log an application they made by hand (`source: 'manual'`).
- */
-export async function saveApplication(newApplication: NewApplication): Promise<Application> {
-  const [row] = await db.insert(applications).values(newApplication).returning();
-  return toApplication(row);
-}
-
-/** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
-export async function updateApplication(
-  id: string,
-  snapshot: ApplicationSnapshot,
-): Promise<Application | null> {
-  const [row] = await db
-    .update(applications)
-    .set(snapshot)
-    .where(eq(applications.id, id))
-    .returning();
-  return row ? toApplication(row) : null;
-}
-
-/**
- * One past application to a company, reduced to what a history summary needs.
- *
- * A projection rather than an `Application` because the only caller
- * (`buildPriorApplicationsSummary` in `routes/tailor-resume.ts`) builds `"<role> (<date>)"` lines
- * and reads nothing else. Selecting whole rows meant every past application at that company shipped
- * its `jobInfo`, `tailoredResume`, `answers` and `notes` jsonb across the wire, on the Analyze path,
- * to be discarded — and each one had to survive `ApplicationSchema.parse` to be counted, so a row
- * written by an older build dropped out of a summary that only ever needed two of its columns.
- */
-export interface PriorApplication {
-  roleTitle: string;
-  createdAt: string;
-}
-
-/** Lists past applications to the given company, most recently created first. */
-export async function listPriorApplicationsByCompany(company: string): Promise<PriorApplication[]> {
-  const rows = await db
-    .select({ roleTitle: applications.roleTitle, createdAt: applications.createdAt })
-    .from(applications)
-    .where(eq(applications.company, company))
-    .orderBy(desc(applications.createdAt));
-
-  return rows.map((row) => ({ roleTitle: row.roleTitle, createdAt: row.createdAt.toISOString() }));
-}
-
-/**
- * Lists past applications to the exact same job URL, most recently created first.
- *
- * Backs the duplicate guard on Analyze: the extension asks this before spending any LLM call, so a
- * posting the candidate already applied to stops the run instead of re-tailoring a resume for it.
- * Matched exactly rather than normalized — a query string can be what distinguishes two postings on
- * the same board, so stripping one risks suppressing an application the candidate hasn't made.
- */
+/** Lists full applications for an exact job URL for legacy API consumers. */
 export async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> {
   const rows = await db
     .select()
@@ -127,18 +77,81 @@ export async function listApplicationsByJobUrl(jobUrl: string): Promise<Applicat
   return toApplications(rows);
 }
 
+/**
+ * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
+ * they log an application they made by hand (`source: 'manual'`).
+ */
+export async function saveApplication(
+  newApplication: NewApplication,
+): Promise<ApplicationWriteResult> {
+  const [row] = await db
+    .insert(applications)
+    .values(newApplication)
+    .returning({ id: applications.id });
+  return row;
+}
+
+/** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
+export async function updateApplication(
+  id: string,
+  snapshot: ApplicationSnapshot,
+): Promise<ApplicationWriteResult | null> {
+  const [row] = await db
+    .update(applications)
+    .set(snapshot)
+    .where(eq(applications.id, id))
+    .returning({ id: applications.id });
+  return row ?? null;
+}
+
+/**
+ * Summarizes applications to the exact same job URL without loading their large snapshots.
+ *
+ * Backs the compact duplicate guard response: the extension asks this before spending any LLM call,
+ * so a posting the candidate already applied to stops the run instead of re-tailoring a resume for
+ * it. The count and newest metadata come back in one database round trip. URLs are matched exactly
+ * rather than normalized: a query string can distinguish two postings on one board.
+ */
+export async function getApplicationDuplicateSummary(
+  jobUrl: string,
+): Promise<DuplicateApplicationSummary> {
+  const [row] = await db
+    .select({
+      id: applications.id,
+      company: applications.company,
+      roleTitle: applications.roleTitle,
+      createdAt: applications.createdAt,
+      count: sql<number>`count(*) over ()`.mapWith(Number),
+    })
+    .from(applications)
+    .where(eq(applications.jobUrl, jobUrl))
+    .orderBy(desc(applications.createdAt))
+    .limit(1);
+
+  if (!row) return { count: 0, latest: null };
+  return {
+    count: row.count,
+    latest: {
+      id: row.id,
+      company: row.company,
+      roleTitle: row.roleTitle,
+      createdAt: row.createdAt.toISOString(),
+    },
+  };
+}
+
 /** Moves an application to a new interview stage, or `null` if no application has that id. */
 export async function updateApplicationStage(
   id: string,
   stage: ApplicationStage,
-): Promise<Application | null> {
+): Promise<UpdateApplicationStageResult | null> {
   const [row] = await db
     .update(applications)
     .set({ stage })
     .where(eq(applications.id, id))
-    .returning();
+    .returning({ id: applications.id, stage: applications.stage });
 
-  return row ? toApplication(row) : null;
+  return row ? { id: row.id, stage: ApplicationStageSchema.parse(row.stage) } : null;
 }
 
 /**
@@ -154,7 +167,10 @@ export async function updateApplicationStage(
  * exactly the loss an append-only log exists to prevent, so the concatenation happens in Postgres
  * where it is atomic.
  */
-export async function addApplicationNote(id: string, note: NewNote): Promise<Application | null> {
+export async function addApplicationNote(
+  id: string,
+  note: NewNote,
+): Promise<AddApplicationNoteResult | null> {
   const appended: Note = {
     ...note,
     id: crypto.randomUUID(),
@@ -165,7 +181,7 @@ export async function addApplicationNote(id: string, note: NewNote): Promise<App
     .update(applications)
     .set({ notes: sql`${applications.notes} || ${JSON.stringify([appended])}::jsonb` })
     .where(eq(applications.id, id))
-    .returning();
+    .returning({ id: applications.id });
 
-  return row ? toApplication(row) : null;
+  return row ? { id: row.id, note: appended } : null;
 }

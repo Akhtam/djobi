@@ -51,8 +51,8 @@ export type Story = z.infer<typeof StorySchema>;
 
 /**
  * The whole base profile: contact info, links, work/education history, skills, and reusable
- * stories. Stored whole as the `profiles.data` jsonb column and passed as ground truth into every
- * LLM call — tailoring/answering prompts are instructed never to invent facts outside of it.
+ * stories. Stored whole as the `profiles.data` jsonb column; each operation receives only the
+ * projection it uses, and tailoring/answering treat those projected facts as ground truth.
  */
 export const ProfileSchema = z.object({
   fullName: z.string(),
@@ -142,8 +142,8 @@ export function parseProfile(value: unknown): Profile {
 }
 
 /**
- * Structured job-posting information extracted from scraped page text by `extractJob`
- * (see `apps/backend/src/llm/extractJob.ts`).
+ * Structured job-posting information extracted by `extractJob` from the Job Description pasted by
+ * the candidate (see `apps/backend/src/llm/extractJob.ts`).
  */
 export const JobInfoSchema = z.object({
   company: z.string(),
@@ -237,11 +237,10 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
  *
  * There used to be a separate `status` field (`draft` / `submitted`) alongside this, meant to
  * answer "was this actually sent to the employer" as distinct from "how far has it got". It was
- * removed: nothing ever set it to `submitted`, so all 28 stored rows read `draft` and the field
- * carried no information. The reason it was never set is that saving is already a manual step the
- * candidate takes *after* submitting — so a saved Application is a submitted one by construction,
- * and `stage` covers everything after that. Don't reintroduce a status field without first having
- * a moment in the flow that would set it.
+ * removed because nothing ever set it to `submitted`, so the field carried no information. That
+ * does not establish that every saved Application was submitted: there is no authoritative
+ * submission event in the current flow. Don't reintroduce a status field without first having a
+ * moment in the flow that can set it reliably.
  */
 export const ApplicationStageSchema = z.enum([
   'applied',
@@ -304,8 +303,8 @@ export const ApplicationSourceSchema = z.enum(['autofill', 'manual']);
 export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
 
 /**
- * One persisted `applications` row, keyed to the job posting, so past applications can be
- * referenced later (e.g. by `tailorResume`'s `priorApplicationsSummary`).
+ * One persisted `applications` row, keyed to the job posting, so its exact generated snapshot
+ * remains available in the Dashboard.
  *
  * Either a completed (or in-progress) autofill run, or an application the candidate made by hand
  * and logged afterwards — see {@link ApplicationSourceSchema}. The two are the same record; only

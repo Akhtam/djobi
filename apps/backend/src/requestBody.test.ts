@@ -22,7 +22,7 @@ vi.mock('./llm/extractJob.js', () => ({
 vi.mock('./db/applicationsRepository.js', () => ({
   listApplications: vi.fn(async () => []),
   listApplicationsByJobUrl: vi.fn(async () => []),
-  listPriorApplicationsByCompany: vi.fn(async () => []),
+  getApplicationDuplicateSummary: vi.fn(async () => ({ count: 0, latest: null })),
   getApplicationById: vi.fn(async () => null),
   saveApplication: vi.fn(),
   updateApplication: vi.fn(),

@@ -94,6 +94,9 @@ describe('callStructured', () => {
 
     await expect(call()).resolves.toMatchObject({ title: 'Hello' });
     expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate.mock.calls[1][0].tools[0].input_schema).toBe(
+      mockCreate.mock.calls[0][0].tools[0].input_schema,
+    );
     expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_retry', {
       kind: 'no-tool-call',
       toolName: 'report_sample',

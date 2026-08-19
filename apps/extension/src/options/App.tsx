@@ -46,6 +46,27 @@ function orNull(value: string): string | null {
   return value.trim() ? value : null;
 }
 
+/** Repairs legacy Story identity without changing IDs that are already unambiguous. */
+function normalizeStoryIds(stories: Profile['stories']): Profile['stories'] {
+  const counts = new Map<string, number>();
+  const usedIds = new Set<string>();
+  for (const story of stories) {
+    if (story.id.trim()) {
+      counts.set(story.id, (counts.get(story.id) ?? 0) + 1);
+      usedIds.add(story.id);
+    }
+  }
+
+  return stories.map((story) => {
+    if (story.id.trim() && counts.get(story.id) === 1) return story;
+
+    let id = crypto.randomUUID();
+    while (usedIds.has(id)) id = crypto.randomUUID();
+    usedIds.add(id);
+    return { ...story, id };
+  });
+}
+
 /** The Profile keys holding an editable list of entries. */
 type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
 
@@ -119,6 +140,7 @@ function ListSection<T>({
       {items.length === 0 && <p className="empty-list">No {noun} added yet.</p>}
       {items.map((entry, index) => (
         <fieldset key={index} className="entry-card">
+          <legend>{`${noun} ${index + 1}`}</legend>
           <div className="entry-card-header">
             <span>{`Entry ${index + 1}`}</span>
             <button
@@ -187,11 +209,10 @@ export function App() {
     field: null,
     graduationYear: null,
   }));
-  // `id: ''` matches what this form has always created. Note `QuestionAnswer.sourceStoryIds`
-  // references `Story.id`, so every story sharing the empty id makes those references useless —
-  // worth fixing, but it is a behaviour change rather than part of this de-duplication.
   const stories = listEditor(profile, setProfile, 'stories', () => ({
-    id: '',
+    // Answer provenance stores Story ids, so every new entry needs a stable unique value even when
+    // the candidate leaves the editable id field alone.
+    id: crypto.randomUUID(),
     title: '',
     tags: [],
     situation: '',
@@ -215,6 +236,7 @@ export function App() {
         ...we,
         bullets: we.bullets.filter((bullet) => bullet.trim() !== ''),
       })),
+      stories: normalizeStoryIds(profile.stories),
     };
     httpBackendClient
       .saveProfile(toSave)

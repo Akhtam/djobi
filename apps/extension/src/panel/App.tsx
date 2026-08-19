@@ -1,14 +1,13 @@
 /**
  * Review UI root, mounted by `panel/main.tsx` as the side panel's sole content (see
- * `manifest.ts`'s `side_panel.default_path` — there's no popup). Once a profile exists, polls the
- * background service worker for the job page the content script reported for the active tab
- * (`lib/tabStore.ts`) — the content script itself runs on every page and decides
+ * `manifest.ts`'s `side_panel.default_path` — there's no popup). Once a profile exists, tracks the
+ * active tab and reads the job page the content script reported for it from `lib/tabStore.ts` — the
+ * content script itself runs on every page and decides
  * whether it's a job application form (see `detect.ts`), not a fixed ATS-host allowlist, since
- * ATS platforms let companies white-label their job board onto their own domain. Once a job page
- * is found, kicks off the extract → tailor/answer pipeline — actually run by
- * `background/applicationPipeline.ts`, not here, so it survives this component unmounting mid-run —
- * and shows an editable review, hydrated from and checkpointed to `lib/tabStore.ts`, once
- * results land.
+ * ATS platforms let companies white-label their job board onto their own domain. Analysis starts
+ * only when the candidate clicks Analyze; `background/applicationPipeline.ts` runs it so it survives
+ * this component unmounting mid-run. The panel shows an editable review hydrated from and
+ * checkpointed to `lib/tabStore.ts` once results land.
  *
  * The panel survives switching tabs (unlike a popup, which is destroyed on any outside click) —
  * it re-tracks the active tab instead of remounting, so it resets back to the bootstrap state
@@ -29,7 +28,7 @@ import { formatAppliedDate } from '../lib/format';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import { reviewOf } from '../lib/runReview';
-import { getDetectedPage, patchPipelineRun, type PipelineStatus } from '../lib/tabStore';
+import { getDetectedPage, type PipelineStatus } from '../lib/tabStore';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { LogApplication } from './LogApplication';
 import { useActiveTab } from './useActiveTab';
@@ -40,7 +39,7 @@ import { usePipelineRun } from './usePipelineRun';
 //
 // What the run *means* — the pill, whether the review stays up, how the Fill Step went — is not
 // derived here. It is `reviewOf` in `lib/runReview.ts`, one derivation the whole component reads.
-type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus;
+type Status = 'loading' | 'profile-error' | 'no-profile' | 'ready' | PipelineStatus;
 
 /**
  * Which of the panel's two flows is showing. A tab rather than a mode toggle on one flow: the Log
@@ -53,7 +52,9 @@ export function App() {
   const { theme, toggleTheme } = useThemePreference();
   const [tab, setTab] = useState<PanelTab>('autofill');
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileError, setProfileError] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const profileRequestRef = useRef(0);
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
   // The pasted job description before any run exists — once one does, it lives on the run.
@@ -64,13 +65,24 @@ export function App() {
 
   // The stored run — hydration, the storage subscription, the optimistic status and write-back all
   // live in the hook.
-  const { run, status: runStatus, begin, edit } = usePipelineRun(tabId);
+  const {
+    run: storedRun,
+    status: storedRunStatus,
+    begin,
+    edit,
+  } = usePipelineRun(tabId, changeToken);
+  // Navigation updates the tracked URL before the service worker's async storage cleanup lands.
+  // Never render or act on a run captured from a different page in that gap.
+  const run = storedRun?.tabUrl === tabUrl ? storedRun : null;
+  const runStatus = storedRun ? (run ? storedRunStatus : null) : storedRunStatus;
 
   const status: Status = !profileLoaded
     ? 'loading'
-    : !profile
-      ? 'no-profile'
-      : (runStatus ?? 'ready');
+    : profileError
+      ? 'profile-error'
+      : !profile
+        ? 'no-profile'
+        : (runStatus ?? 'ready');
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
   const jobPageData = run?.jobPageData ?? detectedPage;
@@ -94,10 +106,11 @@ export function App() {
     { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; url: string } | { kind: 'error' }
   >({ kind: 'idle' });
   const resumeUrlRef = useRef<string | null>(null);
+  const resumePreviewRequestRef = useRef(0);
 
   // Everything scoped to the page being shown, dropped whenever that page changes — a different
-  // tab, or a navigation within one. `useActiveTab` reports both as a bumped `changeToken`, and the
-  // run itself is re-read by `usePipelineRun` off the new `tabId`.
+  // tab, or a navigation within one. `useActiveTab` reports both as a bumped `changeToken`; the
+  // service worker clears persisted state on navigation and `usePipelineRun` reflects that removal.
   useEffect(() => {
     if (tabId === null) return;
 
@@ -119,17 +132,38 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `changeToken` is the reset signal
   }, [tabId, changeToken]);
 
+  function loadProfile() {
+    const requestToken = ++profileRequestRef.current;
+    setProfileLoaded(false);
+    setProfileError(false);
+    void httpBackendClient
+      .getProfile()
+      .then((loadedProfile) => {
+        if (requestToken !== profileRequestRef.current) return;
+        setProfile(loadedProfile);
+        setProfileLoaded(true);
+      })
+      .catch(() => {
+        if (requestToken !== profileRequestRef.current) return;
+        setProfileError(true);
+        setProfileLoaded(true);
+      });
+  }
+
   useEffect(() => {
-    void httpBackendClient.getProfile().then((loadedProfile) => {
-      setProfile(loadedProfile);
-      setProfileLoaded(true);
-    });
+    loadProfile();
+    return () => {
+      ++profileRequestRef.current;
+    };
+    // Profile bootstrap runs once; retries are explicit user actions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Release the preview's blob: URL when the panel unmounts (the blob outlives the component's
   // state, so without this revoked here it'd leak until the browser reclaims it).
   useEffect(() => {
     return () => {
+      ++resumePreviewRequestRef.current;
       if (resumeUrlRef.current) URL.revokeObjectURL(resumeUrlRef.current);
     };
   }, []);
@@ -161,19 +195,20 @@ export function App() {
   }
 
   function editJobDescription(value: string) {
+    if (status === 'saving') return;
     if (run) edit({ answers, jobDescription: value });
     else setLocalPageText(value);
   }
 
   function updateAnswer(fieldId: string, value: string) {
+    if (status === 'saving') return;
     edit({
       answers: answers.map((answer) =>
         answer.fieldId === fieldId ? { ...answer, answer: value } : answer,
       ),
       jobDescription,
+      ...(status === 'saved' ? { status: 'filled' as const } : {}),
     });
-    // A saved record is a snapshot. Editing it makes the displayed snapshot pending until saved again.
-    if (tabId !== null && status === 'saved') void patchPipelineRun(tabId, { status: 'filled' });
   }
 
   function handleFill() {
@@ -194,6 +229,7 @@ export function App() {
   /** Releases the preview's blob: URL and resets the resume-preview state (used on preview
    *  regeneration and whenever the tracked tab changes, since a URL is meaningless without its blob). */
   function clearResumePreview() {
+    ++resumePreviewRequestRef.current;
     if (resumeUrlRef.current) {
       URL.revokeObjectURL(resumeUrlRef.current);
       resumeUrlRef.current = null;
@@ -205,14 +241,24 @@ export function App() {
     if (!profile || !tailoredResume || resumePreview.kind === 'loading') return;
     clearResumePreview();
     setResumePreview({ kind: 'loading' });
+    const requestToken = resumePreviewRequestRef.current;
     void httpBackendClient
       .renderResumePdf(profile, tailoredResume)
       .then((bytes) => {
+        if (requestToken !== resumePreviewRequestRef.current) return;
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        if (requestToken !== resumePreviewRequestRef.current) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         resumeUrlRef.current = url;
         setResumePreview({ kind: 'ready', url });
       })
-      .catch(() => setResumePreview({ kind: 'error' }));
+      .catch(() => {
+        if (requestToken === resumePreviewRequestRef.current) {
+          setResumePreview({ kind: 'error' });
+        }
+      });
   }
 
   const review = reviewOf(run);
@@ -229,7 +275,11 @@ export function App() {
       <header className="panel-header">
         <img src={icon48} alt="" className="brand-mark" />
         <h1>djobi</h1>
-        {pill && <span className={`status-pill ${pill.tone}`}>{pill.label}</span>}
+        {pill && (
+          <span className={`status-pill ${pill.tone}`} role="status" aria-live="polite">
+            {pill.label}
+          </span>
+        )}
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
 
@@ -265,14 +315,31 @@ export function App() {
 
       <div className="panel-body" hidden={tab !== 'autofill'}>
         {status === 'loading' && (
-          <div className="state">
+          <div className="state" role="status" aria-live="polite">
             <span className="spinner" />
             <p>Loading…</p>
           </div>
         )}
 
+        {status === 'profile-error' && (
+          <div className="state error" role="alert">
+            <span className="state-icon error">⚠️</span>
+            <p>Couldn't load your profile. Check that the djobi backend is running, then retry.</p>
+            <button type="button" className="btn-primary" onClick={loadProfile}>
+              Retry loading profile
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => chrome.runtime.openOptionsPage()}
+            >
+              Open profile settings
+            </button>
+          </div>
+        )}
+
         {status === 'no-profile' && (
-          <div className="state">
+          <div className="state" role="status">
             <span className="state-icon">👤</span>
             <p>Set up your profile to get started.</p>
             <button
@@ -298,7 +365,11 @@ export function App() {
                 ? 'Paste the job description below, then analyze. The form on this page has been detected and will be filled from what the description says about the role.'
                 : 'Paste the job description below to analyze it. You can analyze even though no fillable form has been detected on this page yet — check back before filling.'}
             </p>
+            <label className="field-label" htmlFor="job-description">
+              Job description
+            </label>
             <textarea
+              id="job-description"
               className="page-text-input"
               placeholder="Paste the job description here…"
               value={jobDescription}
@@ -316,14 +387,14 @@ export function App() {
         )}
 
         {status === 'analyzing' && (
-          <div className="state">
+          <div className="state" role="status" aria-live="polite">
             <span className="spinner" />
             <p>Analyzing job posting…</p>
           </div>
         )}
 
         {status === 'duplicate' && duplicateOf && (
-          <div className="state">
+          <div className="state" role="status">
             <span className="state-icon">📮</span>
             <p>
               {duplicateOf.count > 1
@@ -340,7 +411,7 @@ export function App() {
         )}
 
         {status === 'analyze-error' && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
             <p>Something went wrong analyzing this job posting.</p>
             {failure && <p className="failure-detail">{failure.message}</p>}
@@ -353,7 +424,7 @@ export function App() {
         {/* The Fill Step's outcome sits above the review, not below it: the review is long, and a
             result the user has to scroll past it to find is a result they won't see. */}
         {outcome === 'unverified' && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
             <p>
               The fill could not be verified because this page did not answer. Check the form before
@@ -364,7 +435,7 @@ export function App() {
         )}
 
         {outcome === 'no-fields-detected' && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
             <p>
               Nothing was filled — no form fields were found on this page, including in a fresh scan
@@ -379,7 +450,7 @@ export function App() {
             kept none of what was written into it. Reloading is not the advice here — the list of
             fields to fill by hand is. */}
         {outcome === 'nothing-filled' && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
             <p>
               Nothing was filled — this page's form was found ({detectedFieldCount} field
@@ -390,7 +461,7 @@ export function App() {
         )}
 
         {outcome === 'complete' && (
-          <div className="state success">
+          <div className="state success" role="status">
             <span className="state-icon success">✅</span>
             <p>
               Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'}. Save the
@@ -400,7 +471,7 @@ export function App() {
         )}
 
         {outcome === 'incomplete' && (
-          <div className="state error">
+          <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
             <p>
               Filled, but {unresolvedRequiredFields.length} required field
@@ -416,7 +487,7 @@ export function App() {
         )}
 
         {status === 'saved' && (
-          <div className="state success">
+          <div className="state success" role="status">
             <span className="state-icon success">✅</span>
             <p>Application saved.</p>
           </div>
@@ -445,16 +516,21 @@ export function App() {
                     Wrong job title, company, or missing context? Edit the job description here and
                     re-analyze.
                   </p>
+                  <label className="field-label" htmlFor="review-job-description">
+                    Job description
+                  </label>
                   <textarea
+                    id="review-job-description"
                     className="page-text-input"
                     value={jobDescription}
+                    disabled={status === 'saving'}
                     onChange={(e) => editJobDescription(e.target.value)}
                   />
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => handleAnalyze()}
-                    disabled={!jobDescription.trim()}
+                    disabled={!jobDescription.trim() || status === 'saving'}
                   >
                     Re-analyze
                   </button>
@@ -475,7 +551,9 @@ export function App() {
                 </button>
               </div>
               {resumePreview.kind === 'error' && (
-                <p className="preview-error">Couldn't render the resume preview — try again.</p>
+                <p className="preview-error" role="alert">
+                  Couldn't render the resume preview — try again.
+                </p>
               )}
               {resumePreview.kind === 'ready' && (
                 <iframe
@@ -493,6 +571,7 @@ export function App() {
                     <span>{answer.question}</span>
                     <textarea
                       value={answer.answer}
+                      disabled={status === 'saving'}
                       onChange={(e) => updateAnswer(answer.fieldId, e.target.value)}
                     />
                   </label>
@@ -501,7 +580,7 @@ export function App() {
             )}
 
             {status === 'fill-error' && (
-              <div className="inline-error">
+              <div className="inline-error" role="alert">
                 <div className="inline-error-body">
                   <p>Something went wrong filling the form.</p>
                   {failure && <p className="failure-detail">{failure.message}</p>}
@@ -512,7 +591,7 @@ export function App() {
               </div>
             )}
             {status === 'save-error' && (
-              <div className="inline-error">
+              <div className="inline-error" role="alert">
                 <div className="inline-error-body">
                   <p>Something went wrong saving the application.</p>
                   {failure && <p className="failure-detail">{failure.message}</p>}

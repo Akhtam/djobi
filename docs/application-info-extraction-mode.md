@@ -11,14 +11,21 @@
 > at** — from a pasted URL, or off an open LinkedIn Easy Apply modal — and the host-permission,
 > MV3 and LinkedIn-ToS constraints on doing so.
 >
+> **Snapshot scope:** §§1–8 are the pre-Log-tab research snapshot. Present-tense descriptions in
+> those sections describe the implementation at the time of research, before the panel gained its
+> persistent **Autofill / Log** tab switcher; they are preserved as design history, not claims about
+> the current tree. Current implementation corrections are called out where they affect a live
+> recommendation.
+>
 > Every repo claim below is `path:line`; every external claim carries its primary-source URL. Line
 > numbers predate the Log tab and may have shifted.
 
 ## 1. The question, restated
 
-Today the extension has exactly one flow: the candidate pastes a Job Description into the side
-panel, the Analysis Step turns it into Job Info + a Tailored Resume + drafted Question Answers, and
-the Fill Step writes them into the ATS form on the current page.
+At the time of this research, the extension had exactly one flow: the candidate pasted a Job
+Description into the side panel, the Analysis Step turned it into Job Info + a Tailored Resume +
+drafted Question Answers, and the Fill Step wrote them into the ATS form on the current page. The
+current panel also has a separate **Log** flow for recording manually submitted applications.
 
 The ask is a **second mode**: instead of producing a tailored resume for a form the extension is
 sitting on, the extension should **extract everything a human needs in order to fill out a job
@@ -43,7 +50,7 @@ with a dash of (iii), and flags the choice in §7.
 
 ---
 
-## 2. How the extension works today
+## 2. How the extension worked before the Log tab
 
 ### 2.1 Surfaces and the manifest
 
@@ -81,11 +88,13 @@ type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus; // App.tsx:41
 ```
 
 `'loading' | 'no-profile' | 'ready'` are panel-local bootstrap states; the rest is `PipelineStatus`
-from the store (`apps/extension/src/lib/tabStore.ts:23-33`). There is **no tab switcher, no router,
-no mode state** — `App.tsx:229-488` is a sequence of `{status === X && …}` blocks inside one
-`.panel-body`. What each status _means_ (the header pill, whether the review stays up, how the fill
-went) is derived once in `apps/extension/src/lib/runReview.ts:75` (`reviewOf`), specifically so the
-panel doesn't re-derive it per branch.
+from the store (`apps/extension/src/lib/tabStore.ts:23-33`). In this snapshot there was **no tab
+switcher, no router, no mode state** — `App.tsx:229-488` was a sequence of `{status === X && …}`
+blocks inside one `.panel-body`. The current panel has an `Autofill` / `Log` switcher while the
+Autofill pane retains this status-driven pipeline. What each pipeline status _means_ (the header
+pill, whether the review stays up, how the fill went) is derived once in
+`apps/extension/src/lib/runReview.ts:75` (`reviewOf`), specifically so the panel doesn't re-derive it
+per branch.
 
 The panel follows the active browser tab rather than remounting, via
 `apps/extension/src/panel/useActiveTab.ts:28` — `chrome.tabs.query` at startup plus
@@ -102,16 +111,17 @@ pipeline run (`TabState`, `tabStore.ts:130-134`). Writes go through an in-memory
 (`tabStore.ts:333-337`). `session` storage was chosen because it survives service-worker eviction
 but not a browser restart (`tabStore.ts:16-21`).
 
-**The run is keyed by browser tab, and only by browser tab.** That is the single most
-consequential fact for the new mode: an extraction started from a pasted URL has no ATS tab to hang
-off.
+Storage is keyed by browser tab, while each attempt inside that entry has a unique `runId`.
+Asynchronous patches require both identities, so an older completion cannot mutate a replacement
+run. A future extraction started from a pasted URL would still need a storage owner other than an
+ATS tab.
 
 ### 2.4 Message passing
 
 Two protocols, deliberately separate:
 
 - **`TypedMessage`** (`apps/extension/src/lib/messages.ts:122`) — notification-only, no responses:
-  `REPORT_JOB_PAGE`, `START_ANALYSIS`, `START_FILL`, `START_SAVE_APPLICATION`. The doc comment at
+  `REPORT_JOB_PAGE`, `START_ANALYSIS`, `START_FILL`, `START_SAVE_APPLICATION`, and `UPDATE_RUN`. The doc comment at
   `messages.ts:104-121` explains why: holding a message channel open until an Analysis Step finishes
   is exactly the failure the design avoids, since the channel dies with the panel. Progress is read
   from `tabStore` via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`).
@@ -134,8 +144,9 @@ backstop.
 `apps/extension/src/background/applicationPipeline.ts` runs in the service worker so a step
 survives the panel closing (`applicationPipeline.ts:1-17`).
 
-- `runAnalysis` (`applicationPipeline.ts:358`) — duplicate guard (`findDuplicate`,
-  `applicationPipeline.ts:323`, deliberately fails open), then `setPipelineRun`, then `analysisStep`.
+- `runAnalysis` (`applicationPipeline.ts:358`) — stores a new identified run first, then performs the
+  duplicate guard (`findDuplicate`, deliberately fails open) and `analysisStep`; every later patch
+  is conditional on that `runId` still being current.
 - `analysisStep` (`applicationPipeline.ts:88`) — `extractJob(jobDescription)`, then filters the
   page's `question`-category Detected Fields into `PendingQuestion`s (`:96-105`), then
   `splitPreparedQuestions(profile, questions)` (`:109`) resolves everything the Profile already
@@ -144,8 +155,8 @@ survives the panel closing (`applicationPipeline.ts:1-17`).
 - `fillStep` (`applicationPipeline.ts:145`) — re-scans the live page (`:170-175`),
   `carryEnrichment` to keep API-supplied options over a fresh DOM scan (`:180`), maps
   `valueForCategory` for scalar fields (`:59`, `:193`), renders the resume PDF only if a
-  `resume_upload` field exists (`:201-208`), fills, and reports **only what the page verifiably
-  kept** (`:220-249`).
+  `resume_upload` field exists (`:201-208`), fills, and reports what the page verifiably kept when a
+  frame responds. With no response it retains attempted counts and marks the outcome `unverified`.
 - `runSaveApplication` (`applicationPipeline.ts:264`) — explicit, separate from filling.
 
 ### 2.6 Detection, classification and the ATS oracle
@@ -205,11 +216,11 @@ CORS "simple request" and would reach the handler unpreflighted.
 
 ### 2.9 Shared types
 
-`packages/shared/src/wire.ts` owns **one schema per route body**, and the header comment
-(`wire.ts:1-16`) records exactly why: zod's `.object()` strips unknown keys, so a field the extension
-sends and the route's private schema doesn't declare is _silently deleted in transit_ — which
-happened to `knownAnswer`. `apps/extension/src/lib/backendClient.ts:56` builds every body with
-`satisfies` against those schemas, making drift a compile error.
+`packages/shared/src/wire.ts` owns operation-specific transport schemas and aliases; reusable domain
+write shapes such as `NewApplicationSchema` and `ApplicationSnapshotSchema` stay in `schemas.ts`.
+The shared contracts prevent zod's `.object()` stripping a sender-only field in transit — which is
+what once happened to `knownAnswer` — and `backendClient.ts` builds bodies with `satisfies` against
+them.
 
 Relevant shapes: `JobInfoSchema` (`schemas.ts:148`), `TailoredResumeSchema` (`schemas.ts:169`),
 `QuestionAnswerSchema` (`schemas.ts:194`, whose `fieldId` "Matches DetectedField.id"),
@@ -220,14 +231,14 @@ Relevant shapes: `JobInfoSchema` (`schemas.ts:148`), `TailoredResumeSchema` (`sc
 
 ### 2.10 What's already planned
 
-`PROGRESS.md` → **Phase 9 (Ask tab)** already commits to this, verbatim:
+At the time of research, `PROGRESS.md` → **Phase 9 (Ask tab)** committed to this, verbatim:
 
-> **The panel becomes tabbed.** Today `panel/App.tsx` renders one flow keyed off `status`. This
-> needs a tab switcher above it, with the existing pipeline UI as the first tab, so the Ask tab is
-> reachable at any point in a run — including `ready`, when there's no run at all.
+> **The panel becomes tabbed.** At the time of this research, `panel/App.tsx` rendered one flow keyed
+> off `status`. The shipped Log work added the tab switcher; any future Ask surface would extend that
+> existing switcher as a third tab.
 
-So the tab-vs-toggle question is not being asked in a vacuum: a tab switcher is already the plan of
-record for a _third_ surface.
+That planned navigation idiom has since landed for **Autofill / Log**. Any future extraction surface
+should extend the existing tab shell rather than introduce a separate mode toggle.
 
 ---
 
@@ -250,8 +261,10 @@ record for a _third_ surface.
 
 ### Genuinely new
 
-1. **Panel navigation.** There is none today (`App.tsx:229-488` is one linear flow). A switcher is
-   net-new UI plus a decision about what persists across a switch.
+1. **Panel navigation.** This was net-new in the snapshot; the current panel now has an
+   **Autofill / Log** switcher and keeps both panes mounted so in-flight work and typed input survive
+   a switch. Extraction would extend that shell rather than invent navigation, but still needs a
+   persistence decision for its own run state.
 2. **A run that isn't keyed to a browser tab.** `tabStore.ts:146` keys everything `tab:${tabId}`.
    A pasted-URL extraction has no ATS tab.
 3. **Fetching an arbitrary URL.** Nothing in the extension does this. `manifest.ts:48-56` grants
@@ -314,10 +327,10 @@ is therefore genuinely a UI one: tab switcher vs toggle.
 
 ### RECOMMENDATION: a tab
 
-Add a tab switcher above `.panel-body` in `panel/App.tsx`, with today's flow as the first tab
-("Apply") and the new mode as the second ("Prepare" / "Extract"). This is also what `PROGRESS.md`
-Phase 9 already committed to for the Ask tab, so it is one navigation idiom serving three surfaces
-rather than a new one.
+Use a tab in the panel, with the Autofill flow and the new mode as separate panes ("Prepare" /
+"Extract"). The original recommendation was to add a switcher above `.panel-body`; that switcher has
+since landed for **Autofill / Log**, including the important behavior of keeping both panes mounted.
+Extraction should add to that established navigation idiom rather than add a toggle.
 
 Why a tab and not a toggle:
 
@@ -338,9 +351,9 @@ Why a tab and not a toggle:
    reads as "am I about to lose my drafted answers?" Two tabs are obviously two things that both
    exist. Since the panel already checkpoints every state so closing it mid-run loses nothing
    (`PROGRESS.md` "Current state"), coexistence is the honest representation.
-4. **It has to extend to three, not two.** Phase 9 (Ask) and Phase 10 (chat refinement) are both
-   planned. A toggle is a two-state control by construction; adding Ask would then require a tab
-   switcher _and_ a toggle in one 400px-wide panel.
+4. **It has to extend to three, not two.** Phase 9 (Answer chat) is planned as a third tab. A
+   toggle is a two-state control by construction; adding Ask would then require a tab switcher _and_
+   a toggle in one 400px-wide panel.
 5. **Different terminal actions.** Today's footer is Fill / Save (`App.tsx:491-516`) and is
    conditional on `canReview && jobInfo && tailoredResume`. Extraction's terminal action is copy-out.
    A footer that changes meaning under a toggle is a well-known mis-click generator; tabs scope
@@ -759,11 +772,11 @@ LinkedIn constraint, not a Chrome Web Store one.
    or is "paste the text instead" acceptable?
 7. **`QuestionAnswer.fieldId` for predicted questions** — synthetic ids (recommended) or make the
    field nullable? This one is a shared-schema change either way and should be settled before code.
-8. **Phase 9 overlap.** `PROGRESS.md` Phase 9 already plans an "Ask" tab with its own `POST /ask`
-   route, drafting from the Profile with an optional `jobInfo`. That is a strict subset of
+8. **Phase 9 overlap.** `PROGRESS.md` Phase 9 plans an "Ask" tab with a `POST /answer-chat` route,
+   drafting from the Profile with an optional `jobInfo`. That is a strict subset of
    `POST /application-kit`. Should Phase 9 be folded into this work — one route, one tab with a
-   sub-mode — rather than shipped separately? `PROGRESS.md` already flags the same collision between
-   Phase 9 and Phase 10 and says to settle it before building either.
+   sub-mode — rather than shipped separately? The comparable collision inside Phase 9 (a cold ask vs.
+   refining an existing draft) was settled by merging: one chat UI, one route, seeded differently.
 
 ---
 

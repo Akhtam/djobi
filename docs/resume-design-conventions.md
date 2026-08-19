@@ -1,19 +1,21 @@
 # Resume design conventions — research for `renderResume.tsx`
 
-> **Status: implemented (2026-08-12).** The recommendations below were applied to
-> `apps/backend/src/pdf/renderResume.tsx`, which also gained a one-page fitting ladder built on the
-> ranges sourced here. This doc is kept as the **record of where the numbers came from** — every
-> "current state" note and the "Now" column of the summary table describe the code _before_ that
-> pass, not today's. Read it to know why a value is what it is, or before changing one; don't read
-> it as a to-do list.
+> **Status: mostly implemented (updated 2026-08-18).** The typography recommendations below were
+> mostly applied to `apps/backend/src/pdf/renderResume.tsx`, which also gained a one-page fitting
+> ladder built on the sourced ranges. The recommendation to remove the literal `Role: ` prefix was
+> rejected and was not applied; the renderer intentionally still emits `Role: {job.title}`. This doc
+> is kept as the **record of where the numbers came from** — every "current state" note and the
+> summary comparison describe the code _before_ that pass, not today's. Read it as research history,
+> not as a to-do list.
 
 ## Why this doc exists
 
-`apps/backend/src/pdf/renderResume.tsx:5-21` currently holds a `StyleSheet.create` block whose values
-(`padding: 32`, `fontSize: 10`, no explicit `lineHeight`, `borderBottom: 1` under section titles,
-`fontSize: 18` name) were chosen by eye, not against any source. This doc collects what **primary
-sources** — ATS vendor help centres, typographic references, and university career-centre style
-guides — actually say, so those numbers can be defended or changed deliberately.
+When this research was written, `apps/backend/src/pdf/renderResume.tsx:5-21` held a
+`StyleSheet.create` block whose values (`padding: 32`, `fontSize: 10`, no explicit `lineHeight`,
+`borderBottom: 1` under section titles, `fontSize: 18` name) had been chosen by eye, not against any
+source. The implementation has since changed. This doc collects what **primary sources** — ATS
+vendor help centres, typographic references, and university career-centre style guides — said so
+the resulting numbers can be defended or changed deliberately.
 
 Constraints the recommendations must respect, from
 [react-pdf.org/styling](https://react-pdf.org/styling) and [react-pdf.org/fonts](https://react-pdf.org/fonts)
@@ -62,7 +64,8 @@ it gets cut off" number as **folklore**; no vendor documentation for it was loca
 **Parsing risk from margins: none found.** No ATS vendor doc consulted (Greenhouse, Workday, Oracle
 Taleo) mentions margins at all. Parsers work on the extracted text stream, not the page box.
 
-**Current state:** `renderResume.tsx:6` uses `padding: 32` — **below every source's floor** (32 pt = 0.44″).
+**Pre-implementation state:** `renderResume.tsx:6` used `padding: 32` — **below every source's
+floor** (32 pt = 0.44″).
 
 ---
 
@@ -102,9 +105,9 @@ leading — they talk about "white space" qualitatively (§9).
 
 **→ `lineHeight: 1.2` to `1.45`.** At 10 pt body that is 12–14.5 pt per line.
 
-**Current state:** `renderResume.tsx` sets no `lineHeight` at all, so react-pdf applies its own
-default (approximately the font's built-in line gap, roughly 1.15–1.2 for Helvetica) — i.e. at or
-just below the bottom of Butterick's range, the "too tight" end.
+**Pre-implementation state:** `renderResume.tsx` set no `lineHeight` at all, so react-pdf applied its
+own default (approximately the font's built-in line gap, roughly 1.15–1.2 for Helvetica) — i.e. at
+or just below the bottom of Butterick's range, the "too tight" end.
 
 ---
 
@@ -316,10 +319,10 @@ breaks from horizontal gaps above a threshold, and large tracking is the one way
 independent text runs, not a table grid, and the extraction test above shows them concatenating in
 reading order on one line.
 
-One content-level fix is available and currently missed: `renderResume.tsx:69` renders
-`Role: {job.title}`. The literal prefix `"Role: "` is non-standard resume vocabulary that a
-title-extracting parser may swallow into the title string. **Drop the prefix** and let the title stand
-alone, or move the title onto the company line.
+One content-level change considered by the research was removing `Role: ` from
+`Role: {job.title}`. The concern was that the non-standard prefix might be swallowed into the title
+string by a title-extracting parser. **This recommendation was rejected and not applied**; the
+current renderer intentionally retains the literal prefix.
 
 ---
 
@@ -506,22 +509,26 @@ const styles = StyleSheet.create({
 });
 ```
 
-### Diff against the current file
+### Proposed diff against the pre-implementation file
 
-| Style                       | Now (`renderResume.tsx:5-21`) | Recommended                           | Why                                                              |
-| --------------------------- | ----------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
-| `page.padding`              | `32`                          | `40` v / `48` h                       | 32 pt = 0.44″, below MIT's 0.5″ floor and Harvard's 0.75″        |
-| `page.lineHeight`           | _(unset, ≈1.15)_              | `1.35`                                | Below Butterick's 120% floor                                     |
-| `name.fontSize`             | `18`                          | `17`                                  | Cosmetic; frees 1–2 pt and keeps the scale at 1.7×               |
-| `name` weight               | _(regular)_                   | `Helvetica-Bold`                      | The name is currently the only large-but-unbold element          |
-| `sectionTitle.fontSize`     | `12` (1.2×)                   | `10.5` (1.05×)                        | Butterick's smallest-increment rule; caps + bold do the work     |
-| `sectionTitle` case         | mixed                         | `uppercase` + `letterSpacing: 0.8`    | Genre convention (Harvard); tracking per Butterick's caps rule   |
-| `sectionTitle.borderBottom` | `1`, black                    | `borderBottomWidth: 0.75`, `#999999`  | Mid-window of Butterick's 0.5–1 pt; grey reads as structure      |
-| `sectionTitle.marginBottom` | `4`                           | `6`                                   | Heading needs to sit clear of its content                        |
-| `jobEntry.marginTop`        | `12`                          | `9`                                   | Recovers ~9 pt over three roles toward the fill target           |
-| `bullet.marginTop`          | `2`                           | `2.5`                                 | Slight separation at the higher leading                          |
-| `Role: {job.title}` (`:69`) | literal `"Role: "` prefix     | drop the prefix                       | Non-standard vocabulary a title parser may absorb                |
-| first section / first entry | no special case               | `sectionTitleFirst` / `jobEntryFirst` | Avoids double spacing under `contactLine` and under each heading |
+| Style                       | Before                    | Recommended                           | Why                                                              |
+| --------------------------- | ------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
+| `page.padding`              | `32`                      | `40` v / `48` h                       | 32 pt = 0.44″, below MIT's 0.5″ floor and Harvard's 0.75″        |
+| `page.lineHeight`           | _(unset, ≈1.15)_          | `1.35`                                | Below Butterick's 120% floor                                     |
+| `name.fontSize`             | `18`                      | `17`                                  | Cosmetic; frees 1–2 pt and keeps the scale at 1.7×               |
+| `name` weight               | _(regular)_               | `Helvetica-Bold`                      | The name is currently the only large-but-unbold element          |
+| `sectionTitle.fontSize`     | `12` (1.2×)               | `10.5` (1.05×)                        | Butterick's smallest-increment rule; caps + bold do the work     |
+| `sectionTitle` case         | mixed                     | `uppercase` + `letterSpacing: 0.8`    | Genre convention (Harvard); tracking per Butterick's caps rule   |
+| `sectionTitle.borderBottom` | `1`, black                | `borderBottomWidth: 0.75`, `#999999`  | Mid-window of Butterick's 0.5–1 pt; grey reads as structure      |
+| `sectionTitle.marginBottom` | `4`                       | `6`                                   | Heading needs to sit clear of its content                        |
+| `jobEntry.marginTop`        | `12`                      | `9`                                   | Recovers ~9 pt over three roles toward the fill target           |
+| `bullet.marginTop`          | `2`                       | `2.5`                                 | Slight separation at the higher leading                          |
+| `Role: {job.title}` (`:69`) | literal `"Role: "` prefix | drop the prefix                       | Rejected/not applied; the current renderer retains the prefix    |
+| first section / first entry | no special case           | `sectionTitleFirst` / `jobEntryFirst` | Avoids double spacing under `contactLine` and under each heading |
+
+**Implementation outcome:** most of this table landed, with a density ladder replacing several
+single fixed values and horizontal padding now at 60 pt. The literal `Role: ` recommendation is the
+explicit exception: it was rejected and remains in the renderer.
 
 ### What is deliberately _not_ changed
 

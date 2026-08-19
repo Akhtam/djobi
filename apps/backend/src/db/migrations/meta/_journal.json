@@ -29,6 +29,20 @@
       "when": 1787092582829,
       "tag": "0003_abandoned_sir_ram",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787098034078,
+      "tag": "0004_shocking_wind_dancer",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787106583741,
+      "tag": "0005_curved_jackal",
+      "breakpoints": true
     }
   ]
 }

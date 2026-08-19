@@ -1,4 +1,4 @@
-import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * The base profile, stored whole. `data` holds a `Profile` object (from `@djobi/shared`) as
@@ -6,7 +6,7 @@ import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
  * whatever is in the column.
  */
 export const profiles = pgTable('profiles', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: uuid('id').primaryKey(),
   data: jsonb('data').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -18,16 +18,22 @@ export const profiles = pgTable('profiles', {
  * jsonb snapshots (of `JobInfo`/`TailoredResume`/`QuestionAnswer[]` from `@djobi/shared`) so a past
  * application remains readable even if the schema or tailoring prompt changes later.
  */
-export const applications = pgTable('applications', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  company: text('company').notNull(),
-  roleTitle: text('role_title').notNull(),
-  jobUrl: text('job_url').notNull(),
-  jobInfo: jsonb('job_info').notNull(),
-  tailoredResume: jsonb('tailored_resume').notNull(),
-  answers: jsonb('answers').notNull(),
-  source: text('source').notNull().default('autofill'),
-  stage: text('stage').notNull().default('applied'),
-  notes: jsonb('notes').notNull().default([]),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const applications = pgTable(
+  'applications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    company: text('company').notNull(),
+    roleTitle: text('role_title').notNull(),
+    jobUrl: text('job_url').notNull(),
+    jobInfo: jsonb('job_info').notNull(),
+    tailoredResume: jsonb('tailored_resume').notNull(),
+    answers: jsonb('answers').notNull(),
+    source: text('source').notNull().default('autofill'),
+    stage: text('stage').notNull().default('applied'),
+    notes: jsonb('notes').notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('applications_job_url_created_at_idx').on(table.jobUrl, table.createdAt.desc()),
+  ],
+);

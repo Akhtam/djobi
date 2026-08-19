@@ -507,6 +507,12 @@ button:disabled {
   color: var(--text-muted);
 }
 
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .page-text-input {
   width: 100%;
   font: inherit;

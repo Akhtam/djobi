@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockListApplications,
   mockListApplicationsByJobUrl,
+  mockGetApplicationDuplicateSummary,
   mockGetApplicationById,
   mockSaveApplication,
   mockUpdateApplication,
@@ -12,6 +13,7 @@ const {
 } = vi.hoisted(() => ({
   mockListApplications: vi.fn(),
   mockListApplicationsByJobUrl: vi.fn(),
+  mockGetApplicationDuplicateSummary: vi.fn(),
   mockGetApplicationById: vi.fn(),
   mockSaveApplication: vi.fn(),
   mockUpdateApplication: vi.fn(),
@@ -22,6 +24,7 @@ const {
 vi.mock('../db/applicationsRepository.js', () => ({
   listApplications: mockListApplications,
   listApplicationsByJobUrl: mockListApplicationsByJobUrl,
+  getApplicationDuplicateSummary: mockGetApplicationDuplicateSummary,
   getApplicationById: mockGetApplicationById,
   saveApplication: mockSaveApplication,
   updateApplication: mockUpdateApplication,
@@ -60,6 +63,7 @@ describe('GET /applications', () => {
   beforeEach(() => {
     mockListApplications.mockReset();
     mockListApplicationsByJobUrl.mockReset();
+    mockGetApplicationDuplicateSummary.mockReset();
     mockGetApplicationById.mockReset();
   });
 
@@ -81,7 +85,7 @@ describe('GET /applications', () => {
     expect(await res.json()).toEqual([]);
   });
 
-  it('narrows to one posting when asked for a job URL — what the duplicate guard on Analyze reads', async () => {
+  it('returns full matching Applications for a legacy job URL lookup', async () => {
     mockListApplicationsByJobUrl.mockResolvedValue([sampleApplication]);
 
     const res = await app.request(
@@ -90,17 +94,42 @@ describe('GET /applications', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([sampleApplication]);
-    // Matched exactly: the query string can be what tells two postings on one board apart.
     expect(mockListApplicationsByJobUrl).toHaveBeenCalledWith('https://acme.com/jobs/123');
+    expect(mockGetApplicationDuplicateSummary).not.toHaveBeenCalled();
+  });
+
+  it('returns a summary for a compact job URL lookup', async () => {
+    const summary = {
+      count: 1,
+      latest: {
+        id: sampleApplication.id,
+        company: sampleApplication.company,
+        roleTitle: sampleApplication.roleTitle,
+        createdAt: sampleApplication.createdAt,
+      },
+    };
+    mockGetApplicationDuplicateSummary.mockResolvedValue(summary);
+
+    const res = await app.request(
+      `/applications?jobUrl=${encodeURIComponent('https://acme.com/jobs/123')}&response=compact`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(summary);
+    // Matched exactly: the query string can be what tells two postings on one board apart.
+    expect(mockGetApplicationDuplicateSummary).toHaveBeenCalledWith('https://acme.com/jobs/123');
     expect(mockListApplications).not.toHaveBeenCalled();
+    expect(mockListApplicationsByJobUrl).not.toHaveBeenCalled();
   });
 
   it('reports no match for a URL never applied to, rather than falling back to the full list', async () => {
-    mockListApplicationsByJobUrl.mockResolvedValue([]);
+    mockGetApplicationDuplicateSummary.mockResolvedValue({ count: 0, latest: null });
 
-    const res = await app.request('/applications?jobUrl=https%3A%2F%2Facme.com%2Fjobs%2F999');
+    const res = await app.request(
+      '/applications?jobUrl=https%3A%2F%2Facme.com%2Fjobs%2F999&response=compact',
+    );
 
-    expect(await res.json()).toEqual([]);
+    expect(await res.json()).toEqual({ count: 0, latest: null });
     expect(mockListApplications).not.toHaveBeenCalled();
   });
 });
@@ -140,8 +169,24 @@ describe('POST /applications', () => {
     mockSaveApplication.mockReset();
   });
 
-  it('saves a valid new application and returns it', async () => {
-    mockSaveApplication.mockResolvedValue(sampleApplication);
+  it('returns only the generated id for a compact create', async () => {
+    mockSaveApplication.mockResolvedValue({ id: sampleApplication.id });
+
+    const res = await app.request('/applications?response=compact', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(newApplication),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: sampleApplication.id });
+    expect(mockSaveApplication).toHaveBeenCalledWith(newApplication);
+    expect(mockGetApplicationById).not.toHaveBeenCalled();
+  });
+
+  it('returns the full saved Application for a legacy create', async () => {
+    mockSaveApplication.mockResolvedValue({ id: sampleApplication.id });
+    mockGetApplicationById.mockResolvedValue(sampleApplication);
 
     const res = await app.request('/applications', {
       method: 'POST',
@@ -149,17 +194,16 @@ describe('POST /applications', () => {
       body: JSON.stringify(newApplication),
     });
 
-    expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleApplication);
-    expect(mockSaveApplication).toHaveBeenCalledWith(newApplication);
+    expect(mockGetApplicationById).toHaveBeenCalledWith(sampleApplication.id);
   });
 
   it('defaults source, stage and notes when the extension omits them', async () => {
     // The Fill Step posts none of the three; requiring any would 400 every fill.
-    mockSaveApplication.mockResolvedValue(sampleApplication);
+    mockSaveApplication.mockResolvedValue({ id: sampleApplication.id });
     const { source: _source, stage: _stage, notes: _notes, ...withoutDefaults } = newApplication;
 
-    const res = await app.request('/applications', {
+    const res = await app.request('/applications?response=compact', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(withoutDefaults),
@@ -176,9 +220,9 @@ describe('POST /applications', () => {
 
   /** What the panel's Log tab posts: everything else the same, `source` set explicitly. */
   it('keeps an explicit manual source', async () => {
-    mockSaveApplication.mockResolvedValue({ ...sampleApplication, source: 'manual' });
+    mockSaveApplication.mockResolvedValue({ id: sampleApplication.id });
 
-    const res = await app.request('/applications', {
+    const res = await app.request('/applications?response=compact', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ...newApplication, source: 'manual' }),
@@ -214,20 +258,36 @@ describe('PATCH /applications/:id', () => {
 
   beforeEach(() => {
     mockUpdateApplication.mockReset();
+    mockGetApplicationById.mockReset();
   });
 
   it('updates a valid application snapshot and preserves tracking fields', async () => {
-    mockUpdateApplication.mockResolvedValue(sampleApplication);
+    mockUpdateApplication.mockResolvedValue({ id: sampleApplication.id });
 
-    const res = await app.request('/applications/application-1', {
+    const res = await app.request('/applications/application-1?response=compact', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(snapshot satisfies ApplicationSnapshot),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(sampleApplication);
+    expect(await res.json()).toEqual({ id: sampleApplication.id });
     expect(mockUpdateApplication).toHaveBeenCalledWith('application-1', snapshot);
+    expect(mockGetApplicationById).not.toHaveBeenCalled();
+  });
+
+  it('returns the full updated Application for a legacy snapshot update', async () => {
+    mockUpdateApplication.mockResolvedValue({ id: sampleApplication.id });
+    mockGetApplicationById.mockResolvedValue(sampleApplication);
+
+    const res = await app.request('/applications/application-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    });
+
+    expect(await res.json()).toEqual(sampleApplication);
+    expect(mockGetApplicationById).toHaveBeenCalledWith(sampleApplication.id);
   });
 
   it('returns 404 when the application no longer exists', async () => {
@@ -271,13 +331,14 @@ describe('PATCH /applications/:id/stage', () => {
   beforeEach(() => {
     mockUpdateApplicationStage.mockReset();
     mockUpdateApplication.mockReset();
+    mockGetApplicationById.mockReset();
   });
 
   it('moves an application to a new stage', async () => {
-    const moved = { ...sampleApplication, stage: 'interviewing' as const };
+    const moved = { id: sampleApplication.id, stage: 'interviewing' as const };
     mockUpdateApplicationStage.mockResolvedValue(moved);
 
-    const res = await app.request('/applications/application-1/stage', {
+    const res = await app.request('/applications/application-1/stage?response=compact', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ stage: 'interviewing' }),
@@ -286,6 +347,24 @@ describe('PATCH /applications/:id/stage', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual(moved);
     expect(mockUpdateApplicationStage).toHaveBeenCalledWith('application-1', 'interviewing');
+    expect(mockGetApplicationById).not.toHaveBeenCalled();
+  });
+
+  it('returns the full updated Application for a legacy stage change', async () => {
+    mockUpdateApplicationStage.mockResolvedValue({
+      id: sampleApplication.id,
+      stage: 'interviewing',
+    });
+    mockGetApplicationById.mockResolvedValue({ ...sampleApplication, stage: 'interviewing' });
+
+    const res = await app.request('/applications/application-1/stage', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'interviewing' }),
+    });
+
+    await expect(res.json()).resolves.toEqual({ ...sampleApplication, stage: 'interviewing' });
+    expect(mockGetApplicationById).toHaveBeenCalledWith(sampleApplication.id);
   });
 
   it('rejects a stage outside the enum rather than writing it', async () => {
@@ -312,9 +391,9 @@ describe('PATCH /applications/:id/stage', () => {
   });
 
   it('does not reach the snapshot route, whose body would reject a bare stage', async () => {
-    mockUpdateApplicationStage.mockResolvedValue(sampleApplication);
+    mockUpdateApplicationStage.mockResolvedValue({ id: sampleApplication.id, stage: 'applied' });
 
-    await app.request('/applications/application-1/stage', {
+    await app.request('/applications/application-1/stage?response=compact', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ stage: 'applied' }),
@@ -327,23 +406,22 @@ describe('PATCH /applications/:id/stage', () => {
 describe('POST /applications/:id/notes', () => {
   beforeEach(() => {
     mockAddApplicationNote.mockReset();
+    mockGetApplicationById.mockReset();
   });
 
   it('appends a note', async () => {
     const withNote = {
-      ...sampleApplication,
-      notes: [
-        {
-          id: 'note-1',
-          category: 'technical' as const,
-          text: 'Asked about idempotency keys.',
-          createdAt: '2026-03-18T14:14:00.000Z',
-        },
-      ],
+      id: sampleApplication.id,
+      note: {
+        id: 'note-1',
+        category: 'technical' as const,
+        text: 'Asked about idempotency keys.',
+        createdAt: '2026-03-18T14:14:00.000Z',
+      },
     };
     mockAddApplicationNote.mockResolvedValue(withNote);
 
-    const res = await app.request('/applications/application-1/notes', {
+    const res = await app.request('/applications/application-1/notes?response=compact', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ category: 'technical', text: 'Asked about idempotency keys.' }),
@@ -355,12 +433,41 @@ describe('POST /applications/:id/notes', () => {
       category: 'technical',
       text: 'Asked about idempotency keys.',
     });
+    expect(mockGetApplicationById).not.toHaveBeenCalled();
+  });
+
+  it('returns the full updated Application for a legacy note append', async () => {
+    const note = {
+      id: 'note-1',
+      category: 'technical' as const,
+      text: 'Asked about idempotency keys.',
+      createdAt: '2026-03-18T14:14:00.000Z',
+    };
+    mockAddApplicationNote.mockResolvedValue({ id: sampleApplication.id, note });
+    mockGetApplicationById.mockResolvedValue({ ...sampleApplication, notes: [note] });
+
+    const res = await app.request('/applications/application-1/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'technical', text: note.text }),
+    });
+
+    await expect(res.json()).resolves.toEqual({ ...sampleApplication, notes: [note] });
+    expect(mockGetApplicationById).toHaveBeenCalledWith(sampleApplication.id);
   });
 
   it('ignores a client-supplied id and createdAt — history the sender chose is not history', async () => {
-    mockAddApplicationNote.mockResolvedValue(sampleApplication);
+    mockAddApplicationNote.mockResolvedValue({
+      id: sampleApplication.id,
+      note: {
+        id: 'note-2',
+        category: 'general',
+        text: 'Recruiter call.',
+        createdAt: '2026-03-18T14:14:00.000Z',
+      },
+    });
 
-    await app.request('/applications/application-1/notes', {
+    await app.request('/applications/application-1/notes?response=compact', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

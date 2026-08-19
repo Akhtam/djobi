@@ -1,4 +1,4 @@
-import type { Profile, TailoredResume } from '@djobi/shared';
+import type { RenderResumePdfProfile, TailoredResume } from '@djobi/shared';
 import { Document, Page, renderToBuffer, StyleSheet, Text, View } from '@react-pdf/renderer';
 
 /**
@@ -44,7 +44,7 @@ interface Density {
  * is no sourced room left, which is exactly why the ladder stops there rather than continuing to
  * shrink until something fits.
  */
-export const DENSITY_STEPS: Density[] = [
+export const DENSITY_STEPS: readonly [Density, ...Density[]] = [
   { lineHeight: 1.45, pagePaddingVertical: 40, sectionGap: 18, entryGap: 11, bulletGap: 2.5 },
   { lineHeight: 1.35, pagePaddingVertical: 40, sectionGap: 14, entryGap: 9, bulletGap: 2 },
   { lineHeight: 1.3, pagePaddingVertical: 38, sectionGap: 12, entryGap: 8, bulletGap: 1.5 },
@@ -113,7 +113,7 @@ const createStyles = (density: Density) =>
   });
 
 /** Contact-info line: email, phone, location, and any non-null links, joined with ` · `. */
-function contactLine(profile: Profile): string {
+function contactLine(profile: RenderResumePdfProfile): string {
   return [
     profile.email,
     profile.phone,
@@ -127,15 +127,15 @@ function contactLine(profile: Profile): string {
 }
 
 /**
- * The resume PDF layout: contact info + education from {@link Profile} (these don't vary per
- * job), skills/work-experience from {@link TailoredResume} (these do).
+ * The resume PDF layout: contact info + education from {@link RenderResumePdfProfile} (these don't
+ * vary per job), skills/work-experience from {@link TailoredResume} (these do).
  */
 function ResumeDocument({
   profile,
   tailoredResume,
   density,
 }: {
-  profile: Profile;
+  profile: RenderResumePdfProfile;
   tailoredResume: TailoredResume;
   density: Density;
 }) {
@@ -220,13 +220,13 @@ export function pageCount(pdf: Buffer): number {
  * @returns The rendered PDF as a `Buffer`.
  */
 export async function renderResumePdf(
-  profile: Profile,
+  profile: RenderResumePdfProfile,
   tailoredResume: TailoredResume,
   /**
-   * The ladder to walk. Only a test passes this — narrowing it to a single step is how a test
-   * shows that a given resume *needs* the compression, rather than merely fitting anyway.
+   * The non-empty ladder to walk. Only a test passes this — narrowing it to a single step is how a
+   * test shows that a given resume *needs* the compression, rather than merely fitting anyway.
    */
-  densitySteps: Density[] = DENSITY_STEPS,
+  densitySteps: readonly [Density, ...Density[]] = DENSITY_STEPS,
 ): Promise<Buffer> {
   let rendered: Buffer | null = null;
 
@@ -237,6 +237,6 @@ export async function renderResumePdf(
     if (pageCount(rendered) <= 1) return rendered;
   }
 
-  // Non-null: the ladder is never empty, so the loop above always rendered at least once.
+  // Non-null: the non-empty tuple guarantees the loop rendered at least once.
   return rendered as Buffer;
 }

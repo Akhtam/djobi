@@ -12,8 +12,9 @@ server, a persisted history of past applications, and a web dashboard for tracki
   resume PDF rendering. Runs on `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
-  an options page (profile setup), and a side panel (paste/review/fill). There is no popup — the
-  toolbar icon opens the side panel, which survives tab switches and clicking away.
+  an options page (profile setup), and a side panel with **Autofill** (paste/review/fill) and **Log**
+  tabs. There is no popup — the toolbar icon opens the side panel, which survives tab switches and
+  clicking away.
 - `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications and
   tracking each one's stage and notes. A separate app rather than an extension page: it needs no
   `chrome.*` API, so it talks to the backend over CORS like any other origin.
@@ -102,13 +103,19 @@ the side panel:
    panel says so and spends no LLM calls until you choose **Analyze and apply anyway**
 3. **Review and edit** every drafted answer. Nothing is filled until you say so
 4. **Fill form** writes the reviewed values into the page and attaches the generated resume PDF. It
-   reports how many fields the page actually kept, and lists any required field it couldn't resolve
-5. **Save application** records what went out — job info, tailored resume and answers — as a
-   `draft` application. Saving is explicit and separate from filling; re-saving after another edit
-   or fill updates the same record rather than creating a second one
+   reports verified counts and unresolved required fields when the content script responds. If no
+   frame responds, attempted counts are retained but the result is marked **Fill unverified**
+5. **Save application** records the current job info, tailored resume and answers. Saving is explicit
+   and separate from filling; re-saving after another edit or fill updates the same record rather
+   than creating a second one. Applications have no draft/submitted status
 
-Nothing is submitted to the employer at any point. Analysis, filling and saving all run in the
-background service worker, so closing the panel mid-run doesn't lose them.
+djobi never submits the employer's form; the candidate does that on the ATS. Saving does not verify
+that submission happened. Analysis, filling and saving all run in the background service worker, so
+closing the panel mid-run doesn't lose them.
+
+Use the **Log** tab for an application made without djobi. Its URL field follows the active tab until
+you edit it; it extracts Job Info from a pasted posting and saves a manual Application without
+detecting or writing the page.
 
 The panel and options page share a light/dark theme, toggled from the icon in either header and
 persisted in `chrome.storage.local`.
@@ -121,7 +128,7 @@ pnpm dev:dashboard
 
 Serves the dashboard on `http://localhost:5174`. With the backend running, it lists every saved
 application (filter by stage, search by title or company) and opens each one to edit its stage,
-append notes, and review the job info, tailored resume and drafted answers that went out. Notes are
+append notes, and review the saved job info, tailored resume and drafted answers. Notes are
 append-only. The backend's CORS allowlist covers the dashboard's dev origins only — see
 `apps/backend/README.md`.
 

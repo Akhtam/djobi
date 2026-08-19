@@ -15,20 +15,23 @@
  * the panel against nothing. The guarantee this module exists to give is only as wide as the set of
  * call sites that go through it, so the Profile routes live here too and the claim above holds.
  */
-import type {
-  AnswerQuestionsRequest,
-  Application,
-  ApplicationSnapshot,
-  ExtractJobRequest,
-  JobInfo,
-  NewApplicationRequest,
-  Profile,
-  QuestionAnswer,
-  QuestionForModel,
-  RenderResumePdfRequest,
-  SaveProfileRequest,
-  TailorResumeRequest,
-  TailoredResume,
+import {
+  ApplicationWriteResultSchema,
+  DuplicateApplicationSummarySchema,
+  type AnswerQuestionsRequest,
+  type ApplicationSnapshot,
+  type ApplicationWriteResult,
+  type DuplicateApplicationSummary,
+  type ExtractJobRequest,
+  type JobInfo,
+  type NewApplicationRequest,
+  type Profile,
+  type QuestionAnswer,
+  type QuestionForModel,
+  type RenderResumePdfRequest,
+  type SaveProfileRequest,
+  type TailorResumeRequest,
+  type TailoredResume,
 } from '@djobi/shared';
 import { callBackend, callBackendBinary } from './callBackend';
 
@@ -46,10 +49,10 @@ export interface BackendClient {
   getProfile(): Promise<Profile | null>;
   /** Stores the Profile whole and resolves with what was stored. */
   saveProfile(profile: Profile): Promise<Profile>;
-  saveApplication(payload: NewApplicationRequest): Promise<Application>;
-  updateApplication(id: string, payload: ApplicationSnapshot): Promise<Application>;
-  /** Past applications to this exact job URL, most recent first. Empty when it's a new posting. */
-  findApplicationsByJobUrl(jobUrl: string): Promise<Application[]>;
+  saveApplication(payload: NewApplicationRequest): Promise<ApplicationWriteResult>;
+  updateApplication(id: string, payload: ApplicationSnapshot): Promise<ApplicationWriteResult>;
+  /** Count and newest metadata for Applications saved against this exact job URL. */
+  findApplicationDuplicates(jobUrl: string): Promise<DuplicateApplicationSummary>;
 }
 
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
@@ -58,18 +61,33 @@ export const httpBackendClient: BackendClient = {
     callBackend('/extract-job', { jobDescription } satisfies ExtractJobRequest),
 
   tailorResume: (profile, jobInfo) =>
-    callBackend('/tailor-resume', { profile, jobInfo } satisfies TailorResumeRequest),
+    callBackend('/tailor-resume', {
+      profile: { workExperience: profile.workExperience, skills: profile.skills },
+      jobInfo,
+    } satisfies TailorResumeRequest),
 
   answerQuestions: (profile, jobInfo, questions) =>
     callBackend('/answer-questions', {
-      profile,
+      profile: {
+        workExperience: profile.workExperience,
+        education: profile.education,
+        skills: profile.skills,
+        stories: profile.stories,
+      },
       jobInfo,
       questions,
     } satisfies AnswerQuestionsRequest),
 
   renderResumePdf: (profile, tailoredResume) =>
     callBackendBinary('/render-resume-pdf', {
-      profile,
+      profile: {
+        fullName: profile.fullName,
+        email: profile.email,
+        phone: profile.phone,
+        location: profile.location,
+        links: profile.links,
+        education: profile.education,
+      },
       tailoredResume,
     } satisfies RenderResumePdfRequest),
 
@@ -77,15 +95,26 @@ export const httpBackendClient: BackendClient = {
 
   saveProfile: (profile) => callBackend<Profile>('/profile', profile satisfies SaveProfileRequest),
 
-  saveApplication: (payload) => callBackend<Application>('/applications', payload),
+  saveApplication: async (payload) =>
+    ApplicationWriteResultSchema.parse(
+      await callBackend<ApplicationWriteResult>('/applications?response=compact', payload),
+    ),
 
-  updateApplication: (id, payload) =>
-    callBackend<Application>(`/applications/${encodeURIComponent(id)}`, payload, 'PATCH'),
+  updateApplication: async (id, payload) =>
+    ApplicationWriteResultSchema.parse(
+      await callBackend<ApplicationWriteResult>(
+        `/applications/${encodeURIComponent(id)}?response=compact`,
+        payload,
+        'PATCH',
+      ),
+    ),
 
-  findApplicationsByJobUrl: (jobUrl) =>
-    callBackend<Application[]>(
-      `/applications?jobUrl=${encodeURIComponent(jobUrl)}`,
-      undefined,
-      'GET',
+  findApplicationDuplicates: async (jobUrl) =>
+    DuplicateApplicationSummarySchema.parse(
+      await callBackend<DuplicateApplicationSummary>(
+        `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
+        undefined,
+        'GET',
+      ),
     ),
 };

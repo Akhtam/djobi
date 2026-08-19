@@ -19,11 +19,15 @@ is written against the interface, never against `fetch`.
 
 `httpDashboardClient` is what the app runs on, against three backend routes:
 
-| Call               | Route                           |
-| ------------------ | ------------------------------- |
-| `listApplications` | `GET /applications`             |
-| `updateStage`      | `PATCH /applications/:id/stage` |
-| `addNote`          | `POST /applications/:id/notes`  |
+| Call               | Route                                            |
+| ------------------ | ------------------------------------------------ |
+| `listApplications` | `GET /applications`                              |
+| `updateStage`      | `PATCH /applications/:id/stage?response=compact` |
+| `addNote`          | `POST /applications/:id/notes?response=compact`  |
+
+The write calls explicitly request compact acknowledgements because the store already has the full
+Application and reconciles only the changed Stage or appended Note. Omitting the query parameter is
+reserved for older clients that expect the full updated Application.
 
 `createFixtureDashboardClient` serves `src/lib/fixtures.ts` from memory and applies writes to its
 own copy. It is **test-only** — `main.tsx` does not import it, and there is no runtime flag to

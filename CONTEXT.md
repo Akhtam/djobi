@@ -7,7 +7,7 @@ A Chrome extension that autofills job applications on ATS platforms with an AI-t
 ### Application pipeline
 
 **Application Pipeline**:
-The end-to-end flow that turns a pasted Job Description plus a detected form into a filled, saved Application — the Analysis Step followed by the Fill Step.
+The end-to-end flow that turns a pasted Job Description plus a detected form into a filled, saved Application — the Analysis Step, Fill Step and explicit Save Step.
 _Avoid_: autofill process, flow
 
 **Job Description**:
@@ -19,19 +19,19 @@ Extracting structured Job Info from the pasted Job Description, then tailoring a
 _Avoid_: extraction (too narrow — covers only the first half)
 
 **Fill Step**:
-Turning Analysis Step results into a filled page: generating the Tailored Resume file, filling the page's form fields, and attaching the resume. It reports back only what the page verifiably kept.
+Turning Analysis Step results into a filled page: generating the Tailored Resume file, filling the page's form fields, and attaching the resume. When the content script responds, it reports what the page verifiably kept; when no frame responds, attempted counts remain available but the outcome is explicitly unverified.
 _Avoid_: submission (nothing is sent to the employer by this step), saving (a separate, explicit step — see Save Step)
 
 **Save Step**:
-Recording a filled run as an Application, on an explicit action after the Fill Step. Creates the record the first time and updates that same record on every later save for the run, so re-filling or re-editing doesn't leave duplicates.
-_Avoid_: submission (nothing is sent to the employer by this step — the candidate submits on the ATS themselves, and saves afterwards)
+Recording the current run snapshot as an Application, on an explicit action after the Fill Step. Creates the record the first time and updates that same record on every later save for the run, so re-filling or re-editing doesn't leave duplicates. It neither submits the employer's form nor proves that the candidate submitted it separately.
+_Avoid_: submission (nothing is sent to the employer or verified by this step)
 
 **Duplicate Guard**:
 The check that runs before the Analysis Step: if an Application already exists for this exact job URL, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
 _Avoid_: deduplication (nothing is merged or removed)
 
 **Log Tab**:
-The panel's second flow, alongside the Application Pipeline: records an Application the candidate made _themselves_ — their own resume, or LinkedIn Easy Apply — so it lands in the same history. Deliberately not a step of the pipeline and not a mode toggle on it: it shares no tracked tab, no Detected Fields and no run state. It extracts Job Info from a pasted Job Description and writes an Application with Application Source `manual`, running the same Duplicate Guard lookup first — warning, but never blocking.
+The panel's second flow, alongside the Application Pipeline: records an Application the candidate made _themselves_ — their own resume, or LinkedIn Easy Apply — so it lands in the same history. Deliberately not a step of the pipeline and not a mode toggle on it: it has no Detected Fields, page writes or pipeline run state. Its URL field follows the active tab until the candidate edits it. It extracts Job Info from a pasted Job Description and writes an Application with Application Source `manual`, running the same Duplicate Guard lookup first — warning, but never blocking.
 _Avoid_: manual mode, log mode (it is a tab; a mode would imply the pipeline has two meanings)
 
 ### Application data
@@ -74,7 +74,7 @@ _Avoid_: job id (ambiguous with the Application's own id), requisition id (the e
 internal reference, e.g. `JR101359`)
 
 **Application**:
-One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a Stage and a Notes log. Saving is a manual step the candidate takes after actually submitting, so a stored Application is a submitted one; there is no separate "was this sent" flag.
+One persisted record of an attempt to apply to a job — the saved Job Info, Tailored Resume, and Question Answers, plus a Stage and a Notes log. There is no draft/submitted status or separate "was this sent" flag, and the act of saving does not prove employer submission.
 _Avoid_: job application (ambiguous with the act of applying itself)
 
 **Application Source**:
@@ -92,7 +92,7 @@ _Avoid_: comment, note field (there is no single overwritable text field)
 ### Tracking
 
 **Dashboard**:
-The web app where the candidate reviews saved Applications and tracks each one's Stage and Notes. A separate origin talking to the same backend, not an extension page — it needs no `chrome.*` API and no open ATS tab. Reads and edits what the Application Pipeline already saved; it never runs a step of that pipeline.
+The web app where the candidate reviews saved Applications and tracks each one's Stage and Notes. A separate origin talking to the same backend, not an extension page — it needs no `chrome.*` API and no open ATS tab. Reads and edits what the Application Pipeline or Log Tab already saved; it never runs a step of that pipeline.
 _Avoid_: admin, tracker page, extension dashboard (it is neither an extension surface nor an administrative one)
 
 **In Progress**:

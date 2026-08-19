@@ -5,12 +5,12 @@ import type {
   QuestionAnswer,
   TailoredResume,
 } from '@djobi/shared';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAnalysis, runFill, type PipelineDeps } from '../background/applicationPipeline';
 import { callBackend, callBackendBinary } from '../lib/callBackend';
 import { fakeSessionStorage, type FakeSessionStorage } from '../lib/fakeSessionStorage';
-import { getPipelineRun, patchPipelineRun, reportDetectedPage } from '../lib/tabStore';
+import { getPipelineRun, patchPipelineRun, reportDetectedPage, storageKey } from '../lib/tabStore';
 import { App } from './App';
 
 // The panel's backend seam: the profile it boots with, and the resume PDF it previews on demand.
@@ -97,6 +97,8 @@ interface StubOptions {
   tabUrl: string | null;
   tabId?: number;
   profile: Profile | null;
+  /** Fail successive profile loads; `null` resolves with `profile`. The last entry repeats. */
+  profileFailures?: (string | null)[];
   jobPageData?: { fields: DetectedField[] } | null;
   /** Share one `chrome.storage.session` across multiple `stubChrome`/`render` calls — simulates
    *  the panel closing and reopening (unmount + fresh `render`), both of which see the same
@@ -138,6 +140,7 @@ function nth(entries: (string | null)[] | undefined, index: number): string | nu
  */
 async function stubChrome(options: StubOptions) {
   const openOptionsPage = vi.fn();
+  let profileCallIndex = 0;
   let analysisCallIndex = 0;
   let fillCallIndex = 0;
   // Created up front, not when the Fill Step reaches it: a test clicks and then releases within the
@@ -147,11 +150,12 @@ async function stubChrome(options: StubOptions) {
     releaseFill = resolve;
   });
 
-  vi.mocked(callBackend).mockImplementation((path) =>
-    path === '/profile'
-      ? Promise.resolve(options.profile)
-      : Promise.reject(new Error(`unexpected callBackend path: ${path}`)),
-  );
+  vi.mocked(callBackend).mockImplementation((path) => {
+    if (path !== '/profile')
+      return Promise.reject(new Error(`unexpected callBackend path: ${path}`));
+    const failure = nth(options.profileFailures, profileCallIndex++);
+    return failure ? Promise.reject(new Error(failure)) : Promise.resolve(options.profile);
+  });
 
   const deps: PipelineDeps = {
     backend: {
@@ -173,8 +177,21 @@ async function stubChrome(options: StubOptions) {
           : Promise.resolve({ id: 'application-1' } as never);
       },
       updateApplication: () => Promise.resolve({ id: 'application-1' } as never),
-      findApplicationsByJobUrl: () =>
-        Promise.resolve((options.existingApplications ?? []) as never),
+      findApplicationDuplicates: () => {
+        const existing = options.existingApplications ?? [];
+        const latest = existing[0];
+        return Promise.resolve({
+          count: existing.length,
+          latest: latest
+            ? {
+                id: latest.id,
+                company: latest.company,
+                roleTitle: latest.roleTitle,
+                createdAt: latest.createdAt,
+              }
+            : null,
+        });
+      },
     },
     page: {
       fill: (_tabId, command) => {
@@ -212,6 +229,12 @@ async function stubChrome(options: StubOptions) {
       } else if (message.type === 'START_SAVE_APPLICATION') {
         void import('../background/applicationPipeline').then(({ runSaveApplication }) =>
           runSaveApplication(message.tabId as number, deps),
+        );
+      } else if (message.type === 'UPDATE_RUN') {
+        void patchPipelineRun(
+          message.tabId as number,
+          message.runId as string,
+          message.updates as Parameters<typeof patchPipelineRun>[2],
         );
       }
       callback(undefined);
@@ -271,6 +294,16 @@ function callsOfType(sendMessage: ReturnType<typeof vi.fn>, type: string) {
   return sendMessage.mock.calls.filter(([message]) => message?.type === type);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('panel App', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -299,6 +332,27 @@ describe('panel App', () => {
     expect(openOptionsPage).toHaveBeenCalled();
   });
 
+  it('leaves loading after a profile request fails and retries successfully', async () => {
+    const { openOptionsPage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      profileFailures: ['backend unavailable', null],
+    });
+
+    render(<App />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn't load your profile/i);
+    expect(screen.getByRole('button', { name: 'Open profile settings' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile settings' }));
+    expect(openOptionsPage).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading profile' }));
+
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeInTheDocument();
+    expect(callBackend).toHaveBeenCalledTimes(2);
+  });
+
   it('shows a paste box and an "Analyze" button immediately on open, even before/without any job page being detected', async () => {
     const { sendMessage } = await stubChrome({
       tabUrl: 'https://example.com',
@@ -310,6 +364,7 @@ describe('panel App', () => {
 
     await screen.findByRole('button', { name: 'Analyze' });
     expect(screen.getByPlaceholderText(/paste the job description/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Job description')).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 
@@ -418,7 +473,7 @@ describe('panel App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
 
-    expect(screen.getByDisplayValue(JOB_DESCRIPTION)).toBeInTheDocument();
+    expect(screen.getByLabelText('Job description')).toHaveValue(JOB_DESCRIPTION);
   });
 
   it('disables "Re-analyze" when the review-screen editor is cleared to empty, rather than silently analyzing blank text', async () => {
@@ -474,6 +529,7 @@ describe('panel App', () => {
     await clickAnalyze();
 
     await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     await screen.findByText('Senior Engineer at Acme');
@@ -794,6 +850,31 @@ describe('panel App', () => {
     expect(screen.queryByText('Senior Engineer at Acme')).not.toBeInTheDocument();
   });
 
+  it('removes the old review and Fill/Save controls immediately on same-tab navigation, before storage cleanup resolves', async () => {
+    const { onUpdated, sessionStorage } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+    render(<App />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fill form' }));
+    await screen.findByRole('button', { name: 'Save application' });
+
+    const storageClear = deferred<void>();
+    sessionStorage.session.remove = vi.fn(() => storageClear.promise);
+    void sessionStorage.session.remove(storageKey(1));
+    const [handleUpdated] = onUpdated.addListener.mock.calls[0];
+    act(() => handleUpdated(1, { url: 'https://boards.greenhouse.io/acme/jobs/2' }));
+
+    expect(screen.queryByText('Senior Engineer at Acme')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Fill form/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save application' })).not.toBeInTheDocument();
+    expect(sessionStorage.session.remove).not.toHaveResolved();
+    storageClear.resolve();
+  });
+
   it('checkpoints review progress (including edited answers) to the pipeline run store, so a reopened panel on the same tab restores it instead of starting over', async () => {
     const sessionStorage = fakeSessionStorage();
     await stubChrome({
@@ -830,6 +911,29 @@ describe('panel App', () => {
     expect(callsOfType(secondSendMessage, 'START_ANALYSIS')).toHaveLength(0); // rehydrated, not re-analyzed
   });
 
+  it('disables persisted-data editors while saving so the saved snapshot cannot lag the display', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      tabId: 1,
+    });
+    render(<App />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fill form' }));
+    await screen.findByRole('button', { name: 'Save application' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    const current = await getPipelineRun(1);
+
+    await act(async () => {
+      await patchPipelineRun(1, current!.runId, { status: 'saving' });
+    });
+
+    expect(screen.getByDisplayValue('Draft answer.')).toBeDisabled();
+    expect(screen.getByLabelText('Job description')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Re-analyze' })).toBeDisabled();
+  });
+
   it('reflects a pipeline run update written from elsewhere (e.g. the background service worker) via chrome.storage.onChanged, while the panel stays mounted', async () => {
     const sessionStorage = fakeSessionStorage();
     await stubChrome({
@@ -847,7 +951,8 @@ describe('panel App', () => {
 
     // Simulates background/applicationPipeline.ts patching the store directly, independent of this
     // mounted panel's own writes.
-    await patchPipelineRun(1, {
+    const run = await getPipelineRun(1);
+    await patchPipelineRun(1, run!.runId, {
       answers: [{ ...answers[0], answer: 'Updated from elsewhere.' }],
     });
 
@@ -875,7 +980,14 @@ describe('panel App', () => {
     const frame = await screen.findByTitle('Tailored resume');
     expect(frame).toHaveAttribute('src', 'blob:resume-preview');
     expect(callBackendBinary).toHaveBeenCalledWith('/render-resume-pdf', {
-      profile,
+      profile: {
+        fullName: profile.fullName,
+        email: profile.email,
+        phone: profile.phone,
+        location: profile.location,
+        links: profile.links,
+        education: profile.education,
+      },
       tailoredResume,
     });
   });
@@ -888,7 +1000,87 @@ describe('panel App', () => {
     await clickAnalyze();
     fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
 
-    await screen.findByText(/couldn't render/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't render/i);
+  });
+
+  it('ignores a pending resume preview completion after same-tab navigation', async () => {
+    const preview = deferred<ArrayBuffer>();
+    vi.mocked(callBackendBinary).mockReturnValue(preview.promise);
+    const { onUpdated } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    const [handleUpdated] = onUpdated.addListener.mock.calls[0];
+    act(() => handleUpdated(1, { url: 'https://boards.greenhouse.io/acme/jobs/2' }));
+    await act(async () => preview.resolve(new Uint8Array([37, 80, 68, 70]).buffer));
+
+    expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('revokes a preview blob if it becomes stale while the completion is being applied', async () => {
+    vi.mocked(callBackendBinary).mockResolvedValue(new Uint8Array([37, 80, 68, 70]).buffer);
+    const { onUpdated } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    const [handleUpdated] = onUpdated.addListener.mock.calls[0];
+    vi.mocked(URL.createObjectURL).mockImplementation(() => {
+      handleUpdated(1, { url: 'https://boards.greenhouse.io/acme/jobs/2' });
+      return 'blob:stale-resume-preview';
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+
+    await vi.waitFor(() =>
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:stale-resume-preview'),
+    );
+    expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
+  });
+
+  it('ignores a pending resume preview rejection after navigation', async () => {
+    const preview = deferred<ArrayBuffer>();
+    vi.mocked(callBackendBinary).mockReturnValue(preview.promise);
+    const { onUpdated } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    render(<App />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    const [handleUpdated] = onUpdated.addListener.mock.calls[0];
+    act(() => handleUpdated(1, { url: 'https://boards.greenhouse.io/acme/jobs/2' }));
+    await act(async () => preview.reject(new Error('stale failure')));
+
+    expect(screen.queryByText(/couldn't render/i)).not.toBeInTheDocument();
+  });
+
+  it('ignores a pending resume preview completion after unmount', async () => {
+    const preview = deferred<ArrayBuffer>();
+    vi.mocked(callBackendBinary).mockReturnValue(preview.promise);
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+    });
+
+    const panel = render(<App />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    panel.unmount();
+    await act(async () => preview.resolve(new Uint8Array([37, 80, 68, 70]).buffer));
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   /**

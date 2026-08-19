@@ -1,0 +1,1 @@
+CREATE INDEX "applications_job_url_created_at_idx" ON "applications" USING btree ("job_url","created_at" DESC NULLS LAST);

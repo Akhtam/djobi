@@ -4,6 +4,7 @@ import { reviewOf } from './runReview';
 
 function run(overrides: Partial<PipelineRunState> = {}): PipelineRunState {
   return {
+    runId: 'run-1',
     status: 'review',
     tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
     jobPageData: { fields: [] },
