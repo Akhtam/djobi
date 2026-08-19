@@ -12,7 +12,8 @@ export const profiles = pgTable('profiles', {
 });
 
 /**
- * One row per job the extension has autofilled. `company`/`roleTitle`/`jobUrl` are plain columns
+ * One row per job applied to — autofilled by the extension, or logged by hand afterwards (see
+ * `source`). `company`/`roleTitle`/`jobUrl` are plain columns
  * so they stay queryable without reaching into JSON; `jobInfo`/`tailoredResume`/`answers` are
  * jsonb snapshots (of `JobInfo`/`TailoredResume`/`QuestionAnswer[]` from `@djobi/shared`) so a past
  * application remains readable even if the schema or tailoring prompt changes later.
@@ -25,6 +26,7 @@ export const applications = pgTable('applications', {
   jobInfo: jsonb('job_info').notNull(),
   tailoredResume: jsonb('tailored_resume').notNull(),
   answers: jsonb('answers').notNull(),
+  source: text('source').notNull().default('autofill'),
   stage: text('stage').notNull().default('applied'),
   notes: jsonb('notes').notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

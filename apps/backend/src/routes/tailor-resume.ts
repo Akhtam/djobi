@@ -1,7 +1,10 @@
-import { TailorResumeRequestSchema, type Application } from '@djobi/shared';
+import { TailorResumeRequestSchema } from '@djobi/shared';
 import { Hono } from 'hono';
 import { parseBody } from '../requestBody.js';
-import { listApplicationsByCompany } from '../db/applicationsRepository.js';
+import {
+  listPriorApplicationsByCompany,
+  type PriorApplication,
+} from '../db/applicationsRepository.js';
 import { tailorResume } from '../llm/tailorResume.js';
 
 /**
@@ -9,7 +12,7 @@ import { tailorResume } from '../llm/tailorResume.js';
  * `tailorResume` can vary its phrasing instead of repeating a previous resume verbatim. `undefined`
  * when there's no history with this company yet.
  */
-function buildPriorApplicationsSummary(pastApplications: Application[]): string | undefined {
+function buildPriorApplicationsSummary(pastApplications: PriorApplication[]): string | undefined {
   if (pastApplications.length === 0) return undefined;
   return pastApplications
     .map((application) => `${application.roleTitle} (${application.createdAt.slice(0, 10)})`)
@@ -23,7 +26,7 @@ tailorResumeRoute.post('/tailor-resume', async (c) => {
   const parsed = await parseBody(c, TailorResumeRequestSchema);
 
   const { profile, jobInfo } = parsed;
-  const pastApplications = await listApplicationsByCompany(jobInfo.company);
+  const pastApplications = await listPriorApplicationsByCompany(jobInfo.company);
   const priorApplicationsSummary = buildPriorApplicationsSummary(pastApplications);
   const tailoredResume = await tailorResume(profile, jobInfo, priorApplicationsSummary);
   return c.json(tailoredResume);

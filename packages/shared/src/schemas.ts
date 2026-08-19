@@ -188,6 +188,22 @@ export const TailoredResumeSchema = z.object({
 export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
 
 /**
+ * The base profile as a {@link TailoredResumeSchema} — the resume with no tailoring applied.
+ *
+ * This is a projection, not a conversion: `TailoredResume` is defined as a subset of `Profile`, and
+ * `WorkExperienceSchema` is the same shape as the entries in `TailoredResume.workExperience`, so
+ * every field already lines up. Nothing is reworded, reordered or dropped.
+ *
+ * Exists for manually logged applications (`source: 'manual'`), where the candidate applied with
+ * their own resume and there is no tailored one to store — but the dashboard's detail view renders
+ * `Application.tailoredResume` regardless. Storing the base profile keeps it working without a
+ * nullable field, and `source` is what tells it which of the two it's looking at.
+ */
+export function baseResumeOf(profile: Profile): TailoredResume {
+  return { skills: profile.skills, workExperience: profile.workExperience };
+}
+
+/**
  * One drafted answer to one detected `question` field, produced by `answerQuestions`
  * (see `apps/backend/src/llm/answerQuestions.ts`).
  */
@@ -270,9 +286,30 @@ export const NewNoteSchema = NoteSchema.omit({ id: true, createdAt: true });
 export type NewNote = z.infer<typeof NewNoteSchema>;
 
 /**
- * One persisted `applications` row: a completed (or in-progress) autofill, keyed to the job
- * posting, so past applications can be referenced later (e.g. by `tailorResume`'s
- * `priorApplicationsSummary`).
+ * How an application record came to exist. `'autofill'` is a run the extension analyzed, tailored
+ * and filled; `'manual'` is one the candidate applied to themselves — uploading a resume by hand or
+ * going through LinkedIn Easy Apply — and logged afterwards so it still shows up in the history.
+ *
+ * A manual entry is a real application, not a lesser one: it carries the same extracted `jobInfo`,
+ * and its `tailoredResume` is the base profile projected into that shape rather than an LLM's
+ * output. This field exists because those two are otherwise indistinguishable once stored, and the
+ * difference matters when reading the history back — "djobi wrote this resume" and "this is just my
+ * profile" are not the same claim.
+ *
+ * Defaults to `'autofill'` at every write boundary, so the extension's existing save path (which
+ * posts no `source`) keeps working unchanged.
+ */
+export const ApplicationSourceSchema = z.enum(['autofill', 'manual']);
+/** Inferred type of {@link ApplicationSourceSchema}. */
+export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
+
+/**
+ * One persisted `applications` row, keyed to the job posting, so past applications can be
+ * referenced later (e.g. by `tailorResume`'s `priorApplicationsSummary`).
+ *
+ * Either a completed (or in-progress) autofill run, or an application the candidate made by hand
+ * and logged afterwards — see {@link ApplicationSourceSchema}. The two are the same record; only
+ * `source` and the provenance of `tailoredResume` differ.
  */
 export const ApplicationSchema = z.object({
   id: z.string(),
@@ -282,6 +319,7 @@ export const ApplicationSchema = z.object({
   jobInfo: JobInfoSchema,
   tailoredResume: TailoredResumeSchema,
   answers: z.array(QuestionAnswerSchema),
+  source: ApplicationSourceSchema,
   stage: ApplicationStageSchema,
   notes: z.array(NoteSchema),
   createdAt: z.string(),
@@ -299,6 +337,7 @@ export type Application = z.infer<typeof ApplicationSchema>;
 export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
   // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
   jobUrl: z.string().url(),
+  source: ApplicationSourceSchema.default('autofill'),
   stage: ApplicationStageSchema.default('applied'),
   notes: z.array(NoteSchema).default([]),
 });
@@ -306,10 +345,26 @@ export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt
 export type NewApplication = z.infer<typeof NewApplicationSchema>;
 
 /**
+ * What a client actually *sends* to `POST /applications` — {@link NewApplicationSchema}'s input
+ * side, so the three defaulted fields are optional.
+ *
+ * `NewApplication` is the parsed output, where a default has already been applied and the field is
+ * therefore required. Typing a caller against it demands the very fields the defaults exist to let
+ * it omit, which is why the extension's save payload didn't typecheck against it.
+ */
+export type NewApplicationRequest = z.input<typeof NewApplicationSchema>;
+
+/**
  * The editable snapshot of a saved application. Interview tracking belongs to the persisted record,
- * not the autofill run, so a re-save must never overwrite its stage or notes.
+ * not to the run or the log entry that wrote it, so a re-save must never overwrite its stage or
+ * notes.
+ *
+ * `source` is omitted for the same reason: how a record was created is a fact about the record, not
+ * about the snapshot being written over it. Leaving it in would let a re-save relabel a manual entry
+ * as an autofill.
  */
 export const ApplicationSnapshotSchema = NewApplicationSchema.omit({
+  source: true,
   stage: true,
   notes: true,
 }).strict();

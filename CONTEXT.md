@@ -30,6 +30,10 @@ _Avoid_: submission (nothing is sent to the employer by this step — the candid
 The check that runs before the Analysis Step: if an Application already exists for this exact job URL, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
 _Avoid_: deduplication (nothing is merged or removed)
 
+**Log Tab**:
+The panel's second flow, alongside the Application Pipeline: records an Application the candidate made _themselves_ — their own resume, or LinkedIn Easy Apply — so it lands in the same history. Deliberately not a step of the pipeline and not a mode toggle on it: it shares no tracked tab, no Detected Fields and no run state. It extracts Job Info from a pasted Job Description and writes an Application with Application Source `manual`, running the same Duplicate Guard lookup first — warning, but never blocking.
+_Avoid_: manual mode, log mode (it is a tab; a mode would imply the pipeline has two meanings)
+
 ### Application data
 
 **Profile**:
@@ -41,8 +45,12 @@ The structured facts extracted from a job posting — company, team, role title,
 _Avoid_: job posting (the raw page/text), listing
 
 **Tailored Resume**:
-A resume reworded and reordered from the Profile to emphasize what's relevant to a specific Job Info. Never fabricates experience the Profile doesn't have.
+The resume shape an Application stores — skills and work experience, defined as a subset of the Profile's own. On an `autofill` Application it is what the name says: reworded and reordered from the Profile to emphasize what's relevant to a specific Job Info, never fabricating experience the Profile doesn't have. On a `manual` one it holds the Base Resume instead, untailored — which is why the Dashboard relabels it there rather than making a claim that isn't true of the row.
 _Avoid_: resume (ambiguous with the Profile's own experience data)
+
+**Base Resume**:
+The Profile projected straight into the Tailored Resume shape, nothing reworded — `baseResumeOf` in `@djobi/shared`. Possible only because Tailored Resume is defined as a subset of Profile. What a Log Tab entry stores in place of a Tailored Resume, since the candidate applied with their own resume and no model wrote anything.
+_Avoid_: untailored resume (fine as UI copy, but it names the concept by what it isn't)
 
 **Question Answer**:
 A drafted answer to one freeform application question, generated from the Profile and Job Info. Always reviewed/edited by the user before the Fill Step uses it.
@@ -68,6 +76,10 @@ internal reference, e.g. `JR101359`)
 **Application**:
 One persisted record of an attempt to apply to a job — the Job Info, Tailored Resume, and Question Answers used, plus a Stage and a Notes log. Saving is a manual step the candidate takes after actually submitting, so a stored Application is a submitted one; there is no separate "was this sent" flag.
 _Avoid_: job application (ambiguous with the act of applying itself)
+
+**Application Source**:
+How an Application came to exist: `autofill` (the Application Pipeline produced it) or `manual` (the candidate applied by hand and recorded it through the Log Tab). Defaults to `autofill`, so every row written before the field existed — and the extension's unchanged save path — stays valid. Never part of an Application's editable snapshot: provenance is a fact about the record, so a re-save must not be able to relabel it.
+_Avoid_: type, kind, origin
 
 **Stage**:
 Where an Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it.

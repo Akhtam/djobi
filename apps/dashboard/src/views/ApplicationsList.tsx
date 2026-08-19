@@ -11,6 +11,7 @@
 import { useMemo, useState } from 'react';
 import type { Application, ApplicationStage } from '@djobi/shared';
 import { countByOption, FilterPills } from '../components/FilterPills';
+import { PostingLink } from '../components/PostingLink';
 import { StageSelect } from '../components/StageSelect';
 import { formatDate } from '../lib/format';
 import { IN_PROGRESS_STAGES, STAGES, STAGE_LABELS } from '../lib/stages';
@@ -85,7 +86,15 @@ export function ApplicationsList({
           {visible.map((application) => (
             <li key={application.id} className="card">
               <div className="card__top">
-                <span className="card__company">{application.company}</span>
+                <span className="card__company">
+                  {application.company}
+                  {/*
+                    No `title` here: `.card__link::after` covers the whole card, so the pointer is
+                    never actually over this element and the tooltip could not be reached. The
+                    detail page carries the explanation instead.
+                  */}
+                  {application.source === 'manual' && <span className="source-badge">Manual</span>}
+                </span>
                 {/*
                   The card is not an <a>. A <select> inside a link is invalid HTML and its clicks
                   navigate; instead one real link on the role title is stretched over the whole card
@@ -96,25 +105,7 @@ export function ApplicationsList({
                 </a>
               </div>
               <div className="card__bottom">
-                {/*
-                  A real anchor, layered above the card's stretched link the same way the stage
-                  control is — otherwise the stretched link swallows the click and takes you to the
-                  detail page instead of the posting. `stopPropagation` isn't needed and isn't used:
-                  this element is simply on top.
-                */}
-                <a
-                  className="card__posting"
-                  href={application.jobUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={application.jobUrl}
-                  aria-label={`Open the ${application.company} job posting in a new tab`}
-                >
-                  Job posting
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
-                  </svg>
-                </a>
+                <PostingLink jobUrl={application.jobUrl} company={application.company} stretched />
                 <StageSelect
                   stage={application.stage}
                   label={`Stage for ${application.roleTitle} at ${application.company}`}

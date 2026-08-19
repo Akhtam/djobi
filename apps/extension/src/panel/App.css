@@ -159,6 +159,49 @@ body {
   stroke-linejoin: round;
 }
 
+/*
+ * The two flows the panel offers (`PanelTab` in `App.tsx`). A strip under the header rather than
+ * anything in it: the header already carries the run's status pill, and a control that switches
+ * away from the run shouldn't sit beside a pill describing it.
+ */
+.panel-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.panel-tab {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 12px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.panel-tab:hover {
+  color: var(--text);
+}
+
+.panel-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* `display: flex` below would otherwise beat the `hidden` attribute the panes are switched with. */
+.panel-body[hidden] {
+  display: none;
+}
+
 .panel-body {
   display: flex;
   flex-direction: column;
@@ -293,7 +336,8 @@ body {
   color: var(--text-muted);
 }
 
-.question-card textarea {
+.question-card textarea,
+.question-card input {
   width: 100%;
   font: inherit;
   color: var(--text);
@@ -310,11 +354,19 @@ body {
     background 120ms ease;
 }
 
-.question-card textarea:hover {
+/* Single-line variant of the above: no resize handle, and no textarea min-height. */
+.question-card input {
+  resize: none;
+  min-height: 0;
+}
+
+.question-card textarea:hover,
+.question-card input:hover {
   border-color: color-mix(in srgb, var(--border) 40%, var(--text-muted));
 }
 
-.question-card textarea:focus {
+.question-card textarea:focus,
+.question-card input:focus {
   outline: none;
   background: var(--surface);
   border-color: var(--primary);

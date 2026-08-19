@@ -50,6 +50,7 @@ const sampleApplication: Application = {
     workExperience: [],
   },
   answers: [],
+  source: 'autofill',
   stage: 'applied',
   notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
@@ -153,23 +154,38 @@ describe('POST /applications', () => {
     expect(mockSaveApplication).toHaveBeenCalledWith(newApplication);
   });
 
-  it('defaults stage and notes when the extension omits them', async () => {
-    // The Fill Step posts neither field; requiring either would 400 every fill.
+  it('defaults source, stage and notes when the extension omits them', async () => {
+    // The Fill Step posts none of the three; requiring any would 400 every fill.
     mockSaveApplication.mockResolvedValue(sampleApplication);
-    const { stage: _stage, notes: _notes, ...withoutTracking } = newApplication;
+    const { source: _source, stage: _stage, notes: _notes, ...withoutDefaults } = newApplication;
 
     const res = await app.request('/applications', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(withoutTracking),
+      body: JSON.stringify(withoutDefaults),
     });
 
     expect(res.status).toBe(200);
     expect(mockSaveApplication).toHaveBeenCalledWith({
-      ...withoutTracking,
+      ...withoutDefaults,
+      source: 'autofill',
       stage: 'applied',
       notes: [],
     });
+  });
+
+  /** What the panel's Log tab posts: everything else the same, `source` set explicitly. */
+  it('keeps an explicit manual source', async () => {
+    mockSaveApplication.mockResolvedValue({ ...sampleApplication, source: 'manual' });
+
+    const res = await app.request('/applications', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...newApplication, source: 'manual' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockSaveApplication).toHaveBeenCalledWith(expect.objectContaining({ source: 'manual' }));
   });
 
   it('returns 400 and does not save when the body fails validation', async () => {
@@ -190,6 +206,7 @@ describe('PATCH /applications/:id', () => {
   const {
     id: _id,
     createdAt: _createdAt,
+    source: _source,
     stage: _stage,
     notes: _notes,
     ...snapshot
@@ -230,6 +247,19 @@ describe('PATCH /applications/:id', () => {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ...snapshot, stage: 'rejected' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockUpdateApplication).not.toHaveBeenCalled();
+  });
+
+  /** Same guarantee, for the field that says how the record was created: a re-save can't relabel a
+      manually logged application as an autofill. */
+  it('returns 400 and does not update when the body carries a source', async () => {
+    const res = await app.request('/applications/application-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...snapshot, source: 'autofill' }),
     });
 
     expect(res.status).toBe(400);

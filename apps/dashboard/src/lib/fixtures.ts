@@ -7,19 +7,56 @@
  * quietly leave the UI developed against a shape that no longer exists.
  *
  * The set is chosen to cover every branch the UI has, not to look plausible:
- * one row per `ApplicationStage`, an empty notes log, a log with all three note categories, an
- * application with no drafted answers, and one deliberately oversized row (long role title, twelve
- * resume bullets, long answers) to stress the layout.
+ * one row per `ApplicationStage`, both `ApplicationSource`s, an empty notes log, a log with all
+ * three note categories, an application with no drafted answers, and one deliberately oversized row
+ * (long role title, twelve resume bullets, long answers) to stress the layout.
  */
 import type { Application } from '@djobi/shared';
 
 export const fixtureApplications: Application[] = [
+  {
+    id: 'app-anthropic-manual',
+    company: 'Anthropic',
+    roleTitle: 'Member of Technical Staff, Product',
+    jobUrl: 'https://job-boards.greenhouse.io/anthropic/jobs/4551221008',
+    createdAt: '2026-03-19T08:05:00.000Z',
+    source: 'manual',
+    stage: 'rejected',
+    jobInfo: {
+      company: 'Anthropic',
+      team: null,
+      roleTitle: 'Member of Technical Staff, Product',
+      seniority: null,
+      location: 'Remote',
+      requirements: ['Strong React and TypeScript', 'Comfort owning a product surface end to end'],
+      keywords: ['React', 'TypeScript', 'Next.js'],
+    },
+    // The base profile as-is — nothing was tailored, because the candidate applied themselves.
+    tailoredResume: {
+      skills: ['TypeScript', 'React', 'Node.js', 'Postgres'],
+      workExperience: [
+        {
+          company: 'Northwind',
+          title: 'Software Engineer',
+          startDate: '2021-06',
+          endDate: null,
+          bullets: [
+            'Built and shipped the customer-facing billing portal.',
+            'Cut p95 checkout latency from 1.8s to 400ms.',
+          ],
+        },
+      ],
+    },
+    answers: [],
+    notes: [],
+  },
   {
     id: 'app-brex',
     company: 'Brex',
     roleTitle: 'Senior Frontend Engineer',
     jobUrl: 'https://boards.greenhouse.io/brex/jobs/4012',
     createdAt: '2026-03-14T09:12:00.000Z',
+    source: 'autofill',
     stage: 'interviewing',
     jobInfo: {
       company: 'Brex',
@@ -112,6 +149,7 @@ export const fixtureApplications: Application[] = [
     roleTitle: 'Staff Engineer, Platform',
     jobUrl: 'https://jobs.lever.co/sonarsource/8a1f2c33/apply',
     createdAt: '2026-03-11T16:40:00.000Z',
+    source: 'autofill',
     stage: 'applied',
     jobInfo: {
       company: 'Sonar',
@@ -143,6 +181,7 @@ export const fixtureApplications: Application[] = [
     roleTitle: 'Product Engineer',
     jobUrl: 'https://jobs.ashbyhq.com/ramp/9f21ab',
     createdAt: '2026-03-08T11:05:00.000Z',
+    source: 'autofill',
     stage: 'phone_screen',
     jobInfo: {
       company: 'Ramp',
@@ -192,6 +231,7 @@ export const fixtureApplications: Application[] = [
     roleTitle: 'Software Engineer, Developer Experience',
     jobUrl: 'https://boards.greenhouse.io/vercel/jobs/5588',
     createdAt: '2026-02-27T08:20:00.000Z',
+    source: 'autofill',
     stage: 'rejected',
     jobInfo: {
       company: 'Vercel',
@@ -244,6 +284,7 @@ export const fixtureApplications: Application[] = [
     roleTitle: 'Frontend Engineer',
     jobUrl: 'https://jobs.ashbyhq.com/linear/33cd91',
     createdAt: '2026-03-16T13:00:00.000Z',
+    source: 'autofill',
     stage: 'applied',
     jobInfo: {
       company: 'Linear',
@@ -284,6 +325,7 @@ export const fixtureApplications: Application[] = [
       'Senior Software Engineer, Payments Infrastructure and Merchant Platform Reliability (EMEA)',
     jobUrl: 'https://stripe.com/jobs/listing/senior-software-engineer-payments/6612001',
     createdAt: '2026-01-19T07:30:00.000Z',
+    source: 'autofill',
     stage: 'interviewing',
     jobInfo: {
       company: 'Stripe',

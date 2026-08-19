@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./db/applicationsRepository.js', () => ({
   listApplications: vi.fn(async () => []),
   listApplicationsByJobUrl: vi.fn(async () => []),
-  listApplicationsByCompany: vi.fn(async () => []),
+  listPriorApplicationsByCompany: vi.fn(async () => []),
   getApplicationById: vi.fn(async () => null),
   saveApplication: vi.fn(),
   updateApplication: vi.fn(),

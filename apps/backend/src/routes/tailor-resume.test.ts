@@ -1,9 +1,10 @@
-import type { Application, JobInfo, Profile, TailoredResume } from '@djobi/shared';
+import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PriorApplication } from '../db/applicationsRepository.js';
 
-const { mockTailorResume, mockListApplicationsByCompany } = vi.hoisted(() => ({
+const { mockTailorResume, mockListPriorApplicationsByCompany } = vi.hoisted(() => ({
   mockTailorResume: vi.fn(),
-  mockListApplicationsByCompany: vi.fn(),
+  mockListPriorApplicationsByCompany: vi.fn(),
 }));
 
 vi.mock('../llm/tailorResume.js', () => ({
@@ -11,7 +12,7 @@ vi.mock('../llm/tailorResume.js', () => ({
 }));
 
 vi.mock('../db/applicationsRepository.js', () => ({
-  listApplicationsByCompany: mockListApplicationsByCompany,
+  listPriorApplicationsByCompany: mockListPriorApplicationsByCompany,
 }));
 
 const { app } = await import('../app.js');
@@ -45,25 +46,20 @@ const sampleTailoredResume: TailoredResume = {
   workExperience: [],
 };
 
-const priorApplication: Application = {
-  id: 'application-1',
-  company: 'Acme',
+/** The projection the summary reads — deliberately not a whole `Application`. */
+const priorApplication: PriorApplication = {
   roleTitle: 'Backend Engineer',
-  jobUrl: 'https://acme.com/jobs/1',
-  jobInfo: sampleJobInfo,
-  tailoredResume: sampleTailoredResume,
-  answers: [],
   createdAt: '2026-07-01T00:00:00.000Z',
 };
 
 describe('POST /tailor-resume', () => {
   beforeEach(() => {
     mockTailorResume.mockReset();
-    mockListApplicationsByCompany.mockReset();
+    mockListPriorApplicationsByCompany.mockReset();
   });
 
   it('returns the tailored resume for a valid request', async () => {
-    mockListApplicationsByCompany.mockResolvedValue([]);
+    mockListPriorApplicationsByCompany.mockResolvedValue([]);
     mockTailorResume.mockResolvedValue(sampleTailoredResume);
 
     const res = await app.request('/tailor-resume', {
@@ -74,12 +70,12 @@ describe('POST /tailor-resume', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleTailoredResume);
-    expect(mockListApplicationsByCompany).toHaveBeenCalledWith('Acme');
+    expect(mockListPriorApplicationsByCompany).toHaveBeenCalledWith('Acme');
     expect(mockTailorResume).toHaveBeenCalledWith(sampleProfile, sampleJobInfo, undefined);
   });
 
   it('passes a summary of prior applications to the same company', async () => {
-    mockListApplicationsByCompany.mockResolvedValue([priorApplication]);
+    mockListPriorApplicationsByCompany.mockResolvedValue([priorApplication]);
     mockTailorResume.mockResolvedValue(sampleTailoredResume);
 
     const res = await app.request('/tailor-resume', {
@@ -93,6 +89,26 @@ describe('POST /tailor-resume', () => {
       sampleProfile,
       sampleJobInfo,
       'Backend Engineer (2026-07-01)',
+    );
+  });
+
+  it('lists every prior application, newest first, one per line', async () => {
+    mockListPriorApplicationsByCompany.mockResolvedValue([
+      priorApplication,
+      { roleTitle: 'Platform Engineer', createdAt: '2026-05-02T00:00:00.000Z' },
+    ]);
+    mockTailorResume.mockResolvedValue(sampleTailoredResume);
+
+    await app.request('/tailor-resume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ profile: sampleProfile, jobInfo: sampleJobInfo }),
+    });
+
+    expect(mockTailorResume).toHaveBeenCalledWith(
+      sampleProfile,
+      sampleJobInfo,
+      'Backend Engineer (2026-07-01)\nPlatform Engineer (2026-05-02)',
     );
   });
 

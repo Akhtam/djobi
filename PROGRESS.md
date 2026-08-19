@@ -13,8 +13,8 @@ history belongs in git, not in this file.
 
 ## Current state
 
-Everything below is built, tested and works end to end. Suite green at **585 tests** (108 shared /
-76 backend / 340 extension / 61 dashboard), `pnpm test` from the repo root.
+Everything below is built, tested and works end to end. Suite green at **620 tests** (116 shared /
+85 backend / 356 extension / 63 dashboard), `pnpm test` from the repo root.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
   (Profile, Job Info, Tailored Resume, Question Answer, Application), `detectedField.ts` (what a
@@ -38,6 +38,12 @@ build` compiles the shared package and emits a plain-Node production server to `
 The Application Pipeline as it runs today: **paste a job description → duplicate guard → Analysis
 Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
 checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses nothing.
+
+The panel has two tabs. **Autofill** is that pipeline. **Log** records a job the candidate applied
+to themselves — their own resume, or LinkedIn Easy Apply — so it still lands in the same history:
+paste the posting and its URL, `POST /extract-job` for the details, then `POST /applications` with
+`source: 'manual'` and the base profile in place of a tailored resume. No pipeline, no tab-scoped
+state, no page access.
 
 ## Key decisions
 
@@ -189,6 +195,38 @@ log and composer, and collapsed job info / tailored resume / drafted answers. `h
 `apps/backend/src/app.ts`, registered before the routes with the origin restricted to the
 dashboard's dev URLs.
 
+### Phase 9a — Log tab: record an application made by hand (done)
+
+A second tab in the side panel for jobs the candidate applied to without djobi. Migration
+`0003_abandoned_sir_ram.sql` adds `applications.source` (`'autofill' | 'manual'`, defaulting to
+`'autofill'` so every existing row and the extension's unchanged save path stay valid);
+`baseResumeOf` in `packages/shared` projects a Profile into the `TailoredResume` shape, which is
+possible because the latter is defined as a subset of the former. The dashboard badges manual rows
+and relabels the resume section, since "Tailored resume" would be a false claim on them.
+
+Decisions:
+
+- **A tab, not a mode toggle on the existing flow.** The Log flow shares no state with the pipeline —
+  no tracked tab, no detected form, no `PipelineStatus` — so folding it in would mean threading a
+  second meaning through every branch of `reviewOf`. It is a form and two backend calls, and its
+  state is local to the component for that reason.
+- **No new endpoints and no new LLM call.** `POST /extract-job` and `POST /applications` already do
+  the work; only the `source` column is new.
+- **`source` is omitted from `ApplicationSnapshotSchema`**, alongside `stage` and `notes`: a re-save
+  must not be able to relabel how a record was created.
+- **`jobUrl` stays required and `.url()`-validated.** It is the duplicate guard's key, so the Log tab
+  makes it a required field rather than inventing a placeholder — and it runs the same
+  already-applied check before writing, warning without blocking.
+
+Carried in the same change, though not part of Phase 9a: `listApplicationsByCompany` became
+`listPriorApplicationsByCompany`, returning a two-column projection instead of whole rows on the
+Analyze path; the dashboard's job-URL rendering moved into a shared `PostingLink`; and
+`saveProfile`'s upsert was rewritten (see the checklist below).
+
+Not done: the URL is typed or prefilled from the active tab, never fetched. Reading a posting from a
+link, or off an open LinkedIn Easy Apply modal, is the larger feature sketched in
+`docs/application-info-extraction-mode.md`.
+
 ### Phase 9 — Ask tab: answer a pasted question from the Profile (not started)
 
 A second tab in the side panel where the candidate pastes **any** question from an application
@@ -277,10 +315,13 @@ From the architecture-review runs. Everything **Strong** has been actioned; this
 - [ ] Every new Story is created with `id: ''`, but `QuestionAnswer.sourceStoryIds` references
       `Story.id` — so those references are useless whenever the candidate didn't type an id by hand.
       A behaviour change rather than a refactor, hence left alone; see `options/App.tsx`.
-- [ ] **Worth exploring:** `profileRepository.saveProfile`'s upsert logic has zero test coverage
-      (the route test mocks the whole repository away) — test it directly. Related:
-      `applicationsRepository.toApplication` casts jsonb straight to typed fields while
-      `profileRepository.getProfile` deliberately parses — two policies for the same hazard.
+- [x] `profileRepository.saveProfile`'s upsert now has direct coverage
+      (`db/profileRepository.test.ts`, against a stubbed Drizzle client), and both repositories parse
+      jsonb rather than casting it — the two policies noted here are one. The upsert was also
+      **rewritten**, which this item didn't ask for: it now runs a `WHERE`-less `UPDATE ... RETURNING`
+      and inserts only when that touched nothing, instead of selecting first. One round trip rather
+      than two on Neon's driver, and it relies on `profiles` holding exactly one row — the premise
+      `getProfile`'s `limit(1)` already reads on. See the docblock for why no `WHERE`.
 - [ ] **Speculative:** `tailorResume.ts` / `answerQuestions.ts` both hand-build the same
       `<base_profile>`/`<job_info>` prompt scaffold — extract a shared helper if a third
       writing-model call site appears (Phase 9 would be it).

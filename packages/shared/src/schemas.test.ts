@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApplicationSchema,
+  ApplicationSnapshotSchema,
   ApplicationStageSchema,
+  baseResumeOf,
   EducationSchema,
   JobInfoSchema,
   NewApplicationSchema,
@@ -81,6 +83,7 @@ const validApplication = {
   jobInfo: validJobInfo,
   tailoredResume: validTailoredResume,
   answers: [validQuestionAnswer],
+  source: 'autofill' as const,
   stage: 'applied' as const,
   notes: [],
   createdAt: '2026-08-07T00:00:00.000Z',
@@ -292,6 +295,58 @@ describe('ApplicationSchema', () => {
       false,
     );
   });
+
+  it('rejects an invalid source', () => {
+    expect(ApplicationSchema.safeParse({ ...validApplication, source: 'imported' }).success).toBe(
+      false,
+    );
+  });
+
+  it('requires a source on a stored row', () => {
+    const { source: _source, ...withoutSource } = validApplication;
+    expect(ApplicationSchema.safeParse(withoutSource).success).toBe(false);
+  });
+});
+
+describe('ApplicationSnapshotSchema', () => {
+  const {
+    id: _id,
+    createdAt: _createdAt,
+    source: _source,
+    stage: _stage,
+    notes: _notes,
+    ...snapshot
+  } = validApplication;
+
+  /**
+   * The point of the omission: re-saving an autofill must not be able to relabel how the record was
+   * created, the same guarantee `stage` and `notes` already have.
+   */
+  it('rejects a body carrying a source', () => {
+    expect(ApplicationSnapshotSchema.safeParse({ ...snapshot, source: 'manual' }).success).toBe(
+      false,
+    );
+  });
+
+  it('accepts a body without one', () => {
+    expect(ApplicationSnapshotSchema.safeParse(snapshot).success).toBe(true);
+  });
+});
+
+describe('baseResumeOf', () => {
+  /**
+   * What manual logging stores in place of a tailored resume, so this has to stay a straight
+   * projection — anything reworded here would be a claim the candidate never made.
+   */
+  it("carries the profile's skills and work history through unchanged", () => {
+    const resume = baseResumeOf(validProfile);
+    expect(resume.skills).toEqual(validProfile.skills);
+    expect(resume.workExperience).toEqual(validProfile.workExperience);
+  });
+
+  it('produces a valid TailoredResume', () => {
+    expect(TailoredResumeSchema.safeParse(baseResumeOf(validProfile)).success).toBe(true);
+  });
 });
 
 describe('NewApplicationSchema', () => {
@@ -310,6 +365,18 @@ describe('NewApplicationSchema', () => {
       expect(result.data.stage).toBe('applied');
       expect(result.data.notes).toEqual([]);
     }
+  });
+
+  it("defaults source to 'autofill' when the client omits it", () => {
+    // Same reason as stage/notes above: the Fill Step's save path posts no source.
+    const { source: _source, ...withoutSource } = validNewApplication;
+    expect(NewApplicationSchema.parse(withoutSource).source).toBe('autofill');
+  });
+
+  it("keeps an explicit 'manual' source", () => {
+    // What the panel's Log tab posts.
+    const explicit = { ...validNewApplication, source: 'manual' as const };
+    expect(NewApplicationSchema.parse(explicit).source).toBe('manual');
   });
 
   it('accepts notes supplied explicitly', () => {

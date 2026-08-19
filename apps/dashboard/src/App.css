@@ -275,6 +275,24 @@ h3 {
   font-size: 12px;
 }
 
+/*
+ * Marks a row the candidate applied to themselves (`source: 'manual'`). Only the manual case is
+ * badged — autofills are the default and badging both would put a label on every row, which says
+ * nothing.
+ */
+.source-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
 .bullets {
   margin: 6px 0;
   padding-left: 20px;
@@ -529,9 +547,7 @@ h3 {
  * Layered above the card's stretched link (`z-index: 1`, as the stage control is) so it opens the
  * posting rather than being swallowed by the link covering the card.
  */
-.card__posting {
-  position: relative;
-  z-index: 1;
+.posting-link {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -547,17 +563,23 @@ h3 {
   white-space: nowrap;
 }
 
-.card__posting:hover {
+/* Layers the card's copy above `.card__link::after`, which otherwise swallows the click. */
+.posting-link--above-card {
+  position: relative;
+  z-index: 1;
+}
+
+.posting-link:hover {
   border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
   color: var(--primary);
 }
 
-.card__posting:focus-visible {
+.posting-link:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
-.card__posting svg {
+.posting-link svg {
   width: 12px;
   height: 12px;
   fill: none;
@@ -597,12 +619,8 @@ h3 {
   font-size: 13px;
 }
 
-.detail__job-url {
-  display: inline-block;
-  margin-top: 8px;
-  overflow-wrap: anywhere;
-  color: var(--primary);
-  font-size: 13px;
+.detail__header .posting-link {
+  margin-top: 10px;
 }
 
 .detail__section {

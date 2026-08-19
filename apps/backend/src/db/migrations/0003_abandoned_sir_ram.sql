@@ -1,0 +1,1 @@
+ALTER TABLE "applications" ADD COLUMN "source" text DEFAULT 'autofill' NOT NULL;

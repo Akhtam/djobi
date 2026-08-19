@@ -62,13 +62,16 @@ export async function getApplicationById(id: string): Promise<Application | null
   return toApplication(row);
 }
 
-/** Inserts a new application row after the candidate explicitly saves an autofill. */
+/**
+ * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
+ * they log an application they made by hand (`source: 'manual'`).
+ */
 export async function saveApplication(newApplication: NewApplication): Promise<Application> {
   const [row] = await db.insert(applications).values(newApplication).returning();
   return toApplication(row);
 }
 
-/** Replaces an application's autofill snapshot without disturbing interview tracking. */
+/** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
 export async function updateApplication(
   id: string,
   snapshot: ApplicationSnapshot,
@@ -81,14 +84,30 @@ export async function updateApplication(
   return row ? toApplication(row) : null;
 }
 
+/**
+ * One past application to a company, reduced to what a history summary needs.
+ *
+ * A projection rather than an `Application` because the only caller
+ * (`buildPriorApplicationsSummary` in `routes/tailor-resume.ts`) builds `"<role> (<date>)"` lines
+ * and reads nothing else. Selecting whole rows meant every past application at that company shipped
+ * its `jobInfo`, `tailoredResume`, `answers` and `notes` jsonb across the wire, on the Analyze path,
+ * to be discarded — and each one had to survive `ApplicationSchema.parse` to be counted, so a row
+ * written by an older build dropped out of a summary that only ever needed two of its columns.
+ */
+export interface PriorApplication {
+  roleTitle: string;
+  createdAt: string;
+}
+
 /** Lists past applications to the given company, most recently created first. */
-export async function listApplicationsByCompany(company: string): Promise<Application[]> {
+export async function listPriorApplicationsByCompany(company: string): Promise<PriorApplication[]> {
   const rows = await db
-    .select()
+    .select({ roleTitle: applications.roleTitle, createdAt: applications.createdAt })
     .from(applications)
     .where(eq(applications.company, company))
     .orderBy(desc(applications.createdAt));
-  return toApplications(rows);
+
+  return rows.map((row) => ({ roleTitle: row.roleTitle, createdAt: row.createdAt.toISOString() }));
 }
 
 /**

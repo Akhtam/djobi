@@ -890,4 +890,74 @@ describe('panel App', () => {
 
     await screen.findByText(/couldn't render/i);
   });
+
+  /**
+   * The Log tab itself is covered by `LogApplication.test.tsx`; what's tested here is only the
+   * switch — that the two flows are reachable and that neither renders over the other.
+   */
+  it('offers no tabs until a profile exists', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile: null });
+
+    render(<App />);
+
+    await screen.findByText('Set up your profile to get started.');
+    expect(screen.queryByRole('button', { name: 'Log' })).not.toBeInTheDocument();
+  });
+
+  it('switches between autofilling and logging an application by hand', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Analyze' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+
+    expect(await screen.findByRole('heading', { name: 'Log an application' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Analyze' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Autofill' }));
+
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Log an application' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Extracting a posting on the Log tab is a model call. Unmounting the tab on a switch threw the
+   * result away, so glancing at the run in progress cost the candidate a re-paste and a re-extract.
+   */
+  it('keeps what was typed on the Log tab across a switch to Autofill and back', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Analyze' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+    const posting = await screen.findByPlaceholderText(/Paste the posting/);
+    fireEvent.change(posting, { target: { value: 'Staff Engineer at Globex.' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Autofill' }));
+    await screen.findByRole('button', { name: 'Analyze' });
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+
+    expect(await screen.findByPlaceholderText(/Paste the posting/)).toHaveValue(
+      'Staff Engineer at Globex.',
+    );
+  });
+
+  /**
+   * The footer belongs to the pipeline run, and a run can be mid-review while the candidate is on
+   * the Log tab — a "Fill form" button over a form that has nothing to do with the open tab would
+   * fill the page behind it.
+   */
+  it('keeps the run footer off the Log tab', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<App />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+
+    expect(screen.queryByRole('button', { name: 'Fill form' })).not.toBeInTheDocument();
+  });
 });

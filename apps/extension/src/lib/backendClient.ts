@@ -21,7 +21,7 @@ import type {
   ApplicationSnapshot,
   ExtractJobRequest,
   JobInfo,
-  NewApplication,
+  NewApplicationRequest,
   Profile,
   QuestionAnswer,
   QuestionForModel,
@@ -46,7 +46,7 @@ export interface BackendClient {
   getProfile(): Promise<Profile | null>;
   /** Stores the Profile whole and resolves with what was stored. */
   saveProfile(profile: Profile): Promise<Profile>;
-  saveApplication(payload: NewApplication): Promise<Application>;
+  saveApplication(payload: NewApplicationRequest): Promise<Application>;
   updateApplication(id: string, payload: ApplicationSnapshot): Promise<Application>;
   /** Past applications to this exact job URL, most recent first. Empty when it's a new posting. */
   findApplicationsByJobUrl(jobUrl: string): Promise<Application[]>;

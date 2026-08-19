@@ -12,6 +12,7 @@
 import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
 import { AddNoteForm } from '../components/AddNoteForm';
 import { NotesLog } from '../components/NotesLog';
+import { PostingLink } from '../components/PostingLink';
 import { StageSelect } from '../components/StageSelect';
 import { formatDate } from '../lib/format';
 
@@ -25,6 +26,9 @@ export function ApplicationDetail({
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
 }) {
   const { jobInfo, tailoredResume, answers } = application;
+  // A manually logged application stores the base profile in `tailoredResume` (see `baseResumeOf`),
+  // so every heading and hint that says "tailored" has to say something else here.
+  const loggedManually = application.source === 'manual';
   const subtitle = [application.company, jobInfo.team, jobInfo.location]
     .filter(Boolean)
     .join(' · ');
@@ -37,10 +41,11 @@ export function ApplicationDetail({
         </a>
         <h1>{application.roleTitle}</h1>
         <p className="detail__subtitle">{subtitle}</p>
-        <p className="detail__meta">Saved {formatDate(application.createdAt)}</p>
-        <a className="detail__job-url" href={application.jobUrl} target="_blank" rel="noreferrer">
-          {application.jobUrl}
-        </a>
+        <p className="detail__meta">
+          {loggedManually ? 'Logged' : 'Saved'} {formatDate(application.createdAt)}
+          {loggedManually && <span className="source-badge">Applied manually</span>}
+        </p>
+        <PostingLink jobUrl={application.jobUrl} company={application.company} />
       </header>
 
       <section className="detail__section">
@@ -108,7 +113,13 @@ export function ApplicationDetail({
       </details>
 
       <details className="detail__collapsible">
-        <summary>Tailored resume</summary>
+        <summary>{loggedManually ? 'Resume (untailored)' : 'Tailored resume'}</summary>
+        {loggedManually && (
+          <p className="empty-hint">
+            You applied to this one yourself, so this is your profile as it stood when you logged it
+            — nothing was tailored to the posting.
+          </p>
+        )}
         {tailoredResume.skills.length > 0 ? (
           <ul className="tags">
             {tailoredResume.skills.map((skill) => (
@@ -138,7 +149,11 @@ export function ApplicationDetail({
       <details className="detail__collapsible">
         <summary>Drafted answers ({answers.length})</summary>
         {answers.length === 0 ? (
-          <p className="empty-hint">This form had no freeform questions.</p>
+          <p className="empty-hint">
+            {loggedManually
+              ? 'You answered this application\u2019s questions yourself.'
+              : 'This form had no freeform questions.'}
+          </p>
         ) : (
           <ol className="answers">
             {answers.map((answer) => (

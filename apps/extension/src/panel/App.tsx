@@ -25,11 +25,13 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import { httpBackendClient } from '../lib/backendClient';
+import { formatAppliedDate } from '../lib/format';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import { reviewOf } from '../lib/runReview';
 import { getDetectedPage, patchPipelineRun, type PipelineStatus } from '../lib/tabStore';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
+import { LogApplication } from './LogApplication';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 
@@ -40,13 +42,16 @@ import { usePipelineRun } from './usePipelineRun';
 // derived here. It is `reviewOf` in `lib/runReview.ts`, one derivation the whole component reads.
 type Status = 'loading' | 'no-profile' | 'ready' | PipelineStatus;
 
-/** When a past application was saved, in the reader's own locale — stored as an ISO string. */
-function formatAppliedDate(createdAt: string): string {
-  return new Date(createdAt).toLocaleDateString(undefined, { dateStyle: 'long' });
-}
+/**
+ * Which of the panel's two flows is showing. A tab rather than a mode toggle on one flow: the Log
+ * tab shares no state with the pipeline — no tracked tab, no detected form, no `PipelineStatus` —
+ * so folding it in would mean threading a second meaning through every branch of `reviewOf`.
+ */
+type PanelTab = 'autofill' | 'log';
 
 export function App() {
   const { theme, toggleTheme } = useThemePreference();
+  const [tab, setTab] = useState<PanelTab>('autofill');
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
@@ -213,7 +218,10 @@ export function App() {
   const review = reviewOf(run);
   // The pill is suppressed while the panel is still booting — that part genuinely is local state,
   // and a hydrated run shouldn't flash its pill before we know there's a profile to act with.
-  const pill = status === 'loading' || status === 'no-profile' ? null : review.pill;
+  // The pill describes the pipeline run, so it's suppressed on the Log tab as well — there is no
+  // run there for it to be about.
+  const pill =
+    status === 'loading' || status === 'no-profile' || tab === 'log' ? null : review.pill;
   const { canReview, outcome } = review;
 
   return (
@@ -225,7 +233,37 @@ export function App() {
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
 
-      <div className="panel-body">
+      {profileLoaded && profile && (
+        <nav className="panel-tabs" aria-label="Panel sections">
+          <button
+            type="button"
+            className={tab === 'autofill' ? 'panel-tab active' : 'panel-tab'}
+            aria-current={tab === 'autofill'}
+            onClick={() => setTab('autofill')}
+          >
+            Autofill
+          </button>
+          <button
+            type="button"
+            className={tab === 'log' ? 'panel-tab active' : 'panel-tab'}
+            aria-current={tab === 'log'}
+            onClick={() => setTab('log')}
+          >
+            Log
+          </button>
+        </nav>
+      )}
+
+      {/*
+        Both panes stay mounted and are hidden rather than unmounted. Extracting a posting on the Log
+        tab is a model call, and switching to Autofill to glance at the run used to throw the result
+        away — the panel's promise is that nothing in flight is lost by looking somewhere else.
+      */}
+      <div className="panel-body" hidden={tab !== 'log'}>
+        {profile && <LogApplication profile={profile} activeTabUrl={tabUrl} />}
+      </div>
+
+      <div className="panel-body" hidden={tab !== 'autofill'}>
         {status === 'loading' && (
           <div className="state">
             <span className="spinner" />
@@ -488,7 +526,7 @@ export function App() {
         )}
       </div>
 
-      {canReview && jobInfo && tailoredResume && (
+      {tab === 'autofill' && canReview && jobInfo && tailoredResume && (
         <footer className="panel-footer">
           <button
             type="button"

@@ -1,5 +1,4 @@
 import { ProfileSchema, type Profile } from '@djobi/shared';
-import { eq } from 'drizzle-orm';
 import { db } from './client.js';
 import { profiles } from './schema.js';
 
@@ -23,16 +22,24 @@ export async function getProfile(): Promise<Profile | null> {
 /**
  * Upserts the single stored profile: updates the existing row if one exists, otherwise inserts
  * the first one.
+ *
+ * The update runs first and reports what it touched, rather than a select deciding which statement
+ * to run. Each statement is its own HTTP round trip on Neon's driver, so asking first cost two trips
+ * every save; this costs one on the path that always applies after the very first save.
+ *
+ * The `UPDATE` deliberately carries no `WHERE`. This table holds exactly one row by design — the
+ * same premise `getProfile`'s `limit(1)` reads on — so "the existing row" and "every row" are the
+ * same set, and there is no id to filter by until after the select this replaces. If a second row
+ * ever appeared, writing the profile to both is the outcome that matches what a single-row table
+ * means; the previous version left one of them stale and reachable by `getProfile`.
  */
 export async function saveProfile(profile: Profile): Promise<Profile> {
-  const [existing] = await db.select().from(profiles).limit(1);
+  const updated = await db
+    .update(profiles)
+    .set({ data: profile, updatedAt: new Date() })
+    .returning({ id: profiles.id });
 
-  if (existing) {
-    await db
-      .update(profiles)
-      .set({ data: profile, updatedAt: new Date() })
-      .where(eq(profiles.id, existing.id));
-  } else {
+  if (updated.length === 0) {
     await db.insert(profiles).values({ data: profile });
   }
 

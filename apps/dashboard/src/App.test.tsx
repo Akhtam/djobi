@@ -47,7 +47,7 @@ describe('applications list', () => {
 
   it('summarises the count and how many are live', async () => {
     renderApp();
-    expect(await screen.findByText(/6 applications · 3 in progress/)).toBeInTheDocument();
+    expect(await screen.findByText(/7 applications · 3 in progress/)).toBeInTheDocument();
   });
 
   it('filters by stage', async () => {
@@ -302,11 +302,30 @@ describe('application detail', () => {
   it('links out to the posting without leaking the referrer', async () => {
     renderApp();
     const link = await screen.findByRole('link', {
-      name: 'https://boards.greenhouse.io/brex/jobs/4012',
+      name: /Open the Brex job posting in a new tab/,
     });
 
+    expect(link).toHaveAttribute('href', 'https://boards.greenhouse.io/brex/jobs/4012');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noreferrer');
+  });
+
+  /**
+   * Job-board URLs run long enough to push the record's own content off the first screen, so the
+   * detail page shows the same pill the cards do and keeps the URL on the `title`.
+   */
+  it('does not print the raw job URL', async () => {
+    window.location.hash = '#/applications/app-brex';
+    renderApp();
+    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+
+    expect(
+      screen.queryByText('https://boards.greenhouse.io/brex/jobs/4012'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open the Brex job posting/ })).toHaveAttribute(
+      'title',
+      'https://boards.greenhouse.io/brex/jobs/4012',
+    );
   });
 });
 
