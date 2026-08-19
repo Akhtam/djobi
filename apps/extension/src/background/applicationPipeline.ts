@@ -182,6 +182,26 @@ async function fillStep(
     jobPageData.fields.map((field) => [field.id, field.label] as const),
   );
 
+  // Analysis may have happened on an ATS overview route before its application questions mounted.
+  // The panel normally catches that through live detection, but Fill's fresh scan is authoritative:
+  // never write even the scalar fields when a newly-seen question still has no reviewed answer.
+  if (
+    fields.some(
+      (field) =>
+        field.category === 'question' &&
+        matchAnswerToField(field, answers, labelByAnalyzedId) === undefined,
+    )
+  ) {
+    return {
+      status: 'review',
+      unresolvedRequiredFields: [],
+      filledFieldCount: 0,
+      fillOutcome: null,
+      jobPageData: { ...jobPageData, fields },
+      failure: null,
+    };
+  }
+
   const values: Record<string, string> = {};
   for (const field of fields) {
     if (field.category === 'question') {
@@ -357,7 +377,7 @@ async function findDuplicate(
 /**
  * Starts a run: analyzes `jobDescription` and drafts everything the Fill Step will write.
  *
- * `jobDescription` is the candidate's pasted posting, and it is the only thing analyzed. The page
+ * `jobDescription` is the candidate-reviewed posting text, and it is the only thing analyzed. The page
  * is consulted solely for the *form* — which fields exist to be filled — and a tab with no
  * detection yet still analyzes fine, because the Fill Step re-scans the live page anyway.
  *

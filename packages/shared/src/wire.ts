@@ -61,7 +61,7 @@ export type QuestionForModel = z.infer<typeof QuestionForModelSchema>;
 /** Body of `POST /extract-job`. */
 export const ExtractJobRequestSchema = z.object({
   /**
-   * The posting the candidate pasted into the panel — the Analysis Step's only input.
+   * The candidate-reviewed posting text from the panel — the Analysis Step's only input.
    * Non-empty: an empty description is a request that can only waste a model call.
    */
   jobDescription: z.string().min(1),

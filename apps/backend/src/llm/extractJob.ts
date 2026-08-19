@@ -6,11 +6,9 @@ import { callStructured } from './structuredCall.js';
  * Extracts structured job posting information (company, role, requirements, keywords, ...) from a
  * job description, using the cheap extraction model (`MODELS.extraction`).
  *
- * The text is the posting as the candidate pasted it, not a scrape of the page they were on. The
- * extension used to send the latter and the prompt said so, which was worth correcting rather than
- * leaving stale: told it is reading "scraped page text", the model expects and tolerates the
- * surrounding junk a scrape carries (nav bars, cookie banners, the application form's own labels)
- * and will happily pull a "requirement" out of it.
+ * The text is the candidate-reviewed Job Description field, not an unfiltered page dump. Autofill
+ * can populate that field with a focused extractor, but the candidate can edit it before this call
+ * and the prompt should not teach the model to tolerate navigation, form labels or cookie banners.
  *
  * @param jobDescription - The job posting text.
  * @returns The extracted, validated {@link JobInfo}.

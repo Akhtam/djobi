@@ -625,6 +625,25 @@ describe('runFill', () => {
     expect(await getPipelineRun(7)).toMatchObject({ filledFieldCount: 1 });
   });
 
+  it('returns to review without writing when the fresh scan finds an unanalyzed question', async () => {
+    stubChrome();
+    await seedReviewRun(7, []);
+    const deps = makeDeps({
+      scan: vi.fn().mockResolvedValue({ fields: [emailField, questionField] }),
+    });
+
+    await runFill(7, profile, deps);
+
+    expect(deps.page.fill).not.toHaveBeenCalled();
+    expect(deps.backend.renderResumePdf).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobPageData: { fields: [emailField, questionField] },
+      answers: [],
+      fillOutcome: null,
+    });
+  });
+
   it('matches a drafted answer onto its question by text when the ATS remounted the field and it was re-tagged', async () => {
     stubChrome();
     await seedReviewRun(7, [questionField]);

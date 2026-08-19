@@ -1,9 +1,9 @@
 /**
- * The Application Pipeline run for the page the panel is currently showing.
+ * The Application Pipeline run for the job the panel is currently showing.
  *
  * Composes the two hooks either side of it — `useActiveTab` (which page) and `usePipelineRun`
- * (which run) — and applies the one rule that only makes sense once both are in hand: a run
- * captured from a different page is not this page's run.
+ * (which run) — and applies the one rule that only makes sense once both are in hand: a run from a
+ * different job is not this job's run, while another route for the same job may retain it.
  *
  * That rule used to sit in `panel/App.tsx`, between the two `use…` calls, as three lines with a
  * comment. It is not a rendering concern and it is not optional — every reader of the run has to
@@ -18,6 +18,7 @@ import type { QuestionAnswer } from '@djobi/shared';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 import type { PipelineRunState, PipelineStatus } from '../lib/tabStore';
+import { isSameJobUrl, jobKeyForUrl } from '../lib/jobContext';
 
 export interface ActiveRun {
   /** The tracked tab, or `null` before Chrome has named one. */
@@ -25,7 +26,7 @@ export interface ActiveRun {
   tabUrl: string | null;
   /** Increments whenever the tracked page changes — a different tab, or a navigation within one. */
   changeToken: number;
-  /** The stored run **for the page now being shown**, or `null` when there is none. */
+  /** The stored run **for the job now being shown**, or `null` when there is none. */
   run: PipelineRunState | null;
   /** What to render: the run's status, or `null` before anything has been analyzed on this page. */
   status: PipelineStatus | null;
@@ -54,11 +55,12 @@ export interface ActiveRun {
  */
 export function useActiveRun(enabled: boolean): ActiveRun {
   const { tabId, tabUrl, changeToken } = useActiveTab(enabled);
-  const { run: storedRun, status: storedStatus, begin, edit } = usePipelineRun(tabId, changeToken);
+  const jobScope = `${tabId ?? 'none'}:${jobKeyForUrl(tabUrl) ?? tabUrl ?? 'unknown'}`;
+  const { run: storedRun, status: storedStatus, begin, edit } = usePipelineRun(tabId, jobScope);
 
   // Navigation updates the tracked URL before the service worker's async storage cleanup lands.
-  // Never render or act on a run captured from a different page in that gap.
-  const run = storedRun?.tabUrl === tabUrl ? storedRun : null;
+  // Never render another job's run in that gap, but retain same-job ATS route transitions.
+  const run = storedRun && isSameJobUrl(storedRun.tabUrl, tabUrl) ? storedRun : null;
   const status = storedRun ? (run ? storedStatus : null) : storedStatus;
 
   function updateAnswer(fieldId: string, answer: string) {

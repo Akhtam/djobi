@@ -58,6 +58,45 @@ describe('content script', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it('answers an explicit scrape request with the focused Job Description', async () => {
+    document.body.innerHTML = `
+      <main>
+        <article class="job-description">
+          <h1>Senior Engineer</h1>
+          <h2>About the role</h2>
+          <p>Acme builds reliable infrastructure for engineering organizations around the world. This role partners closely with product and customer teams to solve important operational problems.</p>
+          <h2>What you'll bring</h2>
+          <p>You have extensive TypeScript experience and have operated distributed systems in production.</p>
+        </article>
+      </main>
+    `;
+    let listener!: (
+      message: { type: string },
+      sender: unknown,
+      sendResponse: (response: unknown) => void,
+    ) => boolean;
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage,
+        onMessage: { addListener: vi.fn((registered) => (listener = registered)) },
+      },
+    });
+    await loadContentScript();
+    const sendResponse = vi.fn();
+
+    expect(listener({ type: 'SCRAPE_JOB_DESCRIPTION' }, {}, sendResponse)).toBe(true);
+
+    await vi.waitFor(() =>
+      expect(sendResponse).toHaveBeenCalledWith({
+        candidate: expect.objectContaining({
+          source: 'dom',
+          text: expect.stringContaining("What you'll bring"),
+        }),
+      }),
+    );
+  });
+
   it("reports the job page once an ATS embed widget (e.g. Ashby on a company's own domain) renders its form in asynchronously", async () => {
     document.body.innerHTML = `<main><h1>Careers at Acme</h1><div id="ashby_embed"></div></main>`;
     const sendMessage = vi.fn();

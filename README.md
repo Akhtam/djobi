@@ -12,7 +12,8 @@ server, a persisted history of past applications, and a web dashboard for tracki
   resume PDF rendering. Runs on `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
-  an options page (profile setup), and a side panel with **Autofill** (paste/review/fill) and **Log**
+  an options page (profile setup), and a side panel with **Autofill** (scrape or paste/review/fill),
+  **Log**, and **Ask**
   tabs. There is no popup — the toolbar icon opens the side panel, which survives tab switches and
   clicking away.
 - `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications and
@@ -95,17 +96,21 @@ With the backend running and the extension loaded:
 Navigate to the application form for a job you want to apply to, and click the djobi icon to open
 the side panel:
 
-1. **Paste the job description** into the panel. This is the only input analysis has — djobi does
-   not read the posting off the page, because the application form is usually a different page from
-   the ad
-2. **Analyze** — extracts structured job info, tailors a resume to it, and drafts answers to any
+1. **Paste the job description or click Scrape job description.** Scraping reads every addressable
+   frame, prefers `JobPosting` JSON-LD, and falls back to focused, scored DOM sections while excluding
+   forms and navigation. It fills the same editable field and never starts analysis automatically
+2. **Review the description.** It is retained in session storage across same-job routes, including
+   Ashby's Overview → Application transition. The original posting URL remains the URL used for
+   duplicate checks and saving
+3. **Analyze** — extracts structured job info, tailors a resume to it, and drafts answers to any
    freeform questions the form asks. If you've already saved an application for this exact URL, the
    panel says so and spends no LLM calls until you choose **Analyze and apply anyway**
-3. **Review and edit** every drafted answer. Nothing is filled until you say so
-4. **Fill form** writes the reviewed values into the page and attaches the generated resume PDF. It
+4. **Review and edit** every drafted answer. Nothing is filled until you say so. If an application
+   route introduces questions that were absent during analysis, Fill is disabled until you re-analyze
+5. **Fill form** writes the reviewed values into the page and attaches the generated resume PDF. It
    reports verified counts and unresolved required fields when the content script responds. If no
    frame responds, attempted counts are retained but the result is marked **Fill unverified**
-5. **Save application** records the current job info, tailored resume and answers. Saving is explicit
+6. **Save application** records the current job info, tailored resume and answers. Saving is explicit
    and separate from filling; re-saving after another edit or fill updates the same record rather
    than creating a second one. Applications have no draft/submitted status
 

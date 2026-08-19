@@ -275,10 +275,10 @@ that needs to change — all three call sites go through it.
 
 ### `extractJob.ts`
 
-Haiku call. Takes the **pasted Job Description** (not scraped page text — the extension stopped
-scraping, because the application form is a different page from the posting), forces the
-`report_job_info` tool, and returns a validated `JobInfo`. The prompt deliberately does not tell the
-model it's reading scraped text; told that, it tolerates and mines junk.
+Haiku call. Takes the candidate-reviewed **Job Description** field (whether manually pasted or
+populated by Autofill's focused page extractor), forces the `report_job_info` tool, and returns a
+validated `JobInfo`. The prompt deliberately does not describe the input as raw scraped page text;
+told that, a model tolerates and mines junk that the extractor is required to reject.
 
 ### `tailorResume.ts`
 

@@ -1,13 +1,14 @@
 /**
  * Content script injected on every page (`manifest.ts` → `content_scripts`). Watches for the page
  * to become a job application form and keeps reporting it to the background service worker as it
- * changes (see `detect.ts`); answers `SCAN_PAGE` with a fresh scan on demand, and `FILL_FORM` by
- * filling the page.
+ * changes (see `detect.ts`); answers `SCRAPE_JOB_DESCRIPTION` with focused posting text,
+ * `SCAN_PAGE` with a fresh form scan, and `FILL_FORM` by filling the page.
  */
 import type { ContentCommandMessage, JobPageData } from '../lib/messages';
 import { detectFields } from './detectFields';
 import { watchForJobApplicationPage } from './detect';
 import { fillPage } from './fillForm';
+import { extractJobDescriptionWhenReady } from './extractJobDescription';
 
 /** Scans the live page into the shape the background stores and the Application Pipeline consumes. */
 function scan(): JobPageData {
@@ -85,6 +86,13 @@ chrome.runtime.onMessage.addListener(
       if (data.fields.length === 0) return false;
       sendResponse(data);
       return false;
+    }
+
+    if (message.type === 'SCRAPE_JOB_DESCRIPTION') {
+      void extractJobDescriptionWhenReady(document).then((candidate) =>
+        sendResponse({ candidate }),
+      );
+      return true;
     }
 
     if (message.type !== 'FILL_FORM') return false;

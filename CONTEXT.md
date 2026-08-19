@@ -7,15 +7,15 @@ A Chrome extension that autofills job applications on ATS platforms with an AI-t
 ### Application pipeline
 
 **Application Pipeline**:
-The end-to-end flow that turns a pasted Job Description plus a detected form into a filled, saved Application — the Analysis Step, Fill Step and explicit Save Step.
+The end-to-end flow that turns a candidate-reviewed Job Description plus a detected form into a filled, saved Application — the Analysis Step, Fill Step and explicit Save Step.
 _Avoid_: autofill process, flow
 
 **Job Description**:
-The job posting text, as the candidate pastes it into the panel. The Analysis Step's only input — the page itself is read for its form, never for the posting.
-_Avoid_: page text, scraped text (both name a source that no longer exists)
+The focused job posting text in Autofill's editable panel field. The candidate may paste it or explicitly scrape it from the active page; scraping prefers `JobPosting` structured data, then scores focused DOM candidates and excludes form/navigation boilerplate. The reviewed field value is the Analysis Step's only posting input. Its Job Context is retained across same-job ATS routes such as Ashby's Overview → Application transition.
+_Avoid_: page text (the full page is never the Analysis Step input), raw scrape (the extractor fails closed instead of returning an unfiltered page)
 
 **Analysis Step**:
-Extracting structured Job Info from the pasted Job Description, then tailoring a Resume and drafting Question Answers from it.
+Extracting structured Job Info from the reviewed Job Description, then tailoring a Resume and drafting Question Answers from it.
 _Avoid_: extraction (too narrow — covers only the first half)
 
 **Fill Step**:
@@ -31,7 +31,7 @@ The check that runs before the Analysis Step: if an Application already exists f
 _Avoid_: deduplication (nothing is merged or removed)
 
 **Autofill Tab**:
-The panel's first flow: the Application Pipeline as the candidate drives it — paste a Job
+The panel's first flow: the Application Pipeline as the candidate drives it — paste or scrape a Job
 Description, Analyze, review, Fill, Save. A module beside the Log Tab and Ask Tab rather than the
 body of the panel shell, which owns only the Profile bootstrap, the tab switch and the hand-off to
 the Ask Tab. It is the one tab that renders a run; the shell's single use of that run is the header

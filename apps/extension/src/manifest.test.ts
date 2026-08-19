@@ -41,4 +41,8 @@ describe('manifest', () => {
   it('grants tabs permission so the side panel can retain the active application URL after navigation', () => {
     expect(manifest.permissions).toContain('tabs');
   });
+
+  it('grants webNavigation only for enumerating frames when scraping an embedded posting', () => {
+    expect(manifest.permissions).toContain('webNavigation');
+  });
 });

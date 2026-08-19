@@ -22,7 +22,13 @@ import { runAnalysis, runFill, type PipelineDeps } from '../background/applicati
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { fakeChrome } from '../lib/fakeChrome';
 import { type FakeSessionStorage } from '../lib/fakeSessionStorage';
-import { getPipelineRun, patchPipelineRun, reportDetectedPage, storageKey } from '../lib/tabStore';
+import {
+  getPipelineRun,
+  patchPipelineRun,
+  reportDetectedPage,
+  setJobContext,
+  storageKey,
+} from '../lib/tabStore';
 
 export const profile: Profile = {
   fullName: 'Jane Doe',
@@ -263,6 +269,13 @@ export async function stubChrome(options: StubOptions) {
           message.tabId as number,
           message.runId as string,
           message.updates as Parameters<typeof patchPipelineRun>[2],
+        );
+      } else if (message.type === 'UPDATE_JOB_CONTEXT') {
+        void setJobContext(
+          message.tabId as number,
+          message.tabUrl as string,
+          message.jobDescription as string,
+          message.source as 'manual' | 'scraped',
         );
       }
       callback(undefined);

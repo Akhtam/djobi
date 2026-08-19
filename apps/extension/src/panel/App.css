@@ -544,6 +544,13 @@ button:disabled {
   box-shadow: 0 0 0 3px var(--ring);
 }
 
+.scrape-feedback {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .resume-preview {
   display: flex;
   flex-direction: column;

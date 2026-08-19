@@ -37,19 +37,20 @@ build` compiles the shared package and emits a plain-Node production server to `
   the side panel is the review surface. Light/dark theme shared by both pages (`lib/theme.tsx`),
   persisted in `chrome.storage.local`.
 
-The Application Pipeline as it runs today: **paste a job description → duplicate guard → Analysis
-Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
+The Application Pipeline as it runs today: **scrape or paste a job description → duplicate guard →
+Analysis Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
 checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses nothing.
-Every run has a unique id; asynchronous completions patch only that id, navigation clears the tab's
-frames/run, and panel edits route through the service worker so every storage mutation shares one
-per-tab queue. Fill and Save claim statuses atomically before starting.
+Every run has a unique id; asynchronous completions patch only that id. Navigation always clears
+page-specific frames, but the Job Context and run survive when the URL still identifies the same
+job (including Ashby `/application`). Panel edits route through the service worker so every storage
+mutation shares one per-tab queue. Fill and Save claim statuses atomically before starting.
 
-The panel has two tabs. **Autofill** is that pipeline. **Log** records a job the candidate applied
+The panel has three tabs. **Autofill** is that pipeline. **Log** records a job the candidate applied
 to themselves — their own resume, or LinkedIn Easy Apply — so it still lands in the same history:
 paste the posting and its URL, `POST /extract-job` for the details, then `POST /applications` with
 `source: 'manual'` and the base profile in place of a tailored resume. No pipeline, no tab-scoped
 run state, no Detected Fields and no page writes. Its URL field follows the active tab until the
-candidate edits it.
+candidate edits it. **Ask** drafts or revises one application answer without writing to the page.
 
 ## Key decisions
 
@@ -67,9 +68,13 @@ candidate edits it.
 - **Form filling:** one generic heuristic field-classifier, not per-ATS selectors. ATS platform
   APIs are used as an _oracle_ (classification, required, options) where one exists; the DOM stays
   the targeting mechanism. See `background/apiDetectors.ts`.
-- **The Job Description is pasted, never scraped.** The application form is a different page from
-  the job ad, so a scrape captured form labels and nav bars instead of the posting. The page is read
-  for its _form_ only.
+- **Scraping is explicit, focused, and reviewable.** `Scrape job description` prefers schema.org
+  `JobPosting`, then scores semantic DOM candidates across frames, strips forms/navigation, and fails
+  closed below its confidence threshold. It populates the editable Job Description but never starts
+  Analysis. Manual paste remains the fallback.
+- **Job Context outlives an ATS screen, not a job.** The draft, original posting URL and run survive
+  same-job routes such as Ashby Overview → Application; form frames are always discarded and
+  re-detected. A different job URL or tab closure clears the retained state.
 - **Review surface is a side panel, not a popup.** A popup is destroyed on any outside click; the
   panel survives tab switches, and the pipeline runs in the service worker so closing the panel
   mid-run doesn't drop the result.

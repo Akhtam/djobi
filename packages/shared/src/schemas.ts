@@ -142,8 +142,8 @@ export function parseProfile(value: unknown): Profile {
 }
 
 /**
- * Structured job-posting information extracted by `extractJob` from the Job Description pasted by
- * the candidate (see `apps/backend/src/llm/extractJob.ts`).
+ * Structured job-posting information extracted by `extractJob` from the candidate-reviewed Job
+ * Description (see `apps/backend/src/llm/extractJob.ts`).
  */
 export const JobInfoSchema = z.object({
   company: z.string(),

@@ -1,0 +1,205 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { extractJobDescription, extractJobDescriptionWhenReady } from './extractJobDescription';
+
+const LONG_ABOUT =
+  'Acme builds reliable infrastructure for teams around the world. Our engineers work closely with customers and product partners to solve meaningful operational problems.';
+
+describe('extractJobDescription', () => {
+  afterEach(() => {
+    document.head.innerHTML = '';
+    document.body.innerHTML = '';
+    document.title = '';
+    history.replaceState({}, '', '/');
+    vi.useRealTimers();
+  });
+
+  it('prefers nested JobPosting JSON-LD and includes separate qualification fields', () => {
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.textContent = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@graph': [
+        { '@type': 'Organization', name: 'Acme' },
+        {
+          '@type': ['Thing', 'https://schema.org/JobPosting'],
+          title: 'Senior Platform Engineer',
+          hiringOrganization: { name: 'Acme' },
+          description: `<h2>About Acme</h2><p>${LONG_ABOUT}</p><h2>What you'll do</h2><ul><li>Build distributed systems.</li><li>Partner with product teams.</li></ul>`,
+          qualifications:
+            'You have production TypeScript experience and a record of operating distributed systems.',
+        },
+      ],
+    });
+    document.head.append(script);
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('structured-data');
+    expect(result?.text).toContain('Senior Platform Engineer');
+    expect(result?.text).toContain("What you'll do");
+    expect(result?.text).toContain('Qualifications');
+    expect(result?.text).toContain('production TypeScript experience');
+  });
+
+  it('decodes mixed and nested HTML entities in structured descriptions such as Brex postings', () => {
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Software Engineer',
+      hiringOrganization: { name: 'Brex' },
+      description: `<div><p>${LONG_ABOUT} We give you the support needed to grow your career.&lt;/p&gt;&lt;/div&gt;&lt;p&gt;&lt;strong&gt;Engineering at Brex&lt;/strong&gt;&lt;/p&gt;
+        &amp;lt;p&amp;gt;Engineering at Brex is about building systems that scale with speed and intention. Our teams operate with high autonomy and deep collaboration.&amp;lt;/p&amp;gt;
+        <p><strong>Requirements</strong></p><ul><li>Experience shipping reliable production systems.</li></ul>`,
+    });
+    document.head.append(script);
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('structured-data');
+    expect(result?.text).toContain('Engineering at Brex');
+    expect(result?.text).toContain('Requirements');
+    expect(result?.text).not.toMatch(/&(?:amp;)?lt;|<\/?(?:p|div|strong)>/i);
+  });
+
+  it('categorically prefers the structured posting whose URL matches the current job', () => {
+    history.replaceState({}, '', '/jobs/current');
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.textContent = JSON.stringify([
+      {
+        '@type': 'JobPosting',
+        url: '/jobs/current',
+        title: 'Current Role',
+        description: `<p>${LONG_ABOUT} ${LONG_ABOUT} This is the CURRENT posting and its required experience.</p>`,
+      },
+      {
+        '@type': 'JobPosting',
+        url: '/jobs/related',
+        title: 'Related Role',
+        description: `<p>${`${LONG_ABOUT} `.repeat(12)} This is the WRONG related posting.</p>`,
+      },
+    ]);
+    document.head.append(script);
+
+    const result = extractJobDescription(document);
+
+    expect(result?.text).toContain('CURRENT posting');
+    expect(result?.text).not.toContain('WRONG related posting');
+  });
+
+  it('rejects explicitly nonmatching structured data and falls back to the current DOM posting', () => {
+    history.replaceState({}, '', '/jobs/current');
+    const script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.textContent = JSON.stringify({
+      '@type': 'JobPosting',
+      url: '/jobs/stale',
+      title: 'Stale Role',
+      description: `<p>${LONG_ABOUT} ${LONG_ABOUT} This stale structured posting belongs to another job.</p>`,
+    });
+    document.head.append(script);
+    document.body.innerHTML = `
+      <main class="job-description">
+        <h1>Current Role</h1>
+        <h2>About the role</h2>
+        <p>${LONG_ABOUT} ${LONG_ABOUT}</p>
+        <h2>Qualifications</h2>
+        <p>This CURRENT DOM posting requires production engineering experience.</p>
+      </main>
+    `;
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('dom');
+    expect(result?.text).toContain('CURRENT DOM posting');
+    expect(result?.text).not.toContain('stale structured posting');
+  });
+
+  it('falls back from malformed JSON-LD to a focused DOM description', () => {
+    document.head.innerHTML = `<script type="application/ld+json">{"broken":</script>`;
+    document.body.innerHTML = `
+      <header>Careers Navigation</header>
+      <main>
+        <div class="job-description">
+          <h1>Staff Engineer</h1>
+          <h2>About the company</h2>
+          <p>${LONG_ABOUT}</p>
+          <h2>What you'll bring</h2>
+          <ul><li>Experience designing APIs used by other engineering teams.</li></ul>
+        </div>
+      </main>
+    `;
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('dom');
+    expect(result?.text).toContain('About the company');
+    expect(result?.text).toContain("What you'll bring");
+    expect(result?.text).not.toContain('Careers Navigation');
+  });
+
+  it('removes application controls and stops before application boilerplate', () => {
+    document.body.innerHTML = `
+      <main data-testid="job-description">
+        <h1>Product Engineer</h1>
+        <h2>The opportunity</h2>
+        <p>${LONG_ABOUT}</p>
+        <h2>Who you are</h2>
+        <p>You communicate clearly and have several years of product engineering experience.</p>
+        <h2>Apply for this job</h2>
+        <form><label>Email <input name="email" /></label><button>Submit application</button></form>
+        <p>Application privacy notice and recruiting consent text.</p>
+      </main>
+    `;
+
+    const result = extractJobDescription(document);
+
+    expect(result?.text).toContain('Who you are');
+    expect(result?.text).not.toContain('Apply for this job');
+    expect(result?.text).not.toContain('Application privacy notice');
+    expect(result?.text).not.toContain('Submit application');
+  });
+
+  it('reads a description rendered inside an open shadow root', () => {
+    const host = document.createElement('job-posting');
+    document.body.append(host);
+    host.attachShadow({ mode: 'open' }).innerHTML = `
+      <article class="job-description">
+        <h1>Infrastructure Engineer</h1>
+        <h2>About the role</h2>
+        <p>${LONG_ABOUT}</p>
+        <h2>Qualifications</h2>
+        <p>You have deep Linux and networking experience in production environments.</p>
+      </article>
+    `;
+
+    expect(extractJobDescription(document)?.text).toContain('deep Linux and networking experience');
+  });
+
+  it('fails closed on a navigation/application shell instead of returning all body text', () => {
+    document.body.innerHTML = `
+      <nav>Home Careers Teams Sign in</nav>
+      <main><h1>Apply</h1><form><input name="name" /><button>Continue</button></form></main>
+    `;
+
+    expect(extractJobDescription(document)).toBeNull();
+  });
+
+  it('waits briefly for a client-rendered posting and disconnects after finding it', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `<main id="app"></main>`;
+
+    const pending = extractJobDescriptionWhenReady(document, { timeoutMs: 1000, settleMs: 50 });
+    document.querySelector('#app')!.innerHTML = `
+      <article class="job-description">
+        <h2>About us</h2><p>${LONG_ABOUT} ${LONG_ABOUT}</p>
+        <h2>Requirements</h2><p>Five years of relevant software engineering experience.</p>
+      </article>
+    `;
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(50);
+
+    await expect(pending).resolves.toMatchObject({ source: 'dom' });
+  });
+});

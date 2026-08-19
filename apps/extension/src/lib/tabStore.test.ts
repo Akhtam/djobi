@@ -6,10 +6,12 @@ import {
   clearTabState,
   enrichDetectedFields,
   getDetectedPage,
+  getJobContext,
   getPipelineRun,
   patchPipelineRun,
   registerTabStateCleanup,
   reportDetectedPage,
+  setJobContext,
   setPipelineRun,
   storageKey,
   transitionPipelineRun,
@@ -305,11 +307,13 @@ describe('tabStore', () => {
   it('clears everything for a tab at once', async () => {
     stubChrome();
     await reportDetectedPage(1, 0, { fields: [] });
+    await setJobContext(1, run.tabUrl!, run.jobDescription, 'scraped');
     await setPipelineRun(1, run);
 
     await clearTabState(1);
 
     expect(await getDetectedPage(1)).toBeNull();
+    expect(await getJobContext(1)).toBeNull();
     expect(await getPipelineRun(1)).toBeNull();
   });
 
@@ -334,5 +338,32 @@ describe('tabStore', () => {
     await vi.waitFor(async () => expect(await getPipelineRun(1)).toBeNull());
 
     expect(await getDetectedPage(1)).toBeNull();
+  });
+
+  it('retains the Job Description and run while Ashby moves the same job to /application', async () => {
+    const { fireTabUpdated } = stubChrome();
+    registerTabStateCleanup();
+    const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
+    await reportDetectedPage(1, 0, { fields: [textField('overview-field')] });
+    await setJobContext(1, overviewUrl, 'Retained Ashby description', 'scraped');
+    await setPipelineRun(1, { ...run, tabUrl: overviewUrl });
+
+    fireTabUpdated(1, `${overviewUrl}/application`);
+    await vi.waitFor(async () => expect(await getDetectedPage(1)).toBeNull());
+
+    expect(await getJobContext(1)).toMatchObject({
+      sourceUrl: overviewUrl,
+      jobDescription: 'Retained Ashby description',
+    });
+    expect(await getPipelineRun(1)).toMatchObject({ tabUrl: overviewUrl });
+  });
+
+  it('clears a retained draft when navigation identifies a different job', async () => {
+    const { fireTabUpdated } = stubChrome();
+    registerTabStateCleanup();
+    await setJobContext(1, 'https://jobs.ashbyhq.com/acme/job-1', 'Job one', 'scraped');
+
+    fireTabUpdated(1, 'https://jobs.ashbyhq.com/acme/job-2');
+    await vi.waitFor(async () => expect(await getJobContext(1)).toBeNull());
   });
 });

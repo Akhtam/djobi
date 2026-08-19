@@ -1,9 +1,15 @@
 import { parseDetectedFields } from '@djobi/shared';
 import type { DetectedField, JobInfo, QuestionAnswer, TailoredResume } from '@djobi/shared';
 import type { JobPageData } from './messages';
+import {
+  isSameJobUrl,
+  jobKeyForUrl,
+  type JobContext,
+  type JobDescriptionSource,
+} from './jobContext';
 
 /**
- * Everything known about one browser tab's job application, under one key with one lifetime.
+ * Everything known about one browser tab's job application, under one serialized storage key.
  *
  * This replaces two stores that answered the same question — "what do we know about this tab?" —
  * under different rules: an in-memory `Map` in the service worker holding the content script's
@@ -18,6 +24,8 @@ import type { JobPageData } from './messages';
  * browser closes (in-progress review state isn't the permanent record — that is the `applications`
  * row written after an explicit save), and is directly readable from both the background
  * worker and the panel, so neither needs a message round-trip to reach it.
+ * Frames have page lifetime; Job Context and run have job lifetime and survive recognized same-job
+ * routes. The tab closing still removes the whole key.
  */
 
 export type PipelineStatus =
@@ -75,7 +83,7 @@ export interface PipelineRunState {
   tabUrl: string | null;
   jobPageData: JobPageData;
   /**
-   * The job description the candidate pasted, as analyzed. Kept on the run so the panel can show
+   * The candidate-reviewed job description, as analyzed. Kept on the run so the panel can show
    * it back for editing and a re-analysis, and so a reopened panel doesn't lose it.
    */
   jobDescription: string;
@@ -132,6 +140,8 @@ interface DetectedFrame {
 export interface TabState {
   /** Keyed by frame id (stringified — this round-trips through JSON). */
   frames: Record<string, DetectedFrame>;
+  /** Editable posting text retained across same-job routes, even before Analysis starts. */
+  jobContext: JobContext | null;
   run: PipelineRunState | null;
 }
 
@@ -142,9 +152,13 @@ type StoredPipelineRun = Omit<PipelineRunState, 'fillOutcome' | 'runId'> & {
   fillOutcome?: FillOutcome | null;
 };
 
-type StoredTabState = Omit<TabState, 'run'> & { run: StoredPipelineRun | null };
+type StoredTabState = Omit<TabState, 'jobContext' | 'run'> & {
+  /** Absent in entries written before retained Job Description drafts existed. */
+  jobContext?: JobContext | null;
+  run: StoredPipelineRun | null;
+};
 
-const EMPTY: TabState = { frames: {}, run: null };
+const EMPTY: TabState = { frames: {}, jobContext: null, run: null };
 
 /** Exported so `chrome.storage.onChanged` subscribers can pick their tab's key out of a change set. */
 export function storageKey(tabId: number): string {
@@ -175,6 +189,7 @@ async function read(tabId: number): Promise<TabState> {
 
   return {
     ...state,
+    jobContext: state.jobContext ?? null,
     frames: Object.fromEntries(
       Object.entries(state.frames ?? {}).map(([frameId, frame]) => [
         frameId,
@@ -308,6 +323,46 @@ export async function getPipelineRun(tabId: number): Promise<PipelineRunState | 
   return (await read(tabId)).run;
 }
 
+/** The retained pre-analysis Job Description for this tab, if one has been supplied. */
+export async function getJobContext(tabId: number): Promise<JobContext | null> {
+  return (await read(tabId)).jobContext;
+}
+
+/**
+ * Persists the editable pre-analysis draft through the service worker's per-tab write queue.
+ * Clearing the editor removes the context instead of leaving an empty draft that can be restored.
+ */
+export async function setJobContext(
+  tabId: number,
+  sourceUrl: string,
+  jobDescription: string,
+  source: JobDescriptionSource,
+): Promise<void> {
+  return withTabLock(tabId, async () => {
+    const state = await read(tabId);
+    const jobKey = jobKeyForUrl(sourceUrl);
+    if (!jobKey) return;
+
+    if (!jobDescription.trim()) {
+      await write(tabId, { ...state, jobContext: null });
+      return;
+    }
+
+    const existing = state.jobContext?.jobKey === jobKey ? state.jobContext : null;
+    await write(tabId, {
+      ...state,
+      jobContext: {
+        jobKey,
+        // Keep the overview URL once captured; an `/application` edit must not replace the URL used
+        // by Duplicate Guard and Save with a less useful route.
+        sourceUrl: existing?.sourceUrl ?? sourceUrl,
+        jobDescription,
+        source: existing?.source === 'scraped' ? 'scraped' : source,
+      },
+    });
+  });
+}
+
 export async function setPipelineRun(tabId: number, run: PipelineRunState): Promise<void> {
   return withTabLock(tabId, async () => {
     const state = await read(tabId);
@@ -355,12 +410,28 @@ export async function clearTabState(tabId: number): Promise<void> {
   return withTabLock(tabId, () => chrome.storage.session.remove(storageKey(tabId)));
 }
 
-/** Wires service-worker invalidation: closing or navigating a tab makes all stored state stale. */
+/**
+ * Drops page-specific frames on every navigation while retaining data that still belongs to the
+ * same job. A different posting clears everything; closing the tab always clears everything.
+ */
+export async function handleTabNavigation(tabId: number, nextUrl: string): Promise<void> {
+  return withTabLock(tabId, async () => {
+    const state = await read(tabId);
+    const jobContext =
+      state.jobContext && isSameJobUrl(state.jobContext.sourceUrl, nextUrl)
+        ? state.jobContext
+        : null;
+    const run = state.run && isSameJobUrl(state.run.tabUrl, nextUrl) ? state.run : null;
+    await write(tabId, { frames: {}, jobContext, run });
+  });
+}
+
+/** Wires service-worker invalidation for tab closure and navigation. */
 export function registerTabStateCleanup(): void {
   chrome.tabs.onRemoved.addListener((tabId) => {
     void clearTabState(tabId);
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.url !== undefined) void clearTabState(tabId);
+    if (changeInfo.url !== undefined) void handleTabNavigation(tabId, changeInfo.url);
   });
 }

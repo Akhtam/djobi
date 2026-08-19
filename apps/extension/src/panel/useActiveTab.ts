@@ -8,9 +8,9 @@ import { useEffect, useState } from 'react';
  * startup, `get` on activation, and the `onActivated`/`onUpdated` listeners), which lived inline in
  * `App.tsx` and were most of what its test had to stub. Here they are one seam.
  *
- * `changeToken` increments on every switch *and* on a same-tab navigation. The panel uses it to
- * drop everything scoped to the page it was showing: a tab that navigates is a different job
- * application even though its id hasn't changed, so an id alone can't say when to reset.
+ * `changeToken` increments on every switch *and* on a same-tab navigation. Page-scoped consumers
+ * use it to reset form detection and pending requests; job-scoped consumers separately compare a
+ * canonical Job Context so an ATS overview -> application route can retain its description/run.
  */
 export interface ActiveTab {
   tabId: number | null;

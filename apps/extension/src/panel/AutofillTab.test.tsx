@@ -29,13 +29,23 @@ import {
 } from './panelTestHarness';
 import type { DetectedField } from '@djobi/shared';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
-import { getPipelineRun, patchPipelineRun, storageKey } from '../lib/tabStore';
+import type { PostingReadOutcome } from '../lib/postingReader';
+import {
+  getJobContext,
+  getPipelineRun,
+  patchPipelineRun,
+  reportDetectedPage,
+  setJobContext,
+  storageKey,
+} from '../lib/tabStore';
 
 /** The tab as the shell mounts it: a Profile, the real run handle, and nothing else. */
 function AutofillHarness({
   onRefineAnswer = () => {},
+  readPosting,
 }: {
   onRefineAnswer?: (fieldId: string, question: string, currentAnswer: string) => void;
+  readPosting?: (tabId: number) => Promise<PostingReadOutcome>;
 }) {
   const activeRun = useActiveRun(true);
   return (
@@ -44,6 +54,7 @@ function AutofillHarness({
       profile={profile}
       activeRun={activeRun}
       onRefineAnswer={onRefineAnswer}
+      readPosting={readPosting}
       hidden={false}
     />
   );
@@ -64,7 +75,123 @@ describe('AutofillTab', () => {
     await screen.findByRole('button', { name: 'Analyze' });
     expect(screen.getByPlaceholderText(/paste the job description/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Job description')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Scrape job description' })).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it('scrapes into the editable textarea without starting Analysis automatically', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'https://jobs.ashbyhq.com/acme/job-id',
+      profile,
+      jobPageData: null,
+    });
+    const readPosting = vi.fn(() =>
+      Promise.resolve({
+        status: 'success' as const,
+        candidate: { text: JOB_DESCRIPTION, score: 120, source: 'structured-data' as const },
+      }),
+    );
+    render(<AutofillHarness readPosting={readPosting} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+
+    expect(await screen.findByDisplayValue(JOB_DESCRIPTION)).toBeInTheDocument();
+    expect(screen.getByText(/review or edit it before analyzing/i)).toBeInTheDocument();
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+    await vi.waitFor(async () =>
+      expect(await getJobContext(1)).toMatchObject({
+        jobDescription: JOB_DESCRIPTION,
+        source: 'scraped',
+      }),
+    );
+  });
+
+  it('never overwrites text entered while a scrape is still pending', async () => {
+    await stubChrome({ tabUrl: 'https://example.com/jobs/1', profile, jobPageData: null });
+    const scrape = deferred<PostingReadOutcome>();
+    render(<AutofillHarness readPosting={() => scrape.promise} />);
+    const textarea = await screen.findByLabelText('Job description');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scrape job description' }));
+    fireEvent.change(textarea, { target: { value: 'My manually pasted description' } });
+    scrape.resolve({
+      status: 'success',
+      candidate: { text: 'Late scraped description', score: 100, source: 'dom' },
+    });
+
+    await vi.waitFor(() => expect(textarea).toHaveValue('My manually pasted description'));
+    expect(screen.queryByDisplayValue('Late scraped description')).not.toBeInTheDocument();
+  });
+
+  it('keeps scrape failure recoverable through manual paste', async () => {
+    await stubChrome({ tabUrl: 'https://example.com/jobs/1', profile, jobPageData: null });
+    render(<AutofillHarness readPosting={() => Promise.resolve({ status: 'not-found' })} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/paste it instead/i);
+    fireEvent.change(screen.getByLabelText('Job description'), {
+      target: { value: 'Manual fallback description' },
+    });
+    expect(screen.getByRole('button', { name: 'Analyze' })).not.toBeDisabled();
+  });
+
+  it('turns an unexpected frame-reader failure into the reload-or-paste fallback', async () => {
+    await stubChrome({ tabUrl: 'https://example.com/jobs/1', profile, jobPageData: null });
+    render(<AutofillHarness readPosting={() => Promise.reject(new Error('Chrome API failed'))} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/reload it to reconnect/i);
+  });
+
+  it('retains a scraped Ashby description from Overview to Application and analyzes against the posting URL', async () => {
+    const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
+    const { navigate, sendMessage } = await stubChrome({
+      tabUrl: overviewUrl,
+      tabId: 1,
+      profile,
+      jobPageData: null,
+    });
+    await setJobContext(1, overviewUrl, JOB_DESCRIPTION, 'scraped');
+    render(<AutofillHarness />);
+    expect(await screen.findByLabelText('Job description')).toHaveValue(JOB_DESCRIPTION);
+
+    act(() => navigate(1, `${overviewUrl}/application`));
+
+    expect(await screen.findByLabelText('Job description')).toHaveValue(JOB_DESCRIPTION);
+    expect(screen.getByText(/retained for this job/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toMatchObject({
+      tabUrl: overviewUrl,
+      jobDescription: JOB_DESCRIPTION,
+    });
+  });
+
+  it('requires re-analysis when a retained run reaches application questions that were absent on Overview', async () => {
+    const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
+    const { navigate } = await stubChrome({
+      tabUrl: overviewUrl,
+      tabId: 1,
+      profile,
+      jobPageData: null,
+    });
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    act(() => navigate(1, `${overviewUrl}/application`));
+    await reportDetectedPage(1, 0, { fields: [questionField] });
+
+    expect(await screen.findByText(/added questions that were not present/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fill form' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
+
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/added questions that were not present/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
   });
 
   it('leaves the paste box empty even when a form is detected, and keeps Analyze disabled until something is pasted', async () => {

@@ -1,16 +1,14 @@
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
+import type { JobDescriptionSource } from './jobContext';
 
 /**
  * What the content script reports once it's detected an ATS job application form: the fields it
  * found, and nothing else.
  *
- * It used to carry a `pageText` scrape of the page alongside them, which was the Analysis Step's
- * input. That never worked reliably enough to keep: an ATS application form is a different page
- * from the posting, so the scrape routinely captured the form's own labels, a cookie banner and a
- * nav bar instead of the job description — and on a client-rendered ATS it captured whatever
- * happened to have mounted. The job description now comes from the candidate pasting it
- * ({@link StartAnalysisMessage.jobDescription}), which is the one source that is always the actual
- * posting. Detection remains, because the Fill Step still needs to know what to fill.
+ * It used to carry an unconditional `pageText` dump alongside form detection. That routinely sent
+ * form labels, cookie banners and navigation into Analysis. Posting extraction is now a separate,
+ * explicit `SCRAPE_JOB_DESCRIPTION` request that fails closed and only populates the candidate's
+ * editable field. Detection remains independent because the Fill Step needs to know what to fill.
  */
 export interface JobPageData {
   fields: DetectedField[];
@@ -32,7 +30,7 @@ export interface StartAnalysisMessage {
   tabId: number;
   tabUrl: string | null;
   profile: Profile;
-  /** The posting the candidate pasted into the panel — the Analysis Step's only input. */
+  /** The candidate-reviewed posting text from the panel — the Analysis Step's only input. */
   jobDescription: string;
   /**
    * Skip the duplicate check and analyze regardless. Set only when the candidate chose "Analyze and
@@ -65,6 +63,15 @@ export interface UpdateRunMessage {
     /** Editing a saved snapshot makes it pending until it is saved again. */
     status?: 'filled';
   };
+}
+
+/** Panel -> background: retain the editable pre-analysis description for this job. */
+export interface UpdateJobContextMessage {
+  type: 'UPDATE_JOB_CONTEXT';
+  tabId: number;
+  tabUrl: string;
+  jobDescription: string;
+  source: JobDescriptionSource;
 }
 
 export interface FillFormPayload {
@@ -111,8 +118,27 @@ export interface ScanPageCommandMessage {
   type: 'SCAN_PAGE';
 }
 
+/** A focused posting candidate extracted from one frame. */
+export interface ScrapedJobDescription {
+  text: string;
+  /** Comparable within this extractor; the frame reader uses it to select the best candidate. */
+  score: number;
+  source: 'structured-data' | 'dom';
+}
+
+/** Panel -> content: find the Job Description visible in this frame. */
+export interface ScrapeJobDescriptionCommandMessage {
+  type: 'SCRAPE_JOB_DESCRIPTION';
+}
+
+/** An explicit reply lets the caller distinguish "no posting here" from an unreachable frame. */
+export interface ScrapeJobDescriptionResponse {
+  candidate: ScrapedJobDescription | null;
+}
+
 /** Everything the background sends *to* a content script. See `lib/pageClient.ts`. */
-export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMessage;
+export type ContentCommandMessage =
+  FillFormCommandMessage | ScanPageCommandMessage | ScrapeJobDescriptionCommandMessage;
 
 /**
  * The coordination protocol: content script and panel telling the background that something
@@ -124,8 +150,8 @@ export type ContentCommandMessage = FillFormCommandMessage | ScanPageCommandMess
  * avoid, since the channel dies with the panel that opened it. Progress is read from
  * `lib/tabStore.ts` instead.
  *
- * The two messages that *do* have responses (`SCAN_PAGE`, `FILL_FORM`) are not in this union. They
- * live in `lib/pageClient.ts`, where the response is the point.
+ * The messages that *do* have responses are not in this union: `SCAN_PAGE` and `FILL_FORM` live in
+ * `lib/pageClient.ts`, while `SCRAPE_JOB_DESCRIPTION` lives in `lib/postingReader.ts`.
  *
  * This used to be typed as request/response on both ends — a `sendMessage<TReq, TRes>` generic over
  * a response nothing ever sent, and a handler taking `sendResponse` it never called and returning a
@@ -137,7 +163,8 @@ export type TypedMessage =
   | StartAnalysisMessage
   | StartFillMessage
   | StartSaveApplicationMessage
-  | UpdateRunMessage;
+  | UpdateRunMessage
+  | UpdateJobContextMessage;
 
 /**
  * Sends a coordination message to the background and returns immediately. There is no reply to

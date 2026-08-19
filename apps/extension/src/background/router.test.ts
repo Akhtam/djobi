@@ -1,6 +1,6 @@
 import type { Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDetectedPage, getPipelineRun, setPipelineRun } from '../lib/tabStore';
+import { getDetectedPage, getJobContext, getPipelineRun, setPipelineRun } from '../lib/tabStore';
 import { handleTypedMessage } from './router';
 
 const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill, mockRunSaveApplication } =
@@ -269,6 +269,27 @@ describe('handleTypedMessage', () => {
 
     await vi.waitFor(async () =>
       expect(await getPipelineRun(7)).toMatchObject({ jobDescription: 'edited' }),
+    );
+  });
+
+  it('retains an editable Job Description before Analysis starts', async () => {
+    handleTypedMessage(
+      {
+        type: 'UPDATE_JOB_CONTEXT',
+        tabId: 7,
+        tabUrl: 'https://jobs.ashbyhq.com/acme/job-id',
+        jobDescription: 'Scraped posting text',
+        source: 'scraped',
+      },
+      {} as chrome.runtime.MessageSender,
+    );
+
+    await vi.waitFor(async () =>
+      expect(await getJobContext(7)).toMatchObject({
+        sourceUrl: 'https://jobs.ashbyhq.com/acme/job-id',
+        jobDescription: 'Scraped posting text',
+        source: 'scraped',
+      }),
     );
   });
 });

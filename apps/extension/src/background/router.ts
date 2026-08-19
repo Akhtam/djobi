@@ -1,6 +1,11 @@
 import { parseDetectedFields } from '@djobi/shared';
 import type { TypedMessage } from '../lib/messages';
-import { enrichDetectedFields, patchPipelineRun, reportDetectedPage } from '../lib/tabStore';
+import {
+  enrichDetectedFields,
+  patchPipelineRun,
+  reportDetectedPage,
+  setJobContext,
+} from '../lib/tabStore';
 import { enrichWithApiOracle } from './apiDetectors';
 import { runAnalysis, runFill, runSaveApplication } from './applicationPipeline';
 
@@ -77,6 +82,10 @@ export function handleTypedMessage(
 
     case 'UPDATE_RUN':
       void patchPipelineRun(message.tabId, message.runId, message.updates);
+      return;
+
+    case 'UPDATE_JOB_CONTEXT':
+      void setJobContext(message.tabId, message.tabUrl, message.jobDescription, message.source);
       return;
   }
 }
