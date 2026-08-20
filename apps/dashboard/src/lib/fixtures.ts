@@ -21,7 +21,7 @@ export const fixtureApplications: Application[] = [
     jobUrl: 'https://job-boards.greenhouse.io/anthropic/jobs/4551221008',
     createdAt: '2026-03-19T08:05:00.000Z',
     source: 'manual',
-    stage: 'rejected',
+    stage: 'rejected_ats',
     jobInfo: {
       company: 'Anthropic',
       team: null,

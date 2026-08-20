@@ -18,10 +18,17 @@ import { formatDate } from '../lib/format';
 
 export function ApplicationDetail({
   application,
+  backHref,
   onStageChange,
   onAddNote,
 }: {
   application: Application;
+  /**
+   * Where "all applications" goes back to — the list *as the user left it*, filters included, not
+   * a bare `#/`. Passed in because this page cannot know it: the filters live in the list's URL,
+   * which is one history entry back. See `App`.
+   */
+  backHref: string;
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
 }) {
@@ -36,7 +43,7 @@ export function ApplicationDetail({
   return (
     <article className="detail">
       <header className="detail__header">
-        <a className="back-link" href="#/">
+        <a className="back-link" href={backHref}>
           ← Applications
         </a>
         <h1>{application.roleTitle}</h1>

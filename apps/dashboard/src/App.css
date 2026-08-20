@@ -28,7 +28,8 @@
   --ring: rgb(99 86 216 / 32%);
   /* The two anchors of the brand gradient, used to colour the two live-but-early stages. Applied
      takes the blue end, phone screen the violet, so both read as djobi without reading as each
-     other. Interviewing and rejected keep the semantic green/red they share with the rest of the UI. */
+     other. Interviewing and both rejections keep the semantic green/red they share with the rest of
+     the UI. */
   --stage-applied-fg: #3b5cd8;
   --stage-applied-bg: rgb(59 92 216 / 12%);
   --stage-phone-fg: #8450d8;
@@ -332,7 +333,10 @@ h3 {
   --stage-bg: var(--success-bg);
 }
 
-.stage--rejected {
+/* Both rejections share the red, and the one Rejected filter pill — see `STAGE_FILTERS`. They are
+   the same outcome; only the badge's text says which kind. */
+.stage--rejected,
+.stage--rejected-ats {
   --stage-fg: var(--danger);
   --stage-bg: var(--danger-bg);
 }
@@ -595,6 +599,31 @@ h3 {
 }
 
 /* ── Detail view ────────────────────────────────────────────────────────── */
+
+/* ── Load more ──────────────────────────────────────────────────────────── */
+
+/*
+ * Centred under the list rather than pinned to one edge: it is the end of the column, and the eye
+ * is already tracking down the middle of the cards by the time it gets here.
+ */
+.load-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.load-more__button {
+  min-width: 160px;
+}
+
+.load-more__status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 
 .detail__header {
   margin-bottom: 24px;

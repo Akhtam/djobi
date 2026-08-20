@@ -241,9 +241,20 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
  * does not establish that every saved Application was submitted: there is no authoritative
  * submission event in the current flow. Don't reintroduce a status field without first having a
  * moment in the flow that can set it reliably.
+ *
+ * The two rejection values are deliberately distinct rather than one `rejected` plus a separate
+ * flag. `rejected_ats` means the application never reached a human — screened out before any
+ * phone screen — and it sits between `applied` and `phone_screen` because that is where in the
+ * pipeline it happens. `rejected` is a rejection after contact was made. Being enum values, the
+ * two can't disagree with `stage` the way a parallel boolean could, and the picker offers them
+ * without any extra control.
+ *
+ * What this shape can't record is *which* later stage a `rejected` row came from — the stage it
+ * held is overwritten. If that matters, it needs a `rejectedFrom` column, not a third enum value.
  */
 export const ApplicationStageSchema = z.enum([
   'applied',
+  'rejected_ats',
   'phone_screen',
   'interviewing',
   'rejected',

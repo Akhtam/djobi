@@ -233,7 +233,7 @@ describe('QuestionAnswerSchema', () => {
 
 describe('ApplicationStageSchema', () => {
   it('accepts every stage in the interview pipeline', () => {
-    for (const stage of ['applied', 'phone_screen', 'interviewing', 'rejected']) {
+    for (const stage of ['applied', 'rejected_ats', 'phone_screen', 'interviewing', 'rejected']) {
       expect(ApplicationStageSchema.safeParse(stage).success).toBe(true);
     }
   });

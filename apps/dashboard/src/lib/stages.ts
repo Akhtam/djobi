@@ -26,9 +26,38 @@ export const STAGES: readonly ApplicationStage[] = ApplicationStageSchema.option
  */
 export const IN_PROGRESS_STAGES: readonly ApplicationStage[] = ['phone_screen', 'interviewing'];
 
+/**
+ * The stages the list's filter pills offer — one pill per option.
+ *
+ * Not `STAGES`. The two rejections share a pill: they are both "this one is over", and splitting
+ * them across two pills puts two of the five options on the same outcome while making the common
+ * case (show me everything that ended) take two clicks and a mental union. The distinction still
+ * shows on every card's badge and is still set from the stage picker; it just isn't a filter.
+ *
+ * Hand-listed for the same reason {@link IN_PROGRESS_STAGES} is: which stages collapse together is
+ * a judgement, not something the enum's order can answer. `stageFilterOf` is the other half — a
+ * test asserts every stage lands on a pill that exists, so adding a stage without deciding this
+ * fails rather than quietly vanishing from the filter row.
+ */
+export const STAGE_FILTERS = [
+  'applied',
+  'phone_screen',
+  'interviewing',
+  'rejected',
+] as const satisfies readonly ApplicationStage[];
+
+/** One of the {@link STAGE_FILTERS} — a filter value, which is narrower than a stage. */
+export type StageFilter = (typeof STAGE_FILTERS)[number];
+
+/** The pill a stage falls under, and the normaliser for a `?stage=` in the URL. */
+export function stageFilterOf(stage: ApplicationStage): StageFilter {
+  return stage === 'rejected_ats' ? 'rejected' : stage;
+}
+
 /** Human-readable stage names. The enum values are snake_case and must not reach the screen. */
 export const STAGE_LABELS: Record<ApplicationStage, string> = {
   applied: 'Applied',
+  rejected_ats: 'Rejected (ATS)',
   phone_screen: 'Phone screen',
   interviewing: 'Interviewing',
   rejected: 'Rejected',

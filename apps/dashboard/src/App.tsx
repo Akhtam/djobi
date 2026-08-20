@@ -6,22 +6,35 @@
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
  * place the real app's client is named, and it always names the HTTP one.
  */
+import { useRef } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
 import { useApplicationStore } from './lib/useApplicationStore';
-import { useHashRoute } from './lib/useHashRoute';
+import { listPath, useHashRoute } from './lib/useHashRoute';
 import { ApplicationDetail } from './views/ApplicationDetail';
 import { ApplicationsList } from './views/ApplicationsList';
 
 export function App({ client }: { client: DashboardClient }) {
   const { theme, toggleTheme } = useThemePreference();
-  const route = useHashRoute();
+  const { route, replaceRoute } = useHashRoute();
   const { applications, loading, loadError, writeError, updateStage, addNote } =
     useApplicationStore(client);
 
   const application =
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
+
+  /*
+    Where the detail page's back link points. The browser's own Back already returns to the
+    filtered list — that is what the push/replace split in `useHashRoute` buys — but the in-page
+    link has no history to read, so it needs the last list URL handed to it. A ref rather than
+    state: it only ever feeds the next render's href and must not cause one of its own.
+
+    Deep-linking straight into a detail page leaves it at its initial `#/`, which is the right
+    answer there: there is no filtered list to go back to.
+  */
+  const listHref = useRef('#/');
+  if (route.name === 'list') listHref.current = listPath(route.filters, route.shown);
 
   return (
     <>
@@ -72,17 +85,26 @@ export function App({ client }: { client: DashboardClient }) {
           ) : route.name === 'list' ? (
             <ApplicationsList
               applications={applications}
+              filters={route.filters}
+              shown={route.shown}
+              onFiltersChange={(filters) =>
+                // Back to one batch: the rows the user had revealed were rows of a different
+                // result set, and `listPath`'s default is that first batch.
+                replaceRoute(listPath(filters))
+              }
+              onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
               onStageChange={(id, stage) => void updateStage(id, stage)}
             />
           ) : application ? (
             <ApplicationDetail
               application={application}
+              backHref={listHref.current}
               onStageChange={(id, stage) => void updateStage(id, stage)}
               onAddNote={addNote}
             />
           ) : (
             <p className="empty-state">
-              No application with that id. <a href="#/">Back to all applications</a>.
+              No application with that id. <a href={listHref.current}>Back to all applications</a>.
             </p>
           )}
         </main>

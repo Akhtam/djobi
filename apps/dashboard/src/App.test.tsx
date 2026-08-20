@@ -9,9 +9,25 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
 import { createFixtureDashboardClient, type DashboardClient } from './lib/dashboardClient';
 import { fixtureApplications } from './lib/fixtures';
+import { PAGE_SIZE } from './lib/useHashRoute';
 
 function renderApp(client: DashboardClient = createFixtureDashboardClient(fixtureApplications)) {
   return { user: userEvent.setup(), ...render(<App client={client} />) };
+}
+
+/**
+ * `count` applications, numbered so each has a findable role title. The fixtures are seven rows —
+ * enough to exercise filtering, not enough to reach a second batch of {@link PAGE_SIZE}.
+ */
+function manyApplications(count: number) {
+  const [template] = fixtureApplications;
+  return Array.from({ length: count }, (_, i) => ({
+    ...structuredClone(template),
+    id: `app-${i}`,
+    roleTitle: `Engineer ${i}`,
+    // Descending, so `Engineer 0` sorts first and the batches are in a predictable order.
+    createdAt: new Date(Date.UTC(2026, 0, 1) - i * 86_400_000).toISOString(),
+  }));
 }
 
 function deferred<T>() {
@@ -74,6 +90,31 @@ describe('applications list', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows both kinds of rejection under the one Rejected pill', async () => {
+    // There is no ATS-only pill by design. The kind still shows on each card's stage badge.
+    const { user } = renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    await user.click(screen.getByRole('button', { name: /^Rejected/ }));
+
+    // app-anthropic-manual is `rejected_ats`, app-vercel is `rejected`.
+    expect(
+      screen.getByRole('link', { name: 'Member of Technical Staff, Product' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Software Engineer, Developer Experience' }),
+    ).toBeInTheDocument();
+  });
+
+  it('counts both rejections on the one pill', async () => {
+    renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    // One `rejected` fixture and one `rejected_ats`.
+    expect(screen.getByRole('button', { name: /^Rejected/ })).toHaveAccessibleName('Rejected2');
+    expect(screen.queryByRole('button', { name: /ATS/ })).not.toBeInTheDocument();
+  });
+
   it('filters by a search over company and role', async () => {
     const { user } = renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
@@ -84,6 +125,126 @@ describe('applications list', () => {
     expect(
       screen.queryByRole('link', { name: 'Senior Frontend Engineer' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps the filters through opening an application and coming back', async () => {
+    // The whole reason the filters live in the URL. `ApplicationsList` unmounts on the way to the
+    // detail page, so anything held in its own state is gone by the time the user returns.
+    const { user } = renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search company or role' }), 'ramp');
+    await user.click(screen.getByRole('link', { name: 'Product Engineer' }));
+
+    const back = await screen.findByRole('link', { name: '← Applications' });
+    expect(back).toHaveAttribute('href', '#/?q=ramp');
+
+    await user.click(back);
+
+    expect(await screen.findByRole('searchbox', { name: 'Search company or role' })).toHaveValue(
+      'ramp',
+    );
+    expect(
+      screen.queryByRole('link', { name: 'Senior Frontend Engineer' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders the filters a deep link asks for', async () => {
+    window.location.hash = '#/?q=ramp&stage=phone_screen';
+    renderApp();
+
+    expect(await screen.findByRole('link', { name: 'Product Engineer' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search company or role' })).toHaveValue('ramp');
+    expect(screen.getByRole('button', { name: /^Phone screen/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(
+      screen.queryByRole('link', { name: 'Senior Frontend Engineer' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not push a history entry per keystroke', async () => {
+    // Filter changes replace the current entry; only opening an application pushes. Otherwise Back
+    // would walk the user backwards through their own typing instead of leaving the list.
+    const { user } = renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+    const before = window.history.length;
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search company or role' }), 'ramp');
+
+    expect(window.location.hash).toBe('#/?q=ramp');
+    expect(window.history.length).toBe(before);
+  });
+
+  it('reveals only the first batch, and offers the rest', async () => {
+    renderApp(createFixtureDashboardClient(manyApplications(PAGE_SIZE + 5)));
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE);
+    expect(screen.queryByRole('link', { name: `Engineer ${PAGE_SIZE}` })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Load 5 more' })).toBeInTheDocument();
+    expect(screen.getByText(`Showing ${PAGE_SIZE} of ${PAGE_SIZE + 5}`)).toBeInTheDocument();
+  });
+
+  it('keeps what is already on screen when more is loaded', async () => {
+    const { user } = renderApp(createFixtureDashboardClient(manyApplications(PAGE_SIZE + 5)));
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    await user.click(screen.getByRole('button', { name: 'Load 5 more' }));
+
+    // The point of Load more over paging: the first batch does not go anywhere.
+    expect(screen.getByRole('link', { name: 'Engineer 0' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: `Engineer ${PAGE_SIZE}` })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Load/ })).not.toBeInTheDocument();
+  });
+
+  it('offers no button when everything already fits', async () => {
+    renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    expect(screen.queryByRole('button', { name: /Load/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Showing/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the revealed rows through opening an application and coming back', async () => {
+    const { user } = renderApp(createFixtureDashboardClient(manyApplications(PAGE_SIZE * 3)));
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    await user.click(screen.getByRole('button', { name: `Load ${PAGE_SIZE} more` }));
+    await user.click(screen.getByRole('link', { name: `Engineer ${PAGE_SIZE}` }));
+    await user.click(await screen.findByRole('link', { name: '← Applications' }));
+
+    expect(await screen.findByRole('link', { name: `Engineer ${PAGE_SIZE}` })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE * 2);
+  });
+
+  it('starts a freshly loaded document at the first batch, keeping the filters', async () => {
+    // `?show=` is a place in a session, not an intent: a reload should not render hundreds of rows
+    // nobody has asked for again. The filters are an intent, so they stay.
+    window.location.hash = `#/?q=engineer&show=${PAGE_SIZE * 3}`;
+    renderApp(createFixtureDashboardClient(manyApplications(PAGE_SIZE * 3)));
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE);
+    expect(screen.getByRole('searchbox', { name: 'Search company or role' })).toHaveValue(
+      'engineer',
+    );
+    // Rewritten in place, so the dropped count is not left one Back away.
+    expect(window.location.hash).toBe('#/?q=engineer');
+  });
+
+  it('collapses back to one batch when the filter changes', async () => {
+    // The revealed rows belonged to a different result set; carrying the count over would show a
+    // larger slice of the new one than the user ever asked for.
+    const { user } = renderApp(createFixtureDashboardClient(manyApplications(PAGE_SIZE * 3)));
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    await user.click(screen.getByRole('button', { name: `Load ${PAGE_SIZE} more` }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search company or role' }), 'engineer');
+
+    expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE);
+    expect(window.location.hash).toBe('#/?q=engineer');
   });
 
   it('says a filter matched nothing rather than looking like data loss', async () => {
