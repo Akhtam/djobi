@@ -5,7 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
-  MODELS: { extraction: 'claude-haiku-4-5', writing: 'claude-sonnet-5' },
+  MODEL: 'claude-sonnet-5',
 }));
 
 const { answerChat } = await import('./answerChat.js');

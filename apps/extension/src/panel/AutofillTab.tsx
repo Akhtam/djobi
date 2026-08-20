@@ -23,7 +23,7 @@ import {
 } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
-import { formatAppliedDate } from '../lib/format';
+import { formatAppliedDate, formatStage } from '../lib/format';
 import { jobKeyForUrl, type JobDescriptionSource } from '../lib/jobContext';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
@@ -413,7 +413,7 @@ export function AutofillTab({
                 : `You already applied to this job on ${formatAppliedDate(duplicateOf.createdAt)}.`}
             </p>
             <p className="failure-detail">
-              {duplicateOf.roleTitle} at {duplicateOf.company}
+              {duplicateOf.roleTitle} at {duplicateOf.company} · {formatStage(duplicateOf.stage)}
             </p>
             <button type="button" className="btn-primary" onClick={() => handleAnalyze(true)}>
               Analyze and apply anyway

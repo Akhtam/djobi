@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSameJobUrl, jobKeyForUrl } from './jobContext';
+import { isSameJobUrl, jobKeyForUrl } from './jobKey.js';
 
 describe('jobKeyForUrl', () => {
   it('treats Ashby overview and application routes as the same job', () => {

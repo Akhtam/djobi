@@ -11,7 +11,7 @@ import {
   type QuestionForModel,
 } from '@djobi/shared';
 import { z } from 'zod';
-import { MODELS } from './client.js';
+import { MODEL } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -129,7 +129,7 @@ function reconcileAnswers(
 
 /**
  * Drafts answers to application questions, including freeform and choice questions, in the
- * candidate's voice using the writing model (`MODELS.writing`).
+ * candidate's voice.
  *
  * @param profile - The Profile projection used for answers, including reusable `stories`.
  * @param jobInfo - The job being applied to, for context.
@@ -154,7 +154,7 @@ export async function answerQuestions(
   };
 
   const result = await callStructured({
-    model: MODELS.writing,
+    model: MODEL,
     maxTokens: 4096,
     toolName: 'report_answers',
     toolDescription: 'Report the drafted answers for the given application questions.',

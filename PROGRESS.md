@@ -54,11 +54,14 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
 
 ## Key decisions
 
-- **Models:** `claude-haiku-4-5` for job-info extraction, `claude-sonnet-5` for resume tailoring
-  and question answering.
+- **Models:** `claude-sonnet-5` for every LLM call — job-info extraction, resume tailoring and
+  question answering. An earlier two-tier split ran extraction on a cheaper model; it was collapsed
+  because the saving was fractions of a cent per job, and extraction grounds every downstream draft.
 - **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
-  Duplicate Guard lookups use a `(job_url, created_at DESC)` index. PGlite integration tests execute
-  the optimized query and singleton/index migrations against a PostgreSQL-compatible engine.
+  Duplicate Guard lookups match a derived `job_key` — the posting's URL identity — backed by a
+  `(job_key, created_at DESC)` index, falling back to `(job_url, created_at DESC)` for rows written
+  before the key existed. PGlite integration tests execute the optimized query and singleton/index
+  migrations against a PostgreSQL-compatible engine.
 - **Structured output workaround:** the installed `@anthropic-ai/sdk` (0.68.0) has no
   `.messages.parse()` / `zodOutputFormat`. Every LLM call forces a tool call instead and validates
   the result with zod — see `apps/backend/src/llm/structuredCall.ts`. Each tool's `input_schema` is
@@ -82,7 +85,7 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   records the Application. The first save creates the record and every later one updates it via
   `PATCH /applications/:id`, so re-filling or re-editing a run can't leave two rows behind. Saving
   neither submits the employer's form nor proves that the candidate submitted it separately.
-- **The duplicate guard fails open.** A job URL already saved stops a run at `duplicate` before any
+- **The duplicate guard fails open.** A posting already saved stops a run at `duplicate` before any
   LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.

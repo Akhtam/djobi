@@ -27,7 +27,7 @@ Recording the current run snapshot as an Application, on an explicit action afte
 _Avoid_: submission (nothing is sent to the employer or verified by this step)
 
 **Duplicate Guard**:
-The check that runs before the Analysis Step: if an Application already exists for this exact job URL, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
+The check that runs before the Analysis Step: if an Application already exists for this job posting, the run stops at `duplicate` before any LLM call and the candidate is asked whether to proceed anyway. Matching is on the **Job Key** — the job's URL identity, not the raw URL — so a posting revisited through an ad link or from the `/apply` screen is still recognized. The notice reports the past application's Stage as well as its date, because a live process and a year-old rejection call for different decisions. Fails open — a lookup that errors is treated as "no duplicates", because it exists to save the candidate from re-applying, not to gate their work.
 _Avoid_: deduplication (nothing is merged or removed)
 
 **Autofill Tab**:

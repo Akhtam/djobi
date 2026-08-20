@@ -1,5 +1,11 @@
 import { parseDetectedFields } from '@djobi/shared';
-import type { DetectedField, JobInfo, QuestionAnswer, TailoredResume } from '@djobi/shared';
+import type {
+  ApplicationStage,
+  DetectedField,
+  JobInfo,
+  QuestionAnswer,
+  TailoredResume,
+} from '@djobi/shared';
 import type { JobPageData } from './messages';
 import {
   isSameJobUrl,
@@ -60,9 +66,10 @@ export interface PipelineFailure {
 }
 
 /**
- * What the candidate already has on file for this job URL, when the duplicate guard stopped a run.
+ * What the candidate already has on file for this job posting, when the duplicate guard stopped a
+ * run.
  *
- * A flattened summary rather than the whole `Application`: the panel needs four fields to explain
+ * A flattened summary rather than the whole `Application`: the panel needs five fields to explain
  * itself, and storing the full record would put a tailored resume and every answer into
  * `chrome.storage.session` for a run that deliberately did no work.
  */
@@ -70,9 +77,14 @@ export interface DuplicateApplication {
   id: string;
   company: string;
   roleTitle: string;
-  /** The *most recent* save for this URL — the lookup returns matches newest-first. */
+  /**
+   * Where that past application got to. Shown because it changes what the notice means: an
+   * `interviewing` row is a live process, a `rejected` one from a year ago may be worth retrying.
+   */
+  stage: ApplicationStage;
+  /** The *most recent* save for this posting — the lookup returns matches newest-first. */
   createdAt: string;
-  /** How many saved applications share this URL. Greater than one means repeated applications. */
+  /** How many saved applications share this posting. Greater than one means repeated applications. */
   count: number;
 }
 

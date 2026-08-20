@@ -196,7 +196,7 @@ Two tables:
   entire `Profile`. A fixed primary key makes saves one atomic `INSERT ... ON CONFLICT DO UPDATE`
   statement. No migration is needed when the Profile shape changes — `data` accepts the whole blob.
 - **`applications`** — one row per saved autofill run or manually logged application.
-  `company`/`roleTitle`/`jobUrl` are plain columns
+  `company`/`roleTitle`/`jobUrl`/`jobKey` are plain columns
   (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
   jsonb snapshots of what was generated for that specific application, so past applications stay
   readable even if `Profile` or the tailoring prompt changes later. `stage`
@@ -227,7 +227,12 @@ persisted fields are required; an older or malformed application is not silently
 Duplicate Guard gets only a count and newest-row metadata from one projected query. Create and
 snapshot-update routes return only the id; Stage updates return id + Stage; Note appends return id +
 the generated Note. Full rows are reserved for list and detail reads that consume their snapshots.
-The duplicate lookup is backed by `(job_url, created_at DESC)`.
+The duplicate lookup matches `job_key` — `jobUrl` reduced to a posting identity by `jobKeyForUrl`
+in `@djobi/shared`, derived on write and never accepted from a client — backed by
+`(job_key, created_at DESC)`. It keeps an exact `job_url` clause beside it for rows written before
+that column existed, so an unkeyed row is still found exactly as well as it was before. Matching the
+raw URL alone missed a posting revisited through an ad link (`?gh_src=`, `?utm_source=`) or from the
+`/apply` screen, which cost a full re-analysis every time.
 
 `applicationsRepository` is deliberately stricter for a single row than for a list. `getApplicationById`
 throws if the row won't parse, because returning `null` would claim the application doesn't exist —
@@ -240,7 +245,10 @@ one bad row from an older build doesn't hide the entire history behind it.
 `0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
 `0002_outstanding_black_tom.sql` drops `applications.status`; `0003_abandoned_sir_ram.sql` adds the
 Application source; `0004_shocking_wind_dancer.sql` consolidates the Profile to its fixed singleton
-id and removes the random id default; `0005_curved_jackal.sql` adds the Duplicate Guard index.
+id and removes the random id default; `0005_curved_jackal.sql` adds the Duplicate Guard index;
+`0006_damp_princess_powerful.sql` adds `applications.job_key` and its index. `0006` backfills
+nothing — the key is derived by `jobKeyForUrl`, which needs a URL parser, so existing rows keep a
+`NULL` key and go on matching by exact `job_url`.
 
 ## `drizzle.config.ts`
 
@@ -253,9 +261,9 @@ since drizzle-kit runs outside the app's own env loading.
 ### `client.ts`
 
 The `Anthropic` SDK singleton (picks up credentials from `ANTHROPIC_API_KEY` or an `ant auth login`
-profile automatically) and the `MODELS` map: `claude-haiku-4-5` for extraction (cheap, high-volume,
-purely structured), `claude-sonnet-5` for writing (resume tailoring, question answers — quality
-matters more here).
+profile automatically) and `MODEL`: `claude-sonnet-5`, used by every call. `callStructured` still
+takes the model per call, so a cheaper tier can be reintroduced for one call site without a
+refactor.
 
 ### `structuredCall.ts`
 
@@ -275,14 +283,14 @@ that needs to change — all three call sites go through it.
 
 ### `extractJob.ts`
 
-Haiku call. Takes the candidate-reviewed **Job Description** field (whether manually pasted or
+Takes the candidate-reviewed **Job Description** field (whether manually pasted or
 populated by Autofill's focused page extractor), forces the `report_job_info` tool, and returns a
 validated `JobInfo`. The prompt deliberately does not describe the input as raw scraped page text;
 told that, a model tolerates and mines junk that the extractor is required to reject.
 
 ### `tailorResume.ts`
 
-Sonnet call. Takes the Profile's skills/work experience plus `JobInfo`, and returns a validated
+Takes the Profile's skills/work experience plus `JobInfo`, and returns a validated
 `TailoredResume`. Post-processing restores company/title/date metadata from the Profile, drops
 fabricated entries and skills, and applies model-authored bullets only to an unambiguous matching
 experience entry. The prompt also explicitly forbids inventing experience.

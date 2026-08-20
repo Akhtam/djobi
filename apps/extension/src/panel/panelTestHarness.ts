@@ -10,6 +10,7 @@
  * nothing the extension ships, so it is dropped from the build.
  */
 import type {
+  ApplicationStage,
   DetectedField,
   JobInfo,
   Profile,
@@ -123,7 +124,13 @@ export interface StubOptions {
   /** Same idea for the explicit Save Application action. */
   saveFailures?: (string | null)[];
   /** Applications already saved for the tab's URL — what the duplicate guard on Analyze finds. */
-  existingApplications?: { id: string; company: string; roleTitle: string; createdAt: string }[];
+  existingApplications?: {
+    id: string;
+    company: string;
+    roleTitle: string;
+    stage: ApplicationStage;
+    createdAt: string;
+  }[];
   /** If true, the Fill Step hangs at the page-filling call until `resolveFill()` is called —
    *  simulates a Fill Step still in flight in the background. */
   holdFill?: boolean;
@@ -211,6 +218,7 @@ export async function stubChrome(options: StubOptions) {
               id: latest.id,
               company: latest.company,
               roleTitle: latest.roleTitle,
+              stage: latest.stage,
               createdAt: latest.createdAt,
             }
           : null,

@@ -1,10 +1,10 @@
 import { JobInfoSchema, type JobInfo } from '@djobi/shared';
-import { MODELS } from './client.js';
+import { MODEL } from './client.js';
 import { callStructured } from './structuredCall.js';
 
 /**
  * Extracts structured job posting information (company, role, requirements, keywords, ...) from a
- * job description, using the cheap extraction model (`MODELS.extraction`).
+ * job description.
  *
  * The text is the candidate-reviewed Job Description field, not an unfiltered page dump. Autofill
  * can populate that field with a focused extractor, but the candidate can edit it before this call
@@ -16,7 +16,7 @@ import { callStructured } from './structuredCall.js';
  */
 export async function extractJob(jobDescription: string): Promise<JobInfo> {
   return callStructured({
-    model: MODELS.extraction,
+    model: MODEL,
     maxTokens: 2048,
     toolName: 'report_job_info',
     toolDescription:

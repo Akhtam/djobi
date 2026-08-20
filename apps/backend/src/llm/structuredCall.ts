@@ -5,7 +5,7 @@ import { anthropic } from './client.js';
 
 /** Options for {@link callStructured}. */
 export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
-  /** Model id to call, e.g. `MODELS.extraction` or `MODELS.writing`. */
+  /** Model id to call — normally `MODEL`. */
   model: string;
   /** Max output tokens for the request. */
   maxTokens: number;

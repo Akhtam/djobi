@@ -12,7 +12,7 @@
  */
 import type { AnswerChatRequest, AnswerChatResponse } from '@djobi/shared';
 import { z } from 'zod';
-import { MODELS } from './client.js';
+import { MODEL } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -38,8 +38,7 @@ Write answers in the candidate's own voice as implied by their profile, concise 
 Return your side of the conversation as "reply", and — whenever you have produced or updated the answer itself — the full answer text as "revisedAnswer". "revisedAnswer" is what the candidate applies to their application, so it must be the complete answer on its own, not a fragment or a description of what changed. Leave it out when the turn is purely conversational, such as when you are asking the candidate which of two directions they want.`;
 
 /**
- * Answers one turn of a chat about an application question, using the writing model
- * (`MODELS.writing`) — the same tier as the drafted answers this refines.
+ * Answers one turn of a chat about an application question.
  *
  * @param request - The whole validated `POST /answer-chat` body: the Profile projection, the
  *   question under discussion, the optional job and current draft, and the thread so far.
@@ -77,7 +76,7 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
   const conversationOpener = foldedOpener ? `\n\n${foldedOpener.content}` : '';
 
   const result = await callStructured({
-    model: MODELS.writing,
+    model: MODEL,
     maxTokens: 4096,
     toolName: 'report_chat_turn',
     toolDescription: 'Report your reply to the candidate, and the answer text when you wrote one.',

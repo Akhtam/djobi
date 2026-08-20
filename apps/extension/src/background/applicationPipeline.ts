@@ -328,7 +328,11 @@ function failureMessage(error: unknown): string {
 }
 
 /**
- * Looks for applications the candidate has already saved for `tabUrl`.
+ * Looks for applications the candidate has already saved for the posting `tabUrl` belongs to.
+ *
+ * The backend matches on the posting identity (`jobKeyForUrl`), not the raw URL, so a posting
+ * reached through an ad link or from the `/apply` screen still resolves to the earlier
+ * application rather than reading as a new job.
  *
  * Deliberately fails open: the guard exists to save the candidate from re-applying, not to gate
  * their work, and there is no uniqueness constraint on `job_url` making it authoritative anyway. A
@@ -350,6 +354,7 @@ async function findDuplicate(
       id: newest.id,
       company: newest.company,
       roleTitle: newest.roleTitle,
+      stage: newest.stage,
       createdAt: newest.createdAt,
       count,
     };

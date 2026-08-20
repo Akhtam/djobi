@@ -139,11 +139,18 @@ export type UpdateApplicationStageRequest = z.infer<typeof UpdateApplicationStag
 export const ApplicationWriteResultSchema = z.object({ id: z.string() });
 export type ApplicationWriteResult = z.infer<typeof ApplicationWriteResultSchema>;
 
-/** The newest row metadata needed by the Duplicate Guard. */
+/**
+ * The newest row metadata needed by the Duplicate Guard.
+ *
+ * `stage` rides along because it changes what the notice means: an `interviewing` row for this
+ * posting is a live process the candidate should not restart, while a `rejected` one from a year
+ * ago may well be worth re-applying to. Reporting only the date left the reader to guess which.
+ */
 export const DuplicateApplicationLatestSchema = z.object({
   id: z.string(),
   company: z.string(),
   roleTitle: z.string(),
+  stage: ApplicationStageSchema,
   createdAt: z.string(),
 });
 export type DuplicateApplicationLatest = z.infer<typeof DuplicateApplicationLatestSchema>;

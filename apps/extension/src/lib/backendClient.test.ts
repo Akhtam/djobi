@@ -143,6 +143,7 @@ describe('httpBackendClient', () => {
         id: 'application-2',
         company: 'Acme',
         roleTitle: 'Engineer',
+        stage: 'phone_screen',
         createdAt: '2026-08-18T00:00:00.000Z',
       },
     };
@@ -156,7 +157,13 @@ describe('httpBackendClient', () => {
   it.each([
     {
       count: 0,
-      latest: { id: 'application-1', company: 'Acme', roleTitle: 'Engineer', createdAt: 'now' },
+      latest: {
+        id: 'application-1',
+        company: 'Acme',
+        roleTitle: 'Engineer',
+        stage: 'applied',
+        createdAt: 'now',
+      },
     },
     { count: 1, latest: null },
   ])('rejects a contradictory duplicate-lookup response: %o', async (summary) => {

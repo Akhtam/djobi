@@ -11,8 +11,9 @@ import {
   type NewNote,
   type Note,
   type UpdateApplicationStageResult,
+  jobKeyForUrl,
 } from '@djobi/shared';
-import { desc, eq, sql } from 'drizzle-orm';
+import { desc, eq, or, sql } from 'drizzle-orm';
 import { db } from './client.js';
 import { applications } from './schema.js';
 
@@ -86,7 +87,7 @@ export async function saveApplication(
 ): Promise<ApplicationWriteResult> {
   const [row] = await db
     .insert(applications)
-    .values(newApplication)
+    .values({ ...newApplication, jobKey: jobKeyForUrl(newApplication.jobUrl) })
     .returning({ id: applications.id });
   return row;
 }
@@ -98,33 +99,52 @@ export async function updateApplication(
 ): Promise<ApplicationWriteResult | null> {
   const [row] = await db
     .update(applications)
-    .set(snapshot)
+    // Re-derived rather than left alone: the snapshot can carry a corrected `jobUrl`, and a key
+    // still pointing at the old one would make the guard match a posting this row is no longer for.
+    .set({ ...snapshot, jobKey: jobKeyForUrl(snapshot.jobUrl) })
     .where(eq(applications.id, id))
     .returning({ id: applications.id });
   return row ?? null;
 }
 
 /**
- * Summarizes applications to the exact same job URL without loading their large snapshots.
+ * Summarizes applications to the same job posting without loading their large snapshots.
  *
  * Backs the compact duplicate guard response: the extension asks this before spending any LLM call,
  * so a posting the candidate already applied to stops the run instead of re-tailoring a resume for
- * it. The count and newest metadata come back in one database round trip. URLs are matched exactly
- * rather than normalized: a query string can distinguish two postings on one board.
+ * it. The count and newest metadata come back in one database round trip.
+ *
+ * Matching is on `jobKey` — `jobUrl` reduced to a posting identity — rather than on the raw URL.
+ * Exact-URL matching only fired when two visits produced a byte-identical URL, so a posting
+ * revisited through an ad link (`?gh_src=…`, `?utm_source=…`) or from the `/apply` screen read as
+ * new and cost a full re-analysis. `jobKeyForUrl` strips exactly those, and deliberately keeps
+ * query parameters that do distinguish postings, so a board like Workday's `?jobId=` still
+ * separates two jobs.
+ *
+ * The raw `jobUrl` stays in the `or` for rows written before `job_key` existed, and for a `jobUrl`
+ * too malformed to derive a key from. Those match exactly as well as they did before and no better
+ * — which is the point of keeping the clause rather than backfilling behind the caller's back.
  */
 export async function getApplicationDuplicateSummary(
   jobUrl: string,
 ): Promise<DuplicateApplicationSummary> {
+  const jobKey = jobKeyForUrl(jobUrl);
+
   const [row] = await db
     .select({
       id: applications.id,
       company: applications.company,
       roleTitle: applications.roleTitle,
+      stage: applications.stage,
       createdAt: applications.createdAt,
       count: sql<number>`count(*) over ()`.mapWith(Number),
     })
     .from(applications)
-    .where(eq(applications.jobUrl, jobUrl))
+    .where(
+      jobKey === null
+        ? eq(applications.jobUrl, jobUrl)
+        : or(eq(applications.jobKey, jobKey), eq(applications.jobUrl, jobUrl)),
+    )
     .orderBy(desc(applications.createdAt))
     .limit(1);
 
@@ -135,6 +155,7 @@ export async function getApplicationDuplicateSummary(
       id: row.id,
       company: row.company,
       roleTitle: row.roleTitle,
+      stage: ApplicationStageSchema.parse(row.stage),
       createdAt: row.createdAt.toISOString(),
     },
   };

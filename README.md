@@ -152,7 +152,7 @@ the side panel:
    Ashby's Overview → Application transition. The original posting URL remains the URL used for
    duplicate checks and saving
 3. **Analyze** — extracts structured job info, tailors a resume to it, and drafts answers to any
-   freeform questions the form asks. If you've already saved an application for this exact URL, the
+   freeform questions the form asks. If you've already saved an application for this posting, the
    panel says so and spends no LLM calls until you choose **Analyze and apply anyway**
 4. **Review and edit** every drafted answer. Nothing is filled until you say so. If an application
    route introduces questions that were absent during analysis, Fill is disabled until you re-analyze

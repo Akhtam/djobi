@@ -191,9 +191,7 @@ describe('AutofillTab', () => {
     expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
 
-    await vi.waitFor(() =>
-      expect(screen.queryByText(/won't be filled/i)).not.toBeInTheDocument(),
-    );
+    await vi.waitFor(() => expect(screen.queryByText(/won't be filled/i)).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
   });
 
@@ -212,7 +210,12 @@ describe('AutofillTab', () => {
     act(() => navigate(1, `${overviewUrl}/application`));
     await reportDetectedPage(1, 0, {
       fields: [
-        { ...questionField, id: 'f-visa', label: 'Do you require visa sponsorship?', required: true },
+        {
+          ...questionField,
+          id: 'f-visa',
+          label: 'Do you require visa sponsorship?',
+          required: true,
+        },
         { ...questionField, id: 'f-start', label: 'When can you start?', required: true },
         questionField,
       ],
@@ -403,6 +406,7 @@ describe('AutofillTab', () => {
           id: 'application-1',
           company: 'Acme',
           roleTitle: 'Senior Engineer',
+          stage: 'interviewing' as const,
           createdAt: '2026-08-03T10:00:00.000Z',
         },
       ],
@@ -412,6 +416,9 @@ describe('AutofillTab', () => {
     await clickAnalyze();
 
     await screen.findByText(/you already applied to this job on august 3, 2026/i);
+    // The stage is the half that says whether re-applying is even sensible: a live process reads
+    // very differently from a rejection, and a date alone reports neither.
+    await screen.findByText('Senior Engineer at Acme · Interviewing');
     // The review never appears — the point of the guard is that no analysis ran at all.
     expect(screen.queryByRole('button', { name: 'Edit job description' })).not.toBeInTheDocument();
 
@@ -423,7 +430,12 @@ describe('AutofillTab', () => {
   });
 
   it('says how many times a repeatedly-applied-to job was applied for', async () => {
-    const application = { id: 'a', company: 'Acme', roleTitle: 'Senior Engineer' };
+    const application = {
+      id: 'a',
+      company: 'Acme',
+      roleTitle: 'Senior Engineer',
+      stage: 'applied' as const,
+    };
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,

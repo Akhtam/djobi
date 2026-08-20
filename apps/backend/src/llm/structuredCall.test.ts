@@ -5,7 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
-  MODELS: { extraction: 'claude-haiku-4-5', writing: 'claude-sonnet-5' },
+  MODEL: 'claude-sonnet-5',
 }));
 
 const { callStructured, StructuredCallError } = await import('./structuredCall.js');
@@ -43,7 +43,7 @@ describe('callStructured', () => {
     );
 
     await callStructured({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       maxTokens: 1024,
       toolName: 'report_sample',
       toolDescription: 'Report the sample.',
@@ -71,7 +71,7 @@ describe('callStructured', () => {
 
   const call = () =>
     callStructured({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       maxTokens: 1024,
       toolName: 'report_sample',
       toolDescription: 'Report the sample.',
@@ -100,7 +100,7 @@ describe('callStructured', () => {
     expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_retry', {
       kind: 'no-tool-call',
       toolName: 'report_sample',
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       attempt: 2,
       maxAttempts: 2,
       requestId: 'req-first',

@@ -5,7 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
-  MODELS: { extraction: 'claude-haiku-4-5', writing: 'claude-sonnet-5' },
+  MODEL: 'claude-sonnet-5',
 }));
 
 const { extractJob } = await import('./extractJob.js');
@@ -41,7 +41,7 @@ describe('extractJob', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-haiku-4-5');
+    expect(request.model).toBe('claude-sonnet-5');
     expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_job_info' });
     expect(request.tools[0].name).toBe('report_job_info');
     expect(request.messages).toHaveLength(1);

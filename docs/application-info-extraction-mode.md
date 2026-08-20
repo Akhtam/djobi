@@ -200,11 +200,11 @@ omits a question looks identical to a form that didn't ask it.
 Hono on `127.0.0.1:5391` (`apps/backend/src/app.ts:17`). Six route groups (`app.ts:121-126`).
 Three LLM calls, each a thin route over one module:
 
-| Route                                                     | Module                      | Model                       |
-| --------------------------------------------------------- | --------------------------- | --------------------------- |
-| `POST /extract-job` (`routes/extract-job.ts:9`)           | `llm/extractJob.ts:19`      | `MODELS.extraction` (Haiku) |
-| `POST /tailor-resume` (`routes/tailor-resume.ts`)         | `llm/tailorResume.ts`       | `MODELS.writing` (Sonnet)   |
-| `POST /answer-questions` (`routes/answer-questions.ts:9`) | `llm/answerQuestions.ts:54` | `MODELS.writing`            |
+| Route                                                     | Module                      | Model            |
+| --------------------------------------------------------- | --------------------------- | ---------------- |
+| `POST /extract-job` (`routes/extract-job.ts:9`)           | `llm/extractJob.ts:19`      | `MODEL` (Sonnet) |
+| `POST /tailor-resume` (`routes/tailor-resume.ts`)         | `llm/tailorResume.ts`       | `MODEL` (Sonnet) |
+| `POST /answer-questions` (`routes/answer-questions.ts:9`) | `llm/answerQuestions.ts:54` | `MODEL` (Sonnet) |
 
 All three go through `llm/structuredCall.ts` — a forced tool call validated with zod, because the
 installed SDK has no `.messages.parse()` (`PROGRESS.md` "Structured output workaround").
@@ -615,9 +615,10 @@ cost of an id that resolves to nothing. Prefer it, and say so in the doc comment
 
 ### 5.8 Model routing
 
-`extractJob` is Haiku (`llm/extractJob.ts:21`, `MODELS.extraction`); drafting is Sonnet
-(`answerQuestions.ts:62`, `MODELS.writing`). Keep the split: posting → `JobInfo` is extraction;
-question prediction and answer drafting are writing. `PROGRESS.md`'s open cleanup — "`tailorResume.ts`
+Every call runs on `MODEL` (`claude-sonnet-5`) — `extractJob` (`llm/extractJob.ts:19`) and drafting
+(`answerQuestions.ts:62`) alike. The earlier cheaper-model-for-extraction split was collapsed; don't
+reintroduce a per-task tier without a volume argument for it, since extraction grounds every
+downstream draft. `PROGRESS.md`'s open cleanup — "`tailorResume.ts`
 / `answerQuestions.ts` both hand-build the same `<base_profile>`/`<job_info>` prompt scaffold —
 extract a shared helper if a third writing-model call site appears" — is triggered by this work.
 Extract the helper here rather than writing a third copy.
@@ -738,7 +739,8 @@ LinkedIn constraint, not a Chrome Web Store one.
   questions it read vs. predicted.
 - **Predicted questions are speculation.** They must be visually distinguished from questions
   actually read off a page, or the user will paste an answer to a question nobody asked.
-- **Duplicate guard.** `findDuplicate` (`applicationPipeline.ts:323`) keys on `tabUrl`. An extraction
+- **Duplicate guard.** `findDuplicate` (`applicationPipeline.ts:323`) keys on `tabUrl`, which the
+  backend reduces to a posting identity with `jobKeyForUrl`. An extraction
   from a pasted URL has a URL and could use it; one from pasted text has nothing to key on. Decide
   whether the guard runs in this mode at all — it fails open by design, so "doesn't run" is a
   defensible default.

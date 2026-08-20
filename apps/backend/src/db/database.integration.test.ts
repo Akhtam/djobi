@@ -25,6 +25,7 @@ beforeAll(async () => {
       job_info jsonb NOT NULL,
       tailored_resume jsonb NOT NULL,
       answers jsonb NOT NULL,
+      job_key text,
       source text NOT NULL DEFAULT 'autofill',
       stage text NOT NULL DEFAULT 'applied',
       notes jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -32,12 +33,19 @@ beforeAll(async () => {
     );
 
     INSERT INTO applications
-      (id, company, role_title, job_url, job_info, tailored_resume, answers, created_at)
+      (id, company, role_title, job_url, job_key, job_info, tailored_resume, answers, stage,
+       created_at)
     VALUES
       ('00000000-0000-4000-8000-000000000011', 'Acme', 'Engineer I',
-       'https://example.com/jobs/1', '{}', '{}', '[]', '2026-01-01T00:00:00Z'),
+       'https://example.com/jobs/1', 'https://example.com/jobs/1',
+       '{}', '{}', '[]', 'applied', '2026-01-01T00:00:00Z'),
       ('00000000-0000-4000-8000-000000000012', 'Acme', 'Engineer II',
-       'https://example.com/jobs/1', '{}', '{}', '[]', '2026-02-01T00:00:00Z');
+       'https://example.com/jobs/1', 'https://example.com/jobs/1',
+       '{}', '{}', '[]', 'interviewing', '2026-02-01T00:00:00Z'),
+      -- Written before job_key existed: only an exact job_url can find it.
+      ('00000000-0000-4000-8000-000000000013', 'Globex', 'Analyst',
+       'https://example.com/jobs/legacy?utm_source=old', NULL,
+       '{}', '{}', '[]', 'rejected', '2026-03-01T00:00:00Z');
   `);
 });
 
@@ -45,15 +53,54 @@ afterAll(async () => {
   await integrationClient.close();
 });
 
+const newestForJob1 = {
+  count: 2,
+  latest: {
+    id: '00000000-0000-4000-8000-000000000012',
+    company: 'Acme',
+    roleTitle: 'Engineer II',
+    stage: 'interviewing',
+    createdAt: '2026-02-01T00:00:00.000Z',
+  },
+};
+
 describe('getApplicationDuplicateSummary integration', () => {
   it('returns the full count and newest projected metadata from one matching row', async () => {
-    await expect(getApplicationDuplicateSummary('https://example.com/jobs/1')).resolves.toEqual({
-      count: 2,
+    await expect(getApplicationDuplicateSummary('https://example.com/jobs/1')).resolves.toEqual(
+      newestForJob1,
+    );
+  });
+
+  /**
+   * The case exact-URL matching missed, and the reason `job_key` exists: the same posting reached
+   * through an ad link or from the application screen used to read as a new job and cost a full
+   * re-analysis. Each of these normalizes onto the stored key.
+   */
+  it.each([
+    ['tracking parameters', 'https://example.com/jobs/1?utm_source=newsletter&gh_src=board'],
+    ['an application-route suffix', 'https://example.com/jobs/1/apply'],
+    ['a trailing slash', 'https://example.com/jobs/1/'],
+  ])('matches the same posting reached with %s', async (_label, url) => {
+    await expect(getApplicationDuplicateSummary(url)).resolves.toEqual(newestForJob1);
+  });
+
+  it('still distinguishes postings a query parameter separates', async () => {
+    await expect(
+      getApplicationDuplicateSummary('https://example.com/jobs/1?jobId=other'),
+    ).resolves.toEqual({ count: 0, latest: null });
+  });
+
+  it('finds a row written before job_key existed by its exact url', async () => {
+    await expect(
+      getApplicationDuplicateSummary('https://example.com/jobs/legacy?utm_source=old'),
+    ).resolves.toEqual({
+      count: 1,
       latest: {
-        id: '00000000-0000-4000-8000-000000000012',
-        company: 'Acme',
-        roleTitle: 'Engineer II',
-        createdAt: '2026-02-01T00:00:00.000Z',
+        id: '00000000-0000-4000-8000-000000000013',
+        company: 'Globex',
+        roleTitle: 'Analyst',
+        stage: 'rejected',
+        createdAt: '2026-03-01T00:00:00.000Z',
       },
     });
   });
@@ -64,21 +111,23 @@ describe('getApplicationDuplicateSummary integration', () => {
     ).resolves.toEqual({ count: 0, latest: null });
   });
 
-  it('applies the composite index used by the duplicate lookup', async () => {
-    const sql = await readFile(
-      new URL('./migrations/0005_curved_jackal.sql', import.meta.url),
-      'utf8',
-    );
-    await integrationClient.exec(sql);
+  it.each([
+    ['0005_curved_jackal', 'applications_job_url_created_at_idx'],
+    ['0006_damp_princess_powerful', 'applications_job_key_created_at_idx'],
+  ])('applies the composite index %s adds', async (tag, indexName) => {
+    const sql = await readFile(new URL(`./migrations/${tag}.sql`, import.meta.url), 'utf8');
+    for (const statement of sql.split('--> statement-breakpoint')) {
+      // 0006 also adds the column, which the fixture table already declares.
+      if (statement.includes('ADD COLUMN')) continue;
+      await integrationClient.exec(statement);
+    }
 
     const indexes = await integrationClient.query<{ indexname: string }>(`
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'applications'
     `);
-    expect(indexes.rows.map(({ indexname }) => indexname)).toContain(
-      'applications_job_url_created_at_idx',
-    );
+    expect(indexes.rows.map(({ indexname }) => indexname)).toContain(indexName);
   });
 });
 

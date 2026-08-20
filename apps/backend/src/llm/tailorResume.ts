@@ -5,7 +5,7 @@ import {
   type TailorResumeProfile,
   type TailoredResume,
 } from '@djobi/shared';
-import { MODELS } from './client.js';
+import { MODEL } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -75,7 +75,7 @@ function reconcileResume(
 }
 
 /**
- * Tailors a resume's content to a specific job, using the writing model (`MODELS.writing`).
+ * Tailors a resume's content to a specific job.
  * Reorders/rewords the profile's existing experience bullets to emphasize what's relevant to the
  * job's requirements/keywords; the prompt explicitly forbids inventing experience not present in
  * `profile`.
@@ -95,7 +95,7 @@ export async function tailorResume(
   };
 
   const modelResume = await callStructured({
-    model: MODELS.writing,
+    model: MODEL,
     maxTokens: 4096,
     toolName: 'report_tailored_resume',
     toolDescription: 'Report the resume content tailored to this specific job.',
