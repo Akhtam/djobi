@@ -64,10 +64,23 @@ const STRONG_SELECTORS = [
   '[id*="jobDescription" i]',
   '[class*="job-description" i]',
   '[class*="jobDescription" i]',
+  // Rippling renders the posting body into `.ATS_htmlPreview`. It names the container's purpose
+  // rather than its styling, which is what makes it usable here: every other class on the page is
+  // an Emotion hash (`css-1nb1zny`) that changes on their next build.
+  '[class*="htmlPreview" i]',
 ].join(',');
 
+/**
+ * Headings that mark a section of a job posting.
+ *
+ * The second half of the alternation is the conversational register — "You can expect to:",
+ * "Nice to have:" — which several ATS templates use in place of "Responsibilities" and
+ * "Qualifications". Matching only the formal wording made a posting invisible to both the
+ * heading-ancestor search below and to {@link scoreElement}'s heading credit, which together are
+ * most of what separates a real posting from page furniture.
+ */
 const SEMANTIC_HEADING =
-  /\b(?:about (?:the )?(?:company|role|job|team|opportunity|us)|company overview|the role|the opportunity|what you(?:'|’)ll do|what you(?:'|’)ll bring|what we(?:'|’)re looking for|who you are|your impact|responsibilities|requirements|qualifications|skills|experience)\b/i;
+  /\b(?:about (?:the )?(?:company|role|job|team|opportunity|us)|about you|company overview|the role|the opportunity|in this role|great for this role|what you(?:'|’)ll do|what you(?:'|’)ll be doing|what you(?:'|’)ll bring|what we(?:'|’)re looking for|who you are|who we are|why join|your impact|you can expect to|day[ -]to[ -]day|responsibilities|requirements|qualifications|nice to have|bonus points|skills|experience|benefits|perks|compensation)\b/i;
 
 const APPLICATION_BOUNDARY =
   /^(?:apply(?: for this job| now)?|application(?: form)?|submit (?:an )?application|similar jobs|related jobs|job alerts?|share this job)$/i;
@@ -318,6 +331,10 @@ function scoreElement(element: Element, text: string, strong: boolean): number {
   let score = Math.min(30, Math.floor(text.length / 350));
   if (strong) score += 55;
   if (element.matches('main,article,[role="main"]')) score += 18;
+  // Deliberately only the *recognized* headings. Crediting any `h1`-`h6` was tried, to reach a
+  // posting whose sections this file couldn't name; it also lifted an encyclopedia entry and a
+  // documentation page over the threshold, because "prose split into sections" describes them just
+  // as well. Widening SEMANTIC_HEADING above reaches the same postings and still says no to those.
   score += Math.min(36, headings * 9);
   score += Math.min(12, paragraphs * 2);
   score += Math.min(12, listItems);

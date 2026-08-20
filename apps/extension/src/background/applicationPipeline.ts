@@ -182,26 +182,11 @@ async function fillStep(
     jobPageData.fields.map((field) => [field.id, field.label] as const),
   );
 
-  // Analysis may have happened on an ATS overview route before its application questions mounted.
-  // The panel normally catches that through live detection, but Fill's fresh scan is authoritative:
-  // never write even the scalar fields when a newly-seen question still has no reviewed answer.
-  if (
-    fields.some(
-      (field) =>
-        field.category === 'question' &&
-        matchAnswerToField(field, answers, labelByAnalyzedId) === undefined,
-    )
-  ) {
-    return {
-      status: 'review',
-      unresolvedRequiredFields: [],
-      filledFieldCount: 0,
-      fillOutcome: null,
-      jobPageData: { ...jobPageData, fields },
-      failure: null,
-    };
-  }
-
+  // Analysis may have happened on an ATS overview route before its application questions mounted,
+  // so the fresh scan can hold questions this run never drafted an answer for. Those are left
+  // blank for the candidate to write themselves rather than blocking the whole fill: everything
+  // that *does* have a reviewed answer still lands, and an unanswered required question comes back
+  // in `unresolvedRequiredFields` below, which is what the panel lists.
   const values: Record<string, string> = {};
   for (const field of fields) {
     if (field.category === 'question') {

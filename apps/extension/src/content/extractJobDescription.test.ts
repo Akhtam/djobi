@@ -177,6 +177,52 @@ describe('extractJobDescription', () => {
     expect(extractJobDescription(document)?.text).toContain('deep Linux and networking experience');
   });
 
+  it('reads a Rippling posting: no JSON-LD, no landmark element, conversational headings', () => {
+    // Every ingredient the scorer used to rely on is missing here, which is why this page returned
+    // nothing: Rippling ships no JobPosting JSON-LD, wraps the posting in a plain `div` rather than
+    // `main`/`article`, and titles its sections the way a person would speak instead of
+    // "Responsibilities"/"Qualifications". `.ATS_htmlPreview` is the one durable handle on the page
+    // — the rest of its classes are Emotion hashes.
+    document.body.innerHTML = `
+      <div class="css-1nb1zny">
+        <h2>Full Stack Product Engineer</h2>
+        <div class="ATS_htmlPreview">
+          <p>${LONG_ABOUT}</p>
+          <h2>You can expect to:</h2>
+          <ul><li>Ship product surfaces used by clinics every day.</li></ul>
+          <h2>You&rsquo;d be great for this role if you:</h2>
+          <ul><li>Have shipped and owned production web applications.</li></ul>
+          <h2>Nice to have:</h2>
+          <ul><li>Exposure to healthcare or regulated data.</li></ul>
+        </div>
+      </div>
+    `;
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('dom');
+    expect(result?.text).toContain('You can expect to:');
+    expect(result?.text).toContain('Nice to have:');
+  });
+
+  it('still says no to an article that is merely prose in sections', () => {
+    // The counterweight to the heading vocabulary above: a page can be long, sectioned and
+    // list-heavy without being a job posting, and crediting unrecognized headings for their
+    // structure alone was enough to let encyclopedia and documentation pages through.
+    document.body.innerHTML = `
+      <main>
+        <h1>Software engineering</h1>
+        <h2>History</h2>
+        <p>${LONG_ABOUT} ${LONG_ABOUT}</p>
+        <h2>Terminology</h2>
+        <ul><li>Definitions vary between practitioners and institutions.</li></ul>
+        <h2>See also</h2>
+      </main>
+    `;
+
+    expect(extractJobDescription(document)).toBeNull();
+  });
+
   it('fails closed on a navigation/application shell instead of returning all body text', () => {
     document.body.innerHTML = `
       <nav>Home Careers Teams Sign in</nav>

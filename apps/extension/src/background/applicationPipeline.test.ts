@@ -625,7 +625,7 @@ describe('runFill', () => {
     expect(await getPipelineRun(7)).toMatchObject({ filledFieldCount: 1 });
   });
 
-  it('returns to review without writing when the fresh scan finds an unanalyzed question', async () => {
+  it('fills what it has an answer for and leaves an unanalyzed question blank for the candidate', async () => {
     stubChrome();
     await seedReviewRun(7, []);
     const deps = makeDeps({
@@ -634,13 +634,22 @@ describe('runFill', () => {
 
     await runFill(7, profile, deps);
 
-    expect(deps.page.fill).not.toHaveBeenCalled();
-    expect(deps.backend.renderResumePdf).not.toHaveBeenCalled();
+    // The question carries no drafted answer, so it is absent from `values` — but the scalar field
+    // still lands rather than the whole fill being withheld.
+    expect(deps.page.fill).toHaveBeenCalledWith(
+      7,
+      {
+        fields: [emailField, questionField],
+        values: { 'f-email': 'jane@example.com' },
+        resume: undefined,
+      },
+      0,
+    );
     expect(await getPipelineRun(7)).toMatchObject({
-      status: 'review',
+      status: 'filled',
       jobPageData: { fields: [emailField, questionField] },
       answers: [],
-      fillOutcome: null,
+      filledFieldCount: 1,
     });
   });
 

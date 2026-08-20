@@ -15,6 +15,8 @@
   --danger: #e0435c;
   --danger-hover: #c92e48;
   --danger-bg: #fdeced;
+  --warn: #c47a09;
+  --warn-bg: #fdf3e0;
   --success: #1a9d6c;
   --success-bg: #e7f7f0;
   --ring: rgb(99 86 216 / 32%);
@@ -40,6 +42,8 @@
   --danger: #ff7890;
   --danger-hover: #ff98a8;
   --danger-bg: rgb(255 107 131 / 14%);
+  --warn: #f0b74a;
+  --warn-bg: rgb(240 183 74 / 14%);
   --success: #46dc9e;
   --success-bg: rgb(61 219 155 / 14%);
   --ring: rgb(143 131 242 / 38%);
@@ -390,6 +394,33 @@ body {
   padding: 10px 12px;
   font-size: 12.5px;
   color: var(--text);
+}
+
+/* Recoloured `.inline-error`: the run is still usable, so it must not read as a failure. Applied
+   alongside `.inline-error` rather than replacing it.
+
+   It also stacks rather than sitting beside its button. The side-by-side row the other banners use
+   suits their one-line "something went wrong" text; this one explains a choice in a few lines, and
+   at panel width that squeezes the prose into a narrow column beside the button. The remaining
+   banners keep the row — this is a layout for the long message, not a correction to the shared one. */
+.inline-warning {
+  flex-direction: column;
+  align-items: flex-start;
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  line-height: 1.45;
+}
+
+.inline-warning .inline-error-body {
+  /* Full width of the banner now that nothing shares the row. */
+  align-self: stretch;
+}
+
+/* `.unresolved-fields` chips are tinted `--danger-bg` for the post-fill error that first used them.
+   Left alone here they read as red-on-amber, which is exactly the "something broke" impression this
+   banner is shaped to avoid. */
+.inline-warning .unresolved-fields li {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
 }
 
 .inline-error p {

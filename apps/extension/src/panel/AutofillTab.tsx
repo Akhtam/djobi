@@ -13,7 +13,14 @@
  * `begin` is only instant feedback until the background writes its own status, and is never
  * persisted — see the ownership note on `usePipelineRun`.
  */
-import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
+import {
+  matchAnswerToField,
+  normalizeLabel,
+  type DetectedField,
+  type JobInfo,
+  type Profile,
+  type TailoredResume,
+} from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
 import { formatAppliedDate } from '../lib/format';
@@ -94,6 +101,7 @@ export function AutofillTab({
   const draftRevisionRef = useRef(0);
 
   const status: AutofillStatus = runStatus ?? 'ready';
+  const { canReview, outcome } = reviewOf(run);
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
   const jobPageData = run?.jobPageData ?? detectedPage;
@@ -125,20 +133,36 @@ export function AutofillTab({
   // Scraping only supplies this editable draft; Analyze still sends exactly what it contains.
   const jobDescription = run ? run.jobDescription : (currentDraft?.text ?? '');
   const analysisUrl = run?.tabUrl ?? currentDraft?.sourceUrl ?? tabUrl;
-  const analyzedQuestionLabels = new Set(
-    (run?.answers ?? []).map((answer) => answer.question.trim().toLowerCase()),
+  // Which questions Fill will leave blank — decided with `matchAnswerToField`, the same resolution
+  // Fill itself uses. It answers by field id first and only then by the label the question was
+  // analyzed under, so the label-set lookup this used to do disagreed with the outcome it was
+  // warning about: it flagged a remounted field whose id Fill still matched, and said nothing about
+  // a question whose drafted answer had been dropped before it reached the run.
+  const labelByAnalyzedId = new Map(
+    (run?.jobPageData.fields ?? []).map((field) => [field.id, field.label] as const),
   );
   // Keep both sources: a just-finished Fill scan may have checkpointed new questions onto the run
-  // while panel-side detection still holds an older empty snapshot from the route transition.
+  // while panel-side detection still holds an older empty snapshot from the route transition. They
+  // overlap, so the same question can arrive from both — name it once.
   const currentFields = [...(run?.jobPageData.fields ?? []), ...(detectedPage?.fields ?? [])];
-  const hasNewApplicationQuestions = Boolean(
-    run &&
-    currentFields.some(
-      (field) =>
-        field.category === 'question' &&
-        !analyzedQuestionLabels.has(field.label.trim().toLowerCase()),
-    ),
-  );
+  const unfilledQuestions: DetectedField[] = [];
+  const namedQuestions = new Set<string>();
+  for (const field of run ? currentFields : []) {
+    if (field.category !== 'question') continue;
+    if (matchAnswerToField(field, answers, labelByAnalyzedId) !== undefined) continue;
+    const name = normalizeLabel(field.label);
+    if (namedQuestions.has(name)) continue;
+    namedQuestions.add(name);
+    unfilledQuestions.push(field);
+  }
+  // Only the required ones are listed: an optional question left blank is a normal outcome, and
+  // naming every one of them buries the entries that actually block a submission.
+  const unfilledRequiredQuestions = unfilledQuestions.filter((field) => field.required);
+  // Only until a Fill reports. This banner predicts what Fill will skip; once it has run,
+  // `unresolvedRequiredFields` is the page's own account of what it actually kept, and it names the
+  // same questions plus any the form rejected outright. Showing both listed the same questions
+  // twice, under two headings, one of them stale.
+  const hasNewApplicationQuestions = outcome === null && unfilledQuestions.length > 0;
 
   // The Tailored Resume preview, and the blob-URL lifecycle that comes with it.
   const resumePreview = useResumePreview(client, profile, tailoredResume);
@@ -304,8 +328,6 @@ export function AutofillTab({
     begin('saving');
     notify({ type: 'START_SAVE_APPLICATION', tabId });
   }
-
-  const { canReview, outcome } = reviewOf(run);
 
   return (
     <>
@@ -492,12 +514,26 @@ export function AutofillTab({
             </div>
 
             {hasNewApplicationQuestions && (
-              <div className="inline-error" role="alert">
+              <div className="inline-error inline-warning" role="status">
                 <div className="inline-error-body">
-                  <p>
-                    This application route added questions that were not present during analysis.
-                    Re-analyze before filling so answers are prepared for them.
-                  </p>
+                  {unfilledRequiredQuestions.length > 0 ? (
+                    <>
+                      <p>
+                        {unfilledRequiredQuestions.length} required question
+                        {unfilledRequiredQuestions.length === 1 ? '' : 's'} won't be filled:
+                      </p>
+                      <ul className="unresolved-fields">
+                        {unfilledRequiredQuestions.map((field) => (
+                          <li key={field.id}>{field.label}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p>
+                      {unfilledQuestions.length} optional question
+                      {unfilledQuestions.length === 1 ? '' : 's'} won't be filled.
+                    </p>
+                  )}
                 </div>
                 <button type="button" className="btn-secondary" onClick={() => handleAnalyze()}>
                   Re-analyze
@@ -630,7 +666,7 @@ export function AutofillTab({
             type="button"
             className="btn-primary"
             onClick={handleFill}
-            disabled={hasNewApplicationQuestions || status === 'filling' || status === 'saving'}
+            disabled={status === 'filling' || status === 'saving'}
           >
             {status === 'filling' && <span className="spinner" />}
             {status === 'filled' || status === 'saved' || status === 'save-error'

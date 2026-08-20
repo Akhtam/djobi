@@ -169,7 +169,7 @@ describe('AutofillTab', () => {
     });
   });
 
-  it('requires re-analysis when a retained run reaches application questions that were absent on Overview', async () => {
+  it('warns without blocking Fill when a retained run reaches application questions that were absent on Overview', async () => {
     const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
     const { navigate } = await stubChrome({
       tabUrl: overviewUrl,
@@ -184,13 +184,45 @@ describe('AutofillTab', () => {
     act(() => navigate(1, `${overviewUrl}/application`));
     await reportDetectedPage(1, 0, { fields: [questionField] });
 
-    expect(await screen.findByText(/added questions that were not present/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Fill form' })).toBeDisabled();
+    // `questionField` is optional, so it is counted but deliberately not named — see the required
+    // case below, which is the one worth reading the list for.
+    expect(await screen.findByText(/1 optional question won't be filled/i)).toBeInTheDocument();
+    // The warning is advisory: Fill still writes every field that does have a reviewed answer.
+    expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
 
     await vi.waitFor(() =>
-      expect(screen.queryByText(/added questions that were not present/i)).not.toBeInTheDocument(),
+      expect(screen.queryByText(/won't be filled/i)).not.toBeInTheDocument(),
     );
+    expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
+  });
+
+  it('names the required questions Fill will leave blank, and only those', async () => {
+    const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
+    const { navigate } = await stubChrome({
+      tabUrl: overviewUrl,
+      tabId: 1,
+      profile,
+      jobPageData: null,
+    });
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    act(() => navigate(1, `${overviewUrl}/application`));
+    await reportDetectedPage(1, 0, {
+      fields: [
+        { ...questionField, id: 'f-visa', label: 'Do you require visa sponsorship?', required: true },
+        { ...questionField, id: 'f-start', label: 'When can you start?', required: true },
+        questionField,
+      ],
+    });
+
+    expect(await screen.findByText(/2 required questions won't be filled/i)).toBeInTheDocument();
+    expect(screen.getByText('Do you require visa sponsorship?')).toBeInTheDocument();
+    expect(screen.getByText('When can you start?')).toBeInTheDocument();
+    // The optional one is not named — the list exists to show what blocks a submission.
+    expect(screen.queryByText(questionField.label)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
   });
 
@@ -553,6 +585,35 @@ describe('AutofillTab', () => {
     await screen.findByText(/didn't take a value/);
     expect(screen.getByText('Referral code')).toBeInTheDocument();
     expect(screen.queryByText(/Filled 3 fields/)).not.toBeInTheDocument();
+  });
+
+  it('reports an unfilled required question once after a fill, not beside its own prediction', async () => {
+    // Both banners can describe the same question: one predicts what Fill will skip, the other
+    // reports what it did skip. Before the prediction was retired on a reported fill, an
+    // application route that mounted its own screening questions listed them twice on one screen.
+    const screeningQuestion: DetectedField = {
+      ...questionField,
+      id: 'f-sponsorship',
+      label: 'Will you now or in the future require immigration sponsorship?',
+      required: true,
+    };
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData: { ...jobPageData, fields: [...jobPageData.fields, screeningQuestion] },
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    expect(await screen.findByText(/1 required question won't be filled/i)).toBeInTheDocument();
+    expect(screen.getAllByText(screeningQuestion.label)).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    await screen.findByText(/didn't take a value/);
+    // The prediction is gone; the page's own account of the fill is the only list left.
+    expect(screen.queryByText(/won't be filled/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(screeningQuestion.label)).toHaveLength(1);
   });
 
   it('reports a fill that wrote nothing as a failure, not as a success with an empty warning list', async () => {
