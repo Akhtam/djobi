@@ -81,7 +81,7 @@ describe('readPostingFromTab', () => {
     );
     const executeScript = vi.fn(
       (
-        _details: chrome.scripting.ScriptInjection,
+        _details: chrome.scripting.ScriptInjection<unknown[], unknown>,
         callback: (results: chrome.scripting.InjectionResult[]) => void,
       ) => {
         reconnected = true;

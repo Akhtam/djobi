@@ -4,12 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  test:
-    # Linux on purpose: the host is macOS, and a case-sensitive filesystem is what
+  format:
+    # Linux on purpose: the host is macOS, and a case-sensitive filesystem
     # catches import-casing bugs that are invisible locally.
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -24,4 +30,78 @@ jobs:
 
       - run: pnpm format:check
 
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
       - run: pnpm test
+
+  check:
+    if: always()
+    needs: [format, typecheck, build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify all required jobs passed
+        run: |
+          echo "format: ${{ needs.format.result }}"
+          echo "typecheck: ${{ needs.typecheck.result }}"
+          echo "build: ${{ needs.build.result }}"
+          echo "test: ${{ needs.test.result }}"
+
+          if [[
+            "${{ needs.format.result }}" != "success" ||
+            "${{ needs.typecheck.result }}" != "success" ||
+            "${{ needs.build.result }}" != "success" ||
+            "${{ needs.test.result }}" != "success"
+          ]]; then
+            echo "One or more required jobs failed or were skipped."
+            exit 1
+          fi
+
+          echo "All required jobs passed."

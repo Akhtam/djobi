@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["chrome", "vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "vitest.setup.ts"]
 }

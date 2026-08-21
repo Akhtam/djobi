@@ -15,6 +15,8 @@
     "db:migrate": "pnpm --filter backend db:migrate",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "build": "pnpm --filter @djobi/shared build && pnpm -r --if-present run build",
     "test": "pnpm -r --if-present run test"
   },
   "keywords": [],

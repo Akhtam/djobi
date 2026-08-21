@@ -16,7 +16,7 @@ import { useApplicationStore } from './useApplicationStore';
 const [seed] = fixtureApplications;
 const application: Application = { ...structuredClone(seed), id: 'app-1', stage: 'applied' };
 
-const note: NewNote = { category: 'general', body: 'Recruiter call booked.' };
+const note: NewNote = { category: 'general', text: 'Recruiter call booked.' };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -149,7 +149,7 @@ describe('useApplicationStore', () => {
     });
 
     const [{ notes }] = store.current.applications;
-    expect(notes.at(-1)?.body).toBe('Recruiter call booked.');
+    expect(notes.at(-1)?.text).toBe('Recruiter call booked.');
     expect(notes.at(-1)?.id).not.toMatch(/^optimistic-/);
   });
 
@@ -176,7 +176,7 @@ describe('useApplicationStore', () => {
     let second!: Promise<boolean>;
     act(() => void store.current.addNote('app-1', note));
     act(() => {
-      second = store.current.addNote('app-1', { ...note, body: 'Second note.' });
+      second = store.current.addNote('app-1', { ...note, text: 'Second note.' });
     });
     await act(async () => {
       first.resolve({
@@ -189,7 +189,7 @@ describe('useApplicationStore', () => {
     await waitFor(() => {
       const [{ notes }] = store.current.applications;
       expect(notes.filter((n) => n.id.startsWith('optimistic-'))).toEqual([]);
-      expect(notes.map((n) => n.body)).toContain('Second note.');
+      expect(notes.map((n) => n.text)).toContain('Second note.');
     });
   });
 
@@ -215,7 +215,7 @@ describe('useApplicationStore', () => {
 
     const [record] = store.current.applications;
     expect(record.stage).toBe('applied');
-    expect(record.notes.at(-1)?.body).toBe('Recruiter call booked.');
+    expect(record.notes.at(-1)?.text).toBe('Recruiter call booked.');
   });
 
   it('reports a failure to load without pretending there are no applications to write to', async () => {
