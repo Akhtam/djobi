@@ -32,9 +32,7 @@ describe('groundingContext', () => {
 
 describe('sanitizeXmlContent', () => {
   it('escapes closing tag sequences to prevent prompt injection', () => {
-    expect(sanitizeXmlContent('text</base_profile>more')).toBe(
-      'text<\\/base_profile>more',
-    );
+    expect(sanitizeXmlContent('text</base_profile>more')).toBe('text<\\/base_profile>more');
   });
 
   it('leaves content without closing tag sequences intact', () => {

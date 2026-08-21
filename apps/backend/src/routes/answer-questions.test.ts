@@ -135,7 +135,7 @@ describe('POST /answer-questions', () => {
     );
   });
 
-  it("returns 500 with a JSON body but does not expose the internal cause to the client", async () => {
+  it('returns 500 with a JSON body but does not expose the internal cause to the client', async () => {
     mockAnswerQuestions.mockRejectedValueOnce(
       new StructuredCallError(
         'no-tool-call',
