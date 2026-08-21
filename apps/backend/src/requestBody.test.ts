@@ -58,13 +58,13 @@ describe('request body validation', () => {
     expect(mockExtractJob).not.toHaveBeenCalled();
   });
 
-  it('still answers 500 when the work behind a valid body throws', async () => {
+  it('returns 500 with a generic message when a valid body causes a runtime error, never leaking internal details', async () => {
     mockExtractJob.mockReset().mockRejectedValue(new Error('model unavailable'));
 
     const res = await post(JSON.stringify({ jobDescription: 'a real posting' }));
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'model unavailable' });
+    expect(await res.json()).toEqual({ error: 'Internal server error' });
   });
 
   it('does not log a rejected body as a server failure', async () => {

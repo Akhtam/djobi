@@ -10,7 +10,7 @@
  * Both mutations are **optimistic**: the local record changes first and the request reconciles
  * afterwards, reverting **that record** on failure. Stage in particular is a single enum a user
  * clicks through quickly, and gating that on a round trip makes the control feel broken. See
- * `mutate` for why the revert is per-record and why it reports whether the write landed.
+ * {@link Mutation} for why the revert is per-record and why it reports whether the write landed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
@@ -29,6 +29,35 @@ export interface ApplicationStore {
   addNote(id: string, note: NewNote): Promise<boolean>;
 }
 
+/**
+ * One optimistic change to one Application.
+ *
+ * `slot` is what separates the two kinds of mutation this store makes, and it replaces the
+ * ordering and staleness bookkeeping callers used to do for themselves.
+ *
+ * A **slotted** mutation claims a field only one value can occupy — a Stage. Clicking through
+ * `applied → phone_screen → interviewing` faster than the network answers means three writes for
+ * one field: they are queued so the server sees them in that order, and only the newest one's
+ * answer is applied, because an earlier write's authoritative Stage is a stale Stage.
+ *
+ * An **unslotted** mutation owns something no other mutation touches — a Note it appended, which it
+ * finds again by its own optimistic id. Two of those are independent, so they neither queue behind
+ * one another nor supersede one another. Giving Notes a slot would be actively wrong: the older
+ * mutation would skip its reconcile and leave its placeholder Note on screen forever.
+ */
+interface Mutation<Result> {
+  id: string;
+  /** The field this mutation claims, when only one value can occupy it. Omit if it claims none. */
+  slot?: string;
+  /** The record as it should read immediately, before the server has answered. */
+  apply(application: Application): Application;
+  write(): Promise<Result>;
+  /** The record once the server has answered — for the fields this mutation owns, and no others. */
+  reconcile(application: Application, result: Result): Application;
+  /** Undoes `apply`, given the record as it was before it. Must not restore unrelated fields. */
+  rollback(application: Application, previous: Application): Application;
+}
+
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -38,8 +67,11 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
-  const stageMutationVersions = useRef(new Map<string, number>());
-  const stageWriteTails = useRef(new Map<string, Promise<void>>());
+  // Per slot (see {@link Mutation.slot}): which mutation is the newest, and the write it queues
+  // behind. Both are the store's own bookkeeping — a caller states what it is changing, not how to
+  // sequence it.
+  const slotVersions = useRef(new Map<string, number>());
+  const slotWriteTails = useRef(new Map<string, Promise<void>>());
 
   useEffect(() => {
     let current = true;
@@ -66,14 +98,44 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
   }, [client]);
 
   /**
-   * Applies `optimistic` to one record, runs `write`, and reconciles or rolls back only the field
-   * this mutation owns.
+   * Runs one mutation's write behind whatever is already queued for its slot, so two writes to the
+   * same slot reach the server in the order the user made them.
+   *
+   * Unslotted mutations go straight out: they claim nothing another mutation could also be
+   * changing, so serializing them would only make the second one slower.
+   */
+  const enqueue = useCallback(<Result>(key: string | null, write: () => Promise<Result>) => {
+    if (key === null) return write();
+
+    const previousWrite = slotWriteTails.current.get(key) ?? Promise.resolve();
+    const request = previousWrite.then(write);
+    const tail = request.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    slotWriteTails.current.set(key, tail);
+    void tail.then(() => {
+      if (slotWriteTails.current.get(key) === tail) slotWriteTails.current.delete(key);
+    });
+
+    return request;
+  }, []);
+
+  /**
+   * Applies `apply` to one record, runs `write`, and reconciles or rolls back only what this
+   * mutation owns.
    *
    * Resolves `true` when the write landed. Callers need that: a form that clears itself on an
    * `await` returning would throw away the user's typing on every failure, because a rejected
    * write is handled here and never reaches them as a rejection.
    *
-   * Two details are deliberate and easy to undo by accident.
+   * Three details are deliberate and easy to undo by accident.
+   *
+   * Ordering and staleness are the store's, keyed by {@link Mutation.slot}. They were the caller's
+   * — `updateStage` built its own version counter and its own promise queue and handed the result
+   * in as a predicate — which meant the store's hardest rule lived outside the store, applied to
+   * exactly one of the two mutations, and was invisible to anyone reading the other.
    *
    * The rollback is field-specific. Restoring a snapshot of either the list or the whole record
    * would undo another write that succeeded while this one was in flight — including a Note and a
@@ -86,23 +148,32 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
    * restore `undefined`.
    */
   const mutate = useCallback(
-    async <Result>(
-      id: string,
-      optimistic: (application: Application) => Application,
-      write: () => Promise<Result>,
-      reconcile: (application: Application, result: Result) => Application,
-      rollback: (application: Application, previous: Application) => Application,
-      isCurrent: () => boolean = () => true,
-    ): Promise<boolean> => {
+    async <Result>({
+      id,
+      slot,
+      apply,
+      write,
+      reconcile,
+      rollback,
+    }: Mutation<Result>): Promise<boolean> => {
       const previous = applications.find((a) => a.id === id);
       if (!previous) return false;
 
+      const key = slot === undefined ? null : `${id}:${slot}`;
+      let version = 0;
+      if (key !== null) {
+        version = (slotVersions.current.get(key) ?? 0) + 1;
+        slotVersions.current.set(key, version);
+      }
+      /** False once a later mutation has claimed the same slot — its answer is the current one. */
+      const isCurrent = () => key === null || slotVersions.current.get(key) === version;
+
       // A retry should not sit behind the last attempt's banner.
       setWriteError(null);
-      setApplications((current) => current.map((a) => (a.id === id ? optimistic(a) : a)));
+      setApplications((current) => current.map((a) => (a.id === id ? apply(a) : a)));
 
       try {
-        const result = await write();
+        const result = await enqueue(key, write);
         if (isCurrent()) {
           setApplications((current) =>
             current.map((a) => (a.id === id ? reconcile(a, result) : a)),
@@ -119,61 +190,47 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
         return false;
       }
     },
-    [applications],
+    [applications, enqueue],
   );
 
   const updateStage = useCallback(
-    (id: string, stage: ApplicationStage) => {
-      const version = (stageMutationVersions.current.get(id) ?? 0) + 1;
-      stageMutationVersions.current.set(id, version);
-
-      return mutate(
+    (id: string, stage: ApplicationStage) =>
+      mutate({
         id,
-        (a) => ({ ...a, stage }),
-        () => {
-          const previousWrite = stageWriteTails.current.get(id) ?? Promise.resolve();
-          const request = previousWrite.then(() => client.updateStage(id, stage));
-          const tail = request.then(
-            () => undefined,
-            () => undefined,
-          );
-
-          stageWriteTails.current.set(id, tail);
-          void tail.then(() => {
-            if (stageWriteTails.current.get(id) === tail) stageWriteTails.current.delete(id);
-          });
-
-          return request;
-        },
-        (a, result) => ({ ...a, stage: result.stage }),
-        (a, previous) => (a.stage === stage ? { ...a, stage: previous.stage } : a),
-        () => stageMutationVersions.current.get(id) === version,
-      );
-    },
+        slot: 'stage',
+        apply: (a) => ({ ...a, stage }),
+        write: () => client.updateStage(id, stage),
+        reconcile: (a, result) => ({ ...a, stage: result.stage }),
+        // Only if this mutation's Stage is still the one showing. A newer click has already put its
+        // own Stage there, and that one is not this failure's to undo.
+        rollback: (a, previous) => (a.stage === stage ? { ...a, stage: previous.stage } : a),
+      }),
     [client, mutate],
   );
 
   const addNote = useCallback(
     (id: string, note: NewNote) => {
+      // What makes this mutation unslotted: it owns exactly the Note carrying this id, so it can
+      // find its own work again however many other Notes land while the write is in flight.
       const optimisticId = `optimistic-${crypto.randomUUID()}`;
-      return mutate(
+      return mutate({
         id,
-        (a) => ({
+        apply: (a) => ({
           ...a,
           // The optimistic note carries placeholder server fields. It exists only until the real
           // record replaces it, and the `id` is prefixed so it can never be mistaken for a real one.
           notes: [...a.notes, { ...note, id: optimisticId, createdAt: new Date().toISOString() }],
         }),
-        () => client.addNote(id, note),
-        (a, result) => ({
+        write: () => client.addNote(id, note),
+        reconcile: (a, result) => ({
           ...a,
           notes: [...a.notes.filter((existing) => existing.id !== optimisticId), result.note],
         }),
-        (a) => ({
+        rollback: (a) => ({
           ...a,
           notes: a.notes.filter((existing) => existing.id !== optimisticId),
         }),
-      );
+      });
     },
     [client, mutate],
   );

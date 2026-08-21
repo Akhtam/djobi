@@ -13,7 +13,7 @@
 import type { AnswerChatRequest, AnswerChatResponse } from '@djobi/shared';
 import { z } from 'zod';
 import { MODEL } from './client.js';
-import { groundingContext } from './promptContext.js';
+import { groundingContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 const AnswerChatOutputSchema = z.object({
@@ -60,7 +60,7 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
   const coldTurn = messages.length === 0 && !currentAnswer?.trim();
 
   const draftSection = currentAnswer?.trim()
-    ? `\n\n<current_answer>\n${currentAnswer}\n</current_answer>\n\nThe candidate is refining the draft above. Unless they ask for something else, keep what already works and change only what they asked about.`
+    ? `\n\n<current_answer>\n${sanitizeXmlContent(currentAnswer)}\n</current_answer>\n\nThe candidate is refining the draft above. Unless they ask for something else, keep what already works and change only what they asked about.`
     : '';
 
   const coldSection = coldTurn
@@ -73,7 +73,7 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
   // it is a cold ask's continuation, whose opening user turn was this scaffold in an earlier call.
   const foldedOpener = messages[0]?.role === 'user' ? messages[0] : undefined;
   const rest = foldedOpener ? messages.slice(1) : messages;
-  const conversationOpener = foldedOpener ? `\n\n${foldedOpener.content}` : '';
+  const conversationOpener = foldedOpener ? `\n\n${sanitizeXmlContent(foldedOpener.content)}` : '';
 
   const result = await callStructured({
     model: MODEL,
@@ -86,7 +86,7 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
 ${groundingContext(relevantProfile, jobInfo)}
 
 <question>
-${question}
+${sanitizeXmlContent(question)}
 </question>${draftSection}${coldSection}${conversationOpener}`,
     followUpTurns: rest,
   });

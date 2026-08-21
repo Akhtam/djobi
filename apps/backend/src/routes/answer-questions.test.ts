@@ -135,7 +135,7 @@ describe('POST /answer-questions', () => {
     );
   });
 
-  it("returns a JSON body carrying the real reason when answerQuestions throws, rather than a plain-text 500 the extension can't parse", async () => {
+  it("returns 500 with a JSON body but does not expose the internal cause to the client", async () => {
     mockAnswerQuestions.mockRejectedValueOnce(
       new StructuredCallError(
         'no-tool-call',
@@ -160,7 +160,7 @@ describe('POST /answer-questions', () => {
     expect(res.status).toBe(500);
     expect(res.headers.get('content-type')).toContain('application/json');
     await expect(res.json()).resolves.toEqual({
-      error: 'report_answers did not produce a tool call.',
+      error: 'Internal server error',
     });
     expect(console.error).toHaveBeenCalledWith('[djobi] POST /answer-questions failed', {
       name: 'StructuredCallError',

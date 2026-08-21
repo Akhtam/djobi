@@ -15,10 +15,11 @@
  * editing both modules and the store. Here each step returns the patch it checkpoints, and the run's
  * shape lives only in `lib/tabStore.ts`.
  */
-import { matchAnswerToField, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
+import { resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
 import { carryEnrichment } from './apiDetectors';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
+import { answersFor } from '../lib/runAnswers';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
 import {
@@ -50,8 +51,14 @@ export interface PipelineDeps {
   page: PageClient;
 }
 
-/** The production adapter: the local backend, and the tab's own content script. */
-const productionDeps: PipelineDeps = {
+/**
+ * The production adapter: the local backend, and the tab's own content script.
+ *
+ * Exported so `background/router.ts` can name it as its own default — the seam is widened to the
+ * dispatch above these functions, not just to each of them, so a caller substituting the adapter
+ * substitutes it once for the whole protocol.
+ */
+export const productionDeps: PipelineDeps = {
   backend: httpBackendClient,
   page: chromePageClient,
 };
@@ -157,7 +164,7 @@ async function fillStep(
   | 'jobPageData'
   | 'failure'
 > | null> {
-  const { jobPageData, jobInfo, tailoredResume, answers, tabUrl } = run;
+  const { jobPageData, jobInfo, tailoredResume, tabUrl } = run;
 
   // Fill what the page holds *now*, not what it held when the Analysis Step started. The run's own
   // detection is the fallback for a page that can't be re-scanned (no content script — the tab was
@@ -178,9 +185,10 @@ async function fillStep(
   const fields = scanned?.fields.length
     ? carryEnrichment(scanned.fields, jobPageData.fields)
     : jobPageData.fields;
-  const labelByAnalyzedId = new Map(
-    jobPageData.fields.map((field) => [field.id, field.label] as const),
-  );
+  // Resolved through the run, so the panel's warning and this fill agree by construction — see
+  // `lib/runAnswers.ts`. `run` is the analyzed snapshot, which is the only correct source for the
+  // labels: `fields` above is the *fresh* scan.
+  const drafted = answersFor(run);
 
   // Analysis may have happened on an ATS overview route before its application questions mounted,
   // so the fresh scan can hold questions this run never drafted an answer for. Those are left
@@ -190,7 +198,7 @@ async function fillStep(
   const values: Record<string, string> = {};
   for (const field of fields) {
     if (field.category === 'question') {
-      const answer = matchAnswerToField(field, answers, labelByAnalyzedId);
+      const answer = drafted.valueFor(field);
       if (answer !== undefined) values[field.id] = answer;
       continue;
     }

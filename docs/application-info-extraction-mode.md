@@ -197,14 +197,15 @@ omits a question looks identical to a form that didn't ask it.
 
 ### 2.8 Backend
 
-Hono on `127.0.0.1:5391` (`apps/backend/src/app.ts:17`). Six route groups (`app.ts:121-126`).
+Hono on `127.0.0.1:5391` (`apps/backend/src/app.ts:17`). Four route groups (`app.ts:119-122`); the three LLM routes
+are consolidated behind one `llmRoutes` mount (`routes/llm.ts`).
 Three LLM calls, each a thin route over one module:
 
 | Route                                                     | Module                      | Model            |
 | --------------------------------------------------------- | --------------------------- | ---------------- |
-| `POST /extract-job` (`routes/extract-job.ts:9`)           | `llm/extractJob.ts:19`      | `MODEL` (Sonnet) |
-| `POST /tailor-resume` (`routes/tailor-resume.ts`)         | `llm/tailorResume.ts`       | `MODEL` (Sonnet) |
-| `POST /answer-questions` (`routes/answer-questions.ts:9`) | `llm/answerQuestions.ts:54` | `MODEL` (Sonnet) |
+| `POST /extract-job` (`routes/llm.ts`)                     | `llm/extractJob.ts:19`      | `MODEL` (Sonnet) |
+| `POST /tailor-resume` (`routes/llm.ts`)                   | `llm/tailorResume.ts`       | `MODEL` (Sonnet) |
+| `POST /answer-questions` (`routes/llm.ts`)                | `llm/answerQuestions.ts:54` | `MODEL` (Sonnet) |
 
 All three go through `llm/structuredCall.ts` — a forced tool call validated with zod, because the
 installed SDK has no `.messages.parse()` (`PROGRESS.md` "Structured output workaround").

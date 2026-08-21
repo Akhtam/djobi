@@ -20,42 +20,6 @@ server, a persisted history of past applications, and a web dashboard for tracki
   tracking each one's stage and notes. A separate app rather than an extension page: it needs no
   `chrome.*` API, so it talks to the backend over CORS like any other origin.
 
-## Run it with Docker
-
-Recommended on Linux and Windows. `pnpm-lock.yaml` pins platform-specific binaries for esbuild,
-rollup and lightningcss, so a `node_modules/` installed on macOS does not work on Linux and vice
-versa — installing inside the image is what makes this repo behave the same everywhere. You need
-Docker, a Neon connection string and an Anthropic key; nothing else, not even Node.
-
-```bash
-cp apps/backend/.env.example apps/backend/.env   # then fill in DATABASE_URL and ANTHROPIC_API_KEY
-docker compose up                                # or: pnpm docker:dev
-```
-
-Backend on `http://127.0.0.1:5391`, dashboard on `http://localhost:5174`, both hot-reloading as you
-edit files on your host. Then build the extension and load `apps/extension/dist` unpacked, exactly
-as in step 4 below:
-
-```bash
-docker compose run --rm extension-build   # or: pnpm docker:build:extension
-docker compose run --rm test              # or: pnpm docker:test
-```
-
-Tests need no database and no API key — the one test that touches the schema runs PGlite
-in-process. Running them is also the quickest check that your container's native binaries are sound.
-
-There is deliberately **no database service**: `apps/backend/src/db/client.ts` reaches Postgres over
-Neon's HTTP driver (`@neondatabase/serverless`), which a plain `postgres:` container cannot answer
-without a proxy sidecar. Point `DATABASE_URL` at your own free Neon branch instead. Run migrations
-from your host (`pnpm db:migrate`) — `drizzle-kit` connects over TCP rather than through that driver.
-
-`node_modules` lives in named volumes seeded from the image once and never refreshed, so after
-pulling a change to `pnpm-lock.yaml` run `docker compose down -v && docker compose build`.
-
-The rest of this README is the native setup. Docker exists for parity, not to replace a working host
-setup — every environment variable it sets falls back to the native behaviour when unset, so if
-`pnpm dev:backend` already works for you, nothing here changes that.
-
 ## Prerequisites
 
 - Node.js and `pnpm` (`11.22.0` — see `packageManager` and `devEngines` in `package.json`)
@@ -85,16 +49,14 @@ PORT=5391
 
 A few optional variables are read too, each defaulting to the behaviour above when unset:
 
-| Variable              | Default                                       | Notes                                                                                                                                                                        |
-| --------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HOST`                | `127.0.0.1`                                   | Interface the backend binds. Compose sets `0.0.0.0` — inside a container, loopback is the container's own and a published port would reach nothing.                          |
-| `CORS_ORIGINS`        | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated allowlist. Never a wildcard: this server holds an API key and any page in your browser can reach `127.0.0.1`.                                                |
-| `VITE_BACKEND_ORIGIN` | `http://127.0.0.1:5391`                       | Dashboard, inlined at build time. The address your **browser** uses — under Docker that is the host-published port, never `http://backend:5391`.                             |
-| `VITE_POLL`           | unset                                         | Set to `1` or `true` to make the dashboard's dev server poll for file changes. Docker's host file sharing does not deliver inotify events, so HMR needs this in a container. |
+| Variable              | Default                                       | Notes                                                                                                                         |
+| --------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                | `127.0.0.1`                                   | Interface the backend binds.                                                                                                  |
+| `CORS_ORIGINS`        | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated allowlist. Never a wildcard: this server holds an API key and any page in your browser can reach `127.0.0.1`. |
+| `VITE_BACKEND_ORIGIN` | `http://127.0.0.1:5391`                       | Dashboard, inlined at build time. The address your **browser** uses.                                                          |
 
 The extension's backend origin is intentionally not configurable — it is hardcoded in
-`src/lib/callBackend.ts` and in the manifest's host permissions, and compose publishes the backend on
-that same host port so it keeps working unchanged.
+`src/lib/callBackend.ts` and in the manifest's host permissions.
 
 Run migrations against your database:
 
@@ -195,8 +157,6 @@ pnpm --filter extension test     # extension only
 pnpm --filter dashboard test     # dashboard only
 pnpm --filter @djobi/shared test # shared schemas only
 ```
-
-Or in a container, on any host OS: `docker compose run --rm test`.
 
 ## Other scripts
 

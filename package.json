@@ -28,6 +28,9 @@
     }
   },
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "prettier": "^3.4.2"
   }

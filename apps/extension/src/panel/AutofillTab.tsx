@@ -13,24 +13,18 @@
  * `begin` is only instant feedback until the background writes its own status, and is never
  * persisted — see the ownership note on `usePipelineRun`.
  */
-import {
-  matchAnswerToField,
-  normalizeLabel,
-  type DetectedField,
-  type JobInfo,
-  type Profile,
-  type TailoredResume,
-} from '@djobi/shared';
-import { useEffect, useRef, useState } from 'react';
+import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
+import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
 import { formatAppliedDate, formatStage } from '../lib/format';
-import { jobKeyForUrl, type JobDescriptionSource } from '../lib/jobContext';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
-import { readPostingFromTab, type PostingReadOutcome } from '../lib/postingReader';
+import type { PostingReadOutcome } from '../lib/postingReader';
+import { answersFor } from '../lib/runAnswers';
 import { reviewOf } from '../lib/runReview';
-import { getDetectedPage, getJobContext, storageKey, type PipelineStatus } from '../lib/tabStore';
+import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
 import type { ActiveRun } from './useActiveRun';
+import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
 
 /**
@@ -40,27 +34,13 @@ import { useResumePreview } from './useResumePreview';
  */
 type AutofillStatus = 'ready' | PipelineStatus;
 
-interface LocalDraft {
-  tabId: number;
-  jobKey: string | null;
-  sourceUrl: string;
-  text: string;
-  source: JobDescriptionSource;
-}
-
-type ScrapeStatus =
-  | { kind: 'idle' }
-  | { kind: 'loading' }
-  | { kind: 'success' }
-  | { kind: 'error'; reason: 'not-found' | 'unavailable' };
-
 export function AutofillTab({
   client,
   profile,
   activeRun,
   onRefineAnswer,
   hidden,
-  readPosting = readPostingFromTab,
+  readPosting,
 }: {
   /** The backend seam, handed down by the shell — see `panel/App.tsx`. */
   client: BackendClient;
@@ -69,7 +49,10 @@ export function AutofillTab({
   activeRun: ActiveRun;
   /** Hands one drafted answer to the Ask Tab. Offered only for freeform questions — see below. */
   onRefineAnswer: (fieldId: string, question: string, currentAnswer: string) => void;
-  /** Injectable so panel tests do not need to reproduce Chrome's frame-enumeration API. */
+  /**
+   * Injectable so panel tests do not need to reproduce Chrome's frame-enumeration API. Passed
+   * straight through to `panel/useJobDescription.ts`, which owns the scrape and names the default.
+   */
   readPosting?: (tabId: number) => Promise<PostingReadOutcome>;
   /**
    * Whether another tab is showing.
@@ -94,11 +77,10 @@ export function AutofillTab({
 
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
-  // The pasted/scraped Job Description before any run exists — once one does, it lives on the run.
-  const [localDraft, setLocalDraft] = useState<LocalDraft | null>(null);
-  const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus>({ kind: 'idle' });
-  const scrapeRequestRef = useRef(0);
-  const draftRevisionRef = useRef(0);
+
+  // The Job Description, wherever it currently lives — see `panel/useJobDescription.ts`. Draft
+  // versus run, Job Key scoping and the scrape's races are all its business, not this module's.
+  const jobDescription = useJobDescription(activeRun, readPosting);
 
   const status: AutofillStatus = runStatus ?? 'ready';
   const { canReview, outcome } = reviewOf(run);
@@ -127,34 +109,18 @@ export function AutofillTab({
       )
       .map((field) => field.id),
   );
-  const currentJobKey = jobKeyForUrl(tabUrl);
-  const currentDraft =
-    localDraft?.tabId === tabId && localDraft.jobKey === currentJobKey ? localDraft : null;
-  // Scraping only supplies this editable draft; Analyze still sends exactly what it contains.
-  const jobDescription = run ? run.jobDescription : (currentDraft?.text ?? '');
-  const analysisUrl = run?.tabUrl ?? currentDraft?.sourceUrl ?? tabUrl;
-  // Which questions Fill will leave blank — decided with `matchAnswerToField`, the same resolution
-  // Fill itself uses. It answers by field id first and only then by the label the question was
-  // analyzed under, so the label-set lookup this used to do disagreed with the outcome it was
-  // warning about: it flagged a remounted field whose id Fill still matched, and said nothing about
-  // a question whose drafted answer had been dropped before it reached the run.
-  const labelByAnalyzedId = new Map(
-    (run?.jobPageData.fields ?? []).map((field) => [field.id, field.label] as const),
-  );
-  // Keep both sources: a just-finished Fill scan may have checkpointed new questions onto the run
-  // while panel-side detection still holds an older empty snapshot from the route transition. They
-  // overlap, so the same question can arrive from both — name it once.
-  const currentFields = [...(run?.jobPageData.fields ?? []), ...(detectedPage?.fields ?? [])];
-  const unfilledQuestions: DetectedField[] = [];
-  const namedQuestions = new Set<string>();
-  for (const field of run ? currentFields : []) {
-    if (field.category !== 'question') continue;
-    if (matchAnswerToField(field, answers, labelByAnalyzedId) !== undefined) continue;
-    const name = normalizeLabel(field.label);
-    if (namedQuestions.has(name)) continue;
-    namedQuestions.add(name);
-    unfilledQuestions.push(field);
-  }
+  // Which questions Fill will leave blank — decided by `lib/runAnswers.ts`, which is the resolution
+  // Fill itself uses, given the same run. Two derivations of this rule is how the panel came to
+  // warn about the wrong questions: it resolved by label set, so it flagged a remounted field whose
+  // id Fill still matched, and said nothing about a question whose drafted answer had been dropped.
+  //
+  // Both sources of fields are handed over: a just-finished Fill scan may have checkpointed new
+  // questions onto the run while panel-side detection still holds an older empty snapshot from the
+  // route transition. They overlap, and `unanswered` names each question once.
+  const unfilledQuestions: DetectedField[] = answersFor(run).unanswered([
+    ...(run?.jobPageData.fields ?? []),
+    ...(detectedPage?.fields ?? []),
+  ]);
   // Only the required ones are listed: an optional question left blank is a normal outcome, and
   // naming every one of them buries the entries that actually block a submission.
   const unfilledRequiredQuestions = unfilledQuestions.filter((field) => field.required);
@@ -167,22 +133,17 @@ export function AutofillTab({
   // The Tailored Resume preview, and the blob-URL lifecycle that comes with it.
   const resumePreview = useResumePreview(client, profile, tailoredResume);
 
-  // Form detection and previews are page-scoped. The draft is restored separately when the new
-  // route still belongs to the same job (for example Ashby's overview -> /application transition).
+  // Form detection and previews are page-scoped. The Job Description is *not* only page-scoped —
+  // a draft survives a navigation within the same job — so its own reset and restore live with it,
+  // in `panel/useJobDescription.ts`.
   useEffect(() => {
     if (tabId === null) return;
     const activeTabId = tabId;
 
     setShowPageTextEditor(false);
     setDetectedPage(null);
-    setScrapeStatus({ kind: 'idle' });
-    ++scrapeRequestRef.current;
     // A blob URL means nothing on a different page.
     resumePreview.clear();
-
-    setLocalDraft((draft) =>
-      draft?.tabId === tabId && draft.jobKey === currentJobKey ? draft : null,
-    );
 
     // Opportunistic only — the paste + Analyze screen is shown regardless of whether this finds
     // anything, so a page where detection fails (or hasn't finished) never blocks the user from
@@ -194,24 +155,7 @@ export function AutofillTab({
       });
     }
 
-    void Promise.all([getDetectedPage(activeTabId), getJobContext(activeTabId)]).then(
-      ([data, context]) => {
-        if (!current) return;
-        setDetectedPage(data);
-        if (context?.jobKey !== currentJobKey) return;
-        setLocalDraft((draft) =>
-          draft?.tabId === activeTabId && draft.jobKey === currentJobKey
-            ? draft
-            : {
-                tabId: activeTabId,
-                jobKey: context.jobKey,
-                sourceUrl: context.sourceUrl,
-                text: context.jobDescription,
-                source: context.source,
-              },
-        );
-      },
-    );
+    refreshDetectedPage();
     const key = storageKey(activeTabId);
     function onStorageChanged(
       changes: Record<string, chrome.storage.StorageChange>,
@@ -233,85 +177,18 @@ export function AutofillTab({
    * so every entry point into analysis is covered by it.
    */
   function handleAnalyze(force = false) {
-    if (!jobDescription.trim() || tabId === null || !analysisUrl) return;
+    if (!jobDescription.text.trim() || tabId === null || !jobDescription.analysisUrl) return;
 
     begin('analyzing');
 
     notify({
       type: 'START_ANALYSIS',
       tabId,
-      tabUrl: analysisUrl,
+      tabUrl: jobDescription.analysisUrl,
       profile,
-      jobDescription,
+      jobDescription: jobDescription.text,
       force,
     });
-  }
-
-  function editJobDescription(value: string) {
-    if (status === 'saving') return;
-    if (run) edit({ answers, jobDescription: value });
-    else if (tabId !== null && tabUrl) {
-      ++draftRevisionRef.current;
-      const sourceUrl = currentDraft?.sourceUrl ?? tabUrl;
-      const source = currentDraft?.source ?? 'manual';
-      setLocalDraft({ tabId, jobKey: currentJobKey, sourceUrl, text: value, source });
-      notify({
-        type: 'UPDATE_JOB_CONTEXT',
-        tabId,
-        tabUrl: sourceUrl,
-        jobDescription: value,
-        source,
-      });
-      if (scrapeStatus.kind !== 'idle') setScrapeStatus({ kind: 'idle' });
-    }
-  }
-
-  async function handleScrape() {
-    if (tabId === null || !tabUrl || jobDescription.trim() || scrapeStatus.kind === 'loading') {
-      return;
-    }
-
-    const request = ++scrapeRequestRef.current;
-    const draftRevision = draftRevisionRef.current;
-    setScrapeStatus({ kind: 'loading' });
-    let outcome: PostingReadOutcome;
-    try {
-      outcome = await readPosting(tabId);
-    } catch {
-      if (request === scrapeRequestRef.current) {
-        setScrapeStatus({ kind: 'error', reason: 'unavailable' });
-      }
-      return;
-    }
-    if (request !== scrapeRequestRef.current) return;
-
-    // The candidate can keep typing while the content script scans; their text always wins.
-    if (draftRevision !== draftRevisionRef.current) {
-      setScrapeStatus({ kind: 'idle' });
-      return;
-    }
-
-    if (outcome.status !== 'success') {
-      setScrapeStatus({ kind: 'error', reason: outcome.status });
-      return;
-    }
-
-    ++draftRevisionRef.current;
-    setLocalDraft({
-      tabId,
-      jobKey: currentJobKey,
-      sourceUrl: tabUrl,
-      text: outcome.candidate.text,
-      source: 'scraped',
-    });
-    notify({
-      type: 'UPDATE_JOB_CONTEXT',
-      tabId,
-      tabUrl,
-      jobDescription: outcome.candidate.text,
-      source: 'scraped',
-    });
-    setScrapeStatus({ kind: 'success' });
   }
 
   function handleFill() {
@@ -352,35 +229,33 @@ export function AutofillTab({
               id="job-description"
               className="page-text-input"
               placeholder="Paste the job description here…"
-              value={jobDescription}
-              onChange={(e) => editJobDescription(e.target.value)}
+              value={jobDescription.text}
+              onChange={(e) => jobDescription.edit(e.target.value)}
             />
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void handleScrape()}
-              disabled={
-                Boolean(jobDescription.trim()) || !tabUrl || scrapeStatus.kind === 'loading'
-              }
+              onClick={jobDescription.scrape}
+              disabled={!jobDescription.canScrape}
             >
-              {scrapeStatus.kind === 'loading'
+              {jobDescription.scrapeStatus.kind === 'loading'
                 ? 'Scraping job description…'
                 : 'Scrape job description'}
             </button>
-            {scrapeStatus.kind === 'success' && (
+            {jobDescription.scrapeStatus.kind === 'success' && (
               <p className="scrape-feedback" role="status">
                 Job description scraped. Review or edit it before analyzing.
               </p>
             )}
-            {scrapeStatus.kind === 'idle' && currentDraft?.source === 'scraped' && (
+            {jobDescription.scrapeStatus.kind === 'idle' && jobDescription.source === 'scraped' && (
               <p className="scrape-feedback" role="status">
                 Scraped job description retained for this job.
               </p>
             )}
-            {scrapeStatus.kind === 'error' && (
+            {jobDescription.scrapeStatus.kind === 'error' && (
               <div className="inline-error" role="alert">
                 <p>
-                  {scrapeStatus.reason === 'unavailable'
+                  {jobDescription.scrapeStatus.reason === 'unavailable'
                     ? 'This page could not be read. Reload it to reconnect the extension, or paste the job description.'
                     : 'No confident job description was found on this page. Paste it instead.'}
                 </p>
@@ -390,7 +265,7 @@ export function AutofillTab({
               type="button"
               className="btn-primary"
               onClick={() => handleAnalyze()}
-              disabled={!jobDescription.trim() || !analysisUrl}
+              disabled={!jobDescription.text.trim() || !jobDescription.analysisUrl}
             >
               Analyze
             </button>
@@ -561,15 +436,15 @@ export function AutofillTab({
                   <textarea
                     id="review-job-description"
                     className="page-text-input"
-                    value={jobDescription}
+                    value={jobDescription.text}
                     disabled={status === 'saving'}
-                    onChange={(e) => editJobDescription(e.target.value)}
+                    onChange={(e) => jobDescription.edit(e.target.value)}
                   />
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => handleAnalyze()}
-                    disabled={!jobDescription.trim() || status === 'saving'}
+                    disabled={!jobDescription.text.trim() || status === 'saving'}
                   >
                     Re-analyze
                   </button>

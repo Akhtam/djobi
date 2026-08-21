@@ -3,13 +3,10 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { StructuredCallError } from './llm/structuredCall.js';
 import { RequestValidationError } from './requestBody.js';
-import { answerChatRoute } from './routes/answer-chat.js';
-import { answerQuestionsRoute } from './routes/answer-questions.js';
 import { applicationsRoute } from './routes/applications.js';
-import { extractJobRoute } from './routes/extract-job.js';
+import { llmRoutes } from './routes/llm.js';
 import { profileRoute } from './routes/profile.js';
 import { renderResumePdfRoute } from './routes/render-resume-pdf.js';
-import { tailorResumeRoute } from './routes/tailor-resume.js';
 
 /**
  * The Hono app instance — separated from `index.ts` (which calls `serve()`) so it can be imported
@@ -114,15 +111,12 @@ app.onError((err, c) => {
     console.error(`[djobi] ${context} failed:`, err);
   }
 
-  const body: BackendErrorBody = { error: err.message };
+  const body: BackendErrorBody = { error: 'Internal server error' };
 
   return c.json(body, 500);
 });
 
-app.route('/', extractJobRoute);
+app.route('/', llmRoutes);
 app.route('/', profileRoute);
-app.route('/', tailorResumeRoute);
-app.route('/', answerQuestionsRoute);
-app.route('/', answerChatRoute);
 app.route('/', renderResumePdfRoute);
 app.route('/', applicationsRoute);

@@ -15,6 +15,14 @@
 import type { JobInfo } from '@djobi/shared';
 
 /**
+ * Escapes closing-tag sequences so injected content cannot break out of the `<base_profile>` /
+ * `<job_info>` scaffold below.
+ */
+export function sanitizeXmlContent(content: string): string {
+  return content.replace(/<\//g, '<\\/');
+}
+
+/**
  * The `<base_profile>` (and, when there is one, `<job_info>`) block, without surrounding blank
  * lines — callers place it in their own prompt.
  *
@@ -23,7 +31,7 @@ import type { JobInfo } from '@djobi/shared';
  * @param jobInfo - The job being written toward, when one is known.
  */
 export function groundingContext(profile: object, jobInfo?: JobInfo): string {
-  const profileSection = `<base_profile>\n${JSON.stringify(profile)}\n</base_profile>`;
+  const profileSection = `<base_profile>\n${sanitizeXmlContent(JSON.stringify(profile))}\n</base_profile>`;
   if (!jobInfo) return profileSection;
-  return `${profileSection}\n\n<job_info>\n${JSON.stringify(jobInfo)}\n</job_info>`;
+  return `${profileSection}\n\n<job_info>\n${sanitizeXmlContent(JSON.stringify(jobInfo))}\n</job_info>`;
 }

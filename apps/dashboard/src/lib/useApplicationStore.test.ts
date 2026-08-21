@@ -1,0 +1,229 @@
+/**
+ * The store at its own interface.
+ *
+ * Its hardest rules — write ordering, staleness, and a rollback that touches only what one mutation
+ * owns — are about what happens *between* two writes to one Application. Reaching them through the
+ * app's DOM means racing two clicks and asserting on rendered text; here they are stated directly,
+ * which is where they belong now that the store owns them rather than one of its callers.
+ */
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
+import type { DashboardClient } from './dashboardClient';
+import { fixtureApplications } from './fixtures';
+import { useApplicationStore } from './useApplicationStore';
+
+const [seed] = fixtureApplications;
+const application: Application = { ...structuredClone(seed), id: 'app-1', stage: 'applied' };
+
+const note: NewNote = { category: 'general', body: 'Recruiter call booked.' };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+/** A client whose writes a test resolves by hand, so two can be in flight at once. */
+function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
+  return {
+    listApplications: () => Promise.resolve([structuredClone(application)]),
+    updateStage: (id, stage) => Promise.resolve({ id, stage }),
+    addNote: (id, appended) =>
+      Promise.resolve({
+        id,
+        note: { ...appended, id: `note-${Math.random()}`, createdAt: '2026-01-01T00:00:00.000Z' },
+      }),
+    ...overrides,
+  };
+}
+
+async function loadedStore(dashboardClient: DashboardClient) {
+  const { result } = renderHook(() => useApplicationStore(dashboardClient));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  return result;
+}
+
+describe('useApplicationStore', () => {
+  it('shows a new Stage before the server has answered', async () => {
+    const write = deferred<{ id: string; stage: ApplicationStage }>();
+    const store = await loadedStore(client({ updateStage: () => write.promise }));
+
+    act(() => void store.current.updateStage('app-1', 'interviewing'));
+
+    expect(store.current.applications[0].stage).toBe('interviewing');
+  });
+
+  it('puts the Stage back when the write fails, and says why', async () => {
+    const store = await loadedStore(
+      client({ updateStage: () => Promise.reject(new Error('Backend unreachable')) }),
+    );
+
+    await act(async () => {
+      await store.current.updateStage('app-1', 'interviewing');
+    });
+
+    expect(store.current.applications[0].stage).toBe('applied');
+    expect(store.current.writeError).toBe('Backend unreachable');
+  });
+
+  /**
+   * Clicking through the Stages faster than the network answers. The server must see them in the
+   * order they were made, or the record settles on whichever write happened to finish last.
+   */
+  it('sends two Stage writes for one Application in the order they were made', async () => {
+    const first = deferred<{ id: string; stage: ApplicationStage }>();
+    const order: ApplicationStage[] = [];
+    const updateStage = vi.fn((id: string, stage: ApplicationStage) => {
+      order.push(stage);
+      return stage === 'phone_screen' ? first.promise : Promise.resolve({ id, stage });
+    });
+    const store = await loadedStore(client({ updateStage }));
+
+    act(() => void store.current.updateStage('app-1', 'phone_screen'));
+    await act(async () => undefined);
+    expect(order).toEqual(['phone_screen']);
+
+    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    await act(async () => undefined);
+    // Still nothing new: the second write is queued behind the first, which hasn't answered.
+    expect(order).toEqual(['phone_screen']);
+
+    await act(async () => {
+      first.resolve({ id: 'app-1', stage: 'phone_screen' });
+      await first.promise;
+    });
+
+    await waitFor(() => expect(order).toEqual(['phone_screen', 'interviewing']));
+  });
+
+  /** A superseded write's authoritative Stage is a stale Stage — applying it undoes a later click. */
+  it('ignores a superseded Stage write when it answers', async () => {
+    const first = deferred<{ id: string; stage: ApplicationStage }>();
+    const store = await loadedStore(
+      client({
+        updateStage: (id, stage) =>
+          stage === 'phone_screen' ? first.promise : Promise.resolve({ id, stage }),
+      }),
+    );
+
+    act(() => void store.current.updateStage('app-1', 'phone_screen'));
+    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    await act(async () => {
+      first.resolve({ id: 'app-1', stage: 'phone_screen' });
+      await first.promise;
+    });
+
+    await waitFor(() => expect(store.current.applications[0].stage).toBe('interviewing'));
+  });
+
+  /** The same rule on the failure path: a stale rollback would undo the newer click. */
+  it('does not roll back a Stage a later write has already replaced', async () => {
+    const first = deferred<{ id: string; stage: ApplicationStage }>();
+    const store = await loadedStore(
+      client({
+        updateStage: (id, stage) =>
+          stage === 'phone_screen' ? first.promise : Promise.resolve({ id, stage }),
+      }),
+    );
+
+    act(() => void store.current.updateStage('app-1', 'phone_screen'));
+    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    await act(async () => {
+      first.reject(new Error('Backend unreachable'));
+      await first.promise.catch(() => undefined);
+    });
+
+    expect(store.current.applications[0].stage).toBe('interviewing');
+  });
+
+  it("appends a Note and replaces it with the server's record", async () => {
+    const store = await loadedStore(client());
+
+    await act(async () => {
+      expect(await store.current.addNote('app-1', note)).toBe(true);
+    });
+
+    const [{ notes }] = store.current.applications;
+    expect(notes.at(-1)?.body).toBe('Recruiter call booked.');
+    expect(notes.at(-1)?.id).not.toMatch(/^optimistic-/);
+  });
+
+  /**
+   * Notes are unslotted: each mutation owns the Note it appended and nothing else. Two in flight
+   * together must both reconcile — treating the older one as superseded would strand its
+   * placeholder on screen forever.
+   */
+  it('reconciles both of two Notes added before either write answers', async () => {
+    const first = deferred<Awaited<ReturnType<DashboardClient['addNote']>>>();
+    let call = 0;
+    const store = await loadedStore(
+      client({
+        addNote: (id, appended) => {
+          const answer = {
+            id,
+            note: { ...appended, id: `note-${call}`, createdAt: '2026-01-01T00:00:00.000Z' },
+          };
+          return call++ === 0 ? first.promise : Promise.resolve(answer);
+        },
+      }),
+    );
+
+    let second!: Promise<boolean>;
+    act(() => void store.current.addNote('app-1', note));
+    act(() => {
+      second = store.current.addNote('app-1', { ...note, body: 'Second note.' });
+    });
+    await act(async () => {
+      first.resolve({
+        id: 'app-1',
+        note: { ...note, id: 'note-0', createdAt: '2026-01-01T00:00:00.000Z' },
+      });
+      await second;
+    });
+
+    await waitFor(() => {
+      const [{ notes }] = store.current.applications;
+      expect(notes.filter((n) => n.id.startsWith('optimistic-'))).toEqual([]);
+      expect(notes.map((n) => n.body)).toContain('Second note.');
+    });
+  });
+
+  /**
+   * The reason the rollback is field-specific rather than a snapshot of the record: a failed Stage
+   * write must not take a Note that landed while it was in flight down with it.
+   */
+  it('keeps a Note that landed while a failing Stage write was in flight', async () => {
+    const stageWrite = deferred<{ id: string; stage: ApplicationStage }>();
+    const store = await loadedStore(client({ updateStage: () => stageWrite.promise }));
+
+    let stage!: Promise<boolean>;
+    act(() => {
+      stage = store.current.updateStage('app-1', 'interviewing');
+    });
+    await act(async () => {
+      await store.current.addNote('app-1', note);
+    });
+    await act(async () => {
+      stageWrite.reject(new Error('Backend unreachable'));
+      await stage;
+    });
+
+    const [record] = store.current.applications;
+    expect(record.stage).toBe('applied');
+    expect(record.notes.at(-1)?.body).toBe('Recruiter call booked.');
+  });
+
+  it('reports a failure to load without pretending there are no applications to write to', async () => {
+    const store = await loadedStore(
+      client({ listApplications: () => Promise.reject(new Error('Backend unreachable')) }),
+    );
+
+    expect(store.current.loadError).toBe('Backend unreachable');
+    expect(await store.current.updateStage('app-1', 'interviewing')).toBe(false);
+  });
+});

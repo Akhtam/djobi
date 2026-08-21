@@ -106,7 +106,7 @@ describe('POST /answer-chat', () => {
     expect(mockAnswerChat).not.toHaveBeenCalled();
   });
 
-  it('reports a model failure as JSON carrying the real reason', async () => {
+  it('returns a JSON error body but does not expose the internal cause to the client', async () => {
     mockAnswerChat.mockRejectedValueOnce(
       new StructuredCallError(
         'invalid-input',
@@ -121,7 +121,7 @@ describe('POST /answer-chat', () => {
     expect(res.status).toBe(500);
     expect(res.headers.get('content-type')).toContain('application/json');
     await expect(res.json()).resolves.toEqual({
-      error: 'report_chat_turn produced input that failed validation: revisedAnswer required',
+      error: 'Internal server error',
     });
   });
 });

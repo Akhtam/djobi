@@ -1,5 +1,6 @@
 import { JobInfoSchema, type JobInfo } from '@djobi/shared';
 import { MODEL } from './client.js';
+import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /**
@@ -22,6 +23,6 @@ export async function extractJob(jobDescription: string): Promise<JobInfo> {
     toolDescription:
       'Report the structured job posting information extracted from the description.',
     schema: JobInfoSchema,
-    userContent: `Extract structured job posting information from the following job description. Only use information present in the text — leave a field null rather than guessing.\n\n<job_description>\n${jobDescription}\n</job_description>`,
+    userContent: `Extract structured job posting information from the following job description. Only use information present in the text — leave a field null rather than guessing.\n\n<job_description>\n${sanitizeXmlContent(jobDescription)}\n</job_description>`,
   });
 }

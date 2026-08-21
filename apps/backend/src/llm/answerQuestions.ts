@@ -12,7 +12,7 @@ import {
 } from '@djobi/shared';
 import { z } from 'zod';
 import { MODEL } from './client.js';
-import { groundingContext } from './promptContext.js';
+import { groundingContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /** Wraps `QuestionAnswer[]` in an object, since the forced tool call needs a top-level object shape. */
@@ -164,7 +164,7 @@ export async function answerQuestions(
 ${groundingContext(relevantProfile, jobInfo)}
 
 <questions>
-${JSON.stringify(questions)}
+${sanitizeXmlContent(JSON.stringify(questions))}
 </questions>
 
 If a question includes an "options" array, your answer MUST be copied verbatim from one of the provided options — do not invent or rephrase.

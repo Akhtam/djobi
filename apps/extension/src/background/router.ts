@@ -7,7 +7,13 @@ import {
   setJobContext,
 } from '../lib/tabStore';
 import { enrichWithApiOracle } from './apiDetectors';
-import { runAnalysis, runFill, runSaveApplication } from './applicationPipeline';
+import {
+  productionDeps,
+  runAnalysis,
+  runFill,
+  runSaveApplication,
+  type PipelineDeps,
+} from './applicationPipeline';
 
 /**
  * Routes a coordination message, using `lib/tabStore.ts` as the hand-off point.
@@ -18,10 +24,19 @@ import { runAnalysis, runFill, runSaveApplication } from './applicationPipeline'
  *
  * What this module genuinely owns, and the reason it isn't just inlined into the service worker, is
  * the frame/revision rule below.
+ *
+ * `deps` is the Application Pipeline's seam, taken here rather than only by the three functions
+ * below it. The pipeline's own adapter substitution stopped one level too low: a caller that wanted
+ * a fake backend had to bypass this dispatch and call `runAnalysis`/`runFill`/`runSaveApplication`
+ * itself, which is what `panel/panelTestHarness.ts` used to do — re-stating all five cases, with a
+ * cast per field, in a switch that could drift from this one without either side failing. Two
+ * adapters now meet at one interface: production from `service-worker.ts`, a fake backend and page
+ * from the panel tests.
  */
 export function handleTypedMessage(
   message: TypedMessage,
   sender: chrome.runtime.MessageSender,
+  deps: PipelineDeps = productionDeps,
 ): void {
   switch (message.type) {
     case 'REPORT_JOB_PAGE': {
@@ -67,17 +82,17 @@ export function handleTypedMessage(
         message.tabUrl,
         message.profile,
         message.jobDescription,
-        undefined, // production deps
+        deps,
         message.force,
       );
       return;
 
     case 'START_FILL':
-      void runFill(message.tabId, message.profile);
+      void runFill(message.tabId, message.profile, deps);
       return;
 
     case 'START_SAVE_APPLICATION':
-      void runSaveApplication(message.tabId);
+      void runSaveApplication(message.tabId, deps);
       return;
 
     case 'UPDATE_RUN':

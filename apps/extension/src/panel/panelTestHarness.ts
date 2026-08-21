@@ -19,17 +19,13 @@ import type {
 } from '@djobi/shared';
 import { fireEvent, screen } from '@testing-library/react';
 import { vi } from 'vitest';
-import { runAnalysis, runFill, type PipelineDeps } from '../background/applicationPipeline';
+import { type PipelineDeps } from '../background/applicationPipeline';
+import { handleTypedMessage } from '../background/router';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { fakeChrome } from '../lib/fakeChrome';
 import { type FakeSessionStorage } from '../lib/fakeSessionStorage';
-import {
-  getPipelineRun,
-  patchPipelineRun,
-  reportDetectedPage,
-  setJobContext,
-  storageKey,
-} from '../lib/tabStore';
+import type { TypedMessage } from '../lib/messages';
+import { getPipelineRun, reportDetectedPage, storageKey } from '../lib/tabStore';
 
 export const profile: Profile = {
   fullName: 'Jane Doe',
@@ -168,12 +164,15 @@ export function panelClient(): BackendClient {
  * Stubs `chrome.tabs.query` (active tab), `chrome.runtime.sendMessage` and
  * `chrome.storage.session`, and builds the fake `BackendClient` the panel and the pipeline share.
  *
- * `START_ANALYSIS`/`START_FILL` run the **real** `background/applicationPipeline.ts` against the
- * real `lib/tabStore.ts`, with only its `PipelineDeps` stubbed — so these tests cover the whole
- * round trip the panel actually depends on: message -> pipeline -> store -> `chrome.storage
- * .onChanged` -> `usePipelineRun` -> render. This stub used to re-implement the pipeline instead,
- * listing by hand every field the runner checkpoints; a change to what the real one wrote left
- * these tests passing regardless.
+ * Every `TypedMessage` goes to the **real** `background/router.ts`, which runs the real
+ * `background/applicationPipeline.ts` against the real `lib/tabStore.ts`, with only its
+ * `PipelineDeps` stubbed — so these tests cover the whole round trip the panel actually depends on:
+ * message -> router -> pipeline -> store -> `chrome.storage.onChanged` -> `usePipelineRun` ->
+ * render. This stub used to re-implement the pipeline instead, listing by hand every field the
+ * runner checkpoints; a change to what the real one wrote left these tests passing regardless. It
+ * then re-implemented the *router* for the same reason — the deps seam sat below the dispatch — so
+ * a message the real router handled differently, or stopped handling, still passed here. Both
+ * re-implementations are gone: the harness sends what the panel sends.
  */
 export async function stubChrome(options: StubOptions) {
   let profileCallIndex = 0;
@@ -256,36 +255,10 @@ export async function stubChrome(options: StubOptions) {
     tab: { id: options.tabId ?? 1, url: options.tabUrl },
     storage: options.sessionStorage,
     sendMessage: (message, callback) => {
-      // Fire-and-forget, exactly as `background/router.ts` dispatches them.
-      if (message.type === 'START_ANALYSIS') {
-        void runAnalysis(
-          message.tabId as number,
-          message.tabUrl as string | null,
-          message.profile as Profile,
-          message.jobDescription as string,
-          deps,
-          message.force as boolean | undefined,
-        );
-      } else if (message.type === 'START_FILL') {
-        void runFill(message.tabId as number, message.profile as Profile, deps);
-      } else if (message.type === 'START_SAVE_APPLICATION') {
-        void import('../background/applicationPipeline').then(({ runSaveApplication }) =>
-          runSaveApplication(message.tabId as number, deps),
-        );
-      } else if (message.type === 'UPDATE_RUN') {
-        void patchPipelineRun(
-          message.tabId as number,
-          message.runId as string,
-          message.updates as Parameters<typeof patchPipelineRun>[2],
-        );
-      } else if (message.type === 'UPDATE_JOB_CONTEXT') {
-        void setJobContext(
-          message.tabId as number,
-          message.tabUrl as string,
-          message.jobDescription as string,
-          message.source as 'manual' | 'scraped',
-        );
-      }
+      // The service worker's listener, minus Chrome: one dispatch, fire-and-forget, no reply. The
+      // panel is the sender, so it carries no `tab` — only `REPORT_JOB_PAGE` reads one, and the
+      // panel never sends that.
+      handleTypedMessage(message as unknown as TypedMessage, {}, deps);
       callback(undefined);
     },
   });

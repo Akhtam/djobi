@@ -3,16 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDetectedPage, getJobContext, getPipelineRun, setPipelineRun } from '../lib/tabStore';
 import { handleTypedMessage } from './router';
 
-const { mockEnrichWithApiOracle, mockRunAnalysis, mockRunFill, mockRunSaveApplication } =
-  vi.hoisted(() => ({
-    mockEnrichWithApiOracle: vi.fn(),
-    mockRunAnalysis: vi.fn(),
-    mockRunFill: vi.fn(),
-    mockRunSaveApplication: vi.fn(),
-  }));
+const {
+  mockEnrichWithApiOracle,
+  mockRunAnalysis,
+  mockRunFill,
+  mockRunSaveApplication,
+  /** Stands in for the real adapter, which the router names as its default `deps`. */
+  productionDeps,
+} = vi.hoisted(() => ({
+  mockEnrichWithApiOracle: vi.fn(),
+  mockRunAnalysis: vi.fn(),
+  mockRunFill: vi.fn(),
+  mockRunSaveApplication: vi.fn(),
+  productionDeps: { backend: 'production-backend', page: 'production-page' },
+}));
 
 vi.mock('./apiDetectors', () => ({ enrichWithApiOracle: mockEnrichWithApiOracle }));
 vi.mock('./applicationPipeline', () => ({
+  productionDeps,
   runAnalysis: mockRunAnalysis,
   runFill: mockRunFill,
   runSaveApplication: mockRunSaveApplication,
@@ -188,7 +196,7 @@ describe('handleTypedMessage', () => {
       'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       'Senior Engineer at Acme...',
-      undefined,
+      productionDeps,
       undefined,
     );
     // Chrome holds the channel open only for a listener that returns `true`. Returning nothing at
@@ -214,7 +222,7 @@ describe('handleTypedMessage', () => {
       'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       'Senior Engineer at Acme...',
-      undefined,
+      productionDeps,
       true,
     );
   });
@@ -225,7 +233,7 @@ describe('handleTypedMessage', () => {
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunFill).toHaveBeenCalledWith(7, profile);
+    expect(mockRunFill).toHaveBeenCalledWith(7, profile, productionDeps);
     expect(returned).toBeUndefined();
   });
 
@@ -235,8 +243,36 @@ describe('handleTypedMessage', () => {
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunSaveApplication).toHaveBeenCalledWith(7);
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps);
     expect(returned).toBeUndefined();
+  });
+
+  /**
+   * The seam that lets `panel/panelTestHarness.ts` send real messages through this dispatch instead
+   * of re-implementing it. Every step-starting branch has to honour it: one that quietly kept the
+   * production adapter would reach the network from a test.
+   */
+  it('hands a substituted adapter to every step it starts', () => {
+    const deps = { backend: 'fake-backend', page: 'fake-page' } as never;
+    const sender = {} as chrome.runtime.MessageSender;
+
+    handleTypedMessage(
+      {
+        type: 'START_ANALYSIS',
+        tabId: 7,
+        tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+        profile,
+        jobDescription: 'Senior Engineer at Acme...',
+      },
+      sender,
+      deps,
+    );
+    handleTypedMessage({ type: 'START_FILL', tabId: 7, profile }, sender, deps);
+    handleTypedMessage({ type: 'START_SAVE_APPLICATION', tabId: 7 }, sender, deps);
+
+    expect(mockRunAnalysis.mock.calls[0][4]).toBe(deps);
+    expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps);
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps);
   });
 
   it('routes UPDATE_RUN through the background store queue and scopes it to its run', async () => {
