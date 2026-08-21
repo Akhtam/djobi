@@ -64,6 +64,15 @@ const STRONG_SELECTORS = [
   '[id*="jobDescription" i]',
   '[class*="job-description" i]',
   '[class*="jobDescription" i]',
+  // The substring match is separator-literal, so the camel and hyphen forms above do not cover BEM
+  // naming: Greenhouse's `job-boards` host wraps the posting body in `div.job__description`, which
+  // contains neither `job-description` nor `jobdescription`. That page carries no JSON-LD either,
+  // so this selector is the only thing standing between it and the `<main>` fallback — and `<main>`
+  // there is the posting *plus* the whole application form.
+  '[class*="job__description" i]',
+  '[class*="job_description" i]',
+  '[id*="job__description" i]',
+  '[id*="job_description" i]',
   // Rippling renders the posting body into `.ATS_htmlPreview`. It names the container's purpose
   // rather than its styling, which is what makes it usable here: every other class on the page is
   // an Emotion hash (`css-1nb1zny`) that changes on their next build.
@@ -81,6 +90,31 @@ const STRONG_SELECTORS = [
  */
 const SEMANTIC_HEADING =
   /\b(?:about (?:the )?(?:company|role|job|team|opportunity|us)|about you|company overview|the role|the opportunity|in this role|great for this role|what you(?:'|’)ll do|what you(?:'|’)ll be doing|what you(?:'|’)ll bring|what we(?:'|’)re looking for|who you are|who we are|why join|your impact|you can expect to|day[ -]to[ -]day|responsibilities|requirements|qualifications|nice to have|bonus points|skills|experience|benefits|perks|compensation)\b/i;
+
+const MAX_PSEUDO_HEADING_LENGTH = 80;
+
+/**
+ * Bold lines that a posting uses *as* a heading, where the markup offers no `h1`-`h6`.
+ *
+ * Greenhouse's own board is the case that forced this: its sections are `<p><strong>Who We Are
+ * </strong></p>`, and the page's only real headings are the job title and the application form's
+ * own — so both the heading-ancestor search and {@link scoreElement}'s heading credit saw a posting
+ * with zero recognizable sections and left the description container unnominated.
+ *
+ * The standalone-line test is what keeps this from crediting inline emphasis: a `<b>` in the middle
+ * of a sentence ("five years of <b>experience</b> with Docker") leaves other text in its block and
+ * is rejected, so prose that merely bolds a recognized word does not read as a sectioned posting.
+ * Combined with the length guard and {@link SEMANTIC_HEADING}'s fixed wording, this stays as narrow
+ * as the "recognized headings only" rule the scoring comment below describes.
+ */
+function pseudoHeadings(root: ParentNode): Element[] {
+  return [...root.querySelectorAll('strong,b')].filter((element) => {
+    const text = element.textContent?.trim() ?? '';
+    if (text.length > MAX_PSEUDO_HEADING_LENGTH || !SEMANTIC_HEADING.test(text)) return false;
+    const parent = element.parentElement;
+    return parent !== null && (parent.textContent?.trim() ?? '') === text;
+  });
+}
 
 const APPLICATION_BOUNDARY =
   /^(?:apply(?: for this job| now)?|application(?: form)?|submit (?:an )?application|similar jobs|related jobs|job alerts?|share this job)$/i;
@@ -317,9 +351,10 @@ function openRoots(document: Document): ParentNode[] {
 function scoreElement(element: Element, text: string, strong: boolean): number {
   if (text.length < MIN_DESCRIPTION_LENGTH) return Number.NEGATIVE_INFINITY;
 
-  const headings = [...element.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter((heading) =>
-    SEMANTIC_HEADING.test(heading.textContent ?? ''),
-  ).length;
+  const headings =
+    [...element.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter((heading) =>
+      SEMANTIC_HEADING.test(heading.textContent ?? ''),
+    ).length + pseudoHeadings(element).length;
   const paragraphs = element.querySelectorAll('p').length;
   const listItems = element.querySelectorAll('li').length;
   const controls = element.querySelectorAll('input,select,textarea,button').length;
@@ -331,10 +366,12 @@ function scoreElement(element: Element, text: string, strong: boolean): number {
   let score = Math.min(30, Math.floor(text.length / 350));
   if (strong) score += 55;
   if (element.matches('main,article,[role="main"]')) score += 18;
-  // Deliberately only the *recognized* headings. Crediting any `h1`-`h6` was tried, to reach a
-  // posting whose sections this file couldn't name; it also lifted an encyclopedia entry and a
-  // documentation page over the threshold, because "prose split into sections" describes them just
-  // as well. Widening SEMANTIC_HEADING above reaches the same postings and still says no to those.
+  // Deliberately only the *recognized* headings — `h1`-`h6` and the bold standalone lines
+  // {@link pseudoHeadings} accepts, both gated on the same wording. Crediting any `h1`-`h6` was
+  // tried, to reach a posting whose sections this file couldn't name; it also lifted an
+  // encyclopedia entry and a documentation page over the threshold, because "prose split into
+  // sections" describes them just as well. Widening SEMANTIC_HEADING above, and reading bold lines
+  // as headings, reach the same postings and still say no to those.
   score += Math.min(36, headings * 9);
   score += Math.min(12, paragraphs * 2);
   score += Math.min(12, listItems);
@@ -354,8 +391,13 @@ function domCandidate(document: Document): ScrapedJobDescription | null {
       if (!candidates.has(element)) candidates.set(element, false);
     }
 
-    for (const heading of root.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
-      if (!SEMANTIC_HEADING.test(heading.textContent ?? '')) continue;
+    const headings = [
+      ...[...root.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter((heading) =>
+        SEMANTIC_HEADING.test(heading.textContent ?? ''),
+      ),
+      ...pseudoHeadings(root),
+    ];
+    for (const heading of headings) {
       let ancestor = heading.parentElement;
       for (let depth = 0; ancestor && depth < 5; depth += 1, ancestor = ancestor.parentElement) {
         if (ancestor.tagName === 'BODY') break;

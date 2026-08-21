@@ -537,17 +537,12 @@ export function AutofillTab({
 
       {!hidden && canReview && jobInfo && tailoredResume && (
         <footer className="panel-footer">
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={handleFill}
-            disabled={status === 'filling' || status === 'saving'}
-          >
-            {status === 'filling' && <span className="spinner" />}
-            {status === 'filled' || status === 'saved' || status === 'save-error'
-              ? 'Fill form again'
-              : 'Fill form'}
-          </button>
+          {/*
+            Save sits above Fill once the form has been filled, because from that point on it is the
+            step the candidate is actually on: Fill has already happened, and the button below it
+            reads "Fill form again" — a repeat, not the way forward. Ordering the repeat first put
+            the recovery action where the next action belongs.
+          */}
           {(status === 'filled' || status === 'save-error' || status === 'saving') && (
             <button
               type="button"
@@ -559,6 +554,17 @@ export function AutofillTab({
               {status === 'saving' ? 'Saving...' : 'Save application'}
             </button>
           )}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleFill}
+            disabled={status === 'filling' || status === 'saving'}
+          >
+            {status === 'filling' && <span className="spinner" />}
+            {status === 'filled' || status === 'saved' || status === 'save-error'
+              ? 'Fill form again'
+              : 'Fill form'}
+          </button>
         </footer>
       )}
     </>

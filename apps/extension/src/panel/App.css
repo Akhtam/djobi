@@ -453,7 +453,13 @@ body {
 
 .panel-footer {
   flex: 0 0 auto;
-  padding: 14px 18px;
+  /* Explicit column + gap rather than the inline-whitespace the two full-width buttons used to fall
+     back on: that gap was a text node's line height, so the buttons read as one stuck-together pair
+     and it would vanish outright if the JSX were ever reformatted. */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px 18px;
   border-top: 1px solid var(--border);
 }
 

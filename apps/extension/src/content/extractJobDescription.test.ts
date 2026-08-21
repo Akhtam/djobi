@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { extractJobDescription, extractJobDescriptionWhenReady } from './extractJobDescription';
+
+/** Resolved against this file, not the working directory — see the note in `greenhouseForm.test.ts`. */
+function fixture(name: string): string {
+  return readFileSync(join(import.meta.dirname, '__fixtures__', name), 'utf8');
+}
 
 const LONG_ABOUT =
   'Acme builds reliable infrastructure for teams around the world. Our engineers work closely with customers and product partners to solve meaningful operational problems.';
@@ -203,6 +210,73 @@ describe('extractJobDescription', () => {
     expect(result?.source).toBe('dom');
     expect(result?.text).toContain('You can expect to:');
     expect(result?.text).toContain('Nice to have:');
+  });
+
+  it('reads a real Greenhouse job-boards posting rather than the page it is embedded in', () => {
+    // Captured live from `job-boards.greenhouse.io/otter/jobs/7820368002`, and it defeated every
+    // path at once: no JSON-LD, a BEM container (`job__description`) that the separator-literal
+    // strong selectors missed, and sections marked with `<p><strong>` instead of `h2`. What was
+    // left was `<main>` — the posting plus the whole application form, 37 controls' worth of
+    // penalty — scoring 32 against a threshold of 35, so the page returned nothing at all.
+    document.body.innerHTML = fixture('otter-greenhouse.html');
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('dom');
+    expect(result?.text).toContain('Core Responsibilities');
+    expect(result?.text).toContain('Proficiency in backend programming languages');
+    // The description container won, not `<main>`: the form and its boilerplate are absent.
+    expect(result?.text).not.toContain('Voluntary Self-Identification');
+    expect(result?.text).not.toContain('Accepted file types');
+  });
+
+  it('nominates a posting whose only section headings are bold lines', () => {
+    // No landmark element and no container name to match — the bold lines are the sole evidence
+    // that this is a sectioned posting, so they have to seed the candidate as a heading would.
+    document.body.innerHTML = `
+      <div class="css-8fj20a">
+        <div class="posting-body">
+          <p><strong>Who We Are</strong></p>
+          <p>${LONG_ABOUT}</p>
+          <p><strong>What You&rsquo;ll Do</strong></p>
+          <ul><li>Design and operate backend services.</li></ul>
+          <p><strong>Basic Qualifications</strong></p>
+          <ul><li>Five years of relevant software engineering experience.</li></ul>
+        </div>
+      </div>
+    `;
+
+    const result = extractJobDescription(document);
+
+    expect(result?.source).toBe('dom');
+    expect(result?.text).toContain('Who We Are');
+    expect(result?.text).toContain('Basic Qualifications');
+  });
+
+  it('matches a description container written in either underscore convention', () => {
+    document.body.innerHTML = `
+      <div class="job_description">
+        <p>${LONG_ABOUT} ${LONG_ABOUT}</p>
+        <p>Five years of relevant software engineering experience.</p>
+      </div>
+    `;
+
+    expect(extractJobDescription(document)?.source).toBe('dom');
+  });
+
+  it('does not read inline emphasis as a section heading', () => {
+    // The guardrail on the bold-heading rule: bolding a recognized word mid-sentence is not a
+    // section, and an article that leans on it must not inherit a posting's structure credit.
+    document.body.innerHTML = `
+      <main>
+        <h1>Software engineering</h1>
+        <p>${LONG_ABOUT} Practitioners disagree about how much <b>experience</b> is required.</p>
+        <p>${LONG_ABOUT} Definitions of <strong>qualifications</strong> vary by institution.</p>
+        <ul><li>Definitions vary between practitioners and institutions.</li></ul>
+      </main>
+    `;
+
+    expect(extractJobDescription(document)).toBeNull();
   });
 
   it('still says no to an article that is merely prose in sections', () => {

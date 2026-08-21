@@ -513,6 +513,14 @@ describe('AutofillTab', () => {
     );
     expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')).toHaveLength(0);
 
+    // Save comes first in the footer once filling has happened: it is the step the candidate is on,
+    // and the button under it offers a *repeat* of the one they just took ("Fill form again").
+    const footerButtons = screen
+      .getAllByRole('button')
+      .filter((button) => button.closest('.panel-footer'))
+      .map((button) => button.textContent);
+    expect(footerButtons).toEqual(['Save application', 'Fill form again']);
+
     fireEvent.click(screen.getByRole('button', { name: 'Save application' }));
     await screen.findByText('Application saved.');
     expect(sendMessage).toHaveBeenCalledWith(
