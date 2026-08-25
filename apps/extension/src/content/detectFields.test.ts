@@ -754,9 +754,14 @@ describe('detectFields', () => {
     expect(orphan?.label).toBe('orphan');
   });
 
-  it('returns native fields, then comboboxes, then groups — an order content/index.ts depends on when choosing which upload input gets the resume', () => {
+  it('returns native fields, then comboboxes, then groups, regardless of document order', () => {
     // Deliberately authored so document order and return order disagree: the group comes first in
     // the markup and must still come last in the result.
+    //
+    // The order is a documented guarantee, not a priority ranking — see `detectFields`' own doc.
+    // This title used to claim `content/index.ts` inferred upload priority from it, which was wrong
+    // twice over: the chooser is `fillForm.fillOwnedPage`, and it prefers `required` explicitly,
+    // using order only as the tie-break between equally eligible inputs.
     document.body.innerHTML = `
       <form>
         <fieldset>

@@ -1,4 +1,4 @@
-import { getSignal } from './detectFields';
+import { getSignal } from './pageSignals';
 
 /**
  * A field label that only appears on a job application: the things a candidate is asked to hand

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DetectedField } from '@djobi/shared';
-import { attachResumeFile, fillForm, fillPage, resolveField } from './fillForm';
+import { attachResumeFile, fillForm, fillPage } from './fillForm';
+import { resolveField } from './detectedFieldDom';
 
 function field(overrides: Partial<DetectedField>): DetectedField {
   return {

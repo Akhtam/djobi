@@ -1,20 +1,7 @@
-import {
-  containsLabel,
-  labelsMatch,
-  optionFor,
-  uniqueMatch,
-  type DetectedField,
-} from '@djobi/shared';
+import { containsLabel, labelsMatch, type DetectedField } from '@djobi/shared';
 import type { FillFormResult } from '../lib/messages';
-import { choiceLabel } from './detectFields';
-
-/** Resolves a `DetectedField`'s `selector` to its matching DOM element, or `null` if unresolvable. */
-export function resolveField<T extends Element = HTMLElement>(
-  doc: Document,
-  field: DetectedField,
-): T | null {
-  return doc.querySelector<T>(field.selector);
-}
+import { resolveChoice, resolveField } from './detectedFieldDom';
+import { isInstanceOf } from './pageSignals';
 
 /**
  * Writes `value` through the *prototype's* `value` setter rather than assigning `el.value` directly.
@@ -83,28 +70,6 @@ function commitValue(
 }
 
 /**
- * Finds the element for the choice `value` names, following the `selector` `detectFields.ts`
- * recorded for that choice at detection time.
- *
- * Returns `null` when the choice has no selector — it came from an ATS API schema, or from a
- * listbox that only mounts once opened, so no element existed to tag. Callers fall back to matching
- * label text against the live DOM, which is the only thing possible for a choice we never saw.
- */
-function resolveOptionElement<T extends Element = HTMLElement>(
-  doc: Document,
-  field: DetectedField,
-  value: string,
-): T | null {
-  const selector = optionFor(field, value)?.selector;
-  return selector ? doc.querySelector<T>(selector) : null;
-}
-
-/** Whether the recorded option list itself gives more than one meaning to this answer. */
-function hasAmbiguousRecordedOption(field: DetectedField, value: string): boolean {
-  return (field.options?.filter((option) => labelsMatch(option.label, value)).length ?? 0) > 1;
-}
-
-/**
  * A check, run after the page has had a chance to re-render, of whether a fill actually stuck.
  *
  * Every fill path returns one. The point is that writing to the DOM and the page's form model
@@ -125,15 +90,12 @@ function fillSelect(
   el: HTMLSelectElement,
   value: string,
 ): FillVerifier {
-  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
+  const choice = resolveChoice(doc, field, value);
+  if (!choice.ok) return FAILED;
 
-  const match =
-    resolveOptionElement<HTMLOptionElement>(doc, field, value) ??
-    uniqueMatch(Array.from(el.options), (opt) => labelsMatch(opt.text, value));
-  if (!match) return FAILED;
-
-  commitValue(el, match.value);
-  return () => el.value === match.value;
+  const { value: optionValue } = choice.element as HTMLOptionElement;
+  commitValue(el, optionValue);
+  return () => el.value === optionValue;
 }
 
 /**
@@ -150,27 +112,11 @@ function fillSelect(
  * drives both identically.
  */
 function fillGroup(doc: Document, field: DetectedField, value: string): FillVerifier {
-  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
+  const choice = resolveChoice(doc, field, value);
+  if (!choice.ok) return FAILED;
 
-  const recorded = resolveOptionElement<HTMLElement>(doc, field, value);
-  if (recorded) {
-    recorded.click();
-    return () => isChosen(recorded);
-  }
-
-  const container = resolveField(doc, field);
-  if (!container) return FAILED;
-
-  const choices = Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"], button[aria-pressed]',
-    ),
-  );
-  const match = uniqueMatch(choices, (choice) => labelsMatch(choiceLabel(doc, choice), value));
-  if (!match) return FAILED;
-
-  match.click();
-  return () => isChosen(match);
+  choice.element.click();
+  return () => isChosen(choice.element);
 }
 
 /**
@@ -179,7 +125,7 @@ function fillGroup(doc: Document, field: DetectedField, value: string): FillVeri
  * the page's handler ignored leaves all three untouched, which is what makes this a real check.
  */
 function isChosen(el: HTMLElement): boolean {
-  if (el instanceof HTMLInputElement) return el.checked;
+  if (isInstanceOf(el, 'HTMLInputElement')) return el.checked;
   return el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
 }
 
@@ -209,27 +155,11 @@ const DEFAULT_FILL_OPTIONS = {
 
 type ResolvedFillOptions = Required<FillOptions>;
 
-/**
- * The `[role="option"]` elements belonging to `trigger`'s listbox.
- *
- * Prefers the listbox the combobox names via `aria-controls`/`aria-owns`, which is the same link
- * `detectFields.resolveComboboxOptions` follows. Only when the widget names none does this fall back
- * to searching the whole document — which is what it always used to do, and is unsafe on a form with
- * two comboboxes open or portal-mounted at once: the first text match wins, and it may belong to a
- * different field entirely.
- */
-function liveOptionsFor(doc: Document, trigger: Element): Element[] {
-  const controlsId = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns');
-  const listbox = controlsId ? doc.getElementById(controlsId) : null;
-
-  return Array.from((listbox ?? doc).querySelectorAll('[role="option"]'));
-}
-
 /** Polls `find` until it returns something or the budget runs out. */
 async function waitForOption(
-  find: () => Element | undefined,
+  find: () => HTMLElement | undefined,
   options: ResolvedFillOptions,
-): Promise<Element | undefined> {
+): Promise<HTMLElement | undefined> {
   for (let attempt = 0; attempt < options.optionWaitAttempts; attempt++) {
     const found = find();
     if (found) return found;
@@ -261,25 +191,24 @@ async function fillCombobox(
   value: string,
   options: ResolvedFillOptions,
 ): Promise<FillVerifier> {
-  if (hasAmbiguousRecordedOption(field, value)) return FAILED;
-
   const trigger = resolveField(doc, field);
   if (!trigger) return FAILED;
 
   trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-  if (trigger instanceof HTMLInputElement) {
+  if (isInstanceOf(trigger, 'HTMLInputElement')) {
     trigger.focus();
     setNativeValue(trigger, value);
     trigger.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  const match = await waitForOption(
-    () =>
-      resolveOptionElement(doc, field, value) ??
-      uniqueMatch(liveOptionsFor(doc, trigger), (opt) => labelsMatch(opt.textContent ?? '', value)),
-    options,
-  );
+  // `resolveChoice` is re-asked rather than the option list re-read, because for a searching
+  // combobox the recorded element and the live ones both arrive late, and it is the one place that
+  // knows which of them this field is allowed to claim.
+  const match = await waitForOption(() => {
+    const choice = resolveChoice(doc, field, value);
+    return choice.ok ? choice.element : undefined;
+  }, options);
   if (!match) return FAILED;
 
   match.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -291,7 +220,7 @@ async function fillCombobox(
   // carry a placeholder remnant or an adjacent clear-button's label alongside the choice, and an
   // equality test there would report a perfectly good selection as unfilled.
   return () =>
-    trigger instanceof HTMLInputElement
+    isInstanceOf(trigger, 'HTMLInputElement')
       ? labelsMatch(trigger.value, value)
       : containsLabel(trigger.textContent ?? '', value);
 }
@@ -345,7 +274,7 @@ export async function fillForm(
       continue;
     }
 
-    if (el instanceof HTMLSelectElement) {
+    if (isInstanceOf(el, 'HTMLSelectElement')) {
       verifiers.push([field.id, fillSelect(doc, field, el, value)]);
       continue;
     }
@@ -369,6 +298,11 @@ export async function fillForm(
  * Only jsdom lacks `DataTransfer`, which is why the shim below still exists; it's a
  * test-environment fallback, not the production path.
  *
+ * The constructor comes from `input`'s own realm rather than this module's global, for the same
+ * reason every DOM-class test here goes through `pageSignals.isInstanceOf`: a `FileList` minted in
+ * one realm and assigned to an element in another is a cross-realm object, which is exactly the
+ * kind of thing an implementation is entitled to reject.
+ *
  * The event order matters. Upload widgets built on react-dropzone (Ashby's is) accept *either* a
  * `change` on the hidden input or a `drop` carrying a `DataTransfer`, and this used to fire a
  * synthetic drag sequence first. That sequence carried a hand-rolled `dataTransfer` whose `items`
@@ -380,9 +314,10 @@ export async function fillForm(
  */
 export function attachResumeFile(input: HTMLInputElement, file: File): void {
   let dataTransfer: DataTransfer | { files: unknown; items: unknown; types: string[] };
+  const RealmDataTransfer = input.ownerDocument.defaultView?.DataTransfer;
 
-  if (typeof DataTransfer !== 'undefined') {
-    const dt = new DataTransfer();
+  if (RealmDataTransfer) {
+    const dt = new RealmDataTransfer();
     dt.items.add(file);
     input.files = dt.files;
     dataTransfer = dt;
