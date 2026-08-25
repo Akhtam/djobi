@@ -2,7 +2,8 @@
 
 The local Hono server that does the LLM and database work for djobi: extracting structured Job Info
 from a pasted Job Description, tailoring a resume to it, drafting answers to freeform application
-questions, rendering the resume PDF, and persisting profiles and applications. Runs on your machine
+questions, holding a chat about one of those answers, rendering the resume PDF, and persisting
+profiles and applications. Runs on your machine
 (`127.0.0.1:5391`); the only cloud dependencies are the Neon Postgres database and the Anthropic API.
 
 Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**, **Profile**,
@@ -10,7 +11,7 @@ Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**,
 
 ## `src/app.ts` / `src/index.ts`
 
-`app.ts` builds and returns the Hono app with all six route modules mounted, and installs an
+`app.ts` builds and returns the Hono app with all four route modules mounted, and installs an
 `onError` handler that renders every uncaught failure as a `BackendErrorBody` (from
 `@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack trace or a bare non-JSON
 body to the extension. `structuredCall.ts` handles its one retryable case locally, logs the safe
@@ -143,6 +144,7 @@ and extension use the same contracts instead of private route schemas. Domain wr
 | `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`            |
 | `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`          |
 | `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`       |
+| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`            |
 | `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`          |
 | `GET`/`POST /profile`           | `Profile`                       | `db/profileRepository`      |
 | `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationsRepository` |
@@ -256,7 +258,7 @@ Config for the `drizzle-kit` CLI (`pnpm db:generate`, `pnpm db:migrate`). Points
 `src/db/schema.ts`, outputs to `src/db/migrations`, and reads `DATABASE_URL` via `dotenv/config`
 since drizzle-kit runs outside the app's own env loading.
 
-## `src/llm/` — the three AI calls
+## `src/llm/` — the model calls
 
 ### `client.ts`
 
@@ -279,7 +281,15 @@ Anthropic's `input_schema` doesn't dereference `$ref`/`definitions`. There are n
 JSON Schema mirrors anywhere in this package; if one appears, it's a regression.
 
 If the SDK is upgraded and `.parse()`/`zodOutputFormat` become available, this is the only function
-that needs to change — all three call sites go through it.
+that needs to change — every call site goes through it.
+
+### `promptContext.ts`
+
+`groundingContext(profile, jobInfo?)` — the `<base_profile>` / `<job_info>` block every writing
+prompt opens with, plus the `sanitizeXmlContent` escape that stops injected content breaking out of
+it. It is one helper rather than three hand-built copies because each prompt's non-fabrication rule
+is phrased as "not present in the base profile": if one call site named that container something
+else, the rule would refer to nothing. `jobInfo` is optional, so the Ask tab works with no job page.
 
 ### `extractJob.ts`
 
@@ -314,6 +324,27 @@ Two constraints worth knowing:
   treats it as binding, and post-processing independently maps high-confidence authorization and
   sponsorship polarity. If no unique safe mapping exists, the answer is omitted.
 
+### `answerChat.ts`
+
+One turn of the Ask tab's conversation about a single application question, through the same
+`structuredCall.ts` and the same `groundingContext` grounding as `answerQuestions`. Asking cold and
+refining an existing draft are the same function: what separates them is whether `currentAnswer` is
+set and whether the thread already has turns, never a "which flow is this" branch.
+
+Two rules are enforced here rather than in the prompt:
+
+- The Profile, the job and the question live in the **scaffold turn**, never in a message the
+  candidate can rewrite — a chat is exactly where "just say I led the migration" shows up, and this
+  must not become the one surface where the model may invent experience.
+- A **cold** turn (no prior messages, no `currentAnswer`) validates against a stricter schema where
+  `revisedAnswer` is required. Elsewhere it is optional, because a turn may be purely conversational
+  ("which of these two stories do you want?"); on a cold ask a reply with no answer would render an
+  Ask tab whose one purpose visibly didn't happen.
+
+The wire schema also requires the thread to alternate and end with the candidate's turn. A leading
+user turn is folded into the scaffold rather than sent after it — the Messages API refuses two user
+turns in a row — so a malformed thread is a 400 here, not an opaque provider 500.
+
 ## `src/pdf/renderResume.tsx`
 
 A single `@react-pdf/renderer` template. Contact info and education come from the
@@ -339,7 +370,7 @@ one that fails validation.
 back out with `unpdf`, so a layout regression can actually fail a test.
 
 `db/database.integration.test.ts` uses PGlite's PostgreSQL engine to execute the optimized window
-query and migrations `0004`/`0005`, including duplicate, empty-table, and index cases.
+query and migrations `0004`–`0006`, including duplicate, empty-table, and index cases.
 
 ## `vitest.config.ts`
 

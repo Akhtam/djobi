@@ -119,6 +119,8 @@ export interface StubOptions {
   analysisFailures?: (string | null)[];
   /** Same idea for the explicit Save Application action. */
   saveFailures?: (string | null)[];
+  /** Fail successive START-message deliveries before the service worker receives them. */
+  dispatchFailures?: (string | null)[];
   /** Applications already saved for the tab's URL — what the duplicate guard on Analyze finds. */
   existingApplications?: {
     id: string;
@@ -178,6 +180,7 @@ export async function stubChrome(options: StubOptions) {
   let profileCallIndex = 0;
   let analysisCallIndex = 0;
   let fillCallIndex = 0;
+  let dispatchCallIndex = 0;
   // Created up front, not when the Fill Step reaches it: a test clicks and then releases within the
   // same tick, long before the pipeline's async path gets as far as `fillPage`.
   let releaseFill!: () => void;
@@ -255,10 +258,25 @@ export async function stubChrome(options: StubOptions) {
     tab: { id: options.tabId ?? 1, url: options.tabUrl },
     storage: options.sessionStorage,
     sendMessage: (message, callback) => {
+      const typedMessage = message as unknown as TypedMessage;
+      const isStart = typedMessage.type.startsWith('START_');
+      const dispatchFailure = isStart ? nth(options.dispatchFailures, dispatchCallIndex++) : null;
+      if (dispatchFailure) {
+        Object.defineProperty(globalThis.chrome.runtime, 'lastError', {
+          value: { message: dispatchFailure },
+          configurable: true,
+        });
+        callback(undefined);
+        Object.defineProperty(globalThis.chrome.runtime, 'lastError', {
+          value: undefined,
+          configurable: true,
+        });
+        return;
+      }
       // The service worker's listener, minus Chrome: one dispatch, fire-and-forget, no reply. The
       // panel is the sender, so it carries no `tab` — only `REPORT_JOB_PAGE` reads one, and the
       // panel never sends that.
-      handleTypedMessage(message as unknown as TypedMessage, {}, deps);
+      void handleTypedMessage(typedMessage, {}, deps);
       callback(undefined);
     },
   });

@@ -179,7 +179,7 @@ describe('handleTypedMessage', () => {
     );
   });
 
-  it("starts the Analysis Step in the background without holding the message channel open, so a panel that closes right after sending it doesn't block the run", () => {
+  it("returns the Analysis task for rejection observation without deciding whether Chrome's message channel stays open", async () => {
     const returned = handleTypedMessage(
       {
         type: 'START_ANALYSIS',
@@ -199,9 +199,7 @@ describe('handleTypedMessage', () => {
       productionDeps,
       undefined,
     );
-    // Chrome holds the channel open only for a listener that returns `true`. Returning nothing at
-    // all is what makes that impossible to get wrong here.
-    expect(returned).toBeUndefined();
+    await expect(returned).resolves.toBeUndefined();
   });
 
   it('carries the candidate\'s "analyze anyway" through to the run, so the duplicate guard is skipped', () => {
@@ -227,24 +225,36 @@ describe('handleTypedMessage', () => {
     );
   });
 
-  it('starts the Fill Step in the background without holding the message channel open', () => {
+  it('returns the Fill task for rejection observation', async () => {
     const returned = handleTypedMessage(
       { type: 'START_FILL', tabId: 7, profile },
       {} as chrome.runtime.MessageSender,
     );
 
     expect(mockRunFill).toHaveBeenCalledWith(7, profile, productionDeps);
-    expect(returned).toBeUndefined();
+    await expect(returned).resolves.toBeUndefined();
   });
 
-  it('starts saving in the background without holding the message channel open', () => {
+  it('returns the Save task for rejection observation', async () => {
     const returned = handleTypedMessage(
       { type: 'START_SAVE_APPLICATION', tabId: 7 },
       {} as chrome.runtime.MessageSender,
     );
 
     expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps);
-    expect(returned).toBeUndefined();
+    await expect(returned).resolves.toBeUndefined();
+  });
+
+  it('lets a runner rejection reach the service-worker observation boundary', async () => {
+    const failure = new Error('session storage unavailable');
+    mockRunFill.mockRejectedValue(failure);
+
+    await expect(
+      handleTypedMessage(
+        { type: 'START_FILL', tabId: 7, profile },
+        {} as chrome.runtime.MessageSender,
+      ),
+    ).rejects.toBe(failure);
   });
 
   /**

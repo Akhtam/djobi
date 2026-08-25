@@ -2,16 +2,20 @@
  * The "Autofill" tab: the Application Pipeline as the candidate sees it — scrape or paste a Job Description,
  * Analyze, review what came back, Fill, Save.
  *
- * A module alongside `LogApplication` and `AskTab` rather than the body of `panel/App.tsx`, which
- * is what it used to be. The other two flows had always been modules; this one stayed in the shell,
- * so the shell's interface was "everything the pipeline renders" plus profile bootstrap plus tab
- * state, and a fourth tab would have added to it again.
+ * A module alongside `LogApplication` and `AskTab` rather than the body of `panel/App.tsx`. Folded
+ * into the shell, the shell's interface becomes "everything the pipeline renders" plus profile
+ * bootstrap plus tab state, and every further tab adds to it again.
  *
  * The steps themselves run in `background/applicationPipeline.ts`, not here: the panel closing
- * mid-request must not kill a run. `START_ANALYSIS`/`START_FILL`/`START_SAVE_APPLICATION` are
- * fire-and-forget notifications; real progress arrives through the run this module is handed.
- * `begin` is only instant feedback until the background writes its own status, and is never
- * persisted — see the ownership note on `usePipelineRun`.
+ * mid-request must not kill a run. `START_ANALYSIS`/`START_FILL`/`START_SAVE_APPLICATION` carry no
+ * response — real progress arrives through the run this module is handed. `begin` is only instant
+ * feedback until the background writes its own status, and is never persisted; see the ownership
+ * note on `usePipelineRun`.
+ *
+ * The one thing that comes back from a `notify` is whether Chrome managed to *deliver* it. A START
+ * that never reached the worker will produce no run and no storage event at all, so
+ * `dispatchFailure` stands the optimistic status back down rather than leaving the tab spinning on
+ * a step nothing is running.
  */
 import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
@@ -22,7 +26,12 @@ import { notify } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor } from '../lib/runAnswers';
 import { reviewOf } from '../lib/runReview';
-import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
+import {
+  getDetectedPage,
+  storageKey,
+  type PipelineFailure,
+  type PipelineStatus,
+} from '../lib/tabStore';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
@@ -77,12 +86,16 @@ export function AutofillTab({
 
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
+  const [dispatchFailure, setDispatchFailure] = useState<{
+    status: 'analyze-error' | 'fill-error' | 'save-error';
+    failure: PipelineFailure;
+  } | null>(null);
 
   // The Job Description, wherever it currently lives — see `panel/useJobDescription.ts`. Draft
   // versus run, Job Key scoping and the scrape's races are all its business, not this module's.
   const jobDescription = useJobDescription(activeRun, readPosting);
 
-  const status: AutofillStatus = runStatus ?? 'ready';
+  const status: AutofillStatus = dispatchFailure?.status ?? runStatus ?? 'ready';
   const { canReview, outcome } = reviewOf(run);
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
@@ -92,7 +105,7 @@ export function AutofillTab({
   const answers = run?.answers ?? [];
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
-  const failure = run?.failure ?? null;
+  const failure = dispatchFailure?.failure ?? run?.failure ?? null;
   /** How many fields the run's own re-scan saw — what separates the two zero-filled outcomes. */
   const detectedFieldCount = jobPageData?.fields.length ?? 0;
   const duplicateOf = run?.duplicateOf ?? null;
@@ -171,6 +184,19 @@ export function AutofillTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- route identity is the reset signal
   }, [tabId, tabUrl, changeToken]);
 
+  // Any persisted progress supersedes a panel-local delivery error from the command that requested
+  // it. Usually an undelivered command produces no storage event at all; this guard handles the
+  // narrower race where Chrome reports an error as a worker is coming back.
+  useEffect(() => setDispatchFailure(null), [run?.runId, run?.status]);
+
+  function reportDispatchFailure(
+    step: PipelineFailure['step'],
+    status: 'analyze-error' | 'fill-error' | 'save-error',
+    message: string,
+  ) {
+    setDispatchFailure({ status, failure: { step, message } });
+  }
+
   /**
    * `force` is set only by "Analyze and apply anyway", after the background told us this job URL
    * already has a saved Application. The Duplicate Guard itself runs in the background, not here,
@@ -179,31 +205,41 @@ export function AutofillTab({
   function handleAnalyze(force = false) {
     if (!jobDescription.text.trim() || tabId === null || !jobDescription.analysisUrl) return;
 
+    setDispatchFailure(null);
     begin('analyzing');
 
-    notify({
-      type: 'START_ANALYSIS',
-      tabId,
-      tabUrl: jobDescription.analysisUrl,
-      profile,
-      jobDescription: jobDescription.text,
-      force,
-    });
+    notify(
+      {
+        type: 'START_ANALYSIS',
+        tabId,
+        tabUrl: jobDescription.analysisUrl,
+        profile,
+        jobDescription: jobDescription.text,
+        force,
+      },
+      (message) => reportDispatchFailure('analysis', 'analyze-error', message),
+    );
   }
 
   function handleFill() {
     if (!jobPageData || !jobInfo || !tailoredResume || tabId === null) return;
 
+    setDispatchFailure(null);
     begin('filling');
 
-    notify({ type: 'START_FILL', tabId, profile });
+    notify({ type: 'START_FILL', tabId, profile }, (message) =>
+      reportDispatchFailure('fill', 'fill-error', message),
+    );
   }
 
   function handleSaveApplication() {
     if (tabId === null || (status !== 'filled' && status !== 'save-error')) return;
 
+    setDispatchFailure(null);
     begin('saving');
-    notify({ type: 'START_SAVE_APPLICATION', tabId });
+    notify({ type: 'START_SAVE_APPLICATION', tabId }, (message) =>
+      reportDispatchFailure('save', 'save-error', message),
+    );
   }
 
   return (

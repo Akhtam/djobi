@@ -9,11 +9,9 @@
  * observes it via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`) rather than a message
  * response.
  *
- * The steps used to live in `panel/pipeline.ts` — a directory nothing in the panel imported from
- * once the run moved here — with this module spreading their loose return values field-by-field
- * into a {@link PipelineRunState}. That modelled a run twice, so adding one step output meant
- * editing both modules and the store. Here each step returns the patch it checkpoints, and the run's
- * shape lives only in `lib/tabStore.ts`.
+ * Each step returns the patch it checkpoints, and the run's shape lives only in `lib/tabStore.ts`.
+ * Splitting the steps from their checkpointing models a run twice — every new step output then has
+ * to be added to the step, to whatever spreads its result, and to the store.
  */
 import { resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
@@ -312,10 +310,7 @@ export async function runSaveApplication(
       failure: null,
     });
   } catch (error) {
-    await patchPipelineRun(tabId, runId, {
-      status: 'save-error',
-      failure: { step: 'save', message: failureMessage(error) },
-    });
+    await checkpointFailure(tabId, runId, 'save-error', 'save', error);
   }
 }
 
@@ -323,16 +318,43 @@ export async function runSaveApplication(
  * The reason to show the user for a failed step — usually a `BackendError` naming the path and
  * status.
  *
- * The steps used to wrap their own failures in an `AnalysisFailedError`/`FillFailedError` whose
- * message was a fixed string, so this had to dig the real cause back out of `.cause`. That wrapping
- * only ever existed to tell "the step failed" apart from "the step's caller has a bug" across the
- * module seam that no longer exists — and letting a bug escape a fire-and-forget `runAnalysis` was
- * never useful anyway: it strands the run in `analyzing` forever with nothing on screen.
+ * The real cause is used verbatim rather than wrapped in a step-specific error type. Which step
+ * failed is already recorded beside this message as `failure.step`, and a fixed wrapper string
+ * would only mean digging the useful half back out of `.cause` here.
  */
 function failureMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   return String(error ?? 'unknown cause');
+}
+
+/**
+ * Records a step's failure on the run, so the panel shows an error the candidate can retry from
+ * rather than a status that never resolves.
+ *
+ * If the checkpoint write *itself* rejects, both causes are thrown together: the operational
+ * failure would otherwise be lost to a storage fault that has nothing to do with it. Nothing here
+ * catches that — `background/router.ts` returns this task to `background/service-worker.ts`, whose
+ * listener is the one place a terminal rejection is logged.
+ */
+async function checkpointFailure(
+  tabId: number,
+  runId: string,
+  status: 'analyze-error' | 'fill-error' | 'save-error',
+  step: 'analysis' | 'fill' | 'save',
+  error: unknown,
+): Promise<void> {
+  try {
+    await patchPipelineRun(tabId, runId, {
+      status,
+      failure: { step, message: failureMessage(error) },
+    });
+  } catch (checkpointError) {
+    throw new AggregateError(
+      [error, checkpointError],
+      `${step} failed and its failure could not be stored`,
+    );
+  }
 }
 
 /**
@@ -413,32 +435,29 @@ export async function runAnalysis(
     duplicateOf: null,
   });
 
-  const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
-  const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
-
-  const stillCurrent = await patchPipelineRun(tabId, runId, {
-    status: duplicateOf ? 'duplicate' : 'analyzing',
-    jobPageData,
-    duplicateOf,
-  });
-
-  if (!stillCurrent) return;
-
-  // Stop before any backend work: not spending three LLM calls on a posting the candidate has
-  // already applied to is the entire point of the check.
-  if (duplicateOf) return;
-
   try {
+    const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
+    const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
+
+    const stillCurrent = await patchPipelineRun(tabId, runId, {
+      status: duplicateOf ? 'duplicate' : 'analyzing',
+      jobPageData,
+      duplicateOf,
+    });
+
+    if (!stillCurrent) return;
+
+    // Stop before any backend work: not spending three LLM calls on a posting the candidate has
+    // already applied to is the entire point of the check.
+    if (duplicateOf) return;
+
     await patchPipelineRun(
       tabId,
       runId,
       await analysisStep(jobDescription, jobPageData, profile, deps),
     );
   } catch (error) {
-    await patchPipelineRun(tabId, runId, {
-      status: 'analyze-error',
-      failure: { step: 'analysis', message: failureMessage(error) },
-    });
+    await checkpointFailure(tabId, runId, 'analyze-error', 'analysis', error);
   }
 }
 
@@ -481,9 +500,6 @@ export async function runFill(
     const result = await fillStep(run, profile, tabId, deps);
     if (result) await patchPipelineRun(tabId, runId, result);
   } catch (error) {
-    await patchPipelineRun(tabId, runId, {
-      status: 'fill-error',
-      failure: { step: 'fill', message: failureMessage(error) },
-    });
+    await checkpointFailure(tabId, runId, 'fill-error', 'fill', error);
   }
 }

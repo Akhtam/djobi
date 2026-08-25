@@ -45,6 +45,28 @@ describe('notify', () => {
     expect(read).toHaveBeenCalled();
   });
 
+  it('reports an immediate delivery failure without adding a response to the protocol', () => {
+    const onDispatchError = vi.fn();
+    const sendMessage = vi.fn((_message: unknown, callback: () => void) => callback());
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage, lastError: { message: 'Could not establish connection.' } },
+    });
+
+    notify({ type: 'START_FILL', tabId: 1, profile }, onDispatchError);
+
+    expect(onDispatchError).toHaveBeenCalledWith('Could not establish connection.');
+  });
+
+  it('does not report a dispatch error when Chrome accepted the notification', () => {
+    const onDispatchError = vi.fn();
+    const sendMessage = vi.fn((_message: unknown, callback: () => void) => callback());
+    vi.stubGlobal('chrome', { runtime: { sendMessage, lastError: undefined } });
+
+    notify({ type: 'START_FILL', tabId: 1, profile }, onDispatchError);
+
+    expect(onDispatchError).not.toHaveBeenCalled();
+  });
+
   it('returns nothing — the protocol has no responses to wait on', () => {
     expect(notify({ type: 'START_FILL', tabId: 1, profile })).toBeUndefined();
   });

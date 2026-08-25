@@ -172,6 +172,22 @@ draft. Three outcomes, and the distinction between the last two is the point of 
 Lives here because both sides need it: the extension splits before calling the backend, and the
 backend both prompts with and validates `knownAnswer`.
 
+### `src/jobKey.ts`
+
+**A URL identity for a job posting, rather than for the ATS screen the candidate happens to be
+looking at.** `jobKeyForUrl` strips a trailing `/application` or `/apply` route, drops `utm_*` and
+the other tracking parameters, and sorts what's left; `isSameJobUrl` compares two URLs through it.
+
+It lives here because both sides depend on the same key. The extension scopes a Job Description
+draft to it, so collecting the posting on an overview route and then navigating to the application
+route doesn't erase the draft (Ashby `pushState`s exactly that transition). The backend derives
+`applications.job_key` on write and matches the Duplicate Guard on it, so a posting revisited
+through an ad link is still recognized — matching the raw URL alone missed that, at a cost of three
+LLM calls and a re-application each time.
+
+A key the extension computed one way and the backend another would silently stop matching, which is
+the whole reason it isn't two private helpers.
+
 ### `src/resumeFileName.ts`
 
 `resumeFileName(fullName)` — the filename the generated Tailored Resume is attached under.
@@ -185,7 +201,8 @@ Barrel — re-exports all of the above. Import from `@djobi/shared`, not `@djobi
 One `describe` per schema in `schemas.test.ts`; each covers a valid parse, a missing required field,
 and any schema-specific edge case worth pinning (nullable fields accepting `null`, an embedded
 invalid `Story` failing the parent `Profile`, every `FieldCategory` value being accepted).
-`detectedField`, `labelMatching`, `preparedAnswers` and `resumeFileName` have their own test files.
+`detectedField`, `jobKey`, `labelMatching`, `preparedAnswers`, `resumeFileName` and `wire` have
+their own test files.
 
 **`screeningAnswers.ts` is the only module here with no test file** — so `matchScreeningTopic`'s
 order-dependent matching, where "authorized to work without sponsorship?" has to resolve to work

@@ -5,20 +5,42 @@
  * tab leaves no stale frames/run behind, and makes the toolbar icon open the side panel (there's no
  * `default_popup` to compete with it).
  *
- * This used to multiplex a second, untyped `{ path, body, method? }` protocol onto the same
- * listener, relaying it to the backend on the extension pages' behalf. They call
- * `lib/callBackend.ts` directly now, so there is one message protocol here and `message.type` is
- * always present.
+ * One message protocol, so `message.type` is always present — the extension pages call
+ * `lib/callBackend.ts` themselves rather than relaying through here.
+ *
+ * This module owns the two things that only exist because Chrome can stop a worker mid-operation:
+ * the one-time recovery sweep every message waits behind, and the `.catch` that is the single place
+ * a routed task's terminal rejection is logged.
  */
-import { registerTabStateCleanup } from '../lib/tabStore';
+import { recoverInterruptedPipelineRuns, registerTabStateCleanup } from '../lib/tabStore';
 import type { TypedMessage } from '../lib/messages';
 import { handleTypedMessage } from './router';
 
 registerTabStateCleanup();
 void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
+// Register the listener synchronously, but route every waking message only after this worker has
+// repaired operations abandoned by its predecessor. Without one shared barrier, a startup sweep can
+// read `analyzing` after this same worker has just written it and demote live work as interrupted.
+const recoveryReady = recoverInterruptedPipelineRuns().catch((error: unknown) => {
+  console.error('[djobi] interrupted pipeline recovery failed', error);
+});
+
+function tabIdOf(message: TypedMessage, sender: chrome.runtime.MessageSender): number | undefined {
+  return 'tabId' in message ? message.tabId : sender.tab?.id;
+}
+
 // Returns nothing on purpose. Chrome keeps the message channel open only when a listener returns
 // `true`, and every message in this protocol is a notification — see `lib/messages.ts`.
 chrome.runtime.onMessage.addListener((message: TypedMessage, sender) => {
-  handleTypedMessage(message, sender);
+  void recoveryReady
+    .then(() => handleTypedMessage(message, sender))
+    .catch((error: unknown) => {
+      console.error('[djobi] background message failed', {
+        type: message.type,
+        tabId: tabIdOf(message, sender),
+        ...('runId' in message ? { runId: message.runId } : {}),
+        error,
+      });
+    });
 });

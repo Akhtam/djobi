@@ -170,11 +170,14 @@ export type TypedMessage =
  * Sends a coordination message to the background and returns immediately. There is no reply to
  * wait for.
  *
- * The callback exists only so `chrome.runtime.lastError` is read, which is what marks it handled —
- * without it, sending while no service worker is listening logs an unchecked runtime error.
+ * The callback reads `chrome.runtime.lastError`, which marks it handled. A START caller may also
+ * use `onDispatchError` to stand down optimistic UI when Chrome could not deliver the notification;
+ * this still adds no response payload and does not wait for the operation.
  */
-export function notify(message: TypedMessage): void {
+export function notify(message: TypedMessage, onDispatchError?: (message: string) => void): void {
   chrome.runtime.sendMessage(message, () => {
-    void chrome.runtime.lastError;
+    const error = chrome.runtime.lastError;
+    if (error)
+      onDispatchError?.(error.message || 'The background worker did not receive the command.');
   });
 }

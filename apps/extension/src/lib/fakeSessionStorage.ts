@@ -15,7 +15,7 @@ type StorageListener = (changes: Record<string, { newValue?: unknown }>, areaNam
 
 export interface FakeSessionStorage {
   session: {
-    get: (key: string) => Promise<Record<string, unknown>>;
+    get: (key: string | null) => Promise<Record<string, unknown>>;
     set: (items: Record<string, unknown>) => Promise<void>;
     remove: (key: string) => Promise<void>;
   };
@@ -37,7 +37,10 @@ export function fakeSessionStorage(): FakeSessionStorage {
 
   return {
     session: {
-      get: (key) => Promise.resolve(data.has(key) ? { [key]: data.get(key) } : {}),
+      get: (key) =>
+        Promise.resolve(
+          key === null ? Object.fromEntries(data) : data.has(key) ? { [key]: data.get(key) } : {},
+        ),
       set: (items) => {
         const changes: Record<string, { newValue?: unknown }> = {};
         for (const [key, value] of Object.entries(items)) {

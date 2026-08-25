@@ -1,5 +1,5 @@
 /**
- * Options page root — profile onboarding form (`PROGRESS.md` Phase 5).
+ * Options page root — the profile onboarding form, and the only surface that edits a Profile.
  *
  * `client` is a prop for the same reason it is one in `panel/App.tsx`: the page is tested through
  * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is

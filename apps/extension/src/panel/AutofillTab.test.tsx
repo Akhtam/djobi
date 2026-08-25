@@ -396,6 +396,24 @@ describe('AutofillTab', () => {
     await screen.findByText('Senior Engineer at Acme');
   });
 
+  it('stands down optimistic analysis and reports an immediate START delivery failure', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      dispatchFailures: ['Could not establish connection.', null],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(screen.getByText('Could not establish connection.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('Senior Engineer at Acme');
+  });
+
   it('stops on a job already applied to, naming when it was applied for', async () => {
     const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',

@@ -19,10 +19,9 @@ import type { FillPageCommand, PageClient } from '../lib/pageClient';
 import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
 
 /**
- * The Analysis and Fill Steps used to be tested separately from the checkpointing that drives them,
- * in `panel/pipeline.test.ts` and `background/pipelineRunner.test.ts` — which asserted the same
- * outcomes twice, once as a returned value and once as a stored run. They're one module now, so
- * every test here goes through `runAnalysis`/`runFill` and reads the result out of the store.
+ * Every test here goes through `runAnalysis`/`runFill`/`runSaveApplication` and reads the result out
+ * of the store, rather than asserting on a returned value — a step and the checkpointing that drives
+ * it are one module, and testing them apart asserts the same outcome twice.
  *
  * Dependencies are passed in rather than `vi.mock`ed: the seam is a parameter, so a test needn't
  * reach around the module to replace what it calls. The two tests at the bottom deliberately don't
@@ -440,6 +439,49 @@ describe('runAnalysis', () => {
         step: 'analysis',
         message: 'POST /answer-questions failed (500): report_answers did not produce a tool call.',
       },
+    });
+  });
+
+  it('checkpoints a storage failure after claiming analysis, including work that happens before the backend calls', async () => {
+    stubChrome();
+    const originalGet = chrome.storage.session.get.bind(chrome.storage.session);
+    let reads = 0;
+    chrome.storage.session.get = vi.fn((keys) => {
+      reads += 1;
+      if (reads === 2) return Promise.reject(new Error('session read failed'));
+      return originalGet(keys);
+    }) as typeof chrome.storage.session.get;
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', makeDeps());
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'analyze-error',
+      failure: { step: 'analysis', message: 'session read failed' },
+    });
+  });
+
+  it('rejects to the terminal observer when both analysis and its failure checkpoint fail', async () => {
+    stubChrome();
+    const originalGet = chrome.storage.session.get.bind(chrome.storage.session);
+    let reads = 0;
+    chrome.storage.session.get = vi.fn((keys) => {
+      reads += 1;
+      if (reads === 4) return Promise.reject(new Error('checkpoint storage failed'));
+      return originalGet(keys);
+    }) as typeof chrome.storage.session.get;
+    const analysisFailure = new Error('backend unavailable');
+
+    const rejected = runAnalysis(
+      7,
+      null,
+      profile,
+      'Senior Engineer at Acme...',
+      makeDeps({ extractJob: vi.fn().mockRejectedValue(analysisFailure) }),
+    );
+
+    await expect(rejected).rejects.toMatchObject({
+      message: 'analysis failed and its failure could not be stored',
+      errors: [analysisFailure, expect.objectContaining({ message: 'checkpoint storage failed' })],
     });
   });
 

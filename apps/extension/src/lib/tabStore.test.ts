@@ -9,6 +9,7 @@ import {
   getJobContext,
   getPipelineRun,
   patchPipelineRun,
+  recoverInterruptedPipelineRuns,
   registerTabStateCleanup,
   reportDetectedPage,
   setJobContext,
@@ -205,6 +206,41 @@ describe('tabStore', () => {
 
       expect((await getDetectedPage(1))?.fields).toHaveLength(1);
       expect(await getPipelineRun(1)).toEqual(run);
+    });
+
+    it('recovers operations abandoned by an earlier service-worker instance without touching idle runs', async () => {
+      stubChrome();
+      await setPipelineRun(1, { ...run, status: 'analyzing', jobInfo: null, tailoredResume: null });
+      await setPipelineRun(2, { ...run, runId: 'run-2', status: 'filling' });
+      await setPipelineRun(3, { ...run, runId: 'run-3', status: 'saving' });
+      await setPipelineRun(4, { ...run, runId: 'run-4', status: 'review' });
+
+      await recoverInterruptedPipelineRuns();
+
+      expect(await getPipelineRun(1)).toMatchObject({
+        status: 'analyze-error',
+        failure: {
+          step: 'analysis',
+          message: expect.stringMatching(/background worker stopped.*try again/i),
+        },
+      });
+      expect(await getPipelineRun(2)).toMatchObject({
+        status: 'fill-error',
+        failure: {
+          step: 'fill',
+          message: expect.stringMatching(
+            /may have partially completed.*check the application page/i,
+          ),
+        },
+      });
+      expect(await getPipelineRun(3)).toMatchObject({
+        status: 'save-error',
+        failure: {
+          step: 'save',
+          message: expect.stringMatching(/may have completed.*check the dashboard/i),
+        },
+      });
+      expect(await getPipelineRun(4)).toEqual({ ...run, runId: 'run-4', status: 'review' });
     });
   });
 

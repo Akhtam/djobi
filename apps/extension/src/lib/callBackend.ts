@@ -2,14 +2,13 @@
  * The one transport to the local djobi backend, used by the service worker and by the extension
  * pages (panel, options) alike.
  *
- * There used to be three. This one; a `{ path, body, method? }` relay message (`sendToBackground`
- * -> `background/relay.ts` -> here) for the extension pages; and a bare `fetch` in
- * `fetchResumePdf.ts` for the one response that isn't JSON. The relay rested on the premise that
- * extension pages can't call the backend directly — which that bare `fetch` disproved by doing
- * exactly that from the panel. They can: `manifest.ts` grants `http://127.0.0.1:5391/*` to the
- * whole extension, not just the service worker. Collapsing them here also lets
- * `background/service-worker.ts` stop multiplexing two message protocols onto one `onMessage`
- * listener, and leaves one origin and one error type instead of three of each.
+ * There is deliberately no relay through the service worker for the pages' calls. A relay would
+ * rest on the premise that extension pages can't reach the backend themselves, and they can:
+ * `manifest.ts` grants `http://127.0.0.1:5391/*` to the whole extension, not just the worker.
+ * Adding one back would put a second message protocol on `background/service-worker.ts`'s single
+ * `onMessage` listener and give the codebase two origins and two error types where one of each
+ * does. The PDF route is the one non-JSON response and is served here too, by
+ * {@link callBackendBinary}, rather than by a bare `fetch` somewhere else.
  */
 import { BackendErrorBodySchema } from '@djobi/shared';
 

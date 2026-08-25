@@ -1,11 +1,16 @@
 # Application-info extraction mode — design research
 
-> **Status: superseded in part (2026-08-18).** The narrower feature the candidate actually wanted —
-> logging an application they made by hand, so it joins the same history — was built instead, as the
-> panel's **Log** tab (see `PROGRESS.md`, Phase 9a). It needed no new endpoint, no new LLM call and
-> no new pipeline: `POST /extract-job` for the details, `POST /applications` with `source: 'manual'`,
-> and the base profile in place of a tailored resume. This document's tab-vs-toggle recommendation
-> was adopted; its Application Kit, `POST /fetch-posting` and `POST /application-kit` were not.
+> **Status: superseded in part (updated 2026-08-25).** The narrower feature the candidate actually
+> wanted — logging an application they made by hand, so it joins the same history — was built
+> instead, as the panel's **Log** tab (see `PROGRESS.md` → "Shipped"). It needed no new endpoint, no
+> new LLM call and no new pipeline: `POST /extract-job` for the details, `POST /applications` with
+> `source: 'manual'`, and the base profile in place of a tailored resume. This document's
+> tab-vs-toggle recommendation was adopted; its Application Kit, `POST /fetch-posting` and
+> `POST /application-kit` were not.
+>
+> The **Ask** tab has since shipped too, as a third tab on the same switcher, with its own
+> `POST /answer-chat`. So the "should this be folded into an Application Kit?" question in §7 is
+> closed: it wasn't, and Ask exists independently.
 >
 > What remains live here is the part still unbuilt: **reading a posting the extension isn't looking
 > at** — from a pasted URL, or off an open LinkedIn Easy Apply modal — and the host-permission,
@@ -13,12 +18,8 @@
 >
 > **Snapshot scope:** §§1–8 are the pre-Log-tab research snapshot. Present-tense descriptions in
 > those sections describe the implementation at the time of research, before the panel gained its
-> persistent **Autofill / Log** tab switcher; they are preserved as design history, not claims about
-> the current tree. Current implementation corrections are called out where they affect a live
-> recommendation.
->
-> Every repo claim below is `path:line`; every external claim carries its primary-source URL. Line
-> numbers predate the Log tab and may have shifted.
+> **Autofill / Log / Ask** tab switcher; they are preserved as design history, not claims about the
+> current tree. Every repo claim below is `path:line`, and those line numbers predate both tabs.
 
 ## 1. The question, restated
 
@@ -232,14 +233,9 @@ Relevant shapes: `JobInfoSchema` (`schemas.ts:148`), `TailoredResumeSchema` (`sc
 
 ### 2.10 What's already planned
 
-At the time of research, `PROGRESS.md` → **Phase 9 (Ask tab)** committed to this, verbatim:
-
-> **The panel becomes tabbed.** At the time of this research, `panel/App.tsx` rendered one flow keyed
-> off `status`. The shipped Log work added the tab switcher; any future Ask surface would extend that
-> existing switcher as a third tab.
-
-That planned navigation idiom has since landed for **Autofill / Log**. Any future extraction surface
-should extend the existing tab shell rather than introduce a separate mode toggle.
+At the time of this research `panel/App.tsx` rendered one flow keyed off `status`, and a tabbed
+panel was only planned. It has since landed for **Autofill / Log / Ask**. Any future extraction
+surface should extend that existing tab shell rather than introduce a separate mode toggle.
 
 ---
 
@@ -352,9 +348,9 @@ Why a tab and not a toggle:
    reads as "am I about to lose my drafted answers?" Two tabs are obviously two things that both
    exist. Since the panel already checkpoints every state so closing it mid-run loses nothing
    (`PROGRESS.md` "Current state"), coexistence is the honest representation.
-4. **It has to extend to three, not two.** Phase 9 (Answer chat) is planned as a third tab. A
-   toggle is a two-state control by construction; adding Ask would then require a tab switcher _and_
-   a toggle in one 400px-wide panel.
+4. **It has to extend to three, not two.** The Ask tab was planned as a third tab at the time, and
+   has since shipped as one. A toggle is a two-state control by construction; adding Ask would have
+   required a tab switcher _and_ a toggle in one 400px-wide panel.
 5. **Different terminal actions.** Today's footer is Fill / Save (`App.tsx:491-516`) and is
    conditional on `canReview && jobInfo && tailoredResume`. Extraction's terminal action is copy-out.
    A footer that changes meaning under a toggle is a well-known mis-click generator; tabs scope
@@ -501,7 +497,7 @@ This one is different in kind: the questions are **real and present**, so nothin
   re-scan on each step (the content script's existing `MutationObserver` + settle already
   re-reports, `content/detect.ts:82-88`) and accumulate, or scan-on-demand from a panel button. The
   accumulate-across-steps model is new state that doesn't exist today.
-- **No writes.** See §6. Recommendation is read-and-copy-out only, matching Phase 9's already-stated
+- **No writes.** See §6. Recommendation is read-and-copy-out only, matching the Ask tab's already-stated
   "Copy-out, not auto-fill" decision.
 
 ### 5.5 Where each piece lives
@@ -667,7 +663,7 @@ which option is chosen.
 
 **Recommendation:** for the LinkedIn source, ship read-and-copy-out only, never a write; never fetch
 linkedin.com from the backend; and offer paste as the always-available fallback. This also aligns
-with the already-recorded Phase 9 decision ("Copy-out, not auto-fill… this phase adds no new path
+with the already-recorded Ask-tab decision ("Copy-out, not auto-fill… this phase adds no new path
 from a drafted answer into a form field").
 
 ### 6.2 Chrome Web Store policy
@@ -758,7 +754,7 @@ LinkedIn constraint, not a Chrome Web Store one.
    Tailored Resume and a PDF are still produced, and whether §4's recommendation (tab) even holds —
    under (ii) alone, a toggle wins.
 2. **Does extraction mode ever write to a page?** Recommendation is no (copy-out only), which keeps
-   LinkedIn read-only and matches the Phase 9 decision. Confirm — if it _should_ fill non-LinkedIn
+   LinkedIn read-only and matches the Ask-tab decision. Confirm — if it _should_ fill non-LinkedIn
    forms, then it isn't a second mode, it's the existing pipeline with a different front end.
 3. **LinkedIn posture.** Accept read-and-copy-out with an in-UI note about LinkedIn's terms
    (§6.1), or stay entirely off linkedin.com and treat "LinkedIn" as "paste the text"? The middle
@@ -775,11 +771,11 @@ LinkedIn constraint, not a Chrome Web Store one.
    or is "paste the text instead" acceptable?
 7. **`QuestionAnswer.fieldId` for predicted questions** — synthetic ids (recommended) or make the
    field nullable? This one is a shared-schema change either way and should be settled before code.
-8. **Phase 9 overlap.** `PROGRESS.md` Phase 9 plans an "Ask" tab with a `POST /answer-chat` route,
-   drafting from the Profile with an optional `jobInfo`. That is a strict subset of
-   `POST /application-kit`. Should Phase 9 be folded into this work — one route, one tab with a
-   sub-mode — rather than shipped separately? The comparable collision inside Phase 9 (a cold ask vs.
-   refining an existing draft) was settled by merging: one chat UI, one route, seeded differently.
+8. ~~**Ask-tab overlap.** The planned "Ask" tab (`POST /answer-chat`, drafting from the Profile
+   with an optional `jobInfo`) is a strict subset of `POST /application-kit`. Should it be folded
+   into this work — one route, one tab with a sub-mode — rather than shipped separately?~~
+   **Settled:** shipped separately. Ask is its own tab and its own route; an Application Kit, if it
+   is ever built, would have to reuse `answerChat` rather than absorb it.
 
 ---
 

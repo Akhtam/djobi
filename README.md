@@ -22,7 +22,8 @@ server, a persisted history of past applications, and a web dashboard for tracki
 
 ## Prerequisites
 
-- Node.js and `pnpm` (`11.22.0` — see `packageManager` and `devEngines` in `package.json`)
+- Node.js 26 (`.nvmrc`; the root `engines` field requires >= 22) and `pnpm` 11 (see `devEngines` in
+  `package.json`, which downloads a matching version on demand)
 - A [Neon](https://neon.tech) Postgres database (or any Postgres connection string)
 - An Anthropic API key
 - Google Chrome (to load the extension)
@@ -47,16 +48,21 @@ ANTHROPIC_API_KEY=sk-ant-...
 PORT=5391
 ```
 
-A few optional variables are read too, each defaulting to the behaviour above when unset:
+Those three are the only environment variables the backend reads, and `PORT` is the only optional
+one (it defaults to 5391).
 
-| Variable              | Default                                       | Notes                                                                                                                         |
-| --------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `HOST`                | `127.0.0.1`                                   | Interface the backend binds.                                                                                                  |
-| `CORS_ORIGINS`        | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated allowlist. Never a wildcard: this server holds an API key and any page in your browser can reach `127.0.0.1`. |
-| `VITE_BACKEND_ORIGIN` | `http://127.0.0.1:5391`                       | Dashboard, inlined at build time. The address your **browser** uses.                                                          |
+Everything else about the local wiring is deliberately hardcoded rather than configurable:
 
-The extension's backend origin is intentionally not configurable — it is hardcoded in
-`src/lib/callBackend.ts` and in the manifest's host permissions.
+- The bind address is always `127.0.0.1` (`apps/backend/src/index.ts`), never `0.0.0.0`.
+- The CORS allowlist is the literal list `http://localhost:5174, http://127.0.0.1:5174` in
+  `apps/backend/src/app.ts`. Never a wildcard: this server holds an API key and any page in your
+  browser can reach `127.0.0.1`.
+- The backend origin each client calls is `http://127.0.0.1:5391`, written into
+  `apps/extension/src/lib/callBackend.ts` (and the manifest's host permissions) and
+  `apps/dashboard/src/lib/dashboardClient.ts`.
+
+Deploying to a real origin is what would make these configurable — see
+`docs/adr/0001-cloudflare-single-worker.md`, which lists them as porting items.
 
 Run migrations against your database:
 
@@ -127,11 +133,18 @@ the side panel:
 
 djobi never submits the employer's form; the candidate does that on the ATS. Saving does not verify
 that submission happened. Analysis, filling and saving all run in the background service worker, so
-closing the panel mid-run doesn't lose them.
+closing the panel mid-run doesn't lose them. Chrome may still stop that worker mid-step; the next
+one to start turns any operation its predecessor abandoned into a visible error you can retry from,
+rather than a step that appears to run forever.
 
 Use the **Log** tab for an application made without djobi. Its URL field follows the active tab until
 you edit it; it extracts Job Info from a pasted posting and saves a manual Application without
 detecting or writing the page.
+
+Use the **Ask** tab to draft or revise a single application answer — a question the detector missed,
+one from a form djobi can't see, or a drafted answer you want reworked. It never writes to the page:
+opened from a question card it offers **Use this answer**, which writes back to the run's answer;
+opened cold it offers a copy button.
 
 The panel and options page share a light/dark theme, toggled from the icon in either header and
 persisted in `chrome.storage.local`.
@@ -161,8 +174,14 @@ pnpm --filter @djobi/shared test # shared schemas only
 ## Other scripts
 
 ```bash
+pnpm typecheck      # tsc across every package
+pnpm build          # shared, then every package's own build
 pnpm format         # prettier --write .
 pnpm format:check   # prettier --check .
 ```
+
+CI (`.github/workflows/ci.yml`) runs `format:check`, `typecheck`, `build` and `test` on every pull
+request and every push to `main`, on Linux — the host here is macOS, and a case-sensitive filesystem
+catches import-casing bugs that are invisible locally.
 
 Known issues and loose ends live in `PROGRESS.md` → "Known loose ends".

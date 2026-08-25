@@ -418,6 +418,51 @@ export async function transitionPipelineRun(
   });
 }
 
+/**
+ * Turns operations owned by a previous MV3 service-worker instance into visible retry states.
+ *
+ * This runs once when a new worker starts, before that worker routes any message. No timeout is
+ * involved: an in-progress status already present at startup necessarily belonged to the worker
+ * instance Chrome stopped. Each repair is a status compare-and-transition, so idle runs are left
+ * untouched and the recovery rule stays atomic with every normal pipeline claim.
+ */
+export async function recoverInterruptedPipelineRuns(): Promise<void> {
+  const stored = await chrome.storage.session.get(null);
+  const tabIds = Object.keys(stored).flatMap((key) => {
+    const match = /^tab:(\d+)$/.exec(key);
+    return match ? [Number(match[1])] : [];
+  });
+
+  await Promise.all(
+    tabIds.flatMap((tabId) => [
+      transitionPipelineRun(tabId, ['analyzing'], {
+        status: 'analyze-error',
+        failure: {
+          step: 'analysis',
+          message:
+            "Analysis was interrupted when the extension's background worker stopped. Try again.",
+        },
+      }),
+      transitionPipelineRun(tabId, ['filling'], {
+        status: 'fill-error',
+        failure: {
+          step: 'fill',
+          message:
+            'Filling was interrupted and may have partially completed. Check the application page before trying again.',
+        },
+      }),
+      transitionPipelineRun(tabId, ['saving'], {
+        status: 'save-error',
+        failure: {
+          step: 'save',
+          message:
+            'Saving was interrupted and may have completed. Check the Dashboard before trying again.',
+        },
+      }),
+    ]),
+  );
+}
+
 export async function clearTabState(tabId: number): Promise<void> {
   return withTabLock(tabId, () => chrome.storage.session.remove(storageKey(tabId)));
 }
