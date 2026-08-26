@@ -340,6 +340,24 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
 
 ## Planned
 
+### Multi-tenant authentication (proposed, not started)
+
+Turn djobi from a single-user local tool into something more than one person can sign into. Decisions
+and the phase-by-phase plan are in `docs/multi-tenant-auth.md`; the shape of it:
+
+- **Ownership in the data model comes first, with auth second.** Nothing in the database has an owner
+  today — `profiles` is a hardcoded singleton and `applications` has no owner column — so the large
+  mechanical change is adding one everywhere and scoping every query. Done while there is still
+  exactly one tenant, that work is reviewable and a mistake cannot leak anything.
+- **The mechanism is an OAuth-first auth library self-hosted against the existing Postgres**, so
+  ownership stays a foreign key rather than a claim in someone else's token. MV3 can't hold a client
+  secret, so the extension authenticates through `chrome.identity.launchWebAuthFlow` with PKCE.
+- **The Duplicate Guard indexes must become user-scoped, and that is a correctness rule.** Unscoped,
+  one user's saved application stops another user's analysis and tells them they already applied to a
+  job they have never seen.
+- **One server-side `ANTHROPIC_API_KEY` funds every signup.** Either users bring their own key or
+  there are hard per-user quotas. This gates going public and is not a later hardening task.
+
 ### Phase 10 — Bullet selection: an unbounded bullet bank, capped per resume (proposed, not started)
 
 Let the candidate keep **every** bullet they have ever written for a role, and make `tailorResume`
