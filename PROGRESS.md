@@ -14,7 +14,7 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **866 tests** (136 shared / 142 backend / 483
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **908 tests** (147 shared / 156 backend / 500
 extension / 105 dashboard), `pnpm test` from the repo root. CI (`.github/workflows/ci.yml`) runs
 `format:check`, `typecheck`, `build` and `test` on Linux for every PR and every push to `main`.
 
@@ -25,8 +25,8 @@ extension / 105 dashboard), `pnpm test` from the repo root. CI (`.github/workflo
   are the same), `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a
   model), `jobKey.ts` (a posting's URL identity, which both sides must derive identically), and
   `resumeFileName.ts`.
-- **`apps/backend`** — Hono on `127.0.0.1:5391`. Four LLM calls (`extractJob`, `tailorResume`,
-  `answerQuestions`, `answerChat`) through `structuredCall.ts`, all grounded by one
+- **`apps/backend`** — Hono on `127.0.0.1:5391`. Five LLM calls (`extractJob`, `tailorResume`,
+  `answerQuestions`, `answerChat`, `assessRequirements`) through `structuredCall.ts`, all grounded by one
   `promptContext.ts` scaffold; a one-page-fitting resume PDF renderer, and
   Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
 build` compiles the shared package and emits a plain-Node production server to `dist/`.
@@ -84,6 +84,25 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
 - **Form filling:** one generic heuristic field-classifier, not per-ATS selectors. ATS platform
   APIs are used as an _oracle_ (classification, required, options) where one exists; the DOM stays
   the targeting mechanism. See `background/apiDetectors.ts`.
+- **The Analysis Step reports what it produced, and never rewrites toward the report.**
+  `extractJob` emits `requirements` and `keywords`, `tailorResume` is told to emphasize them, and
+  nothing used to check the result. Two surfaces now do: **Keyword Coverage**
+  (`packages/shared/src/keywordCoverage.ts`, deterministic, whole-word via `containsAsWords`, no
+  model call and no added latency) and **Requirement Fit** (`llm/assessRequirements.ts`, one model
+  call that must return an **index into the Profile**, not prose — a verdict whose pointer doesn't
+  resolve is downgraded to `unmet` in code, the same trick Phase 10 plans for `sourceIndex`).
+  Neither feeds back into tailoring, and that is the load-bearing part: `reconcileResume` filters
+  tailored skills through `matchOptionLabel(profile.skills, …)`, so a keyword the Profile cannot
+  support cannot honestly reach the resume — the only true remedy is the Profile. Both are rendered
+  as gap lists rather than scores, because a number on screen is a number someone will raise, and
+  the only way to raise this one dishonestly is keyword stuffing. The "ATS rejects below an X%
+  keyword match" framing is **folklore**; what coverage actually buys is recruiter search hits, the
+  6–10 second human scan, and employer-configured filters.
+- **Requirement Fit fails open; tailoring and answers do not.** `assessRequirements` is the third
+  call in `analysisStep`'s `Promise.all` and its rejection is caught to `[]` with a warning. A
+  tailored resume and drafted answers are what a run is _for_; a fit assessment is advice about it,
+  and an advisory feature must never become the reason Analyze doesn't work — the same judgement
+  the Duplicate Guard already makes.
 - **Scraping is explicit, focused, and reviewable.** `Scrape job description` prefers schema.org
   `JobPosting`, then scores semantic DOM candidates across frames, strips forms/navigation, and fails
   closed below its confidence threshold. It populates the editable Job Description but never starts

@@ -153,6 +153,7 @@ function makeDeps(
     extractJob: vi.fn().mockResolvedValue(jobInfo),
     tailorResume: vi.fn().mockResolvedValue(tailoredResume),
     answerQuestions: vi.fn().mockResolvedValue(answers),
+    assessRequirements: vi.fn().mockResolvedValue([]),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
     // The Ask tab's route, likewise never reached from the pipeline.
     answerChat: vi.fn().mockResolvedValue({ reply: 'unused' }),
@@ -351,6 +352,8 @@ describe('runAnalysis', () => {
       jobInfo,
       tailoredResume,
       answers,
+      coverage: [],
+      requirementFit: [],
       unresolvedRequiredFields: [],
       filledFieldCount: 0,
       fillOutcome: null,
@@ -358,6 +361,57 @@ describe('runAnalysis', () => {
       failure: null,
       duplicateOf: null,
     });
+  });
+
+  it('checkpoints how the profile measures up to each stated requirement', async () => {
+    stubChrome();
+    const fit = [
+      { requirement: '5 years of Go', verdict: 'unmet' as const, evidence: null, note: 'Two.' },
+    ];
+    const deps = makeDeps({ assessRequirements: vi.fn().mockResolvedValue(fit) });
+    await reportDetectedPage(7, 0, { fields: [questionField] });
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+
+    expect((await getPipelineRun(7))?.requirementFit).toEqual(fit);
+  });
+
+  it('completes the analysis when the requirement assessment fails — it is advice about the run, never the run itself', async () => {
+    stubChrome();
+    const deps = makeDeps({
+      assessRequirements: vi.fn().mockRejectedValue(new Error('backend is down')),
+    });
+    await reportDetectedPage(7, 0, { fields: [questionField] });
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+
+    const run = await getPipelineRun(7);
+    expect(run?.status).toBe('review');
+    expect(run?.requirementFit).toEqual([]);
+    expect(run?.tailoredResume).toEqual(tailoredResume);
+  });
+
+  it('checkpoints what the tailored resume evidences of the posting keywords, so the panel reports the resume this run produced', async () => {
+    stubChrome();
+    const bullet = 'Migrated the fleet to Kubernetes';
+    const deps = makeDeps();
+    deps.backend.extractJob = vi
+      .fn()
+      .mockResolvedValue({ ...jobInfo, keywords: ['Kubernetes', 'Terraform'] });
+    deps.backend.tailorResume = vi.fn().mockResolvedValue({
+      skills: [],
+      workExperience: [
+        { company: 'Acme', title: 'Engineer', startDate: '2020', endDate: null, bullets: [bullet] },
+      ],
+    });
+    await reportDetectedPage(7, 0, { fields: [questionField] });
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+
+    expect((await getPipelineRun(7))?.coverage).toEqual([
+      { keyword: 'Kubernetes', verdict: 'experience', evidence: bullet },
+      { keyword: 'Terraform', verdict: 'missing', evidence: null },
+    ]);
   });
 
   it("passes only a question field's option labels to answerQuestions — the DOM selector that locates each choice is meaningless off-page and never crosses the seam", async () => {

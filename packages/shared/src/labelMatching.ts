@@ -18,6 +18,7 @@
  * | {@link matchPreparedAnswerToOption} | A stored answer, typed months ago, against this form's wording. Forgiving. |
  * | {@link matchByContainment} | Two independently-written phrasings of one question. |
  * | {@link containsLabel} | Reading a value back out of a container element that may hold more than the value. |
+ * | {@link containsAsWords} | Is this term *present* in a longer text at all? The only rule here not about a form label — `keywordCoverage.ts` asks it of a resume bullet. |
  *
  * Every rule that can match more than one candidate resolves ambiguity the same way, through
  * {@link uniqueMatch}: **more than one candidate means no match.** That invariant used to be
@@ -91,8 +92,14 @@ function startsWithAnswer(option: string, answer: string): boolean {
  *
  * `\b` won't do here, since an answer can begin or end with punctuation, where `\b` sits on the
  * wrong side of the character.
+ *
+ * Exported for `keywordCoverage.ts`, whose haystack is a resume bullet rather than a form option
+ * and whose needle is a posting's keyword — but which needs this rule for exactly the reason above,
+ * one letter shorter: "R" is contained in "React" and "Go" in "Google", and reporting a keyword as
+ * evidenced on that basis is a false claim about the candidate. A second caller is the reason this
+ * module exists rather than a reason to copy the regex out of it.
  */
-function containsAsWords(option: string, answer: string): boolean {
+export function containsAsWords(option: string, answer: string): boolean {
   const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(option);
 }

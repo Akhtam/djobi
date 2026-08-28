@@ -33,6 +33,8 @@ const run: PipelineRunState = {
   jobInfo,
   tailoredResume,
   answers: [{ fieldId: 'f-why', question: 'Why us?', answer: 'Draft answer.', sourceStoryIds: [] }],
+  coverage: [],
+  requirementFit: [],
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,

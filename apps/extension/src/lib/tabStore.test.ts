@@ -40,6 +40,8 @@ const run: PipelineRunState = {
   jobInfo,
   tailoredResume,
   answers: [],
+  coverage: [],
+  requirementFit: [],
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,

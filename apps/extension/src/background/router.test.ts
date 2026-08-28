@@ -295,6 +295,8 @@ describe('handleTypedMessage', () => {
       jobInfo: null,
       tailoredResume: null,
       answers: [],
+      coverage: [],
+      requirementFit: [],
       failure: null,
       unresolvedRequiredFields: [],
       filledFieldCount: 0,

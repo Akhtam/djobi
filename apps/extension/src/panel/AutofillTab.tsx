@@ -26,6 +26,8 @@ import { notify } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor } from '../lib/runAnswers';
 import { reviewOf } from '../lib/runReview';
+import { CoverageReport } from './CoverageReport';
+import { RequirementFitReport } from './RequirementFitReport';
 import {
   getDetectedPage,
   storageKey,
@@ -103,6 +105,8 @@ export function AutofillTab({
   const jobInfo: JobInfo | null = run?.jobInfo ?? null;
   const tailoredResume: TailoredResume | null = run?.tailoredResume ?? null;
   const answers = run?.answers ?? [];
+  const coverage = run?.coverage ?? [];
+  const requirementFit = run?.requirementFit ?? [];
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
   const failure = dispatchFailure?.failure ?? run?.failure ?? null;
@@ -515,6 +519,10 @@ export function AutofillTab({
                 />
               )}
             </div>
+
+            <RequirementFitReport fit={requirementFit} />
+
+            <CoverageReport coverage={coverage} />
 
             {answers.length > 0 && (
               <div className="questions">

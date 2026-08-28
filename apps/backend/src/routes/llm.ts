@@ -1,20 +1,21 @@
 /**
- * The four routes that are nothing but a route: validate a body, run one `llm/` operation, answer
+ * The routes that are nothing but a route: validate a body, run one `llm/` operation, answer
  * with what it returned.
  *
  * They were four modules — a `Hono` instance, an import of `parseBody`, and a single `post` each.
  * Nothing was hidden behind any of them: the path was the only fact a module held that its
  * operation didn't, so adding a route meant a new file, a new import in `app.ts`, and a new
- * `app.route` line, none of which said anything. Here a route is one line, and the four lines sit
+ * `app.route` line, none of which said anything. Here a route is one line, and the lines sit
  * where they can be read as a set.
  *
  * `routes/applications.ts` and `routes/render-resume-pdf.ts` stay as they are, and the difference is
  * the point rather than an inconsistency: one holds a REST resource's worth of handlers, the other a
- * render cache and PDF response headers. Both have implementation to hide. These four did not.
+ * render cache and PDF response headers. Both have implementation to hide. These did not.
  */
 import {
   AnswerChatRequestSchema,
   AnswerQuestionsRequestSchema,
+  AssessRequirementsRequestSchema,
   ExtractJobRequestSchema,
   TailorResumeRequestSchema,
 } from '@djobi/shared';
@@ -23,6 +24,7 @@ import type { z } from 'zod';
 import { parseBody } from '../requestBody.js';
 import { answerChat } from '../llm/answerChat.js';
 import { answerQuestions } from '../llm/answerQuestions.js';
+import { assessRequirements } from '../llm/assessRequirements.js';
 import { extractJob } from '../llm/extractJob.js';
 import { tailorResume } from '../llm/tailorResume.js';
 
@@ -50,6 +52,16 @@ post('/extract-job', ExtractJobRequestSchema, (body) => extractJob(body.jobDescr
 post('/tailor-resume', TailorResumeRequestSchema, (body) =>
   tailorResume(body.profile, body.jobInfo),
 );
+
+/**
+ * Judges the Profile against each requirement the posting states.
+ *
+ * Wrapped in `{ fit }` rather than returned as a bare array, because a JSON array is not an
+ * extensible response shape and every other route here already answers with an object.
+ */
+post('/assess-requirements', AssessRequirementsRequestSchema, async (body) => ({
+  fit: await assessRequirements(body.profile, body.jobInfo),
+}));
 
 /** Drafts answers to a form's freeform application questions. */
 post('/answer-questions', AnswerQuestionsRequestSchema, (body) =>

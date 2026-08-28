@@ -3,7 +3,9 @@ import type {
   ApplicationStage,
   DetectedField,
   JobInfo,
+  KeywordCoverage,
   QuestionAnswer,
+  RequirementFit,
   TailoredResume,
 } from '@djobi/shared';
 import type { JobPageData } from './messages';
@@ -102,6 +104,18 @@ export interface PipelineRunState {
   jobInfo: JobInfo | null;
   tailoredResume: TailoredResume | null;
   answers: QuestionAnswer[];
+  /**
+   * What `tailoredResume` evidences of `jobInfo.keywords`, computed in the Analysis Step. Empty
+   * before it completes, and empty for a posting whose extraction found no keywords — the panel
+   * shows nothing in both cases, which is the honest reading of each.
+   */
+  coverage: KeywordCoverage[];
+  /**
+   * How the Profile measures up to each requirement the posting stated. Empty before the Analysis
+   * Step completes, for a posting that stated none, and for a run whose assessment failed — it is
+   * advice, so its absence never blocks a run or distinguishes itself from having nothing to say.
+   */
+  requirementFit: RequirementFit[];
   /** Set alongside an `analyze-error`/`fill-error` status; cleared on every fresh attempt. */
   failure: PipelineFailure | null;
   /** Required fields the Fill Step couldn't resolve a value for. Populated once it completes. */
@@ -157,11 +171,18 @@ export interface TabState {
   run: PipelineRunState | null;
 }
 
-type StoredPipelineRun = Omit<PipelineRunState, 'fillOutcome' | 'runId'> & {
+type StoredPipelineRun = Omit<
+  PipelineRunState,
+  'fillOutcome' | 'runId' | 'coverage' | 'requirementFit'
+> & {
   /** Absent on runs written before asynchronous updates were scoped to one run. */
   runId?: string;
   /** Absent on runs written before FillOutcome was persisted. */
   fillOutcome?: FillOutcome | null;
+  /** Absent on runs written before Keyword Coverage existed. */
+  coverage?: KeywordCoverage[];
+  /** Absent on runs written before Requirement Fit existed. */
+  requirementFit?: RequirementFit[];
 };
 
 type StoredTabState = Omit<TabState, 'jobContext' | 'run'> & {
@@ -216,6 +237,11 @@ async function read(tabId: number): Promise<TabState> {
           runId: state.run.runId ?? `legacy:${tabId}`,
           jobPageData: { fields: parseDetectedFields(state.run.jobPageData?.fields) },
           unresolvedRequiredFields: parseDetectedFields(state.run.unresolvedRequiredFields),
+          // An older build analyzed without measuring coverage, and there is nothing to
+          // reconstruct it from: the report is about the resume that build produced, not the one
+          // this build would. Empty reads as "not measured", which is what happened.
+          coverage: state.run.coverage ?? [],
+          requirementFit: state.run.requirementFit ?? [],
           fillOutcome:
             state.run.fillOutcome !== undefined
               ? state.run.fillOutcome

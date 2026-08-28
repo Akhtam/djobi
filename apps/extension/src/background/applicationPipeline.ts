@@ -13,7 +13,7 @@
  * Splitting the steps from their checkpointing models a run twice — every new step output then has
  * to be added to the step, to whatever spreads its result, and to the store.
  */
-import { resumeFileName, splitPreparedQuestions } from '@djobi/shared';
+import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
 import { carryEnrichment } from './apiDetectors';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
@@ -96,7 +96,12 @@ async function analysisStep(
   jobPageData: JobPageData,
   profile: Profile,
   deps: PipelineDeps,
-): Promise<Pick<PipelineRunState, 'status' | 'jobInfo' | 'tailoredResume' | 'answers'>> {
+): Promise<
+  Pick<
+    PipelineRunState,
+    'status' | 'jobInfo' | 'tailoredResume' | 'answers' | 'coverage' | 'requirementFit'
+  >
+> {
   const jobInfo = await deps.backend.extractJob(jobDescription);
 
   const questions = jobPageData.fields
@@ -114,9 +119,17 @@ async function analysisStep(
   // knows but can't map onto this form's wording still goes to the model, carrying the fact.
   const { resolved, forModel } = splitPreparedQuestions(profile, questions);
 
-  const [tailoredResume, drafted] = await Promise.all([
+  const [tailoredResume, drafted, requirementFit] = await Promise.all([
     deps.backend.tailorResume(profile, jobInfo),
     deps.backend.answerQuestions(profile, jobInfo, forModel),
+    // Fails open, and is the only one of the three that may. A tailored resume and drafted answers
+    // are what the run is *for*; a fit assessment is advice about it, so letting one bad response
+    // take down an otherwise complete analysis would make an advisory feature the reason Analyze
+    // doesn't work — the same judgement the Duplicate Guard already makes for the same reason.
+    deps.backend.assessRequirements(profile, jobInfo).catch((error: unknown) => {
+      console.warn('[djobi] requirement assessment failed, analyzing anyway', error);
+      return [];
+    }),
   ]);
 
   const prepared: QuestionAnswer[] = resolved.map((question) => ({
@@ -136,7 +149,13 @@ async function analysisStep(
     .map((question) => answerByFieldId.get(question.fieldId))
     .filter((answer): answer is QuestionAnswer => answer !== undefined);
 
-  return { status: 'review', jobInfo, tailoredResume, answers };
+  // Measured here rather than in the panel so the report is of the resume this run actually
+  // produced, and is checkpointed with it — a panel that recomputed on render would re-measure a
+  // restored run against whatever the module happened to say by then. Pure and synchronous: it
+  // costs no backend call and adds nothing to the worker's fetch exposure.
+  const coverage = keywordCoverage(tailoredResume, jobInfo);
+
+  return { status: 'review', jobInfo, tailoredResume, answers, coverage, requirementFit };
 }
 
 /**
@@ -427,6 +446,8 @@ export async function runAnalysis(
     jobInfo: null,
     tailoredResume: null,
     answers: [],
+    coverage: [],
+    requirementFit: [],
     unresolvedRequiredFields: [],
     filledFieldCount: 0,
     fillOutcome: null,

@@ -74,6 +74,24 @@ _Avoid_: untailored resume (fine as UI copy, but it names the concept by what it
 A drafted answer to one freeform application question, generated from the Profile and Job Info. Always reviewed/edited by the user before the Fill Step uses it.
 _Avoid_: response
 
+**Keyword Coverage**:
+What the Tailored Resume evidences of a Job Info's `keywords`, computed without a model: each
+keyword is reported as evidenced in skills, evidenced in experience (with the bullet that carries
+it), or not evidenced. A **report the candidate acts on, never an instruction fed back to the
+model** — a keyword the Profile does not support cannot honestly reach the resume, so the remedy for
+a gap is always the Profile. Matching is whole-word, by the same rule that keeps a stored "No" out
+of "Norway".
+_Avoid_: match score, ATS score (both name it as a number to maximize, which is what invites
+keyword stuffing), keyword match rate
+
+**Requirement Fit**:
+A judgement of the Profile against each of a Job Info's `requirements`, as `met` / `partial` /
+`unmet` with the Profile text that evidences it. Drafted by a model that must return a **pointer**
+into the Profile rather than prose, so a verdict that cannot be resolved to a real skill or bullet
+is downgraded to `unmet` in code rather than taken on the model's word. Advice, not a gate: a run
+whose assessment fails still reaches review.
+_Avoid_: qualification score, screening result (nothing here is the employer's verdict), match
+
 **Detected Field**:
 One thing on a job application page a candidate fills in, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic. Usually one input, textarea or select — but a whole group of choices answering a single question (a fieldset, a `role="radiogroup"`, or radios sharing a `name`) is _one_ Detected Field, with the choices as its options.
 _Avoid_: form field, input (both suggest a single element, which a choice group isn't)
