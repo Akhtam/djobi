@@ -47,39 +47,52 @@ export function CoverageReport({ coverage }: { coverage: KeywordCoverage[] }) {
   const experience = coverage.filter((entry) => entry.verdict === 'experience');
 
   return (
-    <div className="coverage">
-      <span className="eyebrow">Keywords from this posting</span>
+    <details className="coverage keyword-coverage">
+      <summary className="eyebrow keyword-coverage-summary">
+        Keywords from this posting
+        {/* The gap count, on the one surface that is visible while the report is closed. Without it
+            the whole actionable half sits two clicks down behind a heading that gives no reason to
+            take either — and a report nobody opens reports nothing. A count of what is *missing* is
+            the direction this component may count in; see the note at the top of the file. */}
+        {missing.length > 0 && (
+          <span className="coverage-gap-count">{missing.length} not evidenced</span>
+        )}
+      </summary>
 
-      {missing.length > 0 && (
-        <div className="coverage-gap">
-          <p className="coverage-gap-head">
-            {missing.length === 1
-              ? "1 keyword isn't evidenced by your resume:"
-              : `${missing.length} keywords aren't evidenced by your resume:`}
-          </p>
-          <ul className="coverage-list">
-            {missing.map((entry) => (
-              <li key={entry.keyword}>
-                <span className="coverage-keyword">{entry.keyword}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="hint">
-            If you have any of these, add it to your profile — a skill your profile doesn't list
-            can't appear on the tailored resume.
-          </p>
-          <button
-            type="button"
-            className="btn-link"
-            onClick={() => chrome.runtime.openOptionsPage()}
-          >
-            Edit your profile
-          </button>
-        </div>
-      )}
+      <div className="keyword-coverage-content">
+        {missing.length > 0 && (
+          <details className="coverage-group coverage-gap">
+            <summary className="coverage-gap-head">
+              {missing.length === 1
+                ? "1 keyword isn't evidenced by your resume"
+                : `${missing.length} keywords aren't evidenced by your resume`}
+            </summary>
+            <div className="coverage-gap-body">
+              <ul className="coverage-list">
+                {missing.map((entry) => (
+                  <li key={entry.keyword}>
+                    <span className="coverage-keyword">{entry.keyword}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="hint">
+                If you have any of these, add it to your profile — a skill your profile doesn't list
+                can't appear on the tailored resume.
+              </p>
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => chrome.runtime.openOptionsPage()}
+              >
+                Edit your profile
+              </button>
+            </div>
+          </details>
+        )}
 
-      <Evidenced label="skills" entries={skills} />
-      <Evidenced label="experience" entries={experience} />
-    </div>
+        <Evidenced label="skills" entries={skills} />
+        <Evidenced label="experience" entries={experience} />
+      </div>
+    </details>
   );
 }

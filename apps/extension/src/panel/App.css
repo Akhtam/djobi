@@ -272,6 +272,23 @@ body {
   background: var(--success-bg);
 }
 
+.state.success.compact {
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--success-bg);
+}
+
+.state.success.compact .state-icon {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  font-size: 14px;
+}
+
 .state p {
   margin: 0;
   color: var(--text-muted);
@@ -333,6 +350,8 @@ body {
 .question-card {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
   gap: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -636,7 +655,7 @@ button:disabled {
 .question-card-group {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 4px;
 }
 
@@ -976,19 +995,100 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
-.coverage-gap {
+.keyword-coverage {
+  display: block;
+}
+
+.keyword-coverage-summary {
+  cursor: pointer;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.coverage .keyword-coverage-summary:hover,
+.keyword-coverage[open] > .keyword-coverage-summary {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--primary) 11%, var(--surface));
+}
+
+.keyword-coverage-content {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* `display` deliberately left at the `details` default on every group in here. A `details` laid out
+   as flex or grid renders its content even when it is closed on Chromium before `::details-content`
+   (M131), so a column layout at this level would make the collapse silently do nothing on an older
+   browser — the one thing these groups exist to do. The spacing each group needs under its summary
+   sits on the content instead: `.coverage-gap-body` and `.coverage-group > .coverage-list` below.
+   `.keyword-coverage` sets `display: block` for the same reason. */
+.keyword-coverage-content > .coverage-group {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.keyword-coverage-content > .coverage-group:not(.coverage-gap):hover,
+.keyword-coverage-content > .coverage-group:not(.coverage-gap)[open] {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 5%, var(--surface-muted));
+}
+
+.keyword-coverage-content > .coverage-group > summary {
+  font-weight: 600;
+}
+
+.coverage-gap {
   padding: 10px 12px;
   border: 1px solid var(--warn);
   border-radius: var(--radius-sm);
   background: var(--warn-bg);
 }
 
+.keyword-coverage-content > .coverage-gap:hover,
+.keyword-coverage-content > .coverage-gap[open] {
+  border-color: color-mix(in srgb, var(--warn) 75%, var(--border));
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+}
+
+.keyword-coverage-content > .coverage-gap > summary {
+  color: var(--warn);
+}
+
 .coverage-gap-head {
   margin: 0;
   font-weight: 600;
+}
+
+.coverage-gap-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.coverage-group > .coverage-list {
+  margin-top: 6px;
+}
+
+/* Reads as the gap it names rather than as a score: the warning colour, and the only number this
+   surface may show — one that goes down by acquiring the skill, never by editing the resume. */
+.coverage-gap-count {
+  margin-left: 6px;
+  color: var(--warn);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /* Both reports' remedy copy: inside the gap box in Keyword Coverage, and standing alone as the

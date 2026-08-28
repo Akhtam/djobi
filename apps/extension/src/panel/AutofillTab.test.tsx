@@ -192,7 +192,9 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
 
     await vi.waitFor(() => expect(screen.queryByText(/won't be filled/i)).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
+    // The warning clears the moment Re-analyze is clicked, so wait for the replacement run rather
+    // than the warning: Fill is offered again only once the new analysis has actually landed.
+    expect(await screen.findByRole('button', { name: 'Fill form' })).not.toBeDisabled();
   });
 
   it('names the required questions Fill will leave blank, and only those', async () => {
@@ -540,7 +542,9 @@ describe('AutofillTab', () => {
     expect(footerButtons).toEqual(['Save application', 'Fill form again']);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save application' }));
-    await screen.findByText('Application saved.');
+    const savedConfirmation = await screen.findByText('Application saved.');
+    expect(savedConfirmation.closest('[role="status"]')).toHaveClass('compact');
+    expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
     expect(sendMessage).toHaveBeenCalledWith(
       { type: 'START_SAVE_APPLICATION', tabId: 1 },
       expect.any(Function),

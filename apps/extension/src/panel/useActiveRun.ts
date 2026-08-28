@@ -17,7 +17,8 @@
 import type { QuestionAnswer } from '@djobi/shared';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
-import type { PipelineRunState, PipelineStatus } from '../lib/tabStore';
+import type { PipelineFailure, PipelineRunState, PipelineStatus } from '../lib/tabStore';
+import { reviewOf, type RunReview } from '../lib/runReview';
 import { isSameJobUrl, jobKeyForUrl } from '../lib/jobContext';
 
 export interface ActiveRun {
@@ -30,8 +31,20 @@ export interface ActiveRun {
   run: PipelineRunState | null;
   /** What to render: the run's status, or `null` before anything has been analyzed on this page. */
   status: PipelineStatus | null;
+  /** Why the current step failed — a delivery failure or the run's own cause — or `null`. */
+  failure: PipelineFailure | null;
+  /**
+   * The one reading of this run, derived from `status` rather than from the stored run.
+   *
+   * Both readers take it from here: the shell's header pill and the Autofill Tab's own body. They
+   * used to derive it separately from `reviewOf(run)`, which is how the pill came to contradict the
+   * tab it describes for the length of every click.
+   */
+  review: RunReview;
   /** Shows `status` immediately, for the gap between a click and the background's own write. */
   begin: (status: PipelineStatus) => void;
+  /** Stands `begin` back down when Chrome couldn't deliver the command it was raised for. */
+  fail: (status: 'analyze-error' | 'fill-error' | 'save-error', failure: PipelineFailure) => void;
   /** Persists the candidate's edits to the run. */
   edit: (
     edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
@@ -56,12 +69,17 @@ export interface ActiveRun {
 export function useActiveRun(enabled: boolean): ActiveRun {
   const { tabId, tabUrl, changeToken } = useActiveTab(enabled);
   const jobScope = `${tabId ?? 'none'}:${jobKeyForUrl(tabUrl) ?? tabUrl ?? 'unknown'}`;
-  const { run: storedRun, status: storedStatus, begin, edit } = usePipelineRun(tabId, jobScope);
-
   // Navigation updates the tracked URL before the service worker's async storage cleanup lands.
   // Never render another job's run in that gap, but retain same-job ATS route transitions.
-  const run = storedRun && isSameJobUrl(storedRun.tabUrl, tabUrl) ? storedRun : null;
-  const status = storedRun ? (run ? storedStatus : null) : storedStatus;
+  //
+  // Handed to the hook rather than applied to what it returns, because the run is only one of the
+  // four sources its `status` reconciles: an optimistic status and a delivery failure belong to a
+  // command *this* panel just sent, and dropping them alongside the stale run is how an undelivered
+  // START in that same gap left the panel with no spinner and no error — see the hook's `accepts`.
+  const { run, status, failure, begin, fail, edit } = usePipelineRun(tabId, jobScope, (candidate) =>
+    isSameJobUrl(candidate.tabUrl, tabUrl),
+  );
+  const review = reviewOf(run, status);
 
   function updateAnswer(fieldId: string, answer: string) {
     if (!run || status === 'saving') return;
@@ -76,5 +94,17 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     });
   }
 
-  return { tabId, tabUrl, changeToken, run, status, begin, edit, updateAnswer };
+  return {
+    tabId,
+    tabUrl,
+    changeToken,
+    run,
+    status,
+    failure,
+    review,
+    begin,
+    fail,
+    edit,
+    updateAnswer,
+  };
 }

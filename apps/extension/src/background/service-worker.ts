@@ -30,9 +30,11 @@ function tabIdOf(message: TypedMessage, sender: chrome.runtime.MessageSender): n
   return 'tabId' in message ? message.tabId : sender.tab?.id;
 }
 
-// Returns nothing on purpose. Chrome keeps the message channel open only when a listener returns
-// `true`, and every message in this protocol is a notification — see `lib/messages.ts`.
-chrome.runtime.onMessage.addListener((message: TypedMessage, sender) => {
+// Acknowledge receipt synchronously, with no payload, so a sender callback does not mistake the
+// intentionally short-lived response channel for a delivery failure. The routed task remains
+// fire-and-forget and outlives the panel — see `lib/messages.ts`.
+chrome.runtime.onMessage.addListener((message: TypedMessage, sender, sendResponse) => {
+  sendResponse();
   void recoveryReady
     .then(() => handleTypedMessage(message, sender))
     .catch((error: unknown) => {

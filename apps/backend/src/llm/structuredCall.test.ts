@@ -128,7 +128,27 @@ describe('callStructured', () => {
     expect(error).toBeInstanceOf(StructuredCallError);
     expect(error).toMatchObject({ kind: 'invalid-input', toolName: 'report_sample' });
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(console.warn).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalledWith(
+      '[djobi] structured_call_retry',
+      expect.anything(),
+    );
+  });
+
+  it('logs the shape of the input that failed, and never its content', async () => {
+    // Zod says which path was wrong and what it expected; without the shape alongside it the log
+    // never says what the model actually sent, and a deviation nothing normalizes yet — an array
+    // arriving as an object — reads in production as an unexplained 500.
+    mockCreate.mockResolvedValue(toolUseResponse({ title: 42, tags: 'not-an-array' }));
+
+    await call().catch(() => undefined);
+
+    expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_invalid_input', {
+      toolName: 'report_sample',
+      requestId: undefined,
+      received: { title: 'number', tags: 'string' },
+    });
+    // The input carries the candidate's profile and the posting; only its structure may be logged.
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('not-an-array');
   });
 
   it('does not semantically retry an SDK or network failure', async () => {

@@ -9,6 +9,15 @@
  * - `jobKey.ts` — the URL identity of a job posting, shared by draft scoping and the Duplicate Guard.
  * - `screeningAnswers.ts` / `preparedAnswers.ts` — the facts a Profile answers without a model.
  */
+/**
+ * The zod type vocabulary, re-exported so a consumer can *hold* a schema without depending on zod
+ * itself. `apps/extension` needs this to take a response schema as a parameter (see
+ * `lib/callBackend.ts`); giving it a direct zod dependency instead would let the two halves of every
+ * shared schema drift onto different zod versions, which is the one thing this package exists to
+ * prevent.
+ */
+export type { TypeOf as ZodTypeOf, ZodError, ZodTypeAny } from 'zod';
+
 export * from './detectedField.js';
 export * from './schemas.js';
 export * from './wire.js';

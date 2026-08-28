@@ -235,6 +235,70 @@ describe('assessRequirements', () => {
     });
   });
 
+  it('accepts a fit array that the model double-encoded as JSON, while still validating its entries', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        fit: JSON.stringify([
+          {
+            requirement: 'Experience running Kubernetes',
+            verdict: 'met',
+            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
+            note: '',
+          },
+        ]),
+      }),
+    );
+
+    const [entry] = await assessRequirements(profile, jobInfo);
+
+    expect(entry).toEqual({
+      requirement: 'Experience running Kubernetes',
+      verdict: 'met',
+      evidence: BULLET,
+      note: '',
+    });
+  });
+
+  it.each([
+    // The shapes seen in production. A tool `input_schema` is advisory, so `"type": "array"` on
+    // `fit` — asserted below — does not stop the model reaching for a container of its own.
+    ['a lone entry sent unwrapped', (entry: unknown) => entry],
+    ['the array re-wrapped in the tool envelope', (entry: unknown) => ({ fit: [entry] })],
+    ['an index-keyed object', (entry: unknown) => ({ '0': entry })],
+  ])('recovers a report the model returned as %s', async (_shape, wrap) => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        fit: wrap({
+          requirement: 'Experience running Kubernetes',
+          verdict: 'met',
+          evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
+          note: '',
+        }),
+      }),
+    );
+
+    const [entry] = await assessRequirements(profile, jobInfo);
+
+    expect(entry).toEqual({
+      requirement: 'Experience running Kubernetes',
+      verdict: 'met',
+      evidence: BULLET,
+      note: '',
+    });
+  });
+
+  it('still fails a container that is not a report, rather than reinterpreting it into one', async () => {
+    // The normalization rearranges containers only. An output that means something else has to
+    // reach validation intact — a wrapped-up nonsense entry would become a report of one verdict
+    // nobody asked for, which is exactly what this module's reconciliation exists to prevent.
+    mockCreate.mockResolvedValue(toolUseResponse({ fit: { unexpected: 'shape' } }));
+
+    await expect(assessRequirements(profile, jobInfo)).rejects.toMatchObject({
+      kind: 'invalid-input',
+      toolName: 'report_requirement_fit',
+    });
+  });
+
   it('spends no model call on a posting whose extraction found no requirements', async () => {
     const fit = await assessRequirements(profile, { ...jobInfo, requirements: [] });
 
@@ -250,6 +314,7 @@ describe('assessRequirements', () => {
     const request = mockCreate.mock.calls[0][0];
     expect(request.model).toBe('claude-sonnet-5');
     expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_requirement_fit' });
+    expect(request.tools[0].input_schema.properties.fit.type).toBe('array');
     expect(request.messages[0].content).toContain(JSON.stringify(profile));
     expect(request.messages[0].content).toContain(JSON.stringify(jobInfo));
   });

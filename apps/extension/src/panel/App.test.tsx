@@ -6,7 +6,7 @@
  * .tsx`, `AskTab.test.tsx`. What is left here is what the shell actually owns, which is why this
  * module no longer runs the whole Application Pipeline to assert on a tab button.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import {
@@ -189,5 +189,32 @@ describe('panel App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Log' }));
     expect(screen.queryByText('Nothing filled')).not.toBeInTheDocument();
+  });
+
+  it('moves the header pill with the tab it describes, from the click rather than from the store', async () => {
+    // The pill, the tab body and the footer are three readings of one run, and they used to be
+    // derived from two different things: the pill from the stored run, the body and footer from the
+    // reconciled status. So for the whole gap between a click and the background's own write the
+    // header said "Ready to fill" over a body that said "Filling…".
+    const { resolveFill } = await stubChrome({
+      tabUrl: 'https://jobs.lever.co/acme/1/apply',
+      profile,
+      jobPageData,
+      holdFill: true,
+    });
+
+    render(<App client={panelClient()} />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    expect(screen.getByText('Ready to fill')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+
+    // Immediately, on the optimistic status alone — no storage round-trip has happened yet.
+    expect(screen.getByText('Filling…')).toBeInTheDocument();
+    expect(screen.queryByText('Ready to fill')).not.toBeInTheDocument();
+
+    act(() => resolveFill());
+    expect(await screen.findByText('Done')).toBeInTheDocument();
   });
 });

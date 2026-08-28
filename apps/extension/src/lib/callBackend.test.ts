@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApplicationWriteResultSchema, DuplicateApplicationSummarySchema } from '@djobi/shared';
 import { callBackend, callBackendBinary } from './callBackend';
+
+/**
+ * A real schema, standing in for whichever route a case is about. The error cases below reject
+ * before decoding is reached, so passing one that their fixture body would *fail* is deliberate: it
+ * proves the rejection came from the HTTP status, not from the response check.
+ */
+const Result = ApplicationWriteResultSchema;
 
 describe('callBackend', () => {
   beforeEach(() => {
@@ -8,17 +16,17 @@ describe('callBackend', () => {
 
   it('posts the body as JSON to the local backend and resolves with the parsed response', async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ company: 'Acme' }), {
+      new Response(JSON.stringify({ id: 'application-1' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
     );
 
-    const result = await callBackend('/extract-job', {
+    const result = await callBackend('/extract-job', Result, {
       jobDescription: 'Senior Engineer at Acme...',
     });
 
-    expect(result).toEqual({ company: 'Acme' });
+    expect(result).toEqual({ id: 'application-1' });
     expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/extract-job', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -34,7 +42,9 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/extract-job', {})).rejects.toThrow('jobDescription is required');
+    await expect(callBackend('/extract-job', Result, {})).rejects.toThrow(
+      'jobDescription is required',
+    );
   });
 
   it('surfaces a non-JSON error body verbatim instead of failing to parse it — a plain-text 500 used to throw an unrelated SyntaxError, destroying the real cause', async () => {
@@ -45,7 +55,7 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/answer-questions', {})).rejects.toThrow(
+    await expect(callBackend('/answer-questions', Result, {})).rejects.toThrow(
       'POST /answer-questions failed (500): Internal Server Error',
     );
   });
@@ -58,7 +68,7 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/answer-questions', {})).rejects.toMatchObject({
+    await expect(callBackend('/answer-questions', Result, {})).rejects.toMatchObject({
       name: 'BackendError',
       status: 500,
       path: '/answer-questions',
@@ -78,7 +88,9 @@ describe('callBackend', () => {
       ),
     );
 
-    const error = await callBackend('/answer-questions', {}).catch((caught: unknown) => caught);
+    const error = await callBackend('/answer-questions', Result, {}).catch(
+      (caught: unknown) => caught,
+    );
 
     expect(error).toMatchObject({
       name: 'BackendError',
@@ -92,20 +104,54 @@ describe('callBackend', () => {
   it('reports an empty error body rather than throwing on the empty string', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('', { status: 502 }));
 
-    await expect(callBackend('/extract-job', {})).rejects.toThrow('empty response body');
+    await expect(callBackend('/extract-job', Result, {})).rejects.toThrow('empty response body');
   });
 
-  it('sends a bodyless GET request when method is "GET"', async () => {
+  it('names the path and the failed expectation when a 2xx body is not what the route promised', async () => {
+    // A succeeded-and-lied response is a different failure from a request that failed, and the
+    // message has to be readable: it reaches the panel verbatim through `run.failure.message`.
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ fullName: 'Jane Doe' }), {
+      new Response(JSON.stringify({ id: 42 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
     );
 
-    const result = await callBackend('/profile', undefined, 'GET');
+    const error = await callBackend('/applications', Result, {}).catch((caught: unknown) => caught);
 
-    expect(result).toEqual({ fullName: 'Jane Doe' });
+    expect(error).toMatchObject({ name: 'BackendResponseError', path: '/applications' });
+    expect((error as Error).message).toContain(
+      'POST /applications returned an unexpected response',
+    );
+    expect((error as Error).message).toContain('id');
+  });
+
+  it('treats an empty body as a broken promise rather than resolving with undefined', async () => {
+    // The old cast let `undefined` through as whatever the caller claimed, so a route that answered
+    // with nothing at all read as a successful call returning a valid value.
+    vi.mocked(fetch).mockResolvedValue(new Response('', { status: 200 }));
+
+    await expect(callBackend('/applications', Result, {})).rejects.toThrow(
+      'returned an unexpected response',
+    );
+  });
+
+  it('sends a bodyless GET request when method is "GET"', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ count: 0, latest: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const result = await callBackend(
+      '/profile',
+      DuplicateApplicationSummarySchema,
+      undefined,
+      'GET',
+    );
+
+    expect(result).toEqual({ count: 0, latest: null });
     expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', { method: 'GET' });
   });
 });

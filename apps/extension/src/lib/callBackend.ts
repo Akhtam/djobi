@@ -11,6 +11,7 @@
  * {@link callBackendBinary}, rather than by a bare `fetch` somewhere else.
  */
 import { BackendErrorBodySchema } from '@djobi/shared';
+import type { ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
 
@@ -28,6 +29,32 @@ export class BackendError extends Error {
     super(message);
     this.name = 'BackendError';
   }
+}
+
+/**
+ * A 2xx response whose body isn't the shape the route promised.
+ *
+ * Separate from {@link BackendError}, which means the request failed. This one means it *succeeded*
+ * and lied — a distinction worth keeping, because the two have different causes and different fixes:
+ * a `BackendError` is usually the backend being down or rejecting the request, while this is the two
+ * halves having drifted apart.
+ */
+export class BackendResponseError extends Error {
+  constructor(
+    readonly path: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'BackendResponseError';
+  }
+}
+
+/** The failed expectations, flattened into something a panel can show a person. */
+function issuesFrom(error: ZodError): string {
+  return error.issues
+    .slice(0, 3)
+    .map((issue) => `${issue.path.join('.') || 'response'} — ${issue.message}`)
+    .join('; ');
 }
 
 /**
@@ -81,21 +108,44 @@ async function request(path: string, body: unknown, method: Method): Promise<Res
 }
 
 /**
- * Sends `body` as JSON and resolves with the parsed JSON response. `method` defaults to `POST`;
- * `GET` requests are sent bodyless, so `body` may be omitted for them.
+ * Sends `body` as JSON and resolves with the response decoded through `schema`. `method` defaults to
+ * `POST`; `GET` requests are sent bodyless, so `body` may be omitted for them.
  *
  * `PATCH` is in the union because `backendClient.updateApplication` has always sent one — the
  * narrower `'GET' | 'POST'` type was simply a lie the compiler flagged and the runtime ignored.
  *
+ * **`schema` is required, and that is the point.** This used to take a type parameter and cast the
+ * parsed JSON to it, leaving the response checked only where a caller remembered to check it — which
+ * was three routes out of eleven, and the three with the least to get wrong. Every model-written
+ * payload arrived unverified, so a `/tailor-resume` response missing `workExperience` type-checked
+ * all the way through the Analysis Step and surfaced as an empty PDF with nothing pointing back
+ * here. A parameter can't be forgotten the way a convention can, and it mirrors what
+ * `backendClient.ts` already does outbound with `satisfies`: both halves of every call now have to
+ * agree with the shared schema rather than merely with each other.
+ *
+ * An empty body decodes as `undefined` and therefore fails the schema, which is the honest reading:
+ * a route that promised JSON and sent nothing did not do what it said.
+ *
  * @throws {BackendError} When the response status is not 2xx.
+ * @throws {BackendResponseError} When a 2xx body isn't what `schema` describes.
  */
-export async function callBackend<T>(
+export async function callBackend<Schema extends ZodTypeAny>(
   path: string,
+  schema: Schema,
   body?: unknown,
   method: Method = 'POST',
-): Promise<T> {
+): Promise<ZodTypeOf<Schema>> {
   const raw = await (await request(path, body, method)).text();
-  return (raw ? JSON.parse(raw) : undefined) as T;
+  const decoded = schema.safeParse(raw ? JSON.parse(raw) : undefined);
+
+  if (!decoded.success) {
+    throw new BackendResponseError(
+      path,
+      `${method} ${path} returned an unexpected response: ${issuesFrom(decoded.error)}`,
+    );
+  }
+
+  return decoded.data;
 }
 
 /**

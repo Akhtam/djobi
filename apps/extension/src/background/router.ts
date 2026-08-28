@@ -1,12 +1,7 @@
 import { parseDetectedFields } from '@djobi/shared';
 import type { TypedMessage } from '../lib/messages';
-import {
-  enrichDetectedFields,
-  patchPipelineRun,
-  reportDetectedPage,
-  setJobContext,
-} from '../lib/tabStore';
-import { enrichWithApiOracle } from './apiDetectors';
+import { patchPipelineRun, setJobContext } from '../lib/tabStore';
+import { recordReport } from './detectedFields';
 import {
   productionDeps,
   runAnalysis,
@@ -50,7 +45,6 @@ export function handleTypedMessage(
       // after an extension reload a tab left open reports the field shape *that* build produced.
       // `content/index.ts` already handles the send side of this case; this is the receive side.
       const fields = parseDetectedFields(message.fields);
-      const data = { fields };
       // The *sending document's* URL, not the tab's. These differ in the case that matters: an ATS
       // form is usually an iframe on a company's own careers domain, so `sender.tab.url` is
       // `careers.acme.com` while the form — and the posting id every oracle parses out of it — is at
@@ -60,16 +54,10 @@ export function handleTypedMessage(
       // it went unnoticed. Falls back to the tab for a main-frame form, where the two are the same.
       const url = sender.url ?? sender.tab?.url;
 
-      return reportDetectedPage(tabId, frameId, data).then(async (reportedAt) => {
-        if (!url) return;
-        // Fire-and-forget: the DOM-only fields are already stored and usable above. This only
-        // upgrades them (e.g. filling in a portal-mounted combobox's choices) once the platform API
-        // answers — and `enrichDetectedFields` drops the result if this frame has been re-reported
-        // in the meantime, so a slow response for a page we've navigated away from can't land on
-        // top of fresher detection.
-        const enriched = await enrichWithApiOracle(url, fields);
-        await enrichDetectedFields(tabId, frameId, reportedAt, enriched);
-      });
+      // Storing the report and upgrading it from the platform's API are one sequence, and
+      // `background/detectedFields.ts` owns it — including the part this dispatch is in no position
+      // to know, that a run started before the oracle answers must wait for it.
+      return recordReport(tabId, frameId, fields, url);
     }
 
     case 'START_ANALYSIS':

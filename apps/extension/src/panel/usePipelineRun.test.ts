@@ -67,7 +67,21 @@ function stubChrome() {
     void storage.session.set({ [storageKey(tabId)]: { frames: {}, run: next } });
   };
 
-  return { sendMessage, writeFromBackground };
+  /**
+   * Simulates a write to the *rest* of the tab's key — what the content script's detection and the
+   * API-oracle enrichment do, several times per page, sharing one key with the run.
+   */
+  const reportFrameFromContentScript = (tabId: number, current: PipelineRunState | null): void => {
+    void storage.session.set({
+      [storageKey(tabId)]: {
+        frames: { 0: { data: { fields: [] }, revision: Date.now() } },
+        jobContext: null,
+        run: current,
+      },
+    });
+  };
+
+  return { sendMessage, writeFromBackground, reportFrameFromContentScript };
 }
 
 describe('usePipelineRun', () => {
@@ -188,6 +202,178 @@ describe('usePipelineRun', () => {
     act(() => writeFromBackground(1, filled));
 
     expect(result.current.status).toBe('filled');
+  });
+
+  it('keeps a standing optimistic status when an unrelated write touches the tab key', async () => {
+    // Detected frames and the Job Context live under the same key as the run, and the content
+    // script re-reports on every DOM change the form makes. Standing the optimism down for those
+    // snapped the panel back to the stored status mid-click, for the whole gap this exists to cover.
+    const { reportFrameFromContentScript } = stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.begin('filling'));
+    act(() => reportFrameFromContentScript(1, run));
+
+    expect(result.current.status).toBe('filling');
+  });
+
+  it('keeps a standing optimistic status while its own edit echo works back through the store', async () => {
+    // An edit is a write to the run, so this is not covered by the frame case above: typing in the
+    // Job Description editor during a fill would otherwise stand the fill's own optimism down.
+    const { writeFromBackground } = stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.begin('filling'));
+    act(() =>
+      result.current.edit({ answers: run.answers, jobDescription: 'edited while filling' }),
+    );
+    await waitFor(() => expect(result.current.run?.jobDescription).toBe('edited while filling'));
+
+    expect(result.current.status).toBe('filling');
+
+    // The background's own answer still stands it down.
+    act(() =>
+      writeFromBackground(1, {
+        ...run,
+        status: 'filled',
+        jobDescription: 'edited while filling',
+        fillOutcome: 'complete',
+        filledFieldCount: 2,
+      }),
+    );
+
+    expect(result.current.status).toBe('filled');
+  });
+
+  it('keeps a standing optimistic status when an earlier keystroke echoes while a newer one is pending', async () => {
+    // `edit` fires per keystroke, so two of them inside one storage round-trip leave the first's
+    // echo arriving while the second is still outstanding. Recognized against the newest send
+    // alone, that echo matched nothing and read as the background answering — standing the fill's
+    // own optimism down, one keystroke narrower than the case above.
+    const storage = fakeSessionStorage();
+    const queued: {
+      type: string;
+      tabId: number;
+      runId: string;
+      updates: Partial<PipelineRunState>;
+    }[] = [];
+    const sendMessage = vi.fn((message, callback: () => void) => {
+      queued.push(message);
+      callback();
+    });
+    vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.begin('filling'));
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'A' }));
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
+
+    await act(async () => {
+      await patchPipelineRun(1, queued[0].runId, queued[0].updates);
+    });
+
+    expect(result.current.status).toBe('filling');
+    // And the newer keystroke is still what the user sees, rather than the echo's older text.
+    expect(result.current.run?.jobDescription).toBe('AB');
+
+    await act(async () => {
+      await patchPipelineRun(1, queued[1].runId, queued[1].updates);
+    });
+
+    expect(result.current.status).toBe('filling');
+    expect(result.current.run?.jobDescription).toBe('AB');
+  });
+
+  it('shows a delivery failure at once and stands the optimistic status down with it', async () => {
+    // A START that never reached the worker produces no run and no storage event at all, so nothing
+    // else will ever correct the spinner it was raised for.
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => result.current.begin('filling'));
+    act(() =>
+      result.current.fail('fill-error', {
+        step: 'fill',
+        message: 'Could not establish connection.',
+      }),
+    );
+
+    expect(result.current.status).toBe('fill-error');
+    expect(result.current.failure).toEqual({
+      step: 'fill',
+      message: 'Could not establish connection.',
+    });
+  });
+
+  it('lets persisted progress supersede a delivery failure, for a worker that came back', async () => {
+    const { writeFromBackground } = stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() =>
+      result.current.fail('fill-error', {
+        step: 'fill',
+        message: 'Could not establish connection.',
+      }),
+    );
+    act(() => writeFromBackground(1, { ...run, status: 'filling' }));
+
+    expect(result.current.status).toBe('filling');
+    expect(result.current.failure).toBeNull();
+  });
+
+  it('keeps a delivery failure this panel raised when the stored run is one the caller rejects', async () => {
+    // Navigation updates the panel's tracked URL before the worker's storage cleanup lands, so the
+    // store still holds the previous job's run — which `useActiveRun` rejects. That run is not this
+    // job's, but an undelivered START *is* this panel's news, and nothing else will ever report it:
+    // rejecting the run and the status together left a spinner-less, error-less dead Analyze button.
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1, 1, () => false));
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() =>
+      result.current.fail('analyze-error', {
+        step: 'analysis',
+        message: 'Could not establish connection.',
+      }),
+    );
+
+    expect(result.current.run).toBeNull();
+    expect(result.current.status).toBe('analyze-error');
+    expect(result.current.failure).toEqual({
+      step: 'analysis',
+      message: 'Could not establish connection.',
+    });
+  });
+
+  it("reports neither a rejected run nor its status, so one job never shows another's analysis", async () => {
+    stubChrome();
+    await setPipelineRun(1, { ...run, status: 'filled' });
+    const { result } = renderHook(() => usePipelineRun(1, 1, () => false));
+
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    expect(result.current.run).toBeNull();
+    expect(result.current.status).toBeNull();
+  });
+
+  it("reports the run's own checkpointed failure when no delivery failure stands", async () => {
+    stubChrome();
+    const failure = { step: 'analysis' as const, message: 'POST /extract-job failed (500)' };
+    await setPipelineRun(1, { ...run, status: 'analyze-error', failure });
+    const { result } = renderHook(() => usePipelineRun(1));
+
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    expect(result.current.failure).toEqual(failure);
   });
 
   it('drops a standing optimistic status when the tracked tab changes', async () => {

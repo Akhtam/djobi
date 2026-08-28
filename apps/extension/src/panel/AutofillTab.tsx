@@ -13,9 +13,10 @@
  * note on `usePipelineRun`.
  *
  * The one thing that comes back from a `notify` is whether Chrome managed to *deliver* it. A START
- * that never reached the worker will produce no run and no storage event at all, so
- * `dispatchFailure` stands the optimistic status back down rather than leaving the tab spinning on
- * a step nothing is running.
+ * that never reached the worker will produce no run and no storage event at all, so `activeRun.fail`
+ * stands the optimistic status back down rather than leaving the tab spinning on a step nothing is
+ * running. That failure is held by `usePipelineRun` and not here, so the shell's header pill sees it
+ * too — held locally, this module reported an error the pill knew nothing about.
  */
 import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
@@ -25,15 +26,9 @@ import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor } from '../lib/runAnswers';
-import { reviewOf } from '../lib/runReview';
 import { CoverageReport } from './CoverageReport';
 import { RequirementFitReport } from './RequirementFitReport';
-import {
-  getDetectedPage,
-  storageKey,
-  type PipelineFailure,
-  type PipelineStatus,
-} from '../lib/tabStore';
+import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
@@ -81,24 +76,23 @@ export function AutofillTab({
     changeToken,
     run,
     status: runStatus,
+    failure,
+    review,
     begin,
+    fail,
     edit,
     updateAnswer,
   } = activeRun;
 
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
-  const [dispatchFailure, setDispatchFailure] = useState<{
-    status: 'analyze-error' | 'fill-error' | 'save-error';
-    failure: PipelineFailure;
-  } | null>(null);
 
   // The Job Description, wherever it currently lives — see `panel/useJobDescription.ts`. Draft
   // versus run, Job Key scoping and the scrape's races are all its business, not this module's.
   const jobDescription = useJobDescription(activeRun, readPosting);
 
-  const status: AutofillStatus = dispatchFailure?.status ?? runStatus ?? 'ready';
-  const { canReview, outcome } = reviewOf(run);
+  const status: AutofillStatus = runStatus ?? 'ready';
+  const { canReview, outcome } = review;
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
   const jobPageData = run?.jobPageData ?? detectedPage;
@@ -109,7 +103,6 @@ export function AutofillTab({
   const requirementFit = run?.requirementFit ?? [];
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
-  const failure = dispatchFailure?.failure ?? run?.failure ?? null;
   /** How many fields the run's own re-scan saw — what separates the two zero-filled outcomes. */
   const detectedFieldCount = jobPageData?.fields.length ?? 0;
   const duplicateOf = run?.duplicateOf ?? null;
@@ -188,19 +181,6 @@ export function AutofillTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- route identity is the reset signal
   }, [tabId, tabUrl, changeToken]);
 
-  // Any persisted progress supersedes a panel-local delivery error from the command that requested
-  // it. Usually an undelivered command produces no storage event at all; this guard handles the
-  // narrower race where Chrome reports an error as a worker is coming back.
-  useEffect(() => setDispatchFailure(null), [run?.runId, run?.status]);
-
-  function reportDispatchFailure(
-    step: PipelineFailure['step'],
-    status: 'analyze-error' | 'fill-error' | 'save-error',
-    message: string,
-  ) {
-    setDispatchFailure({ status, failure: { step, message } });
-  }
-
   /**
    * `force` is set only by "Analyze and apply anyway", after the background told us this job URL
    * already has a saved Application. The Duplicate Guard itself runs in the background, not here,
@@ -209,7 +189,6 @@ export function AutofillTab({
   function handleAnalyze(force = false) {
     if (!jobDescription.text.trim() || tabId === null || !jobDescription.analysisUrl) return;
 
-    setDispatchFailure(null);
     begin('analyzing');
 
     notify(
@@ -221,28 +200,26 @@ export function AutofillTab({
         jobDescription: jobDescription.text,
         force,
       },
-      (message) => reportDispatchFailure('analysis', 'analyze-error', message),
+      (message) => fail('analyze-error', { step: 'analysis', message }),
     );
   }
 
   function handleFill() {
     if (!jobPageData || !jobInfo || !tailoredResume || tabId === null) return;
 
-    setDispatchFailure(null);
     begin('filling');
 
     notify({ type: 'START_FILL', tabId, profile }, (message) =>
-      reportDispatchFailure('fill', 'fill-error', message),
+      fail('fill-error', { step: 'fill', message }),
     );
   }
 
   function handleSaveApplication() {
     if (tabId === null || (status !== 'filled' && status !== 'save-error')) return;
 
-    setDispatchFailure(null);
     begin('saving');
     notify({ type: 'START_SAVE_APPLICATION', tabId }, (message) =>
-      reportDispatchFailure('save', 'save-error', message),
+      fail('save-error', { step: 'save', message }),
     );
   }
 
@@ -386,8 +363,8 @@ export function AutofillTab({
           </div>
         )}
 
-        {outcome === 'complete' && (
-          <div className="state success" role="status">
+        {outcome === 'complete' && status !== 'saved' && (
+          <div className="state success compact" role="status">
             <span className="state-icon success">✅</span>
             <p>
               Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'}. Save the
@@ -413,7 +390,7 @@ export function AutofillTab({
         )}
 
         {status === 'saved' && (
-          <div className="state success" role="status">
+          <div className="state success compact" role="status">
             <span className="state-icon success">✅</span>
             <p>Application saved.</p>
           </div>

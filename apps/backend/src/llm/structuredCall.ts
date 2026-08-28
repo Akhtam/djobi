@@ -55,6 +55,31 @@ export class StructuredCallError extends Error {
 }
 
 /**
+ * A value's structure with its content left out.
+ *
+ * The content is the candidate's Profile and the posting, so it does not belong in a log line; the
+ * container is what a validation failure is actually about — `fit` arriving as an `object{…}` rather
+ * than an `array(n)` is the whole diagnosis.
+ */
+function shapeOf(value: unknown): unknown {
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return typeof value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, member]) => [
+      key,
+      Array.isArray(member)
+        ? `array(${member.length})`
+        : member === null
+          ? 'null'
+          : typeof member === 'object'
+            ? `object{${Object.keys(member).join(',')}}`
+            : typeof member,
+    ]),
+  );
+}
+
+/**
  * Forces the model to call a single tool and validates its input against the given zod schema.
  * Used instead of `output_config.format` / `messages.parse()`, which aren't available in the
  * installed `@anthropic-ai/sdk` version (0.68.0) — see `apps/backend/README.md` for why.
@@ -107,6 +132,13 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
 
     const parsed = options.schema.safeParse(toolUse.input);
     if (!parsed.success) {
+      // Zod says which path was wrong and what it expected; without this the log never says what the
+      // model actually sent, and a shape nothing normalizes yet reads as an unexplained 500.
+      console.warn('[djobi] structured_call_invalid_input', {
+        toolName: options.toolName,
+        requestId: response._request_id,
+        received: shapeOf(toolUse.input),
+      });
       throw new StructuredCallError(
         'invalid-input',
         options.toolName,

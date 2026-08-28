@@ -25,16 +25,57 @@ const EvidencePointerSchema = z.union([
   }),
 ]);
 
+/**
+ * Normalizes the shapes the model reaches for when this tool asks it for an array.
+ *
+ * The tool's `input_schema` does say `"type": "array"` here — this module's tests assert it — but a
+ * tool schema is advisory, not enforced, and these four deviations are the ones this call actually
+ * produces:
+ *
+ * - the array double-encoded as a JSON string;
+ * - the array re-wrapped in the tool's own `{ fit: … }` envelope;
+ * - an index-keyed object, `{"0": …, "1": …}`, instead of an array;
+ * - a lone entry sent unwrapped, which is what a posting stating one requirement invites.
+ *
+ * Each is recoverable by rearranging the container alone, without interpreting a single verdict, and
+ * each otherwise costs the candidate a whole Requirement Fit report to a 500. Anything this does not
+ * recognize is passed through untouched, so an output that means something else still fails
+ * validation rather than being quietly reinterpreted into a report.
+ */
+function asFitArray(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      return asFitArray(JSON.parse(value) as unknown);
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value) || typeof value !== 'object' || value === null) return value;
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 1 && entries[0][0] === 'fit') return asFitArray(entries[0][1]);
+  if (entries.length > 0 && entries.every(([key]) => /^\d+$/.test(key))) {
+    return entries.sort(([a], [b]) => Number(a) - Number(b)).map(([, entry]) => entry);
+  }
+  // Keyed on the two fields every entry must have, so a container holding anything else is left to
+  // fail validation rather than being wrapped into a one-entry report.
+  if ('requirement' in value && 'verdict' in value) return [value];
+  return value;
+}
+
 const RequirementFitOutputSchema = z.object({
-  fit: z.array(
-    z.object({
-      requirement: z.string(),
-      verdict: z.enum(['met', 'partial', 'unmet']),
-      evidence: EvidencePointerSchema.nullable(),
-      // Defaulted rather than required, for the reason `QuestionAnswer.sourceStoryIds` is: the model
-      // routinely omits a key whose value is empty, and one omission must not fail the whole batch.
-      note: z.string().default(''),
-    }),
+  fit: z.preprocess(
+    asFitArray,
+    z.array(
+      z.object({
+        requirement: z.string(),
+        verdict: z.enum(['met', 'partial', 'unmet']),
+        evidence: EvidencePointerSchema.nullable(),
+        // Defaulted rather than required, for the reason `QuestionAnswer.sourceStoryIds` is: the
+        // model routinely omits a key whose value is empty, and one omission must not fail the batch.
+        note: z.string().default(''),
+      }),
+    ),
   ),
 });
 

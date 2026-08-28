@@ -142,13 +142,13 @@ export type ContentCommandMessage =
 
 /**
  * The coordination protocol: content script and panel telling the background that something
- * happened. **Notification-only — none of these has a response.**
+ * happened. **Notification-only — none of these has an operation response.**
  *
  * That's a real design decision, not an omission. Reports and edits have nothing to return, while
- * START messages kick off work whose whole point is outliving the sender. Holding the message
- * channel open until an Analysis Step resolves is exactly the failure this protocol was built to
- * avoid, since the channel dies with the panel that opened it. Progress is read from
- * `lib/tabStore.ts` instead.
+ * START messages kick off work whose whole point is outliving the sender. The service worker sends
+ * only an immediate empty receipt acknowledgement; holding the channel open until an Analysis Step
+ * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
+ * panel that opened it. Progress is read from `lib/tabStore.ts` instead.
  *
  * The messages that *do* have responses are not in this union: `SCAN_PAGE` and `FILL_FORM` live in
  * `lib/pageClient.ts`, while `SCRAPE_JOB_DESCRIPTION` lives in `lib/postingReader.ts`.
@@ -167,8 +167,8 @@ export type TypedMessage =
   | UpdateJobContextMessage;
 
 /**
- * Sends a coordination message to the background and returns immediately. There is no reply to
- * wait for.
+ * Sends a coordination message to the background and returns immediately. There is no operation
+ * result to wait for; the callback receives only the service worker's empty receipt acknowledgement.
  *
  * The callback reads `chrome.runtime.lastError`, which marks it handled. A START caller may also
  * use `onDispatchError` to stand down optimistic UI when Chrome could not deliver the notification;

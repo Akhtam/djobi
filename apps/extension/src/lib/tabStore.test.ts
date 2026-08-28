@@ -134,6 +134,25 @@ describe('tabStore', () => {
 
       expect((await getDetectedPage(1))?.fields.map((f) => f.id)).toEqual(['new']);
     });
+
+    it('writes nothing when the oracle enriched nothing, so a report costs one storage event', async () => {
+      // The usual case: no oracle recognizes the URL, or the fetch failed, and the fields come back
+      // exactly as they went in. Every write to this key is an event each panel subscriber has to
+      // interpret, and doing it twice per report for no change is what made the panel's optimistic
+      // status so easy to knock over.
+      stubChrome();
+      const fields = [textField('a')];
+      const reportedAt = await reportDetectedPage(1, 0, { fields });
+
+      let writes = 0;
+      chrome.storage.onChanged.addListener(() => {
+        writes += 1;
+      });
+      await enrichDetectedFields(1, 0, reportedAt, [textField('a')]);
+
+      expect(writes).toBe(0);
+      expect((await getDetectedPage(1))?.fields.map((f) => f.id)).toEqual(['a']);
+    });
   });
 
   describe('pipeline run', () => {

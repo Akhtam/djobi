@@ -315,6 +315,13 @@ export async function enrichDetectedFields(
     const frame = state.frames[frameId];
     if (!frame || frame.revision !== revision) return;
 
+    // Most reports enrich nothing — no oracle recognizes the URL, or the fetch failed — and
+    // `enrichWithApiOracle` returns the fields it was given in every one of those cases. Writing
+    // them back unchanged still costs a `chrome.storage.session` write, and every write to this key
+    // is an event each panel subscriber has to interpret. Doing that twice per report, for no
+    // change, is what made the panel's optimistic status so easy to knock over.
+    if (JSON.stringify(fields) === JSON.stringify(frame.data.fields)) return;
+
     await write(tabId, {
       ...state,
       frames: { ...state.frames, [frameId]: { ...frame, data: { ...frame.data, fields } } },

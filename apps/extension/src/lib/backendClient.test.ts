@@ -6,6 +6,11 @@
  * The `satisfies` annotations still do the heavy lifting at compile time; what these cover is the
  * half a type can't see, a path or a method typed wrong. `renderResumePdf` and `getProfile` matter
  * most: both are now called from the panel, which used to build them by hand.
+ *
+ * Each route also names the schema its response is decoded through, which the projection cases below
+ * pass over with `expect.anything()` — what matters there is the request. The cases that do care
+ * feed a response through {@link respondWith}, which applies the route's own schema exactly as the
+ * real transport does, so attaching the wrong one to a route fails here rather than in production.
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +45,15 @@ const jobInfo: JobInfo = {
   keywords: [],
 };
 
+/**
+ * Answers the next call the way the backend would, decoded through whichever schema the client
+ * handed the transport. Mocking `callBackend` to resolve a raw value instead would skip the
+ * response contract, which is half of what each route declares.
+ */
+function respondWith(body: unknown) {
+  vi.mocked(callBackend).mockImplementation(async (_path, schema) => schema.parse(body));
+}
+
 beforeEach(() => {
   vi.mocked(callBackend).mockReset().mockResolvedValue(undefined);
   vi.mocked(callBackendBinary).mockReset().mockResolvedValue(new ArrayBuffer(0));
@@ -49,13 +63,13 @@ describe('httpBackendClient', () => {
   it('reads the profile bodyless, over GET', async () => {
     await httpBackendClient.getProfile();
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', undefined, 'GET');
+    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), undefined, 'GET');
   });
 
   it('saves the profile as the whole body', async () => {
     await httpBackendClient.saveProfile(profile);
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', profile);
+    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), profile);
   });
 
   it('renders the resume through the binary transport, not the JSON one', async () => {
@@ -78,13 +92,15 @@ describe('httpBackendClient', () => {
   it('extracts job info from the pasted description', async () => {
     await httpBackendClient.extractJob('a posting');
 
-    expect(callBackend).toHaveBeenCalledWith('/extract-job', { jobDescription: 'a posting' });
+    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+      jobDescription: 'a posting',
+    });
   });
 
   it('sends only resume fields to tailoring', async () => {
     await httpBackendClient.tailorResume(profile, jobInfo);
 
-    expect(callBackend).toHaveBeenCalledWith('/tailor-resume', {
+    expect(callBackend).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
       profile: { workExperience: profile.workExperience, skills: profile.skills },
       jobInfo,
     });
@@ -93,7 +109,7 @@ describe('httpBackendClient', () => {
   it('sends only grounding fields to question drafting', async () => {
     await httpBackendClient.answerQuestions(profile, jobInfo, []);
 
-    expect(callBackend).toHaveBeenCalledWith('/answer-questions', {
+    expect(callBackend).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
       profile: {
         workExperience: profile.workExperience,
         education: profile.education,
@@ -119,6 +135,7 @@ describe('httpBackendClient', () => {
     expect(callBackend).toHaveBeenCalledWith(
       '/applications/a%20b%2Fc?response=compact',
       expect.anything(),
+      expect.anything(),
       'PATCH',
     );
   });
@@ -131,6 +148,7 @@ describe('httpBackendClient', () => {
 
     expect(callBackend).toHaveBeenCalledWith(
       '/applications?jobUrl=https%3A%2F%2Fboards.example.com%2Fj%3Fid%3D1&response=compact',
+      expect.anything(),
       undefined,
       'GET',
     );
@@ -147,7 +165,7 @@ describe('httpBackendClient', () => {
         createdAt: '2026-08-18T00:00:00.000Z',
       },
     };
-    vi.mocked(callBackend).mockResolvedValue(summary);
+    respondWith(summary);
 
     await expect(
       httpBackendClient.findApplicationDuplicates('https://boards.example.com/jobs/1'),
@@ -167,15 +185,50 @@ describe('httpBackendClient', () => {
     },
     { count: 1, latest: null },
   ])('rejects a contradictory duplicate-lookup response: %o', async (summary) => {
-    vi.mocked(callBackend).mockResolvedValue(summary);
+    respondWith(summary);
 
     await expect(
       httpBackendClient.findApplicationDuplicates('https://boards.example.com/jobs/1'),
     ).rejects.toThrow(/latest must be/);
   });
 
+  it('rejects a tailored resume that came back without its work experience', async () => {
+    // The failure this whole response-decoding change exists for. A model-written payload used to be
+    // cast to its return type unchecked, so a missing half arrived looking valid, was checkpointed
+    // onto the run, and surfaced two steps later as an empty PDF and a Keyword Coverage report that
+    // evidenced nothing — with nothing pointing back at the response that caused it.
+    respondWith({ skills: ['TypeScript'] });
+
+    await expect(httpBackendClient.tailorResume(profile, jobInfo)).rejects.toThrow();
+  });
+
+  it('rejects job info whose requirements came back as prose rather than a list', async () => {
+    respondWith({ ...jobInfo, requirements: 'Five years of TypeScript' });
+
+    await expect(httpBackendClient.extractJob('a posting')).rejects.toThrow();
+  });
+
+  it('rejects a drafted answer missing the field it belongs to, which nothing downstream could fill', async () => {
+    respondWith([{ question: 'Why us?', answer: 'Because.', sourceStoryIds: [] }]);
+
+    await expect(httpBackendClient.answerQuestions(profile, jobInfo, [])).rejects.toThrow();
+  });
+
+  it('reads an absent profile as null rather than failing on it', async () => {
+    // `GET /profile` answers `null` for a candidate who hasn't set one up, which is a real answer.
+    respondWith(null);
+
+    await expect(httpBackendClient.getProfile()).resolves.toBeNull();
+  });
+
+  it('accepts the profile the backend actually stores, so the nullable schema is not too strict', async () => {
+    respondWith(profile);
+
+    await expect(httpBackendClient.getProfile()).resolves.toEqual(profile);
+  });
+
   it('rejects a malformed optimized response instead of silently losing its id', async () => {
-    vi.mocked(callBackend).mockResolvedValue({});
+    respondWith({});
 
     await expect(
       httpBackendClient.saveApplication({
@@ -188,7 +241,11 @@ describe('httpBackendClient', () => {
       }),
     ).rejects.toThrow();
 
-    expect(callBackend).toHaveBeenCalledWith('/applications?response=compact', expect.anything());
+    expect(callBackend).toHaveBeenCalledWith(
+      '/applications?response=compact',
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
 
@@ -200,7 +257,7 @@ describe('httpBackendClient.answerChat', () => {
       messages: [],
     });
 
-    expect(callBackend).toHaveBeenCalledWith('/answer-chat', {
+    expect(callBackend).toHaveBeenCalledWith('/answer-chat', expect.anything(), {
       profile: {
         workExperience: profile.workExperience,
         education: profile.education,
@@ -223,6 +280,7 @@ describe('httpBackendClient.answerChat', () => {
 
     expect(callBackend).toHaveBeenCalledWith(
       '/answer-chat',
+      expect.anything(),
       expect.objectContaining({
         jobInfo,
         currentAnswer: 'A first draft.',

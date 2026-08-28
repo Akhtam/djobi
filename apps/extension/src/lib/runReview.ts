@@ -1,4 +1,4 @@
-import type { FillOutcome, PipelineRunState } from './tabStore';
+import type { FillOutcome, PipelineRunState, PipelineStatus } from './tabStore';
 
 export type { FillOutcome } from './tabStore';
 
@@ -70,11 +70,29 @@ const OUTCOME_PILL: Record<FillOutcome, StatusPill> = {
   complete: { label: 'Done', tone: 'success' },
 };
 
-/** Everything the panel needs to render `run`, derived once. */
-export function reviewOf(run: PipelineRunState | null): RunReview {
-  if (!run) return IDLE;
+/**
+ * Everything the panel needs to render `run`, derived once.
+ *
+ * `status` is the *reconciled* status — an optimistic one while it stands, a delivery failure ahead
+ * of that, and the stored run's otherwise (`panel/usePipelineRun.ts` assembles it). Deriving from it
+ * rather than from `run.status` is what keeps the header pill, the tab body and the footer saying
+ * the same thing: they used to disagree for the whole gap between a click and the background's own
+ * write, because the pill read the stored run while the body and footer read the reconciled status.
+ *
+ * It is therefore separate from `run`, and the idle guard is on `status`, not `run`: the first
+ * Analyze on a page raises `'analyzing'` before any run exists to store it, and a pill suppressed on
+ * `!run` would stay blank while the body already said "Analyzing…". `run` is consulted only for
+ * `fillOutcome`, which no optimistic status can supply.
+ *
+ * Defaults to the stored status, which is the whole reading for a caller with no optimism to apply.
+ */
+export function reviewOf(
+  run: PipelineRunState | null,
+  status: PipelineStatus | null = run?.status ?? null,
+): RunReview {
+  if (!status) return IDLE;
 
-  switch (run.status) {
+  switch (status) {
     case 'analyzing':
       return { pill: { label: 'Analyzing…', tone: 'busy' }, canReview: false, outcome: null };
 
@@ -100,14 +118,15 @@ export function reviewOf(run: PipelineRunState | null): RunReview {
     case 'save-error':
     case 'saved': {
       // Store reads normalize legacy completed runs to `unverified`; this fallback also keeps a
-      // malformed or hand-built run from becoming a blank pill.
-      const outcome = run.fillOutcome ?? 'unverified';
+      // malformed or hand-built run — or an optimistic status standing before any run exists — from
+      // becoming a blank pill.
+      const outcome = run?.fillOutcome ?? 'unverified';
       const pill =
-        run.status === 'saving'
+        status === 'saving'
           ? { label: 'Saving...', tone: 'busy' as const }
-          : run.status === 'save-error'
+          : status === 'save-error'
             ? { label: 'Save failed', tone: 'error' as const }
-            : run.status === 'saved'
+            : status === 'saved'
               ? { label: 'Saved', tone: 'success' as const }
               : OUTCOME_PILL[outcome];
       return { pill, canReview: true, outcome };

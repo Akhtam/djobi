@@ -10,8 +10,18 @@
  * `remove` are promise-based, and every `set`/`remove` notifies listeners — including the context
  * that made the write, exactly as Chrome does, which is what exercises the hook's own-write echo
  * guard rather than just its hydrate-on-mount path.
+ *
+ * Changes carry `oldValue` as well as `newValue`, again as Chrome does. `panel/usePipelineRun.ts`
+ * reads it to tell *which part* of a tab's entry a write touched — the run, or the detected frames
+ * and Job Context sharing its key — so a fake that omitted it would report every write as a change
+ * to everything.
  */
-type StorageListener = (changes: Record<string, { newValue?: unknown }>, areaName: string) => void;
+export interface FakeStorageChange {
+  oldValue?: unknown;
+  newValue?: unknown;
+}
+
+type StorageListener = (changes: Record<string, FakeStorageChange>, areaName: string) => void;
 
 export interface FakeSessionStorage {
   session: {
@@ -30,7 +40,7 @@ export function fakeSessionStorage(): FakeSessionStorage {
   const data = new Map<string, unknown>();
   const listeners: StorageListener[] = [];
 
-  function notify(changes: Record<string, { newValue?: unknown }>) {
+  function notify(changes: Record<string, FakeStorageChange>) {
     // Iterate a copy: a listener that removes itself mid-notification would otherwise skip the next.
     for (const listener of [...listeners]) listener(changes, 'session');
   }
@@ -42,17 +52,18 @@ export function fakeSessionStorage(): FakeSessionStorage {
           key === null ? Object.fromEntries(data) : data.has(key) ? { [key]: data.get(key) } : {},
         ),
       set: (items) => {
-        const changes: Record<string, { newValue?: unknown }> = {};
+        const changes: Record<string, FakeStorageChange> = {};
         for (const [key, value] of Object.entries(items)) {
-          changes[key] = { newValue: value };
+          changes[key] = { oldValue: data.get(key), newValue: value };
           data.set(key, value);
         }
         notify(changes);
         return Promise.resolve();
       },
       remove: (key) => {
+        const oldValue = data.get(key);
         data.delete(key);
-        notify({ [key]: { newValue: undefined } });
+        notify({ [key]: { oldValue, newValue: undefined } });
         return Promise.resolve();
       },
     },

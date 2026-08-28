@@ -152,4 +152,27 @@ describe('reviewOf', () => {
 
     for (const status of statuses) expect(reviewOf(run({ status })).pill).not.toBeNull();
   });
+
+  it('follows the status it is given, so the pill agrees with the tab it describes', () => {
+    // The reconciled status — optimistic while one stands, a delivery failure ahead of that. The
+    // pill used to derive itself from the stored run instead, so for the whole gap between a click
+    // and the background's own write it said "Ready to fill" over a body that said "Filling…".
+    const stored = run({ status: 'review' });
+
+    expect(reviewOf(stored, 'filling').pill).toEqual({ label: 'Filling…', tone: 'busy' });
+    expect(reviewOf(stored, 'fill-error').pill).toEqual({ label: 'Error', tone: 'error' });
+  });
+
+  it('pills an optimistic status raised before any run exists to store it', () => {
+    // The first Analyze on a page. An idle guard on the run rather than the status left the header
+    // blank while the body already said "Analyzing…".
+    expect(reviewOf(null, 'analyzing').pill).toEqual({ label: 'Analyzing…', tone: 'busy' });
+  });
+
+  it('reads a completed run through its own outcome even when the status is optimistic', () => {
+    const stored = filled({ filledFieldCount: 0, fillOutcome: 'nothing-filled' });
+
+    expect(reviewOf(stored, 'saving').pill).toEqual({ label: 'Saving...', tone: 'busy' });
+    expect(reviewOf(stored, 'saving').outcome).toBe('nothing-filled');
+  });
 });

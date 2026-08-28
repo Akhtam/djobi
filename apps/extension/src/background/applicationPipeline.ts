@@ -15,15 +15,13 @@
  */
 import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
-import { carryEnrichment } from './apiDetectors';
+import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import { answersFor } from '../lib/runAnswers';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
 import {
   asAnalyzedRun,
-  getDetectedFrame,
-  getDetectedPage,
   getPipelineRun,
   patchPipelineRun,
   setPipelineRun,
@@ -190,17 +188,17 @@ async function fillStep(
   // Address the frame that reported the form. If navigation destroyed that frame, retry only this
   // read-only scan as a broadcast and use broadcast addressing for the single fill attempt below.
   // Retrying fill itself would be unsafe: clicks and uploads are not idempotent.
-  let frameId = (await getDetectedFrame(tabId))?.frameId;
+  let frameId = (await frameForFill(tabId))?.frameId;
   let scanned = await deps.page.scan(tabId, frameId);
   if (frameId !== undefined && scanned === null) {
     frameId = undefined;
     scanned = await deps.page.scan(tabId);
   }
-  // The fresh scan has the right elements; the analyzed run has the right wording. `carryEnrichment`
+  // The fresh scan has the right elements; the analyzed run has the right wording. `mergeRescan`
   // keeps both — without it the re-scan silently discarded every API-supplied option label and
   // `required` flag, because enrichment only ever attached on the report path, never on `SCAN_PAGE`.
   const fields = scanned?.fields.length
-    ? carryEnrichment(scanned.fields, jobPageData.fields)
+    ? mergeRescan(scanned.fields, jobPageData.fields)
     : jobPageData.fields;
   // Resolved through the run, so the panel's warning and this fill agree by construction — see
   // `lib/runAnswers.ts`. `run` is the analyzed snapshot, which is the only correct source for the
@@ -457,7 +455,11 @@ export async function runAnalysis(
   });
 
   try {
-    const jobPageData: JobPageData = (await getDetectedPage(tabId)) ?? { fields: [] };
+    // Waits for an API-oracle enrichment still in flight for this tab. Clicking Analyze the instant
+    // a page loads used to snapshot DOM-only fields, so the questions crossing to the backend
+    // carried the page's wording of a combobox's choices instead of the API's — and the answers
+    // drafted from them then matched no element at fill time. See `background/detectedFields.ts`.
+    const jobPageData: JobPageData = await snapshotForRun(tabId);
     const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
 
     const stillCurrent = await patchPipelineRun(tabId, runId, {

@@ -25,7 +25,6 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import type { BackendClient } from '../lib/backendClient';
-import { reviewOf } from '../lib/runReview';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { AskTab, type AskSeed } from './AskTab';
 import { AutofillTab } from './AutofillTab';
@@ -109,7 +108,7 @@ export function App({ client }: { client: BackendClient }) {
   // The pill describes the Application Pipeline run, so it is suppressed on every other tab —
   // there is no run there for it to be about — and while the panel is still booting, so a hydrated
   // run doesn't flash its pill before we know there's a Profile to act with.
-  const pill = bootstrap === 'ready' && tab === 'autofill' ? reviewOf(activeRun.run).pill : null;
+  const pill = bootstrap === 'ready' && tab === 'autofill' ? activeRun.review.pill : null;
 
   return (
     <main className="panel">

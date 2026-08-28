@@ -13,7 +13,11 @@ vi.mock('../lib/tabStore', () => ({
 vi.mock('./router', () => ({ handleTypedMessage: mockHandleTypedMessage }));
 
 describe('service worker dispatch', () => {
-  let listener: (message: unknown, sender: chrome.runtime.MessageSender) => void;
+  let listener: (
+    message: unknown,
+    sender: chrome.runtime.MessageSender,
+    sendResponse: (response?: unknown) => void,
+  ) => void;
   let resolveRecovery: () => void;
 
   beforeEach(async () => {
@@ -32,11 +36,9 @@ describe('service worker dispatch', () => {
     vi.stubGlobal('chrome', {
       runtime: {
         onMessage: {
-          addListener: vi.fn(
-            (registered: (message: unknown, sender: chrome.runtime.MessageSender) => void) => {
-              listener = registered;
-            },
-          ),
+          addListener: vi.fn((registered: typeof listener) => {
+            listener = registered;
+          }),
         },
       },
       sidePanel: { setPanelBehavior: vi.fn().mockResolvedValue(undefined) },
@@ -47,8 +49,10 @@ describe('service worker dispatch', () => {
 
   it('registers synchronously but gates a waking message behind the one-time recovery sweep', async () => {
     const message = { type: 'START_SAVE_APPLICATION', tabId: 7 };
+    const sendResponse = vi.fn();
 
-    expect(listener(message, {} as chrome.runtime.MessageSender)).toBeUndefined();
+    expect(listener(message, {} as chrome.runtime.MessageSender, sendResponse)).toBeUndefined();
+    expect(sendResponse).toHaveBeenCalledWith();
     expect(mockHandleTypedMessage).not.toHaveBeenCalled();
 
     resolveRecovery();
@@ -62,7 +66,11 @@ describe('service worker dispatch', () => {
     resolveRecovery();
     await Promise.resolve();
 
-    const returned = listener({ type: 'START_FILL', tabId: 9 }, {} as chrome.runtime.MessageSender);
+    const returned = listener(
+      { type: 'START_FILL', tabId: 9 },
+      {} as chrome.runtime.MessageSender,
+      vi.fn(),
+    );
 
     expect(returned).toBeUndefined();
     await vi.waitFor(() =>

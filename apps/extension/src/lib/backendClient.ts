@@ -9,6 +9,12 @@
  * correctly, and when that stopped being true (a `knownAnswer` the route's private schema didn't
  * declare, silently stripped by zod) nothing on either side could notice.
  *
+ * The same guarantee now runs the other way too. `callBackend` takes the response schema as a
+ * required argument, so every route here states what it expects back and gets it checked — where
+ * before, eight of these eleven cast an unparsed body to their return type and only the three
+ * simplest CRUD shapes were verified. The responses that went unchecked were exactly the ones a
+ * model writes, whose failures surface furthest from their cause.
+ *
  * `callBackend` is the transport underneath and is no longer called directly by anything that names
  * a path. It used to be: the panel and options page built `/profile` and `/render-resume-pdf` by
  * hand, so `/render-resume-pdf` existed twice — once here against `RenderResumePdfRequest`, once in
@@ -16,8 +22,14 @@
  * call sites that go through it, so the Profile routes live here too and the claim above holds.
  */
 import {
+  AnswerChatResponseSchema,
   ApplicationWriteResultSchema,
+  AssessRequirementsResponseSchema,
   DuplicateApplicationSummarySchema,
+  JobInfoSchema,
+  ProfileSchema,
+  QuestionAnswerSchema,
+  TailoredResumeSchema,
   type AnswerChatRequest,
   type AnswerChatResponse,
   type AnswerQuestionsRequest,
@@ -56,6 +68,13 @@ export interface AnswerChatTurn {
   messages: ChatMessage[];
 }
 
+/**
+ * What `GET /profile` answers with. Nullable rather than optional: `null` is the real answer for a
+ * candidate who hasn't set a Profile up yet, not a missing response. Built once here rather than
+ * inline at the call site, which would compose a fresh schema on every request.
+ */
+const MaybeProfileSchema = ProfileSchema.nullable();
+
 /** The backend-facing half of the Application Pipeline's outside world. */
 export interface BackendClient {
   extractJob(jobDescription: string): Promise<JobInfo>;
@@ -83,16 +102,16 @@ export interface BackendClient {
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
 export const httpBackendClient: BackendClient = {
   extractJob: (jobDescription) =>
-    callBackend('/extract-job', { jobDescription } satisfies ExtractJobRequest),
+    callBackend('/extract-job', JobInfoSchema, { jobDescription } satisfies ExtractJobRequest),
 
   tailorResume: (profile, jobInfo) =>
-    callBackend('/tailor-resume', {
+    callBackend('/tailor-resume', TailoredResumeSchema, {
       profile: { workExperience: profile.workExperience, skills: profile.skills },
       jobInfo,
     } satisfies TailorResumeRequest),
 
   answerQuestions: (profile, jobInfo, questions) =>
-    callBackend('/answer-questions', {
+    callBackend('/answer-questions', QuestionAnswerSchema.array(), {
       profile: {
         workExperience: profile.workExperience,
         education: profile.education,
@@ -105,7 +124,7 @@ export const httpBackendClient: BackendClient = {
 
   assessRequirements: async (profile, jobInfo) =>
     (
-      await callBackend<AssessRequirementsResponse>('/assess-requirements', {
+      await callBackend('/assess-requirements', AssessRequirementsResponseSchema, {
         // No `stories` and no `screeningAnswers`: a STAR anecdote is not a qualification, and a
         // screening answer is a legal declaration that must never become grounding for a model.
         profile: {
@@ -118,7 +137,7 @@ export const httpBackendClient: BackendClient = {
     ).fit,
 
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
-    callBackend('/answer-chat', {
+    callBackend('/answer-chat', AnswerChatResponseSchema, {
       profile: {
         workExperience: profile.workExperience,
         education: profile.education,
@@ -146,31 +165,28 @@ export const httpBackendClient: BackendClient = {
       tailoredResume,
     } satisfies RenderResumePdfRequest),
 
-  getProfile: () => callBackend<Profile | null>('/profile', undefined, 'GET'),
+  getProfile: () => callBackend('/profile', MaybeProfileSchema, undefined, 'GET'),
 
-  saveProfile: (profile) => callBackend<Profile>('/profile', profile satisfies SaveProfileRequest),
+  saveProfile: (profile) =>
+    callBackend('/profile', ProfileSchema, profile satisfies SaveProfileRequest),
 
-  saveApplication: async (payload) =>
-    ApplicationWriteResultSchema.parse(
-      await callBackend<ApplicationWriteResult>('/applications?response=compact', payload),
+  saveApplication: (payload) =>
+    callBackend('/applications?response=compact', ApplicationWriteResultSchema, payload),
+
+  updateApplication: (id, payload) =>
+    callBackend(
+      `/applications/${encodeURIComponent(id)}?response=compact`,
+      ApplicationWriteResultSchema,
+      payload,
+      'PATCH',
     ),
 
-  updateApplication: async (id, payload) =>
-    ApplicationWriteResultSchema.parse(
-      await callBackend<ApplicationWriteResult>(
-        `/applications/${encodeURIComponent(id)}?response=compact`,
-        payload,
-        'PATCH',
-      ),
-    ),
-
-  findApplicationDuplicates: async (jobUrl) =>
-    DuplicateApplicationSummarySchema.parse(
-      await callBackend<DuplicateApplicationSummary>(
-        `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
-        undefined,
-        'GET',
-      ),
+  findApplicationDuplicates: (jobUrl) =>
+    callBackend(
+      `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
+      DuplicateApplicationSummarySchema,
+      undefined,
+      'GET',
     ),
 };
 
