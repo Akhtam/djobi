@@ -9,7 +9,13 @@ const profile = {
     sponsorship_required: 'No',
     veteran_status: 'I am not a protected veteran',
   } as Record<string, string>,
-  customAnswers: [{ question: 'How did you hear about us?', answer: 'LinkedIn' }],
+  customAnswers: [
+    { question: 'How did you hear about us?', answer: 'LinkedIn' },
+    {
+      question: ' How are you currently using AI tools in your coding workflow?',
+      answer: 'I use OpenRouter to switch between LLMs, and run agents in a Docker sandbox.',
+    },
+  ],
 };
 
 describe('matchScreeningTopic', () => {
@@ -79,6 +85,36 @@ describe('preparedAnswerFor', () => {
 
   it('answers from a custom entry when no topic matches, matching loosely on wording', () => {
     expect(preparedAnswerFor(profile, 'How did you hear about us?')).toBe('LinkedIn');
+  });
+
+  it('answers a form question that paraphrases a custom entry rather than restating it', () => {
+    // The stored question was written months before this form's, so the two share their subject and
+    // nothing else. Containment alone left the prepared answer unused and drafted a fresh one.
+    expect(preparedAnswerFor(profile, 'How do you currently use AI tools in your work?')).toBe(
+      'I use OpenRouter to switch between LLMs, and run agents in a Docker sandbox.',
+    );
+  });
+
+  it('still declines a question that merely shares a word with a custom entry', () => {
+    expect(
+      preparedAnswerFor(profile, 'What tools does your team use for code review?'),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['How many years have you used React?', 'How many years have you used React Native?'],
+    ['Are you able to work in Portland?', 'Are you able to work in South Portland?'],
+    [
+      'Why are you interested in the Software Engineer role?',
+      'Why are you interested in the Senior Software Engineer role?',
+    ],
+    ['How have you used Oracle?', 'How have you used Oracle Cloud?'],
+  ])('does not reuse an answer when %j becomes %j', (storedQuestion, asked) => {
+    const specificProfile = {
+      customAnswers: [{ question: storedQuestion, answer: 'Only true for the stored subject.' }],
+    };
+
+    expect(preparedAnswerFor(specificProfile, asked)).toBeUndefined();
   });
 
   it('returns undefined for a topic the profile has left blank', () => {

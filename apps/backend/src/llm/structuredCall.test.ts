@@ -69,6 +69,71 @@ describe('callStructured', () => {
     expect(mockCreate.mock.calls[0][1]).toEqual({ maxRetries: 0 });
   });
 
+  it('sends model effort only when the operation selects one', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+    );
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      effort: 'medium',
+      toolName: 'report_sample',
+      toolDescription: 'Report the sample.',
+      schema: SampleSchema,
+      userContent: 'sample prompt',
+    });
+
+    expect(mockCreate.mock.calls[0][0].output_config).toEqual({ effort: 'medium' });
+
+    mockCreate.mockClear();
+    await callStructured({
+      model: 'claude-haiku-4-5-20251001',
+      maxTokens: 256,
+      toolName: 'report_sample',
+      toolDescription: 'Report the sample.',
+      schema: SampleSchema,
+      userContent: 'sample prompt',
+    });
+
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('output_config');
+  });
+
+  it('logs selected effort and thinking-token usage without logging prompt content', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockCreate.mockResolvedValue({
+      ...toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+      usage: {
+        input_tokens: 100,
+        output_tokens: 40,
+        output_tokens_details: { thinking_tokens: 12 },
+      },
+    });
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      effort: 'medium',
+      toolName: 'report_sample',
+      toolDescription: 'Report the sample.',
+      schema: SampleSchema,
+      userContent: 'private prompt content',
+    });
+
+    expect(console.log).toHaveBeenCalledWith(
+      '[djobi] structured_call',
+      expect.objectContaining({
+        effort: 'medium',
+        inputTokens: 100,
+        outputTokens: 40,
+        thinkingTokens: 12,
+      }),
+    );
+    expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(
+      'private prompt content',
+    );
+  });
+
   const call = () =>
     callStructured({
       model: 'claude-sonnet-5',
@@ -103,6 +168,9 @@ describe('callStructured', () => {
       model: 'claude-sonnet-5',
       attempt: 2,
       maxAttempts: 2,
+      // The retry doubles the operation's latency, so what the first attempt already cost is the
+      // one number that explains a run which took twice as long as usual.
+      firstAttemptMs: expect.any(Number),
       requestId: 'req-first',
       stopReason: undefined,
     });
@@ -177,4 +245,122 @@ describe('callStructured', () => {
       expect(console.warn).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('callStructured cachedPrefix', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  it('sends the prefix as its own cache-marked block ahead of the varying half', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+    );
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      toolName: 'report_sample',
+      toolDescription: 'a sample tool',
+      schema: SampleSchema,
+      cachedPrefix: 'the stable half',
+      userContent: 'the varying half',
+    });
+
+    expect(mockCreate.mock.calls[0][0].messages[0].content).toEqual([
+      { type: 'text', text: 'the stable half', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'the varying half' },
+    ]);
+  });
+
+  it('sends a plain string when no prefix is given, as every other caller does', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+    );
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      toolName: 'report_sample',
+      toolDescription: 'a sample tool',
+      schema: SampleSchema,
+      userContent: 'just the one block',
+    });
+
+    expect(mockCreate.mock.calls[0][0].messages[0].content).toBe('just the one block');
+  });
+});
+
+describe('callStructured abort', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('hands the signal to the SDK, so giving up stops the generation rather than just the wait', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+    );
+    const controller = new AbortController();
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      toolName: 'report_sample',
+      toolDescription: 'a sample tool',
+      schema: SampleSchema,
+      userContent: 'sample prompt',
+      signal: controller.signal,
+    });
+
+    expect(mockCreate.mock.calls[0][1]).toEqual({ maxRetries: 0, signal: controller.signal });
+  });
+
+  it('does not retry an abandoned call, which would spend a second request on an answer nobody wants', async () => {
+    // Without the abort check this is a textbook retryable failure — no tool call, `end_turn` — and
+    // the retry would run a whole second generation for a candidate who has already closed the panel.
+    mockCreate.mockResolvedValue({
+      content: [{ type: 'text', text: 'Sure!' }],
+      stop_reason: 'end_turn',
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      callStructured({
+        model: 'claude-sonnet-5',
+        maxTokens: 256,
+        toolName: 'report_sample',
+        toolDescription: 'a sample tool',
+        schema: SampleSchema,
+        userContent: 'sample prompt',
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ kind: 'no-tool-call' });
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(console.warn).not.toHaveBeenCalledWith(
+      '[djobi] structured_call_retry',
+      expect.anything(),
+    );
+  });
+
+  it('marks the forced tool strict, so the schema binds generation instead of advising it', async () => {
+    // Without this the model picks its own container when a shape is awkward: `assessRequirements`
+    // returned its `fit` array double-encoded as a string on 3 of 3 measured calls.
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ title: 'Hello', count: null, tags: [], detail: { note: 'ok' } }),
+    );
+
+    await callStructured({
+      model: 'claude-sonnet-5',
+      maxTokens: 256,
+      toolName: 'report_sample',
+      toolDescription: 'a sample tool',
+      schema: SampleSchema,
+      userContent: 'sample prompt',
+    });
+
+    expect(mockCreate.mock.calls[0][0].tools[0].strict).toBe(true);
+  });
 });

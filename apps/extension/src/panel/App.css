@@ -1023,6 +1023,11 @@ button:disabled {
   margin-top: 8px;
 }
 
+/* Author-level layout rules can override Chromium's native closed-details hiding. */
+.keyword-coverage:not([open]) > .keyword-coverage-content {
+  display: none;
+}
+
 /* `display` deliberately left at the `details` default on every group in here. A `details` laid out
    as flex or grid renders its content even when it is closed on Chromium before `::details-content`
    (M131), so a column layout at this level would make the collapse silently do nothing on an older

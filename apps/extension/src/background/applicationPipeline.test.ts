@@ -3,6 +3,7 @@ import type {
   JobInfo,
   Profile,
   QuestionAnswer,
+  RequirementFit,
   TailoredResume,
 } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,7 @@ import {
 } from '../lib/tabStore';
 import type { BackendClient } from '../lib/backendClient';
 import type { FillPageCommand, PageClient } from '../lib/pageClient';
+import { recordReport } from './detectedFields';
 import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
 
 /**
@@ -67,7 +69,8 @@ const questionField: DetectedField = {
   inputType: 'textarea',
   selector: '#why-field',
   category: 'question',
-  required: false,
+  // Required, because only a required question is drafted — see the optional-question case below.
+  required: true,
   elementRole: 'native',
 };
 
@@ -228,6 +231,34 @@ describe('runAnalysis', () => {
     expect(await getPipelineRun(7)).toMatchObject({ jobDescription: 'New posting' });
   });
 
+  it('starts the duplicate lookup while the enriched field snapshot is still pending', async () => {
+    stubChrome();
+    let releaseOracle!: () => void;
+    const oracleGate = new Promise<void>((resolve) => {
+      releaseOracle = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        await oracleGate;
+        return { ok: true, json: async () => ({ questions: [] }) } as unknown as Response;
+      }),
+    );
+    const report = recordReport(7, 0, [questionField], JOB_URL);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    const deps = makeDeps();
+
+    const analysis = runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
+    await vi.waitFor(() => expect(deps.backend.findApplicationDuplicates).toHaveBeenCalled());
+    expect(deps.backend.extractJob).not.toHaveBeenCalled();
+
+    releaseOracle();
+    await report;
+    await analysis;
+
+    expect(deps.backend.extractJob).toHaveBeenCalled();
+  });
+
   it('answers a screening question from the profile without asking the model at all', async () => {
     stubChrome();
     const deps = makeDeps();
@@ -251,8 +282,8 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
 
-    // The model is asked nothing — the profile already settles this one.
-    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, []);
+    // The model is asked nothing — the profile already settles this one, so no request is sent.
+    expect(deps.backend.answerQuestions).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({
       answers: [
         {
@@ -289,14 +320,117 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(prepared, jobInfo, [
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(
+      prepared,
+      jobInfo,
+      [
+        {
+          fieldId: 'f-sponsor',
+          question: 'Will you require sponsorship?',
+          options: ['I have unrestricted work rights', 'I need employer support'],
+          knownAnswer: 'No',
+        },
+      ],
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('drafts only the required questions, leaving an optional one to the candidate', async () => {
+    // Drafting is the slowest call in the Analysis Step and its cost is per question, so an
+    // optional box — one the candidate can simply leave empty — is not worth the wait.
+    stubChrome();
+    const deps = makeDeps();
+    const optional: DetectedField = {
+      id: 'f-extra',
+      label: 'Anything else you would like us to know?',
+      inputType: 'textarea',
+      selector: '#extra-field',
+      category: 'question',
+      required: false,
+      elementRole: 'native',
+    };
+    await reportDetectedPage(7, 0, { fields: [questionField, optional] });
+
+    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(
+      profile,
+      jobInfo,
+      [{ fieldId: 'f-why', question: 'Why do you want to work here?' }],
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('still fills an optional question the profile already answers, which costs no model call', async () => {
+    stubChrome();
+    const deps = makeDeps();
+    const optional: DetectedField = {
+      id: 'f-country',
+      label: 'What country are you based in?',
+      inputType: 'text',
+      selector: '#country-field',
+      category: 'question',
+      required: false,
+      elementRole: 'native',
+    };
+    const prepared = {
+      ...profile,
+      customAnswers: [{ question: 'What country are you based in?', answer: 'USA' }],
+    };
+    await reportDetectedPage(7, 0, { fields: [optional] });
+
+    await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
+
+    // Not called at all: with nothing left to draft, the Analysis Step spends no request finding out.
+    expect(deps.backend.answerQuestions).not.toHaveBeenCalled();
+    const run = await getPipelineRun(7);
+    expect(run?.answers).toEqual([
       {
-        fieldId: 'f-sponsor',
-        question: 'Will you require sponsorship?',
-        options: ['I have unrestricted work rights', 'I need employer support'],
-        knownAnswer: 'No',
+        fieldId: 'f-country',
+        question: 'What country are you based in?',
+        answer: 'USA',
+        sourceStoryIds: [],
       },
     ]);
+  });
+
+  it("sends an optional question the profile knows but can't map, which costs no model call", async () => {
+    // The required-only filter is about model calls, and this question needs none: `answerQuestions`
+    // maps the stated fact onto the form's options itself. Dropped here, an optional question the
+    // candidate has already answered would simply be left blank.
+    stubChrome();
+    const deps = makeDeps();
+    const sponsorship: DetectedField = {
+      id: 'f-sponsor',
+      label: 'Will you require sponsorship?',
+      inputType: 'radiogroup',
+      selector: '#sponsor-field',
+      category: 'question',
+      required: false,
+      elementRole: 'radiogroup',
+      options: [
+        { label: 'I have unrestricted work rights', selector: '#a' },
+        { label: 'I need employer support', selector: '#b' },
+      ],
+    };
+    const prepared = { ...profile, screeningAnswers: { sponsorship_required: 'No' } };
+    await reportDetectedPage(7, 0, { fields: [sponsorship] });
+
+    await runAnalysis(7, null, prepared, 'Senior Engineer at Acme...', deps);
+
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(
+      prepared,
+      jobInfo,
+      [
+        {
+          fieldId: 'f-sponsor',
+          question: 'Will you require sponsorship?',
+          options: ['I have unrestricted work rights', 'I need employer support'],
+          knownAnswer: 'No',
+        },
+      ],
+      expect.any(AbortSignal),
+    );
   });
 
   it("keeps prepared and drafted answers in the page's own field order, not prepared-first", async () => {
@@ -338,11 +472,21 @@ describe('runAnalysis', () => {
       deps,
     );
 
-    expect(deps.backend.extractJob).toHaveBeenCalledWith('Senior Engineer at Acme...');
-    expect(deps.backend.tailorResume).toHaveBeenCalledWith(profile, jobInfo);
-    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
-      { fieldId: 'f-why', question: 'Why do you want to work here?' },
-    ]);
+    expect(deps.backend.extractJob).toHaveBeenCalledWith(
+      'Senior Engineer at Acme...',
+      expect.any(AbortSignal),
+    );
+    expect(deps.backend.tailorResume).toHaveBeenCalledWith(
+      profile,
+      jobInfo,
+      expect.any(AbortSignal),
+    );
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(
+      profile,
+      jobInfo,
+      [{ fieldId: 'f-why', question: 'Why do you want to work here?' }],
+      expect.any(AbortSignal),
+    );
     expect(await getPipelineRun(7)).toEqual({
       runId: expect.any(String),
       status: 'review',
@@ -363,22 +507,40 @@ describe('runAnalysis', () => {
     });
   });
 
-  it('checkpoints how the profile measures up to each stated requirement', async () => {
+  it('opens review before progressively checkpointing Requirement Fit', async () => {
     stubChrome();
     const fit = [
       { requirement: '5 years of Go', verdict: 'unmet' as const, evidence: null, note: 'Two.' },
     ];
-    const deps = makeDeps({ assessRequirements: vi.fn().mockResolvedValue(fit) });
+    let resolveFit!: (fit: RequirementFit[]) => void;
+    const fitPending = new Promise<RequirementFit[]>((resolve) => {
+      resolveFit = resolve;
+    });
+    const jobWithRequirements = { ...jobInfo, requirements: ['5 years of Go'] };
+    const deps = makeDeps({
+      extractJob: vi.fn().mockResolvedValue(jobWithRequirements),
+      assessRequirements: vi.fn(() => fitPending),
+    });
     await reportDetectedPage(7, 0, { fields: [questionField] });
 
-    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+    const analysis = runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
+    await vi.waitFor(async () => {
+      expect(await getPipelineRun(7)).toMatchObject({ status: 'review', requirementFit: [] });
+    });
 
-    expect((await getPipelineRun(7))?.requirementFit).toEqual(fit);
+    await runFill(7, profile, deps);
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled', requirementFit: [] });
+
+    resolveFit(fit);
+    await analysis;
+
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled', requirementFit: fit });
   });
 
   it('completes the analysis when the requirement assessment fails — it is advice about the run, never the run itself', async () => {
     stubChrome();
     const deps = makeDeps({
+      extractJob: vi.fn().mockResolvedValue({ ...jobInfo, requirements: ['5 years of Go'] }),
       assessRequirements: vi.fn().mockRejectedValue(new Error('backend is down')),
     });
     await reportDetectedPage(7, 0, { fields: [questionField] });
@@ -436,13 +598,18 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(profile, jobInfo, [
-      {
-        fieldId: 'f-auth',
-        question: 'Are you authorized to work in the US?',
-        options: ['Yes', 'No'],
-      },
-    ]);
+    expect(deps.backend.answerQuestions).toHaveBeenCalledWith(
+      profile,
+      jobInfo,
+      [
+        {
+          fieldId: 'f-auth',
+          question: 'Are you authorized to work in the US?',
+          options: ['Yes', 'No'],
+        },
+      ],
+      expect.any(AbortSignal),
+    );
   });
 
   it('checkpoints "analyzing" before the first call, so the panel has something to render while it waits', async () => {
@@ -474,7 +641,8 @@ describe('runAnalysis', () => {
 
   it("checkpoints the underlying cause alongside 'analyze-error', so the panel can report which call failed instead of a generic message", async () => {
     stubChrome();
-    await reportDetectedPage(7, 0, { fields: [] });
+    // A required question, so the drafting call is actually made and can be the one that fails.
+    await reportDetectedPage(7, 0, { fields: [questionField] });
     const deps = makeDeps({
       answerQuestions: vi
         .fn()
@@ -582,7 +750,10 @@ describe('runAnalysis', () => {
 
     await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
 
-    expect(deps.backend.findApplicationDuplicates).toHaveBeenCalledWith(JOB_URL);
+    expect(deps.backend.findApplicationDuplicates).toHaveBeenCalledWith(
+      JOB_URL,
+      expect.any(AbortSignal),
+    );
     expect(deps.backend.extractJob).not.toHaveBeenCalled();
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'duplicate',
@@ -663,6 +834,41 @@ describe('runAnalysis', () => {
 
     expect(await getPipelineRun(7)).toMatchObject({
       runId: secondRun!.runId,
+      status: 'review',
+      jobDescription: 'Second posting',
+      jobInfo: newerJobInfo,
+    });
+  });
+
+  it('aborts a progressive Requirement Fit call when a newer analysis supersedes it', async () => {
+    stubChrome();
+    await reportDetectedPage(7, 0, { fields: [questionField] });
+    let firstSignal: AbortSignal | undefined;
+    const firstJobInfo = { ...jobInfo, requirements: ['5 years of Go'] };
+    const firstDeps = makeDeps({
+      extractJob: vi.fn().mockResolvedValue(firstJobInfo),
+      assessRequirements: vi.fn((_profile, _jobInfo, signal) => {
+        if (!signal) return Promise.reject(new Error('missing analysis signal'));
+        firstSignal = signal;
+        return new Promise<RequirementFit[]>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      }),
+    });
+    const newerJobInfo = { ...jobInfo, company: 'Globex' };
+    const secondDeps = makeDeps({ extractJob: vi.fn().mockResolvedValue(newerJobInfo) });
+
+    const first = runAnalysis(7, JOB_URL, profile, 'First posting', firstDeps, true);
+    await vi.waitFor(async () => {
+      expect(firstDeps.backend.assessRequirements).toHaveBeenCalled();
+      expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
+    });
+
+    const second = runAnalysis(7, JOB_URL, profile, 'Second posting', secondDeps, true);
+    await Promise.all([first, second]);
+
+    expect(firstSignal?.aborted).toBe(true);
+    expect(await getPipelineRun(7)).toMatchObject({
       status: 'review',
       jobDescription: 'Second posting',
       jobInfo: newerJobInfo,

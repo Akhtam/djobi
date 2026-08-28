@@ -54,10 +54,11 @@ _does_ run for a 404, which is a convincing way to look correct while logging al
 --> POST /answer-questions 400 4ms
 ```
 
-Most "the extension isn't working" questions end here. Note the Analysis Step awaits
-`/extract-job` first and only then fires `/tailor-resume` and `/answer-questions` in parallel — so
-if `/extract-job` 500s (usually a missing `ANTHROPIC_API_KEY`), the other two are never called and
-their absence from this log is the expected consequence, not a second bug.
+Most "the extension isn't working" questions end here. The Analysis Step awaits `/extract-job`, then
+fires `/tailor-resume` and `/answer-questions` in parallel. It checkpoints Review as soon as those
+finish and starts `/assess-requirements` afterward, so Requirement Fit does not compete with or block
+the primary result. If `/extract-job` 500s (usually a missing `ANTHROPIC_API_KEY`), none of the later
+routes are called and their absence from this log is expected.
 
 Uncaught failures are already logged by `app.onError` with the method, path and stack.
 
@@ -263,25 +264,39 @@ since drizzle-kit runs outside the app's own env loading.
 ### `client.ts`
 
 The `Anthropic` SDK singleton (picks up credentials from `ANTHROPIC_API_KEY` or an `ant auth login`
-profile automatically) and `MODEL`: `claude-sonnet-5`, used by every call. `callStructured` still
-takes the model per call, so a cheaper tier can be reintroduced for one call site without a
-refactor.
+profile automatically), plus two pinned models. `MODEL` is `claude-sonnet-5` for resume rewriting.
+`FAST_MODEL` is `claude-haiku-4-5-20251001` for structured Job Info extraction, application answers,
+Ask turns, and Requirement Fit. Extraction is the serial first stage of Analysis, so leaving that
+bounded structured task on Sonnet delayed every later call even when resume and answer generation
+were optimized.
 
 ### `structuredCall.ts`
 
-**The one non-obvious file.** The design called for `client.messages.parse()` + `zodOutputFormat()`
-(structured outputs), but the installed `@anthropic-ai/sdk` (0.68.0) has neither — no `.parse()`, no
-`output_config.format`, no `zodOutputFormat` export. `callStructured()` gets the same effect with
-what 0.68.0 supports: it forces a single tool call (`tool_choice: { type: 'tool', name }`) and
-validates the tool's `input` against the zod schema (`schema.safeParse`) before returning.
+**The one non-obvious file.** `callStructured()` forces a single tool call
+(`tool_choice: { type: 'tool', name }`) with `strict: true`, and validates the tool's `input`
+against the zod schema (`schema.safeParse`) before returning.
+
+`strict: true` is what makes `input_schema` binding rather than advisory. Without it the model
+picks its own container whenever a shape is awkward: `assessRequirements` returned its `fit` array
+double-encoded as a **string** on 3 of 3 measured calls, which reaches the candidate as a 500 — the
+failure `asFitArray` was written to absorb.
+
+This file used to say the design called for `client.messages.parse()` + `zodOutputFormat()`
+(structured outputs) and settled for a forced tool only because `@anthropic-ai/sdk` 0.68.0 had
+neither. The SDK is now on 0.122.0 and has both, and the plan was measured rather than adopted:
+on the same schema, `output_config.format` produced the same correct shape but took **11-20s
+against this path's 8-10s, on 1.5-2x the output tokens**. A schema-enforced tool call is the same
+guarantee at the lower price, so the forced tool stays on purpose, not for want of an alternative.
+(`zodOutputFormat` would also want a `zod/v4` schema, where this package's schemas are v3.)
 
 The tool's `input_schema` is **derived from that same zod schema** via `zod-to-json-schema` (pinned
 exact at 3.24.6 to match the installed zod), with `$refStrategy: 'none'` so the schema stays flat —
 Anthropic's `input_schema` doesn't dereference `$ref`/`definitions`. There are no hand-maintained
 JSON Schema mirrors anywhere in this package; if one appears, it's a regression.
 
-If the SDK is upgraded and `.parse()`/`zodOutputFormat` become available, this is the only function
-that needs to change — every call site goes through it.
+Every call site goes through this one function, so a change of mechanism is a change to this file
+alone — which is how the `strict` and structured-outputs comparison above was made without touching
+a single operation.
 
 ### `promptContext.ts`
 
@@ -297,17 +312,26 @@ Takes the candidate-reviewed **Job Description** field (whether manually pasted 
 populated by Autofill's focused page extractor), forces the `report_job_info` tool, and returns a
 validated `JobInfo`. The prompt deliberately does not describe the input as raw scraped page text;
 told that, a model tolerates and mines junk that the extractor is required to reject.
+It uses Haiku because this call is the serial gate before resume and answer generation can start;
+the strict schema and local validation bound its output without paying Sonnet latency for extraction.
 
 ### `tailorResume.ts`
 
 Takes the Profile's skills/work experience plus `JobInfo`, and returns a validated
-`TailoredResume`. Post-processing restores company/title/date metadata from the Profile, drops
-fabricated entries and skills, and applies model-authored bullets only to an unambiguous matching
-experience entry. The prompt also explicitly forbids inventing experience.
+`TailoredResume`. Sonnet runs at medium effort and returns only source indices plus rewritten bullet
+text; post-processing resolves all skill strings and company/title/date metadata from the Profile.
+Missing, duplicate, or invalid pointers conservatively fall back to the source role.
+
+### `assessRequirements.ts`
+
+Runs one compact Haiku call per stated requirement, with at most four in flight. Each call returns a
+verdict, a short note, and a pointer into a skill, role, bullet, or education entry; requirement text
+and evidence prose are restored from authoritative input. A positive verdict whose pointer does not
+resolve is downgraded to `unmet`, and one failed call aborts its active siblings.
 
 ### `answerQuestions.ts`
 
-Sonnet call. Takes the answer-writing projection of `Profile` (work experience, education, skills,
+Haiku call. Takes the answer-writing projection of `Profile` (work experience, education, skills,
 and stories), `JobInfo`, and a list of `{ fieldId, question, options?, knownAnswer? }`; returns
 validated `QuestionAnswer`s, each recording which `Story.id`s it drew on. Invalid choice answers are
 omitted during post-processing, so the result is not guaranteed to contain one answer per input.

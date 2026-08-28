@@ -5,13 +5,13 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
+  FAST_MODEL: 'claude-haiku-4-5-20251001',
   MODEL: 'claude-sonnet-5',
 }));
 
 const { assessRequirements } = await import('./assessRequirements.js');
 
 const BULLET = 'Led the billing service migration onto Kubernetes';
-
 const profile: AssessRequirementsProfile = {
   workExperience: [
     {
@@ -22,7 +22,14 @@ const profile: AssessRequirementsProfile = {
       bullets: [BULLET, 'Owned the on-call rotation'],
     },
   ],
-  education: [],
+  education: [
+    {
+      school: 'State University',
+      degree: 'BS',
+      field: 'Computer Science',
+      graduationYear: '2021',
+    },
+  ],
   skills: ['TypeScript', 'PostgreSQL'],
 };
 
@@ -32,7 +39,7 @@ const jobInfo: JobInfo = {
   roleTitle: 'Senior Software Engineer',
   seniority: 'Senior',
   location: null,
-  requirements: ['Experience running Kubernetes', 'A PhD in distributed systems'],
+  requirements: ['Experience running Kubernetes', 'A degree in computer science'],
   keywords: [],
 };
 
@@ -42,280 +49,177 @@ function toolUseResponse(input: unknown) {
   };
 }
 
+const unmet = (note = '') => toolUseResponse({ verdict: 'unmet', evidence: null, note });
+
 describe('assessRequirements', () => {
   beforeEach(() => {
     mockCreate.mockReset();
   });
 
-  it('resolves a bullet pointer into the bullet text, so what reaches the panel is Profile prose and not the model’s', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
-            note: '',
-          },
-        ],
-      }),
-    );
-
-    const fit = await assessRequirements(profile, jobInfo);
-
-    expect(fit[0]).toEqual({
-      requirement: 'Experience running Kubernetes',
-      verdict: 'met',
-      evidence: BULLET,
-      note: '',
-    });
-  });
-
-  it('resolves a skill pointer against the profile’s own skills list', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'partial',
-            evidence: { kind: 'skill', index: 1 },
-            note: 'Adjacent, not direct.',
-          },
-        ],
-      }),
-    );
-
-    const [entry] = await assessRequirements(profile, jobInfo);
-
-    expect(entry.evidence).toBe('PostgreSQL');
-    expect(entry.verdict).toBe('partial');
-  });
-
-  it('downgrades a met verdict whose pointer resolves to nothing — an unverifiable claim that the candidate qualifies is the one error worth refusing', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 9 },
-            note: '',
-          },
-        ],
-      }),
-    );
-
-    const [entry] = await assessRequirements(profile, jobInfo);
-
-    expect(entry).toEqual({
-      requirement: 'Experience running Kubernetes',
-      verdict: 'unmet',
-      evidence: null,
-      note: '',
-    });
-  });
-
-  it('downgrades a met verdict that offers no pointer at all, rather than taking the word for it', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: null,
-            note: '',
-          },
-        ],
-      }),
-    );
-
-    const [entry] = await assessRequirements(profile, jobInfo);
-
-    expect(entry.verdict).toBe('unmet');
-  });
-
-  it('keeps an unmet verdict and its note, which is the row that carries the useful information', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'A PhD in distributed systems',
-            verdict: 'unmet',
-            evidence: null,
-            note: 'Your profile lists no doctorate.',
-          },
-        ],
-      }),
-    );
-
-    const fit = await assessRequirements(profile, jobInfo);
-
-    expect(fit[1]).toEqual({
-      requirement: 'A PhD in distributed systems',
-      verdict: 'unmet',
-      evidence: null,
-      note: 'Your profile lists no doctorate.',
-    });
-  });
-
-  it('drops a requirement the posting never stated, so the model cannot add one to answer', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          { requirement: 'Willingness to relocate', verdict: 'unmet', evidence: null, note: 'No.' },
-          {
-            requirement: 'A PhD in distributed systems',
-            verdict: 'unmet',
-            evidence: null,
-            note: '',
-          },
-        ],
-      }),
-    );
-
-    const fit = await assessRequirements(profile, jobInfo);
-
-    expect(fit.map((entry) => entry.requirement)).toEqual(jobInfo.requirements);
-    expect(fit.map((entry) => entry.requirement)).not.toContain('Willingness to relocate');
-  });
-
-  it('reports each requirement once, in the posting’s order, however the model ordered or repeated them', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'A PhD in distributed systems',
-            verdict: 'unmet',
-            evidence: null,
-            note: '',
-          },
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
-            note: '',
-          },
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'unmet',
-            evidence: null,
-            note: 'duplicate',
-          },
-        ],
-      }),
-    );
-
-    const fit = await assessRequirements(profile, jobInfo);
-
-    expect(fit.map((entry) => entry.requirement)).toEqual(jobInfo.requirements);
-    expect(fit[0].verdict).toBe('met');
-  });
-
-  it('reports a requirement the model said nothing about as unmet, so silence never reads as qualified', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: [
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
-            note: '',
-          },
-        ],
-      }),
-    );
-
-    const fit = await assessRequirements(profile, jobInfo);
-
-    expect(fit[1]).toEqual({
-      requirement: 'A PhD in distributed systems',
-      verdict: 'unmet',
-      evidence: null,
-      note: '',
-    });
-  });
-
-  it('accepts a fit array that the model double-encoded as JSON, while still validating its entries', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: JSON.stringify([
-          {
-            requirement: 'Experience running Kubernetes',
-            verdict: 'met',
-            evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
-            note: '',
-          },
-        ]),
-      }),
-    );
-
-    const [entry] = await assessRequirements(profile, jobInfo);
-
-    expect(entry).toEqual({
-      requirement: 'Experience running Kubernetes',
-      verdict: 'met',
-      evidence: BULLET,
-      note: '',
-    });
-  });
-
-  it.each([
-    // The shapes seen in production. A tool `input_schema` is advisory, so `"type": "array"` on
-    // `fit` — asserted below — does not stop the model reaching for a container of its own.
-    ['a lone entry sent unwrapped', (entry: unknown) => entry],
-    ['the array re-wrapped in the tool envelope', (entry: unknown) => ({ fit: [entry] })],
-    ['an index-keyed object', (entry: unknown) => ({ '0': entry })],
-  ])('recovers a report the model returned as %s', async (_shape, wrap) => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        fit: wrap({
-          requirement: 'Experience running Kubernetes',
+  it('assesses each requirement independently and restores authoritative text in posting order', async () => {
+    mockCreate
+      .mockResolvedValueOnce(
+        toolUseResponse({
           verdict: 'met',
           evidence: { kind: 'bullet', roleIndex: 0, bulletIndex: 0 },
           note: '',
         }),
-      }),
+      )
+      .mockResolvedValueOnce(unmet('Your profile lists no graduate degree.'));
+
+    const fit = await assessRequirements(profile, jobInfo);
+
+    expect(fit).toEqual([
+      {
+        requirement: jobInfo.requirements[0],
+        verdict: 'met',
+        evidence: BULLET,
+        note: '',
+      },
+      {
+        requirement: jobInfo.requirements[1],
+        verdict: 'unmet',
+        evidence: null,
+        note: 'Your profile lists no graduate degree.',
+      },
+    ]);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [{ kind: 'skill', index: 1 }, 'PostgreSQL'],
+    [{ kind: 'education', index: 0 }, 'BS in Computer Science, State University, 2021'],
+    [{ kind: 'role', roleIndex: 0 }, 'Senior Software Engineer at Acme Corp (2022-01-Present)'],
+  ])('resolves the verified %o pointer', async (evidence, expected) => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ verdict: 'partial', evidence, note: 'Partial.' }),
     );
 
-    const [entry] = await assessRequirements(profile, jobInfo);
+    const [entry] = await assessRequirements(profile, {
+      ...jobInfo,
+      requirements: [jobInfo.requirements[0]],
+    });
+
+    expect(entry).toMatchObject({ verdict: 'partial', evidence: expected });
+  });
+
+  it.each([
+    null,
+    { kind: 'skill', index: -1 },
+    { kind: 'skill', index: 99 },
+    { kind: 'education', index: 99 },
+    { kind: 'role', roleIndex: 99 },
+    { kind: 'bullet', roleIndex: 0, bulletIndex: 99 },
+  ])('downgrades a positive verdict with unresolved evidence %o', async (evidence) => {
+    mockCreate.mockResolvedValue(toolUseResponse({ verdict: 'met', evidence, note: '' }));
+
+    const [entry] = await assessRequirements(profile, {
+      ...jobInfo,
+      requirements: [jobInfo.requirements[0]],
+    });
+
+    expect(entry).toMatchObject({ verdict: 'unmet', evidence: null });
+  });
+
+  it('discards evidence on an unmet verdict and defaults an omitted note', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({ verdict: 'unmet', evidence: { kind: 'skill', index: 0 } }),
+    );
+
+    const [entry] = await assessRequirements(profile, {
+      ...jobInfo,
+      requirements: [jobInfo.requirements[0]],
+    });
 
     expect(entry).toEqual({
-      requirement: 'Experience running Kubernetes',
-      verdict: 'met',
-      evidence: BULLET,
+      requirement: jobInfo.requirements[0],
+      verdict: 'unmet',
+      evidence: null,
       note: '',
     });
   });
 
-  it('still fails a container that is not a report, rather than reinterpreting it into one', async () => {
-    // The normalization rearranges containers only. An output that means something else has to
-    // reach validation intact — a wrapped-up nonsense entry would become a report of one verdict
-    // nobody asked for, which is exactly what this module's reconciliation exists to prevent.
-    mockCreate.mockResolvedValue(toolUseResponse({ fit: { unexpected: 'shape' } }));
+  it('assesses duplicate requirement text in separate calls rather than collapsing it by value', async () => {
+    mockCreate
+      .mockResolvedValueOnce(unmet('First assessment.'))
+      .mockResolvedValueOnce(unmet('Second assessment.'));
 
-    await expect(assessRequirements(profile, jobInfo)).rejects.toMatchObject({
-      kind: 'invalid-input',
-      toolName: 'report_requirement_fit',
+    const fit = await assessRequirements(profile, {
+      ...jobInfo,
+      requirements: ['Same requirement', 'Same requirement'],
     });
+
+    expect(fit.map((entry) => entry.note)).toEqual(['First assessment.', 'Second assessment.']);
   });
 
-  it('spends no model call on a posting whose extraction found no requirements', async () => {
-    const fit = await assessRequirements(profile, { ...jobInfo, requirements: [] });
+  it('runs at most four requirement generations concurrently', async () => {
+    const resolvers: Array<(value: ReturnType<typeof unmet>) => void> = [];
+    mockCreate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const pending = assessRequirements(profile, {
+      ...jobInfo,
+      requirements: Array.from({ length: 6 }, (_, index) => `Requirement ${index}`),
+    });
 
-    expect(fit).toEqual([]);
-    expect(mockCreate).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(4));
+    for (const resolve of resolvers.splice(0, 4)) resolve(unmet());
+    await vi.waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(6));
+    for (const resolve of resolvers.splice(0)) resolve(unmet());
+
+    await expect(pending).resolves.toHaveLength(6);
   });
 
-  it('grounds the call in the profile and the job, and forces the tool call like every other writing call', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ fit: [] }));
+  it('aborts active siblings and starts no queued calls after one requirement fails', async () => {
+    const failure = new Error('provider unavailable');
+    let call = 0;
+    mockCreate.mockImplementation((_request, options: { signal?: AbortSignal }) => {
+      call += 1;
+      if (call === 1) return Promise.reject(failure);
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+          once: true,
+        });
+      });
+    });
+
+    await expect(
+      assessRequirements(profile, {
+        ...jobInfo,
+        requirements: Array.from({ length: 8 }, (_, index) => `Requirement ${index}`),
+      }),
+    ).rejects.toBe(failure);
+
+    expect(mockCreate.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(mockCreate.mock.calls.slice(1).every(([, options]) => options.signal.aborted)).toBe(
+      true,
+    );
+  });
+
+  it('uses compact Haiku calls containing only the current requirement', async () => {
+    mockCreate.mockResolvedValue(unmet());
 
     await assessRequirements(profile, jobInfo);
 
-    const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-sonnet-5');
-    expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_requirement_fit' });
-    expect(request.tools[0].input_schema.properties.fit.type).toBe('array');
-    expect(request.messages[0].content).toContain(JSON.stringify(profile));
-    expect(request.messages[0].content).toContain(JSON.stringify(jobInfo));
+    const firstRequest = mockCreate.mock.calls[0][0];
+    expect(firstRequest.model).toBe('claude-haiku-4-5-20251001');
+    expect(firstRequest).not.toHaveProperty('output_config');
+    expect(firstRequest.max_tokens).toBe(512);
+    expect(firstRequest.tools[0].input_schema.properties).toHaveProperty('verdict');
+    expect(JSON.stringify(firstRequest.tools[0].input_schema)).not.toContain('minimum');
+    expect(firstRequest.tools[0].input_schema.properties).not.toHaveProperty('fit');
+    expect(firstRequest.tools[0].input_schema.properties).not.toHaveProperty('requirement');
+    expect(firstRequest.messages[0].content).toContain(JSON.stringify(jobInfo.requirements[0]));
+    expect(firstRequest.messages[0].content).not.toContain(JSON.stringify(jobInfo.requirements[1]));
+  });
+
+  it('spends no model call on a posting with no requirements', async () => {
+    await expect(assessRequirements(profile, { ...jobInfo, requirements: [] })).resolves.toEqual(
+      [],
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

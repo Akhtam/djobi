@@ -33,5 +33,18 @@ export function sanitizeXmlContent(content: string): string {
 export function groundingContext(profile: object, jobInfo?: JobInfo): string {
   const profileSection = `<base_profile>\n${sanitizeXmlContent(JSON.stringify(profile))}\n</base_profile>`;
   if (!jobInfo) return profileSection;
-  return `${profileSection}\n\n<job_info>\n${sanitizeXmlContent(JSON.stringify(jobInfo))}\n</job_info>`;
+  return `${profileSection}\n\n${jobContext(jobInfo)}`;
+}
+
+/**
+ * The `<job_info>` block on its own.
+ *
+ * For a caller that has to put something *between* the profile and the job — `answerQuestions`
+ * marks its instructions and the Profile as a cached prefix and leaves the job outside it, because
+ * the job changes with every posting while the Profile does not. Splitting the string at the call
+ * site would have spelled the tag name a second time, which is the one thing this module exists to
+ * prevent.
+ */
+export function jobContext(jobInfo: JobInfo): string {
+  return `<job_info>\n${sanitizeXmlContent(JSON.stringify(jobInfo))}\n</job_info>`;
 }

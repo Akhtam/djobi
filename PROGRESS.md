@@ -65,11 +65,12 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
 
 ## Key decisions
 
-- **Models:** `claude-sonnet-5` for every LLM call — job-info extraction, resume tailoring, question
-  answering and the Ask tab's chat. An earlier two-tier split ran extraction on a cheaper model; it
-  was collapsed because the saving was fractions of a cent per job, and extraction grounds every
-  downstream draft. `callStructured` still takes the model per call, so a cheaper tier can come back
-  for one call site without a refactor.
+- **Models:** a two-tier Anthropic split — `claude-sonnet-5` for resume tailoring, where nuance is
+  the product, and `claude-haiku-4-5` for extraction, question answering, the Ask tab's chat and
+  requirement fit. An earlier version of this split was collapsed to one model and then reinstated
+  once extraction and requirement fit became the volume drivers. `callStructured` takes the model
+  per call, so the routing is a call-site argument and not a refactor — which is what _Phase 11_
+  under **Planned** turns into a registry when the provider stops being Anthropic.
 - **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
   Duplicate Guard lookups match a derived `job_key` — the posting's URL identity — backed by a
   `(job_key, created_at DESC)` index, falling back to `(job_url, created_at DESC)` for rows written
@@ -358,6 +359,107 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
   race the guard exists for. This adds no response payload: the protocol still has no replies.
 
 ## Planned
+
+### Phase 11 — Multi-provider models: Vercel AI SDK + OpenRouter (next up, not started)
+
+Stop being a single-vendor codebase. Replace the `@anthropic-ai/sdk` client with the **Vercel AI
+SDK** talking to **OpenRouter**, and route each of the five calls to the model that suits it rather
+than to a cheap/expensive tier of one vendor.
+
+Initial routing:
+
+| Call                 | Model                | Why                                                                                                                                                                                                              |
+| -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extractJob`         | Gemini 3 Flash-Lite  | Highest call volume — every job, every Log-tab entry, and the serial gate for the whole Analysis Step. Near-free, and the task is transcription from text that is already in front of it.                        |
+| `assessRequirements` | Gemini 3 Flash-Lite  | Now one call _per requirement_, so it is the other volume driver. Bounded classification against a fixed Profile index, already verified in code — the cheapest model that can follow a schema is the right one. |
+| `tailorResume`       | DeepSeek V4 Pro 0423 | The one call where nuance is the product.                                                                                                                                                                        |
+| `answerQuestions`    | DeepSeek V4 Pro 0423 | Freeform prose grounded in Stories; the same judgement as tailoring.                                                                                                                                             |
+| `answerChat`         | DeepSeek V4 Pro 0423 | Same drafting task as `answerQuestions`, in a conversation.                                                                                                                                                      |
+
+`assessRequirements` is the one placement not specified up front; it sits with extraction because it
+is high-volume, schema-bounded and already validated server-side, and it fails open, so a weaker
+model degrades advice rather than breaking a run. Move it if the fit verdicts get noticeably worse.
+
+Decisions:
+
+- **One seam changes, not five call sites.** `structuredCall.ts` is the only module that names a
+  provider today, and it stays that way: `callStructured`'s options (`model`, `maxTokens`, `effort`,
+  `userContent`, `cachedPrefix`, `followUpTurns`, `toolName`, `schema`, `signal`) and its
+  `StructuredCallError` contract are what the routes and `applicationPipeline` are written against.
+  The body swaps to `generateObject`; the interface does not move. If this phase ends with a
+  provider name outside `llm/client.ts` and `llm/structuredCall.ts`, it went wrong.
+- **`client.ts` becomes a model registry, not two constants.** `MODEL`/`FAST_MODEL` are a
+  vendor-tier split and stop meaning anything across providers. Replace them with a map from
+  _operation_ to model id, so routing is data one file holds — the thing this phase exists to make
+  changeable.
+- **Model ids are OpenRouter slugs, and they must be verified live before wiring.** A wrong slug is
+  a 404 at request time, not a type error, and both names above are shorthand rather than slugs.
+  Resolve them against OpenRouter's model list as the first task, and pin the exact strings.
+- **Structured output stops being a forced tool call.** `generateObject` picks each provider's own
+  mechanism. The risk this trades into: OpenRouter's structured-output support varies by model _and_
+  by which upstream serves it — a DeepSeek request can land on a host that ignores `response_format`.
+  Route with `provider: { require_parameters: true }` so only upstreams that honour the schema are
+  eligible, and **keep the zod re-validation and the one retry regardless** — the provider promise is
+  the optimization, the local parse is the guarantee.
+- **`strict: true` retires along with the Anthropic tool path.** That removes the two open
+  code-review findings (`minLength` from `z.string().min(1)` in `ColdTurnOutputSchema`, and
+  `JobInfoSchema`'s `["string","null"]` type arrays) instead of fixing them — but the class of
+  problem returns, because every provider takes a different JSON Schema subset. Keep the five
+  schemas inside the common subset and make one live call against each before the phase closes.
+  Schema-generation unit tests catch a regression; only a live call catches an unsupported keyword.
+- **Prompt caching becomes implicit, so `cachedPrefix` keeps its job and loses its marker.** There is
+  no `cache_control` to send: Gemini and DeepSeek both cache automatically on a byte-identical
+  leading prefix. So the option still means "stable text first, varying text last" — which is the
+  whole requirement for implicit caching — and the `cache_control` block goes. Two consequences: the
+  concurrent-first-wave problem (all 8 workers paying a cache _write_ premium) disappears, since
+  implicit caching has no write premium; and `assessRequirements` re-sending the full grounding
+  context per requirement becomes a matter of _ordering_ its prompt, not of adding a marker. Do that
+  ordering here.
+- **`effort` is Anthropic-specific and must be remapped, not dropped.** `tailorResume` is its only
+  caller. It becomes `providerOptions` — a thinking budget on Gemini, a reasoning toggle on DeepSeek
+  — and the mapping lives in `structuredCall.ts` beside the model registry.
+- **`max_tokens` accounting changes, and `tailorResume`'s limit must be re-derived against the new
+  model.** `outputTokenLimit`'s ladder was sized for a model whose thinking tokens count against the
+  same budget. Re-measure rather than port the numbers; a truncated generation is a failed Analysis
+  Step, not a short resume.
+- **Cost and latency get logged, so the routing above can be judged instead of argued.** Keep the
+  `[djobi] structured_call` line and add provider, resolved upstream and cost — OpenRouter returns
+  all three with `usage: { include: true }`. The point of this phase is that tiering becomes a
+  decision someone can revisit with numbers.
+- **Anthropic stays reachable through the same client.** OpenRouter serves Claude, so putting one
+  call back on `anthropic/claude-*` is a registry edit rather than a second SDK. No dual-client
+  fallback path is built; that is a code path with no test coverage waiting to be wrong.
+- **`ANTHROPIC_API_KEY` → `OPENROUTER_API_KEY`.** One key and one meter for every model, which is
+  also the shape the multi-tenant phase needs: "one server-side key funds every signup" becomes one
+  bill to quota rather than one per vendor.
+- **Tests move to the AI SDK's own fake, behind the unchanged `client.js` seam.** Every LLM test
+  currently mocks `./client.js` as `{ anthropic: { messages: { create } } }`; they re-point to
+  `MockLanguageModelV2` from `ai/test`. The seam is already in the right place — this is a
+  mechanical swap of what the fake is, not of where it sits.
+
+- [ ] Resolve and pin the exact OpenRouter slugs for both models; confirm each supports structured
+      outputs and note which upstreams serve DeepSeek with `require_parameters`
+- [ ] Confirm the `ai` package's zod peer range against this repo's `zod@^3.24.1` — a required bump
+      touches `packages/shared` too, and is the one change in this phase with reach outside `llm/`
+- [ ] `apps/backend/package.json`: add `ai` + the OpenRouter provider, drop `@anthropic-ai/sdk`
+      (and `zod-to-json-schema` if nothing else uses it)
+- [ ] `llm/client.ts`: OpenRouter provider instance + the operation→model registry replacing
+      `MODEL`/`FAST_MODEL`
+- [ ] `llm/structuredCall.ts`: `generateObject` in place of the forced tool call; keep the options
+      shape, `StructuredCallError`'s two kinds, the single retry, and the abort-before-retry rule
+- [ ] Re-express the failure classification: `finishReason` in place of `stop_reason`,
+      `NoObjectGeneratedError` → `no-tool-call`, `TypeValidationError` → `invalid-input`, and decide
+      explicitly what a `length` finish is (today it escapes as non-retryable)
+- [ ] Remap `effort` to `providerOptions`; re-derive `outputTokenLimit` against the new model
+- [ ] Reorder `assessRequirements`' prompt so the stable grounding leads, for implicit caching
+- [ ] Repoint all five LLM test files and `structuredCall.test.ts` to `MockLanguageModelV2`
+- [ ] `.env.example`, `apps/backend/README.md` and the `app.ts` CORS comment: the key is
+      OpenRouter's now
+- [ ] One live call per schema (all five) before closing the phase; record measured latency and cost
+      per call in `apps/backend/README.md` beside the existing structured-output comparison
+- [ ] Update the **Models** and **Structured output workaround** entries under _Key decisions_ once
+      this lands
+- Build test-first, same as the rest
 
 ### Multi-tenant authentication (proposed, not started)
 

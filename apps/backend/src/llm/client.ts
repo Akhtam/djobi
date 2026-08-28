@@ -6,12 +6,8 @@ import Anthropic from '@anthropic-ai/sdk';
  */
 export const anthropic = new Anthropic();
 
-/**
- * The single model every LLM operation runs on. Extraction previously used a cheaper Haiku tier,
- * but at this volume the saving was fractions of a cent per job while `extractJob` grounds every
- * downstream draft — so one model it is.
- *
- * `callStructured` still takes the model per call, so a future high-volume path can opt out
- * without a refactor.
- */
+/** Higher-quality model for resume rewriting, where preserving nuance matters most. */
 export const MODEL = 'claude-sonnet-5';
+
+/** Fast model for extraction, answers, and bounded, server-verified classification. */
+export const FAST_MODEL = 'claude-haiku-4-5-20251001';

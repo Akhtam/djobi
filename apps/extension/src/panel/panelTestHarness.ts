@@ -62,7 +62,9 @@ export const questionField: DetectedField = {
   inputType: 'textarea',
   selector: '#why-field',
   category: 'question',
-  required: false,
+  // Required, because the Analysis Step only drafts required questions — an optional one is left
+  // for the candidate, and a fixture marked optional would never reach the review list at all.
+  required: true,
   elementRole: 'native',
 };
 

@@ -77,15 +77,20 @@ const MaybeProfileSchema = ProfileSchema.nullable();
 
 /** The backend-facing half of the Application Pipeline's outside world. */
 export interface BackendClient {
-  extractJob(jobDescription: string): Promise<JobInfo>;
-  tailorResume(profile: Profile, jobInfo: JobInfo): Promise<TailoredResume>;
+  extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo>;
+  tailorResume(profile: Profile, jobInfo: JobInfo, signal?: AbortSignal): Promise<TailoredResume>;
   answerQuestions(
     profile: Profile,
     jobInfo: JobInfo,
     questions: QuestionForModel[],
+    signal?: AbortSignal,
   ): Promise<QuestionAnswer[]>;
   /** How the Profile measures up to each requirement the posting states, one entry per requirement. */
-  assessRequirements(profile: Profile, jobInfo: JobInfo): Promise<RequirementFit[]>;
+  assessRequirements(
+    profile: Profile,
+    jobInfo: JobInfo,
+    signal?: AbortSignal,
+  ): Promise<RequirementFit[]>;
   /** One turn of the Ask tab's conversation — cold ask and refinement alike. */
   answerChat(turn: AnswerChatTurn): Promise<AnswerChatResponse>;
   renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
@@ -96,44 +101,72 @@ export interface BackendClient {
   saveApplication(payload: NewApplicationRequest): Promise<ApplicationWriteResult>;
   updateApplication(id: string, payload: ApplicationSnapshot): Promise<ApplicationWriteResult>;
   /** Count and newest metadata for Applications saved against this exact job URL. */
-  findApplicationDuplicates(jobUrl: string): Promise<DuplicateApplicationSummary>;
+  findApplicationDuplicates(
+    jobUrl: string,
+    signal?: AbortSignal,
+  ): Promise<DuplicateApplicationSummary>;
 }
 
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
 export const httpBackendClient: BackendClient = {
-  extractJob: (jobDescription) =>
-    callBackend('/extract-job', JobInfoSchema, { jobDescription } satisfies ExtractJobRequest),
+  extractJob: (jobDescription, signal) =>
+    callBackend(
+      '/extract-job',
+      JobInfoSchema,
+      { jobDescription } satisfies ExtractJobRequest,
+      'POST',
+      signal,
+    ),
 
-  tailorResume: (profile, jobInfo) =>
-    callBackend('/tailor-resume', TailoredResumeSchema, {
-      profile: { workExperience: profile.workExperience, skills: profile.skills },
-      jobInfo,
-    } satisfies TailorResumeRequest),
+  tailorResume: (profile, jobInfo, signal) =>
+    callBackend(
+      '/tailor-resume',
+      TailoredResumeSchema,
+      {
+        profile: { workExperience: profile.workExperience, skills: profile.skills },
+        jobInfo,
+      } satisfies TailorResumeRequest,
+      'POST',
+      signal,
+    ),
 
-  answerQuestions: (profile, jobInfo, questions) =>
-    callBackend('/answer-questions', QuestionAnswerSchema.array(), {
-      profile: {
-        workExperience: profile.workExperience,
-        education: profile.education,
-        skills: profile.skills,
-        stories: profile.stories,
-      },
-      jobInfo,
-      questions,
-    } satisfies AnswerQuestionsRequest),
-
-  assessRequirements: async (profile, jobInfo) =>
-    (
-      await callBackend('/assess-requirements', AssessRequirementsResponseSchema, {
-        // No `stories` and no `screeningAnswers`: a STAR anecdote is not a qualification, and a
-        // screening answer is a legal declaration that must never become grounding for a model.
+  answerQuestions: (profile, jobInfo, questions, signal) =>
+    callBackend(
+      '/answer-questions',
+      QuestionAnswerSchema.array(),
+      {
         profile: {
           workExperience: profile.workExperience,
           education: profile.education,
           skills: profile.skills,
+          stories: profile.stories,
+          customAnswers: profile.customAnswers,
         },
         jobInfo,
-      } satisfies AssessRequirementsRequest)
+        questions,
+      } satisfies AnswerQuestionsRequest,
+      'POST',
+      signal,
+    ),
+
+  assessRequirements: async (profile, jobInfo, signal) =>
+    (
+      await callBackend(
+        '/assess-requirements',
+        AssessRequirementsResponseSchema,
+        {
+          // No `stories` and no `screeningAnswers`: a STAR anecdote is not a qualification, and a
+          // screening answer is a legal declaration that must never become grounding for a model.
+          profile: {
+            workExperience: profile.workExperience,
+            education: profile.education,
+            skills: profile.skills,
+          },
+          jobInfo,
+        } satisfies AssessRequirementsRequest,
+        'POST',
+        signal,
+      )
     ).fit,
 
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
@@ -143,6 +176,9 @@ export const httpBackendClient: BackendClient = {
         education: profile.education,
         skills: profile.skills,
         stories: profile.stories,
+        // The Ask tab drafts an answer to an application question, same as `/answer-questions`, so
+        // it grounds on the candidate's prepared answers for the same reason.
+        customAnswers: profile.customAnswers,
       },
       question,
       // `null` is the panel's "no run yet"; the wire contract's absent job is `undefined`, and
@@ -181,12 +217,13 @@ export const httpBackendClient: BackendClient = {
       'PATCH',
     ),
 
-  findApplicationDuplicates: (jobUrl) =>
+  findApplicationDuplicates: (jobUrl, signal) =>
     callBackend(
       `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
       DuplicateApplicationSummarySchema,
       undefined,
       'GET',
+      signal,
     ),
 };
 

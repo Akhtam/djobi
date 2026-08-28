@@ -92,33 +92,53 @@ describe('httpBackendClient', () => {
   it('extracts job info from the pasted description', async () => {
     await httpBackendClient.extractJob('a posting');
 
-    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
-      jobDescription: 'a posting',
-    });
+    expect(callBackend).toHaveBeenCalledWith(
+      '/extract-job',
+      expect.anything(),
+      { jobDescription: 'a posting' },
+      'POST',
+      undefined,
+    );
   });
 
   it('sends only resume fields to tailoring', async () => {
     await httpBackendClient.tailorResume(profile, jobInfo);
 
-    expect(callBackend).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
-      profile: { workExperience: profile.workExperience, skills: profile.skills },
-      jobInfo,
-    });
+    expect(callBackend).toHaveBeenCalledWith(
+      '/tailor-resume',
+      expect.anything(),
+      {
+        profile: { workExperience: profile.workExperience, skills: profile.skills },
+        jobInfo,
+      },
+      'POST',
+      undefined,
+    );
   });
 
   it('sends only grounding fields to question drafting', async () => {
     await httpBackendClient.answerQuestions(profile, jobInfo, []);
 
-    expect(callBackend).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
-      profile: {
-        workExperience: profile.workExperience,
-        education: profile.education,
-        skills: profile.skills,
-        stories: profile.stories,
+    expect(callBackend).toHaveBeenCalledWith(
+      '/answer-questions',
+      expect.anything(),
+      {
+        profile: {
+          workExperience: profile.workExperience,
+          education: profile.education,
+          skills: profile.skills,
+          stories: profile.stories,
+          // Prepared answers, so a question whose wording matched none of them is still drafted from
+          // what the candidate has already written rather than invented beside it. `screeningAnswers`
+          // stays behind: a legal declaration is matched, never drafted.
+          customAnswers: profile.customAnswers,
+        },
+        jobInfo,
+        questions: [],
       },
-      jobInfo,
-      questions: [],
-    });
+      'POST',
+      undefined,
+    );
   });
 
   it('encodes the id into the update path', async () => {
@@ -151,6 +171,21 @@ describe('httpBackendClient', () => {
       expect.anything(),
       undefined,
       'GET',
+      undefined,
+    );
+  });
+
+  it('forwards an analysis cancellation signal to the transport', async () => {
+    const signal = new AbortController().signal;
+
+    await httpBackendClient.extractJob('a posting', signal);
+
+    expect(callBackend).toHaveBeenCalledWith(
+      '/extract-job',
+      expect.anything(),
+      { jobDescription: 'a posting' },
+      'POST',
+      signal,
     );
   });
 
@@ -263,6 +298,7 @@ describe('httpBackendClient.answerChat', () => {
         education: profile.education,
         skills: profile.skills,
         stories: profile.stories,
+        customAnswers: profile.customAnswers,
       },
       question: 'Why do you want to work here?',
       messages: [],

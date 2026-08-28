@@ -1,109 +1,120 @@
-import {
-  matchOptionLabel,
-  TailoredResumeSchema,
-  type JobInfo,
-  type TailorResumeProfile,
-  type TailoredResume,
-} from '@djobi/shared';
+import { type JobInfo, type TailorResumeProfile, type TailoredResume } from '@djobi/shared';
+import { z } from 'zod';
 import { MODEL } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
-type ResumeEntry = TailoredResume['workExperience'][number];
+/** Compact model output: source indices replace metadata and skill strings the backend already owns. */
+const TailoredResumeOutputSchema = z.object({
+  skillIndices: z.array(z.number().int()),
+  workExperience: z.array(
+    z.object({
+      sourceIndex: z.number().int(),
+      bullets: z.array(
+        z.object({
+          sourceIndex: z.number().int(),
+          text: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
 
-function metadataKey(entry: ResumeEntry): string {
-  return JSON.stringify([entry.company, entry.title, entry.startDate, entry.endDate]);
+type ModelResume = z.infer<typeof TailoredResumeOutputSchema>;
+type ModelRole = ModelResume['workExperience'][number];
+
+/** Bounds runaway generations relative to how much resume content can legitimately be returned. */
+function outputTokenLimit(profile: TailorResumeProfile): number {
+  const bulletCount = profile.workExperience.reduce((sum, role) => sum + role.bullets.length, 0);
+  return Math.min(4096, Math.max(1536, 1536 + bulletCount * 160));
 }
 
-/** Keeps model-authored content only where it can be attached to one authoritative profile entry. */
-function reconcileResume(
-  profile: TailorResumeProfile,
-  modelResume: TailoredResume,
-): TailoredResume {
-  const profileKeyCounts = new Map<string, number>();
-  const modelKeyCounts = new Map<string, number>();
-  for (const entry of profile.workExperience) {
-    const key = metadataKey(entry);
-    profileKeyCounts.set(key, (profileKeyCounts.get(key) ?? 0) + 1);
-  }
-  for (const entry of modelResume.workExperience) {
-    const key = metadataKey(entry);
-    modelKeyCounts.set(key, (modelKeyCounts.get(key) ?? 0) + 1);
+/** Resolves selected/reworded bullets against one authoritative Profile role. */
+function bulletsFor(role: TailorResumeProfile['workExperience'][number], modelRole: ModelRole) {
+  const counts = new Map<number, number>();
+  for (const bullet of modelRole.bullets) {
+    counts.set(bullet.sourceIndex, (counts.get(bullet.sourceIndex) ?? 0) + 1);
   }
 
-  const safelyKeyedModelEntries = modelResume.workExperience.filter((entry) => {
-    const key = metadataKey(entry);
-    return profileKeyCounts.get(key) === 1 && modelKeyCounts.get(key) === 1;
+  const bullets = modelRole.bullets.flatMap((bullet) => {
+    if (
+      counts.get(bullet.sourceIndex) !== 1 ||
+      role.bullets[bullet.sourceIndex] === undefined ||
+      !bullet.text.trim()
+    ) {
+      return [];
+    }
+    return [bullet.text.trim()];
   });
-  const safelyReordered = safelyKeyedModelEntries.length === profile.workExperience.length;
 
-  let workExperience: ResumeEntry[];
-  if (safelyReordered) {
-    const profileByKey = new Map(
-      profile.workExperience.map((entry) => [metadataKey(entry), entry] as const),
-    );
-    workExperience = safelyKeyedModelEntries.map((entry) => ({
-      ...profileByKey.get(metadataKey(entry))!,
-      bullets: entry.bullets,
-    }));
-  } else {
-    const usedModelIndexes = new Set<number>();
-    workExperience = profile.workExperience.map((profileEntry) => {
-      const key = metadataKey(profileEntry);
-      const modelIndex = modelResume.workExperience.findIndex(
-        (entry, index) =>
-          !usedModelIndexes.has(index) &&
-          metadataKey(entry) === key &&
-          profileKeyCounts.get(key) === 1 &&
-          modelKeyCounts.get(key) === 1,
-      );
-      if (modelIndex < 0) return { ...profileEntry, bullets: profileEntry.bullets };
-      usedModelIndexes.add(modelIndex);
-      return { ...profileEntry, bullets: modelResume.workExperience[modelIndex].bullets };
-    });
-  }
+  // Invalid pointers are a malformed tailoring result, not an instruction to erase a real role.
+  return modelRole.bullets.length > 0 && bullets.length === 0 ? role.bullets : bullets;
+}
 
+/** Rejoins compact, untrusted model output to authoritative Profile fields. */
+function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume): TailoredResume {
   const seenSkills = new Set<string>();
-  const skills = modelResume.skills.flatMap((skill) => {
-    const match = matchOptionLabel(profile.skills, skill);
-    if (!match || seenSkills.has(match)) return [];
-    seenSkills.add(match);
-    return [match];
+  const skills = modelResume.skillIndices.flatMap((index) => {
+    const skill = profile.skills[index];
+    if (skill === undefined || seenSkills.has(skill)) return [];
+    seenSkills.add(skill);
+    return [skill];
+  });
+
+  const roleCounts = new Map<number, number>();
+  for (const role of modelResume.workExperience) {
+    roleCounts.set(role.sourceIndex, (roleCounts.get(role.sourceIndex) ?? 0) + 1);
+  }
+  const safeModelRoles = modelResume.workExperience.filter(
+    (role) =>
+      profile.workExperience[role.sourceIndex] !== undefined &&
+      roleCounts.get(role.sourceIndex) === 1,
+  );
+  const safelyReordered =
+    safeModelRoles.length === profile.workExperience.length &&
+    profile.workExperience.every((_, index) => roleCounts.get(index) === 1);
+
+  const roleByIndex = new Map(safeModelRoles.map((role) => [role.sourceIndex, role] as const));
+  const orderedIndices = safelyReordered
+    ? safeModelRoles.map((role) => role.sourceIndex)
+    : profile.workExperience.map((_, index) => index);
+  const workExperience = orderedIndices.map((index) => {
+    const role = profile.workExperience[index];
+    const modelRole = roleByIndex.get(index);
+    return { ...role, bullets: modelRole ? bulletsFor(role, modelRole) : role.bullets };
   });
 
   return { skills, workExperience };
 }
 
-/**
- * Tailors a resume's content to a specific job.
- * Reorders/rewords the profile's existing experience bullets to emphasize what's relevant to the
- * job's requirements/keywords; the prompt explicitly forbids inventing experience not present in
- * `profile`.
- *
- * @param profile - The candidate's base profile (source of truth — nothing is invented beyond it).
- * @param jobInfo - The job to tailor toward, as extracted by {@link extractJob}.
- * @returns The tailored, validated {@link TailoredResume}.
- * @throws If the model doesn't return a tool call, or returns one that fails validation.
- */
+/** Tailors a resume using compact source pointers and server-side reconstruction. */
 export async function tailorResume(
   profile: TailorResumeProfile,
   jobInfo: JobInfo,
+  signal?: AbortSignal,
 ): Promise<TailoredResume> {
+  if (profile.workExperience.length === 0 && profile.skills.length === 0) {
+    return { skills: [], workExperience: [] };
+  }
+
   const relevantProfile = {
     workExperience: profile.workExperience,
     skills: profile.skills,
   };
 
   const modelResume = await callStructured({
+    signal,
     model: MODEL,
-    maxTokens: 4096,
+    effort: 'medium',
+    maxTokens: outputTokenLimit(profile),
     toolName: 'report_tailored_resume',
     toolDescription: 'Report the resume content tailored to this specific job.',
-    schema: TailoredResumeSchema,
-    userContent: `You are tailoring a resume to a specific job posting. Reorder and reword the candidate's existing experience bullets to emphasize what's relevant to this job's requirements and keywords. Never invent experience, skills, or achievements that are not present in the base profile. Return every work-experience entry exactly once. Copy company, title, startDate, and endDate verbatim; only bullets may be rewritten. Skills must be copied verbatim from base_profile.skills and may only be reordered or omitted.
+    schema: TailoredResumeOutputSchema,
+    userContent: `Tailor the candidate's resume to this job. Reorder and reword existing bullets to emphasize relevant requirements and keywords. Never invent experience, skills, or achievements.
 
-${groundingContext(relevantProfile, jobInfo)}
-`,
+The arrays in base_profile are authoritative and zero-indexed. Return skillIndices as a relevant subset/reordering of base_profile.skills. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex points into base_profile.workExperience and controls role order. Each bullet is {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its concise, truth-preserving rewrite. Bullets may be reordered or omitted. Do not copy company, title, dates, or skill text into the output.
+
+${groundingContext(relevantProfile, jobInfo)}`,
   });
 
   return reconcileResume(profile, modelResume);

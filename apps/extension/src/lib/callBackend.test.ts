@@ -31,7 +31,30 @@ describe('callBackend', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jobDescription: 'Senior Engineer at Acme...' }),
+      // Every call carries a deadline: `fetch` has none of its own, and a request that never
+      // settles leaves the Analysis Step waiting forever with no failure to report.
+      signal: expect.any(AbortSignal),
     });
+  });
+
+  it('combines a caller cancellation signal with the request timeout', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.mocked(fetch).mockImplementation((_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const controller = new AbortController();
+
+    const pending = callBackend('/extract-job', Result, {}, 'POST', controller.signal);
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(requestSignal).not.toBe(controller.signal);
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   it('rejects with the backend error message when the response is not ok', async () => {
@@ -152,7 +175,10 @@ describe('callBackend', () => {
     );
 
     expect(result).toEqual({ count: 0, latest: null });
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', { method: 'GET' });
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
+      method: 'GET',
+      signal: expect.any(AbortSignal),
+    });
   });
 });
 
@@ -172,6 +198,7 @@ describe('callBackendBinary', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ profile }),
+      signal: expect.any(AbortSignal),
     });
     expect(new Uint8Array(result)).toEqual(pdfBytes);
   });

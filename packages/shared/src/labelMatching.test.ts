@@ -3,9 +3,11 @@ import {
   containsLabel,
   labelsMatch,
   matchByContainment,
+  matchByOverlap,
   matchOptionLabel,
   matchPreparedAnswerToOption,
   normalizeLabel,
+  questionsMatch,
   uniqueMatch,
 } from './labelMatching.js';
 
@@ -121,5 +123,102 @@ describe('matchByContainment', () => {
 
   it('returns undefined for blank input', () => {
     expect(matchByContainment(stored, questionOf, '  ')).toBeUndefined();
+  });
+});
+
+describe('questionsMatch', () => {
+  it('matches the same question despite case and trailing punctuation', () => {
+    expect(questionsMatch('How did you hear about us?', ' how did you hear about us. ')).toBe(true);
+  });
+
+  it('does not match a question with an added subject modifier', () => {
+    expect(questionsMatch('Do you use React?', 'Do you use React Native?')).toBe(false);
+  });
+});
+
+describe('matchByOverlap', () => {
+  const questionOf = (stored: { question: string }) => stored.question;
+  const stored = [
+    {
+      question: ' How are you currently using AI tools in your coding workflow?',
+      answer: 'I use…',
+    },
+    { question: 'What country are you based in?', answer: 'USA' },
+  ];
+
+  it('matches a paraphrase of a stored question that shares no substring with it', () => {
+    // The case this rule exists for. Every content word differs in form or scope — "use"/"using",
+    // "work"/"coding workflow" — so containment sees two unrelated strings.
+    expect(
+      matchByOverlap(stored, questionOf, 'How do you currently use AI tools in your work?'),
+    ).toBe(stored[0]);
+  });
+
+  it('ignores the scaffolding a question is phrased with, matching on its subject', () => {
+    expect(matchByOverlap(stored, questionOf, 'What AI tools do you use currently?')).toBe(
+      stored[0],
+    );
+  });
+
+  it.each([
+    // One shared content word each — "based", "tools", "use" — and a different subject.
+    ['What state are you based in?'],
+    ['Which of our tools have you used?'],
+    ['Describe a time you used a tool to debug a production incident.'],
+    ['Why do you want to work here?'],
+  ])('declines %j, whose subject the stored questions do not share', (question) => {
+    expect(matchByOverlap(stored, questionOf, question)).toBeUndefined();
+  });
+
+  it.each([
+    [
+      'How many years of experience do you have with Python?',
+      'How many years of experience do you have with Java?',
+    ],
+    ['Why do you want to work at Acme?', 'Why do you want to work at Globex?'],
+    ['Describe a time you led a team.', 'Describe a time you joined a team.'],
+  ])('declines %j against %j, whose difference is the whole question', (storedQuestion, asked) => {
+    // These score well over the threshold — the Python/Java pair shares three of five content
+    // words — because what differs is a single word. That word is the subject, and filling the
+    // stored answer in would submit a false statement in the candidate's name.
+    const contrasted = [{ question: storedQuestion, answer: 'Eight years, mostly at Acme.' }];
+
+    expect(matchByOverlap(contrasted, questionOf, asked)).toBeUndefined();
+  });
+
+  it.each([
+    ['How many years have you used React?', 'How many years have you used React Native?'],
+    ['Are you able to work in Portland?', 'Are you able to work in South Portland?'],
+    [
+      'Why are you interested in the Software Engineer role?',
+      'Why are you interested in the Senior Software Engineer role?',
+    ],
+    ['How have you used Oracle?', 'How have you used Oracle Cloud?'],
+    ['How many years have you used Java?', 'How many years have you used JavaScript?'],
+  ])('declines additive subject change %j against %j', (storedQuestion, asked) => {
+    const qualified = [{ question: storedQuestion, answer: 'Prepared for the narrower question.' }];
+
+    expect(matchByOverlap(qualified, questionOf, asked)).toBeUndefined();
+  });
+
+  it('declines a question that shares its only content word with a stored one', () => {
+    // A single word in common is a coincidence at any ratio: this scores 1.0 against
+    // "What country are you based in?" on "country" alone.
+    expect(matchByOverlap(stored, questionOf, 'Country?')).toBeUndefined();
+  });
+
+  it('declines when two stored questions are equally about the asked one', () => {
+    const ambiguous = [
+      { question: 'How do you use AI tools at work?', answer: 'One way' },
+      { question: 'How are you using AI tools in your work?', answer: 'Another way' },
+    ];
+
+    expect(
+      matchByOverlap(ambiguous, questionOf, 'How do you use AI tools in your work?'),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for a question that is nothing but scaffolding', () => {
+    expect(matchByOverlap(stored, questionOf, 'What about you?')).toBeUndefined();
   });
 });

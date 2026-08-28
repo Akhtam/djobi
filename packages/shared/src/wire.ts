@@ -90,6 +90,12 @@ export const AnswerQuestionsProfileSchema = ProfileSchema.pick({
   education: true,
   skills: true,
   stories: true,
+  // The candidate's own prepared answers, as grounding for the ones `splitPreparedQuestions` could
+  // not match to a question on this form. A stored answer is the candidate's actual position, in
+  // their own words, and a model drafting the same question from scratch beside it invents a second
+  // one. `screeningAnswers` stays out — those are legal declarations, decided by the matching rules
+  // and never grounding for a draft.
+  customAnswers: true,
 });
 export type AnswerQuestionsProfile = z.infer<typeof AnswerQuestionsProfileSchema>;
 

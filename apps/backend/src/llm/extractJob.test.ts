@@ -5,6 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
+  FAST_MODEL: 'claude-haiku-4-5-20251001',
   MODEL: 'claude-sonnet-5',
 }));
 
@@ -41,7 +42,7 @@ describe('extractJob', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-sonnet-5');
+    expect(request.model).toBe('claude-haiku-4-5-20251001');
     expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_job_info' });
     expect(request.tools[0].name).toBe('report_job_info');
     expect(request.messages).toHaveLength(1);

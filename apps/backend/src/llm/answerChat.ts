@@ -12,7 +12,7 @@
  */
 import type { AnswerChatRequest, AnswerChatResponse } from '@djobi/shared';
 import { z } from 'zod';
-import { MODEL } from './client.js';
+import { FAST_MODEL } from './client.js';
 import { groundingContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -35,6 +35,8 @@ Ground everything in the candidate's profile below. Never invent experience, emp
 
 Write answers in the candidate's own voice as implied by their profile, concise and concrete, preferring specific outcomes over generic claims.
 
+If a prepared answer in base_profile.customAnswers is about the question under discussion, the candidate has already decided what they say about it — build on that answer rather than writing a different one beside it, and keep its specifics unless the candidate asks you to change them.
+
 Return your side of the conversation as "reply", and — whenever you have produced or updated the answer itself — the full answer text as "revisedAnswer". "revisedAnswer" is what the candidate applies to their application, so it must be the complete answer on its own, not a fragment or a description of what changed. Leave it out when the turn is purely conversational, such as when you are asking the candidate which of two directions they want.`;
 
 /**
@@ -46,7 +48,10 @@ Return your side of the conversation as "reply", and — whenever you have produ
  * @throws {StructuredCallError} If the model doesn't return a tool call, or returns one that fails
  *   validation — including a cold turn that came back without an answer.
  */
-export async function answerChat(request: AnswerChatRequest): Promise<AnswerChatResponse> {
+export async function answerChat(
+  request: AnswerChatRequest,
+  signal?: AbortSignal,
+): Promise<AnswerChatResponse> {
   const { profile, question, jobInfo, currentAnswer, messages } = request;
 
   const relevantProfile = {
@@ -54,6 +59,7 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
     education: profile.education,
     skills: profile.skills,
     stories: profile.stories,
+    customAnswers: profile.customAnswers,
   };
 
   // A cold turn is one with nothing to build on: no draft under discussion and no thread behind it.
@@ -76,7 +82,8 @@ export async function answerChat(request: AnswerChatRequest): Promise<AnswerChat
   const conversationOpener = foldedOpener ? `\n\n${sanitizeXmlContent(foldedOpener.content)}` : '';
 
   const result = await callStructured({
-    model: MODEL,
+    signal,
+    model: FAST_MODEL,
     maxTokens: 4096,
     toolName: 'report_chat_turn',
     toolDescription: 'Report your reply to the candidate, and the answer text when you wrote one.',

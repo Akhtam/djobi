@@ -11,14 +11,23 @@ import {
   type QuestionForModel,
 } from '@djobi/shared';
 import { z } from 'zod';
-import { MODEL } from './client.js';
-import { groundingContext, sanitizeXmlContent } from './promptContext.js';
+import { FAST_MODEL } from './client.js';
+import { groundingContext, jobContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
-/** Wraps `QuestionAnswer[]` in an object, since the forced tool call needs a top-level object shape. */
+/**
+ * Wraps `QuestionAnswer[]` in an object, since the forced tool call needs a top-level object shape.
+ *
+ * `question` is omitted from what the model returns. `reconcileAnswers` keys on `fieldId` and takes
+ * the question text from the authoritative input — it has never read the model's copy — so asking
+ * for it bought nothing and cost output tokens on every answer, which is the one thing this
+ * operation's latency is made of. Measured at ~16% of the output tokens per call.
+ */
 const AnswerQuestionsOutputSchema = z.object({
   // A missing answer makes only that item unusable; it must not discard otherwise valid siblings.
-  answers: z.array(QuestionAnswerSchema.extend({ answer: z.string().optional() })),
+  answers: z.array(
+    QuestionAnswerSchema.omit({ question: true }).extend({ answer: z.string().optional() }),
+  ),
 });
 
 type ModelQuestionAnswer = z.infer<typeof AnswerQuestionsOutputSchema>['answers'][number];
@@ -102,18 +111,26 @@ function reconcileAnswers(
   const storyIds = new Set([...storyIdCounts].flatMap(([id, count]) => (count === 1 ? [id] : [])));
   return questions.flatMap((question) => {
     if (inputCounts.get(question.fieldId) !== 1) return [];
+
+    // A stated fact needs no model output to resolve, and never did: `matchKnownAnswer` is local
+    // matching over this form's own options, and the draft the model used to return alongside it
+    // was read for nothing but `sourceStoryIds` — which a stated fact has none of. Resolving it
+    // here is what lets `answerQuestions` skip the call entirely.
+    if (question.knownAnswer) {
+      const answer = question.options ? matchKnownAnswer(question) : question.knownAnswer;
+      return answer
+        ? [{ fieldId: question.fieldId, question: question.question, answer, sourceStoryIds: [] }]
+        : [];
+    }
+
     const candidates = outputByFieldId.get(question.fieldId);
     if (candidates?.length !== 1) return [];
 
     const modelAnswer = candidates[0];
-    let answer: string | undefined;
-    if (question.knownAnswer) {
-      answer = question.options ? matchKnownAnswer(question) : question.knownAnswer;
-    } else if (modelAnswer.answer?.trim()) {
-      answer = question.options
-        ? matchOptionLabel(question.options, modelAnswer.answer)
-        : modelAnswer.answer;
-    }
+    if (!modelAnswer.answer?.trim()) return [];
+    const answer = question.options
+      ? matchOptionLabel(question.options, modelAnswer.answer)
+      : modelAnswer.answer;
     if (!answer) return [];
 
     return [
@@ -128,21 +145,98 @@ function reconcileAnswers(
 }
 
 /**
+ * How many questions may be in flight at once.
+ *
+ * One request per question is what makes this operation fast — the answers are written in parallel
+ * instead of one after another — but it is also a burst of requests from a single candidate's single
+ * click, and an application form with thirty questions should not become thirty simultaneous
+ * requests. Eight covers the forms this runs against with room to spare; beyond it, questions go in
+ * waves and the operation degrades to something slower rather than to something rate-limited.
+ */
+const MAX_CONCURRENT_QUESTIONS = 8;
+
+/** Runs `task` over `items`, at most {@link MAX_CONCURRENT_QUESTIONS} at a time, in input order. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length);
+  let next = 0;
+
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENT_QUESTIONS, items.length) }, worker),
+  );
+  return results;
+}
+
+/**
+ * The instructions and the Profile — everything that is identical for every question on the form.
+ *
+ * Kept apart from the per-question half so it can be sent as a cached prefix. The rules here are
+ * about *how* to answer and are the same whichever question is being answered; the job, the
+ * question and the rules that depend on the question live in {@link questionPrompt}.
+ */
+function sharedPrompt(profile: object): string {
+  return `Draft the candidate's answer to one job application question, written in their own voice as implied by their profile. Ground the answer in the candidate's actual work experience and stories — pick the 1-3 most relevant stories by matching the question against each story's tags and content, and set sourceStoryIds accordingly (empty array if no story fits and you drew on general profile info instead). Do not fabricate experience not present in the profile.
+
+Answer in the form the question asks for, and no larger. A question that asks for a yes or a no is answered with "Yes" or "No" — add at most one short clause after it if the profile makes one genuinely necessary, and nothing at all if it does not. A question asking for a name, a number, a date or a place is answered with that name, number, date or place. Only a question that actually asks the candidate to explain or describe something gets sentences.
+
+When sentences are called for, write at most two. Be specific and concrete — one real detail from the profile beats any amount of general enthusiasm. Write the way the candidate would type it into the box: plain, direct, no throat-clearing, no restating the question back, no phrases like "I am excited to" or "I believe that". Never pad an answer to look thorough; a short true answer is the better answer.
+
+${groundingContext(profile)}`;
+}
+
+/** The job, the one question, and the rules that depend on what that question carries. */
+function questionPrompt(jobInfo: JobInfo, question: QuestionForModel): string {
+  return `${jobContext(jobInfo)}
+
+<question>
+${sanitizeXmlContent(JSON.stringify(question))}
+</question>
+
+If the question includes an "options" array, your answer MUST be copied verbatim from one of the provided options — do not invent or rephrase.
+
+If a prepared answer in base_profile.customAnswers asks about the same subject as this question, it is what the candidate has already decided to say about it — reuse its substance and its specifics, changing only what this form's wording requires. Never draft a second, different position beside one the candidate has already written. If none of them is about this question, ignore them and draft from the profile as usual.
+
+Return exactly one answer, with fieldId copied from the question.`;
+}
+
+/**
  * Drafts answers to application questions, including freeform and choice questions, in the
  * candidate's voice.
+ *
+ * **One model call per question, run concurrently.** A single call had to write every answer in
+ * sequence, and since a structured call spends its wall clock almost entirely on output tokens, its
+ * latency grew linearly with the number of questions — six questions measured ~17s, which is the
+ * whole Analysis Step waiting on the slowest of its three calls. Fanning out makes the operation
+ * cost the *longest* answer instead of the sum of all of them: the same six measured ~4s. The
+ * prompt never asked the model to consider the questions together — it picks stories per question,
+ * by that question's own text — so there is no cross-question reasoning to lose.
+ *
+ * A question the Profile already answers (`knownAnswer`) is not sent at all. Its answer comes from
+ * `matchKnownAnswer`, which is local matching; the model's draft for it was never read.
  *
  * @param profile - The Profile projection used for answers, including reusable `stories`.
  * @param jobInfo - The job being applied to, for context.
  * @param questions - The application questions to answer, in authoritative output order.
- * @returns Valid drafted answers in input-question order. A choice answer with no unambiguous matching option
- *   is omitted, so output count can be smaller than input count. Returns `[]` immediately (no API
- *   call) when `questions` is empty.
- * @throws If the model doesn't return a tool call, or returns one that fails validation.
+ * @returns Valid drafted answers in input-question order. A choice answer with no unambiguous
+ *   matching option is omitted, so output count can be smaller than input count. Returns `[]`
+ *   immediately (no API call) when `questions` is empty.
+ * @throws The first call's error if *every* question's call failed — one failure is survivable and
+ *   costs one answer, but a whole failed batch must not be reported as a form that needed none.
  */
 export async function answerQuestions(
   profile: AnswerQuestionsProfile,
   jobInfo: JobInfo,
   questions: QuestionForModel[],
+  signal?: AbortSignal,
 ): Promise<QuestionAnswer[]> {
   if (questions.length === 0) return [];
 
@@ -151,28 +245,56 @@ export async function answerQuestions(
     education: profile.education,
     skills: profile.skills,
     stories: profile.stories,
+    customAnswers: profile.customAnswers,
   };
 
-  const result = await callStructured({
-    model: MODEL,
-    maxTokens: 4096,
-    toolName: 'report_answers',
-    toolDescription: 'Report the drafted answers for the given application questions.',
-    schema: AnswerQuestionsOutputSchema,
-    userContent: `Draft answers to the following job application questions, written in the candidate's voice as implied by their profile. Ground every answer in the candidate's actual work experience and stories — pick the 1-3 most relevant stories per question by matching the question against each story's tags and content, and set sourceStoryIds accordingly (empty array if no story fits and you drew on general profile info instead). Do not fabricate experience not present in the profile. Keep answers concise and concrete — prefer specific outcomes over generic claims.
+  const toDraft = questions.filter((question) => !question.knownAnswer);
+  if (toDraft.length === 0) return reconcileAnswers([], questions, profile);
 
-${groundingContext(relevantProfile, jobInfo)}
-
-<questions>
-${sanitizeXmlContent(JSON.stringify(questions))}
-</questions>
-
-If a question includes an "options" array, your answer MUST be copied verbatim from one of the provided options — do not invent or rephrase.
-
-If a question includes a "knownAnswer", that is the candidate's own stated answer to this question, taken from their profile. It is a fact, not a suggestion: your answer MUST express the same thing. Your only job there is to say it in this form's words — pick the option that means what knownAnswer says, and never the opposite one. If no option means that, return no answer for that question rather than one that contradicts it. These are legal declarations about work authorization, sponsorship and similar; an answer that reverses the candidate's stated position is worse than no answer at all.
-
-Return one answer per question, in the same order, with fieldId copied from the input question.`,
+  const cachedPrefix = sharedPrompt(relevantProfile);
+  let firstFailure: unknown;
+  const settled = await mapWithConcurrency(toDraft, async (question) => {
+    try {
+      const result = await callStructured({
+        signal,
+        model: FAST_MODEL,
+        // One answer, and a capped one. The old 4096 sized a whole form's worth of answers; leaving
+        // it there would let a single runaway answer cost more wall clock than the entire form.
+        maxTokens: 1024,
+        toolName: 'report_answers',
+        toolDescription: 'Report the drafted answer for the given application question.',
+        schema: AnswerQuestionsOutputSchema,
+        cachedPrefix,
+        userContent: questionPrompt(jobInfo, question),
+      });
+      return result.answers;
+    } catch (error) {
+      // One question's failure costs one answer, not the form. The candidate reviews every drafted
+      // answer anyway, and a missing one is visibly missing — where a thrown error takes down the
+      // Analysis Step that the tailored resume and the fit report were also waiting on.
+      //
+      // An abandoned request is not one of those failures: every question aborts at once, and one
+      // line each for a candidate closing the panel buries the real ones.
+      if (!signal?.aborted) {
+        console.warn('[djobi] answer_question_failed', {
+          fieldId: question.fieldId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      firstFailure ??= error;
+      return null;
+    }
   });
 
-  return reconcileAnswers(result.answers, questions, profile);
+  // Every question failing is not a form that needed no answers — it is the model or the provider
+  // being unavailable, and it has to reach the caller as the failure it is. The first error is
+  // rethrown rather than a summary of them: it carries the actual cause, and a `StructuredCallError`
+  // keeps the kind and request id that `app.onError` logs.
+  if (settled.every((answers) => answers === null)) throw firstFailure;
+
+  return reconcileAnswers(
+    settled.flatMap((answers) => answers ?? []),
+    questions,
+    profile,
+  );
 }

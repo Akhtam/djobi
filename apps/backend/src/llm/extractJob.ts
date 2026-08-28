@@ -1,5 +1,5 @@
 import { JobInfoSchema, type JobInfo } from '@djobi/shared';
-import { MODEL } from './client.js';
+import { FAST_MODEL } from './client.js';
 import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -15,9 +15,10 @@ import { callStructured } from './structuredCall.js';
  * @returns The extracted, validated {@link JobInfo}.
  * @throws If the model doesn't return a tool call, or returns one that fails validation.
  */
-export async function extractJob(jobDescription: string): Promise<JobInfo> {
+export async function extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo> {
   return callStructured({
-    model: MODEL,
+    signal,
+    model: FAST_MODEL,
     maxTokens: 2048,
     toolName: 'report_job_info',
     toolDescription:

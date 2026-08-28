@@ -182,10 +182,12 @@ describe('AutofillTab', () => {
     await screen.findByText('Senior Engineer at Acme');
 
     act(() => navigate(1, `${overviewUrl}/application`));
-    await reportDetectedPage(1, 0, { fields: [questionField] });
+    // Explicitly optional — the shared fixture is required, since only required questions are
+    // drafted, and this case is about the optional wording.
+    await reportDetectedPage(1, 0, { fields: [{ ...questionField, required: false }] });
 
-    // `questionField` is optional, so it is counted but deliberately not named — see the required
-    // case below, which is the one worth reading the list for.
+    // An optional question is counted but deliberately not named — see the required case below,
+    // which is the one worth reading the list for.
     expect(await screen.findByText(/1 optional question won't be filled/i)).toBeInTheDocument();
     // The warning is advisory: Fill still writes every field that does have a reviewed answer.
     expect(screen.getByRole('button', { name: 'Fill form' })).not.toBeDisabled();
@@ -219,7 +221,9 @@ describe('AutofillTab', () => {
           required: true,
         },
         { ...questionField, id: 'f-start', label: 'When can you start?', required: true },
-        questionField,
+        // Explicitly optional — the shared fixture is required, since only required questions are
+        // drafted, and this case needs one of each.
+        { ...questionField, required: false },
       ],
     });
 

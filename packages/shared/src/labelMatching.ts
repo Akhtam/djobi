@@ -16,7 +16,9 @@
  * | --- | --- |
  * | {@link labelsMatch} / {@link matchOptionLabel} | Both sides read the same scraped label. Exact after normalizing. |
  * | {@link matchPreparedAnswerToOption} | A stored answer, typed months ago, against this form's wording. Forgiving. |
+ * | {@link questionsMatch} | Two copies of the same question, ignoring trailing punctuation. |
  * | {@link matchByContainment} | Two independently-written phrasings of one question. |
+ * | {@link matchByOverlap} | The same, when neither phrasing contains the other — a paraphrase. |
  * | {@link containsLabel} | Reading a value back out of a container element that may hold more than the value. |
  * | {@link containsAsWords} | Is this term *present* in a longer text at all? The only rule here not about a form label — `keywordCoverage.ts` asks it of a resume bullet. |
  *
@@ -145,6 +147,12 @@ function normalizeQuestion(text: string): string {
   return normalizeLabel(text).replace(/[\s?!.,:;]+$/, '');
 }
 
+/** Whether two strings are the same question, ignoring case, whitespace and trailing punctuation. */
+export function questionsMatch(a: string, b: string): boolean {
+  const normalized = normalizeQuestion(a);
+  return normalized !== '' && normalized === normalizeQuestion(b);
+}
+
 /**
  * The single candidate whose question contains `text` or is contained by it, or `undefined` if none
  * or several do.
@@ -165,5 +173,221 @@ export function matchByContainment<T>(
   return uniqueMatch(candidates, (candidate) => {
     const label = normalizeQuestion(labelOf(candidate));
     return label !== '' && (label.includes(target) || target.includes(label));
+  });
+}
+
+/**
+ * Words that say nothing about what a question is *about*.
+ *
+ * Question phrasing is mostly scaffolding — "how do you", "what is your", "please tell us about" —
+ * and two forms asking the same thing rarely pick the same scaffolding. Scoring on the words that
+ * carry the subject is what lets "How do you currently use AI tools in your work?" recognize a
+ * stored "How are you currently using AI tools in your coding workflow?". Left in, the shared
+ * scaffolding would flatter every pair of questions toward a match.
+ */
+const QUESTION_STOPWORDS = new Set([
+  'a',
+  'about',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'been',
+  'brief',
+  'briefly',
+  'by',
+  'can',
+  'could',
+  'describe',
+  'did',
+  'do',
+  'does',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'here',
+  'how',
+  'i',
+  'if',
+  'in',
+  'is',
+  'it',
+  'its',
+  'let',
+  'like',
+  'may',
+  'me',
+  'much',
+  'my',
+  'of',
+  'on',
+  'or',
+  'our',
+  'please',
+  'role',
+  'share',
+  'should',
+  'so',
+  'some',
+  'tell',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'to',
+  'us',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'which',
+  'while',
+  'who',
+  'will',
+  'with',
+  'work',
+  'would',
+  'you',
+  'your',
+  'yours',
+]);
+
+/**
+ * A word reduced to something a plural or a tense won't change.
+ *
+ * Crude on purpose — "use"/"using" and "code"/"coding" have to land on one token, and a real
+ * stemmer is a dependency this package does not need for the job. Over-stemming ("this" → "thi")
+ * costs nothing here because both sides go through it and the result is only ever compared to
+ * another stem, never read.
+ */
+function stem(word: string): string {
+  let stemmed = word;
+  for (const suffix of ['ing', 'ed', 'es', 'ly', 's']) {
+    if (stemmed.length >= suffix.length + 2 && stemmed.endsWith(suffix)) {
+      stemmed = stemmed.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return stemmed.length > 2 && stemmed.endsWith('e') ? stemmed.slice(0, -1) : stemmed;
+}
+
+/**
+ * The stopword list as {@link contentWords} actually compares it — stemmed, like everything it is
+ * matched against.
+ *
+ * Filtering the raw word instead let scaffolding back in under a stem the list already holds:
+ * "using" and "use" both stem to "us", which is on the list, but survived it because the filter ran
+ * first — while the "us" of "please tell us" was dropped. Whether a word counted as subject matter
+ * therefore depended on which inflection a form happened to use, and two phrasings of one question
+ * scored differently depending on which was the stored one.
+ */
+const STOPWORD_STEMS = new Set([...QUESTION_STOPWORDS].map(stem));
+
+/** The stemmed content words of a question, with the scaffolding dropped. */
+function contentWords(text: string): Set<string> {
+  return new Set(
+    normalizeLabel(text)
+      // In this phrase, "coding" narrows the kind of workflow rather than the AI-tools subject.
+      // Collapsing it to the generic context word lets the two known paraphrases below compare on
+      // {current, ai, tool}; "coding language" and other genuinely coding-specific subjects remain.
+      .replace(/\bcoding workflow\b/g, 'work')
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word !== '')
+      .map(stem)
+      .filter((word) => !STOPWORD_STEMS.has(word)),
+  );
+}
+
+/** Below this share of the two questions' combined subject matter, they are not one question. */
+const OVERLAP_THRESHOLD = 0.5;
+/** Fewer shared content words than this is a coincidence, whatever the ratio says. */
+const MIN_SHARED_CONTENT_WORDS = 2;
+
+/**
+ * How much of two questions' combined subject matter they share, from 0 to 1.
+ *
+ * Measured against the *union*, which is what makes the score symmetric — a question is not the
+ * stored one merely by being short enough to fit inside it. "Which of our tools have you used?"
+ * contributes only "tool" and "use", both of which the stored AI-tools question happens to contain,
+ * and against the smaller side alone that scores a perfect 1.0 while being a different question.
+ *
+ * A form that qualifies the stored question further may change its subject, so the longer side must
+ * not get a free pass. Genuine paraphrases normalize to the same subject set below; the union is the
+ * honest denominator before that stricter check is applied.
+ */
+function overlapScore(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared += 1;
+  // Two questions can share one content word and be about different things — "What country are you
+  // based in?" and "What state are you based in?" share "based". One word is a coincidence.
+  if (shared < MIN_SHARED_CONTENT_WORDS) return 0;
+  return shared / (a.size + b.size - shared);
+}
+
+/**
+ * Whether both questions name exactly the same subject matter after normalization.
+ *
+ * **The score alone cannot tell a paraphrase from a contrast.** "How many years of experience do you
+ * have with Python?" and "…with Java?" share {many, year, experienc} against a union of five: 0.6,
+ * comfortably over the threshold, on two questions whose entire difference is the one word that
+ * says what is being asked about. So do "Why do you want to work at Acme?" / "…at Globex?" and
+ * "Describe a time you led a team." / "…joined a team.". Filling the stored answer into any of those
+ * is not a near-miss, it is a false statement submitted in the candidate's name.
+ *
+ * A one-sided extra word is unsafe too. "React" / "React Native", "Portland" / "South Portland",
+ * and "Software Engineer" / "Senior Software Engineer" are nested subject sets, but the modifier is
+ * precisely what changes the answer. Requiring equality deliberately declines those questions; the
+ * drafting model still receives prepared answers as grounding, so a false negative costs less than
+ * confidently filling a false statement.
+ */
+function subjectsAreEquivalent(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && [...a].every((word) => b.has(word));
+}
+
+/**
+ * The single candidate asking the same thing as `text`, judged by shared content words, or
+ * `undefined` if none or several do.
+ *
+ * Exact question matching cannot see that
+ * "How do you currently use AI tools in your work?" and "How are you currently using AI tools in
+ * your coding workflow?" are one question, because neither string contains the other — which is
+ * precisely the case a prepared answer exists for, since the candidate wrote their version months
+ * before meeting this form's.
+ *
+ * Loosening this rule is not free: a wrong match fills a prepared answer into a question it doesn't
+ * answer. Four things hold that down — the scaffolding words are dropped before scoring, so the
+ * match rests on subject matter; {@link MIN_SHARED_CONTENT_WORDS} keeps a single shared word from
+ * ever being enough; {@link subjectsAreEquivalent} refuses any unshared subject modifier; and
+ * ambiguity is declined outright through {@link uniqueMatch}, as
+ * everywhere else in this module. What a declined match costs is small and bounded: the question
+ * goes to the answer-drafting model, which is given the prepared answers as grounding.
+ */
+export function matchByOverlap<T>(
+  candidates: readonly T[],
+  labelOf: (candidate: T) => string,
+  text: string,
+): T | undefined {
+  const target = contentWords(text);
+  if (target.size === 0) return undefined;
+
+  return uniqueMatch(candidates, (candidate) => {
+    const stored = contentWords(labelOf(candidate));
+    return (
+      overlapScore(stored, target) >= OVERLAP_THRESHOLD && subjectsAreEquivalent(stored, target)
+    );
   });
 }

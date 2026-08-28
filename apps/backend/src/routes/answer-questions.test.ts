@@ -28,6 +28,7 @@ const answerProfile = {
   education: sampleProfile.education,
   skills: sampleProfile.skills,
   stories: sampleProfile.stories,
+  customAnswers: sampleProfile.customAnswers,
 };
 
 const sampleJobInfo: JobInfo = {
@@ -73,7 +74,12 @@ describe('POST /answer-questions', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleAnswers);
-    expect(mockAnswerQuestions).toHaveBeenCalledWith(answerProfile, sampleJobInfo, sampleQuestions);
+    expect(mockAnswerQuestions).toHaveBeenCalledWith(
+      answerProfile,
+      sampleJobInfo,
+      sampleQuestions,
+      expect.any(AbortSignal),
+    );
   });
 
   it('accepts a question with options and passes it through unchanged', async () => {
@@ -97,6 +103,7 @@ describe('POST /answer-questions', () => {
       answerProfile,
       sampleJobInfo,
       questionsWithOptions,
+      expect.any(AbortSignal),
     );
   });
 
@@ -132,7 +139,31 @@ describe('POST /answer-questions', () => {
       answerProfile,
       sampleJobInfo,
       questionsWithKnownAnswer,
+      expect.any(AbortSignal),
     );
+  });
+
+  it('reports an abandoned request as 499 and logs nothing, so a closed panel is not a backend fault', async () => {
+    // The candidate closed the panel or hit Re-analyze. The model calls were aborted on purpose, so
+    // this is not a failure — and routing it through console.error is what makes the channel that
+    // means "the backend is broken" not worth reading.
+    mockAnswerQuestions.mockRejectedValue(new Error('Request was aborted.'));
+    const controller = new AbortController();
+    controller.abort();
+
+    const res = await app.request('/answer-questions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        profile: sampleProfile,
+        jobInfo: sampleJobInfo,
+        questions: [{ fieldId: 'f1', question: 'Why us?' }],
+      }),
+      signal: controller.signal,
+    });
+
+    expect(res.status).toBe(499);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('returns 500 with a JSON body but does not expose the internal cause to the client', async () => {

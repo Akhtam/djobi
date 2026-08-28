@@ -13,6 +13,7 @@ const profile = {
   education: [],
   skills: ['TypeScript'],
   stories: [],
+  customAnswers: [],
 };
 
 const jobInfo: JobInfo = {
@@ -51,7 +52,7 @@ describe('POST /answer-chat', () => {
       reply: 'Here you go.',
       revisedAnswer: 'An answer.',
     });
-    expect(mockAnswerChat).toHaveBeenCalledWith(body);
+    expect(mockAnswerChat).toHaveBeenCalledWith(body, expect.any(AbortSignal));
   });
 
   it('carries the seeded draft and the thread through to the model call', async () => {
@@ -69,7 +70,7 @@ describe('POST /answer-chat', () => {
     const res = await post(body);
 
     expect(res.status).toBe(200);
-    expect(mockAnswerChat).toHaveBeenCalledWith(body);
+    expect(mockAnswerChat).toHaveBeenCalledWith(body, expect.any(AbortSignal));
   });
 
   it('returns a reply with no revised answer as-is', async () => {

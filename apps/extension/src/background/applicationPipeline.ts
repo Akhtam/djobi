@@ -14,7 +14,7 @@
  * to be added to the step, to whatever spreads its result, and to the store.
  */
 import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
-import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
+import type { DetectedField, JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
 import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import { answersFor } from '../lib/runAnswers';
@@ -59,6 +59,9 @@ export const productionDeps: PipelineDeps = {
   page: chromePageClient,
 };
 
+/** The live Analysis Step for each tab, replaced and aborted by the next run for that tab. */
+const analysisControllers = new Map<number, AbortController>();
+
 /** Maps a scalar (non-question, non-upload) field category to the base profile value that fills it. */
 function valueForCategory(
   category: DetectedField['category'],
@@ -88,19 +91,20 @@ function valueForCategory(
   }
 }
 
+type AnalysisResult = Pick<
+  PipelineRunState,
+  'status' | 'tailoredResume' | 'answers' | 'coverage' | 'requirementFit'
+> & { jobInfo: JobInfo };
+
 /** The Analysis Step: Job Info, then a Tailored Resume and Question Answers drafted from it. */
 async function analysisStep(
   jobDescription: string,
   jobPageData: JobPageData,
   profile: Profile,
   deps: PipelineDeps,
-): Promise<
-  Pick<
-    PipelineRunState,
-    'status' | 'jobInfo' | 'tailoredResume' | 'answers' | 'coverage' | 'requirementFit'
-  >
-> {
-  const jobInfo = await deps.backend.extractJob(jobDescription);
+  signal: AbortSignal,
+): Promise<AnalysisResult> {
+  const jobInfo = await deps.backend.extractJob(jobDescription, signal);
 
   const questions = jobPageData.fields
     .filter((field) => field.category === 'question')
@@ -117,17 +121,30 @@ async function analysisStep(
   // knows but can't map onto this form's wording still goes to the model, carrying the fact.
   const { resolved, forModel } = splitPreparedQuestions(profile, questions);
 
-  const [tailoredResume, drafted, requirementFit] = await Promise.all([
-    deps.backend.tailorResume(profile, jobInfo),
-    deps.backend.answerQuestions(profile, jobInfo, forModel),
-    // Fails open, and is the only one of the three that may. A tailored resume and drafted answers
-    // are what the run is *for*; a fit assessment is advice about it, so letting one bad response
-    // take down an otherwise complete analysis would make an advisory feature the reason Analyze
-    // doesn't work — the same judgement the Duplicate Guard already makes for the same reason.
-    deps.backend.assessRequirements(profile, jobInfo).catch((error: unknown) => {
-      console.warn('[djobi] requirement assessment failed, analyzing anyway', error);
-      return [];
-    }),
+  // Only a required question is worth a *model call*. An optional one is a box the candidate can
+  // leave empty, and drafting it costs the same wall clock as a required one — on the Analysis
+  // Step's slowest call, where every answer is written before any of them arrives.
+  //
+  // A question the profile already answers is not filtered out, whichever half of the split it fell
+  // into. `resolved` never reaches the model at all; a `knownAnswer` one nominally does, but
+  // `answerQuestions` settles it locally by matching the stated fact onto this form's options and
+  // asks the model nothing about it — so dropping it here would not save a token, it would only
+  // leave a question the candidate has answered blank on the page.
+  const requiredFieldIds = new Set(
+    jobPageData.fields.filter((field) => field.required).map((field) => field.id),
+  );
+  const toDraft = forModel.filter(
+    (question) => question.knownAnswer !== undefined || requiredFieldIds.has(question.fieldId),
+  );
+
+  const [tailoredResume, drafted] = await Promise.all([
+    deps.backend.tailorResume(profile, jobInfo, signal),
+    // Not even a round trip when the profile answered everything the form asks: the backend would
+    // return `[]` without a model call, and the Analysis Step is the wrong place to spend a request
+    // establishing that.
+    toDraft.length > 0
+      ? deps.backend.answerQuestions(profile, jobInfo, toDraft, signal)
+      : Promise.resolve([]),
   ]);
 
   const prepared: QuestionAnswer[] = resolved.map((question) => ({
@@ -153,7 +170,9 @@ async function analysisStep(
   // costs no backend call and adds nothing to the worker's fetch exposure.
   const coverage = keywordCoverage(tailoredResume, jobInfo);
 
-  return { status: 'review', jobInfo, tailoredResume, answers, coverage, requirementFit };
+  // Requirement Fit is advisory and is patched in after Review is available. Keeping the initial
+  // value explicit clears a previous run's report while the progressive assessment is pending.
+  return { status: 'review', jobInfo, tailoredResume, answers, coverage, requirementFit: [] };
 }
 
 /**
@@ -390,11 +409,12 @@ async function checkpointFailure(
 async function findDuplicate(
   tabUrl: string | null,
   deps: PipelineDeps,
+  signal: AbortSignal,
 ): Promise<DuplicateApplication | null> {
   if (!tabUrl) return null; // no URL to match on — Chrome hasn't exposed one for this tab
 
   try {
-    const { latest: newest, count } = await deps.backend.findApplicationDuplicates(tabUrl);
+    const { latest: newest, count } = await deps.backend.findApplicationDuplicates(tabUrl, signal);
     if (!newest) return null;
 
     return {
@@ -406,6 +426,7 @@ async function findDuplicate(
       count,
     };
   } catch (error) {
+    if (signal.aborted) throw error;
     console.warn(`[djobi] duplicate check failed, analyzing anyway: ${failureMessage(error)}`);
     return null;
   }
@@ -432,35 +453,42 @@ export async function runAnalysis(
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
+  const controller = new AbortController();
+  analysisControllers.get(tabId)?.abort();
+  analysisControllers.set(tabId, controller);
+
   // Claim the tab before any detection or backend await. Every completion below is scoped to this
   // identity, so a later Analyze click or a navigation can supersede it safely.
   const runId = crypto.randomUUID();
-  await setPipelineRun(tabId, {
-    runId,
-    status: 'analyzing',
-    tabUrl,
-    jobPageData: { fields: [] },
-    jobDescription,
-    jobInfo: null,
-    tailoredResume: null,
-    answers: [],
-    coverage: [],
-    requirementFit: [],
-    unresolvedRequiredFields: [],
-    filledFieldCount: 0,
-    fillOutcome: null,
-    applicationId: null,
-    failure: null,
-    duplicateOf: null,
-  });
-
   try {
+    await setPipelineRun(tabId, {
+      runId,
+      status: 'analyzing',
+      tabUrl,
+      jobPageData: { fields: [] },
+      jobDescription,
+      jobInfo: null,
+      tailoredResume: null,
+      answers: [],
+      coverage: [],
+      requirementFit: [],
+      unresolvedRequiredFields: [],
+      filledFieldCount: 0,
+      fillOutcome: null,
+      applicationId: null,
+      failure: null,
+      duplicateOf: null,
+    });
+
     // Waits for an API-oracle enrichment still in flight for this tab. Clicking Analyze the instant
     // a page loads used to snapshot DOM-only fields, so the questions crossing to the backend
     // carried the page's wording of a combobox's choices instead of the API's — and the answers
     // drafted from them then matched no element at fill time. See `background/detectedFields.ts`.
-    const jobPageData: JobPageData = await snapshotForRun(tabId);
-    const duplicateOf = force ? null : await findDuplicate(tabUrl, deps);
+    const [jobPageData, duplicateOf]: [JobPageData, DuplicateApplication | null] =
+      await Promise.all([
+        snapshotForRun(tabId),
+        force ? Promise.resolve(null) : findDuplicate(tabUrl, deps, controller.signal),
+      ]);
 
     const stillCurrent = await patchPipelineRun(tabId, runId, {
       status: duplicateOf ? 'duplicate' : 'analyzing',
@@ -470,17 +498,43 @@ export async function runAnalysis(
 
     if (!stillCurrent) return;
 
-    // Stop before any backend work: not spending three LLM calls on a posting the candidate has
-    // already applied to is the entire point of the check.
+    // Stop before any paid model work on a posting the candidate has already applied to.
     if (duplicateOf) return;
 
-    await patchPipelineRun(
-      tabId,
-      runId,
-      await analysisStep(jobDescription, jobPageData, profile, deps),
+    const analysis = await analysisStep(
+      jobDescription,
+      jobPageData,
+      profile,
+      deps,
+      controller.signal,
     );
+    const reviewed = await patchPipelineRun(tabId, runId, analysis);
+    if (!reviewed || analysis.jobInfo.requirements.length === 0) return;
+
+    // The candidate can review and fill as soon as the resume and answers are ready. Requirement
+    // Fit is advice, so it runs afterward without competing for provider capacity and patches only
+    // its own field; a fill or save that starts meanwhile keeps its newer status.
+    try {
+      const requirementFit = await deps.backend.assessRequirements(
+        profile,
+        analysis.jobInfo,
+        controller.signal,
+      );
+      await patchPipelineRun(tabId, runId, { requirementFit });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.warn('[djobi] requirement assessment failed after review', error);
+      }
+    }
   } catch (error) {
+    // A newer run owns the tab now. Its initial checkpoint replaces this run, and cancellation is
+    // expected control flow rather than an analysis failure for either run to display.
+    if (controller.signal.aborted) return;
+    // A failed member of the parallel model group should not leave its siblings generating.
+    controller.abort(error);
     await checkpointFailure(tabId, runId, 'analyze-error', 'analysis', error);
+  } finally {
+    if (analysisControllers.get(tabId) === controller) analysisControllers.delete(tabId);
   }
 }
 

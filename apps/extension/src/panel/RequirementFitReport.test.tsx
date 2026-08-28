@@ -23,14 +23,32 @@ const met: RequirementFit = {
 };
 
 describe('RequirementFitReport', () => {
+  function reportSummary() {
+    return screen.getByText('What this posting asks for', { selector: 'summary' });
+  }
+
+  function openReport() {
+    fireEvent.click(reportSummary());
+  }
+
   it('renders nothing when there is no assessment, since a failed one and a posting with no requirements say the same thing', () => {
     const { container } = render(<RequirementFitReport fit={[]} />);
 
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('shows unmet and partial requirements without being opened — they are what the candidate has to decide about', () => {
+  it('is closed by default like the keyword report', () => {
+    const { container } = render(<RequirementFitReport fit={[met, partial, unmet]} />);
+
+    expect(container.querySelector('details')).not.toHaveAttribute('open');
+    expect(reportSummary()).toBeVisible();
+    expect(screen.getByText(unmet.requirement)).not.toBeVisible();
+    expect(screen.getByText(partial.requirement)).not.toBeVisible();
+  });
+
+  it('shows unmet and partial requirements when opened', () => {
     render(<RequirementFitReport fit={[met, partial, unmet]} />);
+    openReport();
 
     expect(screen.getByText(unmet.requirement)).toBeVisible();
     expect(screen.getByText(partial.requirement)).toBeVisible();
@@ -38,6 +56,7 @@ describe('RequirementFitReport', () => {
 
   it('lists unmet requirements before partial ones, hardest news first', () => {
     render(<RequirementFitReport fit={[partial, unmet]} />);
+    openReport();
 
     const shown = screen.getAllByRole('listitem').map((item) => item.textContent);
     expect(shown[0]).toContain(unmet.requirement);
@@ -46,12 +65,14 @@ describe('RequirementFitReport', () => {
 
   it('shows the note explaining a shortfall, which is the part that says what is actually missing', () => {
     render(<RequirementFitReport fit={[unmet]} />);
+    openReport();
 
     expect(screen.getByText(unmet.note)).toBeVisible();
   });
 
   it('collapses the met requirements behind a count, so the block reads as a shortfall list and not a scorecard', () => {
     render(<RequirementFitReport fit={[met]} />);
+    openReport();
 
     expect(screen.getByText(/1 requirement your profile meets/)).toBeVisible();
     expect(screen.queryByText(met.requirement)).not.toBeVisible();
@@ -59,6 +80,7 @@ describe('RequirementFitReport', () => {
 
   it('shows the profile text a met verdict rests on once opened, because a claim the candidate cannot check is not worth making', () => {
     render(<RequirementFitReport fit={[met]} />);
+    openReport();
 
     fireEvent.click(screen.getByText(/1 requirement your profile meets/));
 
@@ -67,6 +89,7 @@ describe('RequirementFitReport', () => {
 
   it('says so plainly when nothing falls short, rather than leaving the block silently empty', () => {
     render(<RequirementFitReport fit={[met]} />);
+    openReport();
 
     expect(screen.getByText(/nothing in this posting looks out of reach/i)).toBeVisible();
   });

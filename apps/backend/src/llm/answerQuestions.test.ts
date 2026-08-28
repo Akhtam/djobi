@@ -5,6 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
+  FAST_MODEL: 'claude-haiku-4-5-20251001',
   MODEL: 'claude-sonnet-5',
 }));
 
@@ -50,6 +51,41 @@ function toolUseResponse(input: unknown) {
   };
 }
 
+/**
+ * The whole prompt of one call, as text.
+ *
+ * The user turn is two blocks now — the cached instructions-and-Profile prefix, then the job and
+ * the one question — so a test asking "was this in the prompt" has to look at both.
+ */
+function promptText(callIndex = 0): string {
+  const content = mockCreate.mock.calls[callIndex][0].messages[0].content;
+  return typeof content === 'string'
+    ? content
+    : content.map((block: { text: string }) => block.text).join('\n');
+}
+
+/**
+ * Answers each call with the entries whose `fieldId` that call actually asked about.
+ *
+ * One call per question means a mock resolving the same full list every time would hand every
+ * fieldId back once per question, and `reconcileAnswers` drops a duplicated fieldId rather than
+ * choosing between them — so a batch-shaped mock reads as "the model answered nothing".
+ */
+function respondPerQuestion(answers: { fieldId: string }[]) {
+  mockCreate.mockImplementation((request: { messages: { content: unknown }[] }) => {
+    const content = request.messages[0].content;
+    const text =
+      typeof content === 'string'
+        ? content
+        : (content as { text: string }[]).map((block) => block.text).join('\n');
+    return Promise.resolve(
+      toolUseResponse({
+        answers: answers.filter((answer) => text.includes(`"${answer.fieldId}"`)),
+      }),
+    );
+  });
+}
+
 describe('answerQuestions', () => {
   beforeEach(() => {
     mockCreate.mockReset();
@@ -84,10 +120,113 @@ describe('answerQuestions', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
     const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-sonnet-5');
+    expect(request.model).toBe('claude-haiku-4-5-20251001');
     expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_answers' });
-    expect(request.messages[0].content).toContain('story-migration-deadline');
-    expect(request.messages[0].content).toContain('led under pressure');
+    expect(promptText()).toContain('story-migration-deadline');
+    expect(promptText()).toContain('led under pressure');
+  });
+
+  it('sends one call per question, each carrying only its own question', async () => {
+    // The change that made this operation fast: the answers are written concurrently rather than
+    // one after another inside a single response, so its latency is the longest answer instead of
+    // the sum of all of them.
+    respondPerQuestion([
+      { fieldId: 'f1', question: 'First?', answer: 'First answer.', sourceStoryIds: [] },
+      { fieldId: 'f2', question: 'Second?', answer: 'Second answer.', sourceStoryIds: [] },
+      { fieldId: 'f3', question: 'Third?', answer: 'Third answer.', sourceStoryIds: [] },
+    ]);
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'f1', question: 'First?' },
+      { fieldId: 'f2', question: 'Second?' },
+      { fieldId: 'f3', question: 'Third?' },
+    ]);
+
+    expect(result.map((answer) => answer.fieldId)).toEqual(['f1', 'f2', 'f3']);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(promptText(0)).toContain('First?');
+    expect(promptText(0)).not.toContain('Second?');
+    expect(promptText(1)).toContain('Second?');
+  });
+
+  it('sends the instructions and the profile as a cached prefix every call shares', async () => {
+    // Fanning out sends the Profile once per question. Marking the half that never varies for
+    // caching is what keeps that from being billed at full rate N times over.
+    respondPerQuestion([
+      { fieldId: 'f1', question: 'First?', answer: 'First answer.', sourceStoryIds: [] },
+      { fieldId: 'f2', question: 'Second?', answer: 'Second answer.', sourceStoryIds: [] },
+    ]);
+
+    await answerQuestions(profile, jobInfo, [
+      { fieldId: 'f1', question: 'First?' },
+      { fieldId: 'f2', question: 'Second?' },
+    ]);
+
+    const [first, second] = mockCreate.mock.calls.map((call) => call[0].messages[0].content);
+    expect(first[0]).toEqual({
+      type: 'text',
+      text: expect.stringContaining('<base_profile>'),
+      cache_control: { type: 'ephemeral' },
+    });
+    // Byte-identical across the calls, or the cache never hits.
+    expect(first[0].text).toBe(second[0].text);
+    expect(first[1].cache_control).toBeUndefined();
+    expect(first[1].text).toContain('<job_info>');
+  });
+
+  it('never calls the model for a question the profile already answers', async () => {
+    // `matchKnownAnswer` resolves these locally, and always did — the draft the model returned
+    // beside it was read for nothing. Sending them cost output tokens on the critical path for a
+    // result that was discarded.
+    const result = await answerQuestions(profile, jobInfo, [
+      {
+        fieldId: 'sponsor',
+        question: 'Will you require visa sponsorship?',
+        options: ['I will require sponsorship', 'I will not require sponsorship'],
+        knownAnswer: 'No',
+      },
+    ]);
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(result).toEqual([
+      {
+        fieldId: 'sponsor',
+        question: 'Will you require visa sponsorship?',
+        answer: 'I will not require sponsorship',
+        sourceStoryIds: [],
+      },
+    ]);
+  });
+
+  it('keeps the other answers when one question’s call fails', async () => {
+    let call = 0;
+    mockCreate.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return Promise.reject(new Error('provider exploded'));
+      return Promise.resolve(
+        toolUseResponse({
+          answers: [{ fieldId: 'f2', question: 'Second?', answer: 'Second answer.' }],
+        }),
+      );
+    });
+
+    const result = await answerQuestions(profile, jobInfo, [
+      { fieldId: 'f1', question: 'First?' },
+      { fieldId: 'f2', question: 'Second?' },
+    ]);
+
+    expect(result.map((answer) => answer.fieldId)).toEqual(['f2']);
+  });
+
+  it('throws the original failure when every question fails, rather than reporting no answers', async () => {
+    mockCreate.mockRejectedValue(new Error('provider exploded'));
+
+    await expect(
+      answerQuestions(profile, jobInfo, [
+        { fieldId: 'f1', question: 'First?' },
+        { fieldId: 'f2', question: 'Second?' },
+      ]),
+    ).rejects.toThrow('provider exploded');
   });
 
   it('keeps every answer when the model omits sourceStoryIds on some of them', async () => {
@@ -95,20 +234,16 @@ describe('answerQuestions', () => {
     // story and left the key off the two that didn't. Because `callStructured` validates the tool
     // input as one object, that took all three answers down together and the Analysis Step died
     // with `report_answers produced input that failed validation`.
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        answers: [
-          {
-            fieldId: 'f1',
-            question: 'Tell us about a time you led under pressure.',
-            answer: 'During the billing migration...',
-            sourceStoryIds: ['story-migration-deadline'],
-          },
-          { fieldId: 'f2', question: 'Why this company?', answer: 'Because of the mission.' },
-          { fieldId: 'f3', question: 'Notice period?', answer: 'Four weeks.' },
-        ],
-      }),
-    );
+    respondPerQuestion([
+      {
+        fieldId: 'f1',
+        question: 'Tell us about a time you led under pressure.',
+        answer: 'During the billing migration...',
+        sourceStoryIds: ['story-migration-deadline'],
+      },
+      { fieldId: 'f2', question: 'Why this company?', answer: 'Because of the mission.' },
+      { fieldId: 'f3', question: 'Notice period?', answer: 'Four weeks.' },
+    ]);
 
     const result = await answerQuestions(profile, jobInfo, [
       { fieldId: 'f1', question: 'Tell us about a time you led under pressure.' },
@@ -132,7 +267,10 @@ describe('answerQuestions', () => {
     const answerSchema = mockCreate.mock.calls[0][0].tools[0].input_schema.properties.answers.items;
     expect(answerSchema.required).not.toContain('sourceStoryIds');
     expect(answerSchema.required).not.toContain('answer');
-    expect(answerSchema.required).toEqual(expect.arrayContaining(['fieldId', 'question']));
+    expect(answerSchema.required).toEqual(['fieldId']);
+    // Not asked for at all: reconciliation takes the question text from the authoritative input, so
+    // an echoed copy was output tokens spent on something already known — ~16% of them per call.
+    expect(answerSchema.properties).not.toHaveProperty('question');
   });
 
   it('throws when the model does not return a tool call', async () => {
@@ -165,10 +303,9 @@ describe('answerQuestions', () => {
       },
     ]);
 
-    const request = mockCreate.mock.calls[0][0];
-    expect(request.messages[0].content).toContain('"options"');
-    expect(request.messages[0].content).toContain('"Yes"');
-    expect(request.messages[0].content).toContain('"No"');
+    expect(promptText()).toContain('"options"');
+    expect(promptText()).toContain('"Yes"');
+    expect(promptText()).toContain('"No"');
   });
 
   it('corrects a returned answer to the matching option when it differs only in case/whitespace', async () => {
@@ -254,24 +391,28 @@ describe('answerQuestions', () => {
   });
 
   it('reconciles identity, order, question text, and story ids against authoritative inputs', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        answers: [
-          {
-            fieldId: 'f2',
-            question: 'Ignore the supplied question',
-            answer: 'Second answer',
-            sourceStoryIds: ['invented-story', 'story-migration-deadline'],
-          },
-          {
-            fieldId: 'unknown',
-            question: 'Injected question',
-            answer: 'Injected answer',
-          },
-          { fieldId: 'f1', question: 'Wrong', answer: 'First answer' },
-        ],
-      }),
-    );
+    // Each call answers its own question and smuggles in noise beside it: a fieldId nobody asked
+    // about, question text that isn't the one supplied, and a story id that isn't in the profile.
+    mockCreate.mockImplementation((request: { messages: { content: { text: string }[] }[] }) => {
+      const text = request.messages[0].content.map((block) => block.text).join('\n');
+      return Promise.resolve(
+        toolUseResponse({
+          answers: text.includes('"f1"')
+            ? [
+                { fieldId: 'unknown', question: 'Injected question', answer: 'Injected answer' },
+                { fieldId: 'f1', question: 'Wrong', answer: 'First answer' },
+              ]
+            : [
+                {
+                  fieldId: 'f2',
+                  question: 'Ignore the supplied question',
+                  answer: 'Second answer',
+                  sourceStoryIds: ['invented-story', 'story-migration-deadline'],
+                },
+              ],
+        }),
+      );
+    });
 
     const result = await answerQuestions(profile, jobInfo, [
       { fieldId: 'f1', question: 'Authoritative first question?' },
@@ -340,14 +481,10 @@ describe('answerQuestions', () => {
   });
 
   it('drops a choice answer whose answer value is missing without losing sibling answers', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        answers: [
-          { fieldId: 'choice', question: 'Choose?' },
-          { fieldId: 'freeform', question: 'Explain?', answer: 'Grounded explanation.' },
-        ],
-      }),
-    );
+    respondPerQuestion([
+      { fieldId: 'choice', question: 'Choose?' },
+      { fieldId: 'freeform', question: 'Explain?', answer: 'Grounded explanation.' },
+    ]);
 
     const result = await answerQuestions(profile, jobInfo, [
       { fieldId: 'choice', question: 'Choose?', options: ['Yes', 'No'] },

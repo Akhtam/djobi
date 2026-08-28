@@ -34,7 +34,10 @@ describe('POST /extract-job', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleJobInfo);
-    expect(mockExtractJob).toHaveBeenCalledWith('Senior Software Engineer at Acme...');
+    expect(mockExtractJob).toHaveBeenCalledWith(
+      'Senior Software Engineer at Acme...',
+      expect.any(AbortSignal),
+    );
   });
 
   it('returns 400 when jobDescription is missing', async () => {

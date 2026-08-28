@@ -17,7 +17,12 @@
  * calling the backend, and the backend puts `knownAnswer` into the prompt.
  */
 import { matchScreeningTopic, type CustomAnswer } from './screeningAnswers.js';
-import { matchByContainment, matchPreparedAnswerToOption } from './labelMatching.js';
+import {
+  matchByOverlap,
+  matchPreparedAnswerToOption,
+  questionsMatch,
+  uniqueMatch,
+} from './labelMatching.js';
 import type { PendingQuestion, QuestionForModel } from './wire.js';
 
 /**
@@ -50,7 +55,21 @@ export interface SplitQuestions {
   forModel: QuestionForModel[];
 }
 
-/** What the profile knows about `question`, from a screening topic first, then a custom answer. */
+/**
+ * What the profile knows about `question`, from a screening topic first, then a custom answer.
+ *
+ * A custom answer is looked up twice, by two rules from `labelMatching.ts` and in this order:
+ * {@link questionsMatch} for the same question despite punctuation, then `matchByOverlap` for a
+ * conservative paraphrase. The candidate wrote "How are you
+ * currently using AI tools in your coding workflow?" long before meeting a form asking "How do you
+ * currently use AI tools in your work?" — one question, no shared substring, and containment alone
+ * sent it to be drafted from scratch while the prepared answer sat unused.
+ *
+ * The looser rule reaches only the custom answers. Screening topics are matched by
+ * {@link matchScreeningTopic}'s own patterns and are untouched by this, which is where it matters:
+ * work authorization and sponsorship are legal declarations, and they are not decided by how many
+ * words two questions happen to share.
+ */
 export function preparedAnswerFor(
   profile: PreparedAnswerSource,
   question: string,
@@ -59,8 +78,12 @@ export function preparedAnswerFor(
   const fromTopic = topic ? profile.screeningAnswers?.[topic] : undefined;
   if (fromTopic) return fromTopic;
 
-  return matchByContainment(profile.customAnswers ?? [], (stored) => stored.question, question)
-    ?.answer;
+  const customAnswers = profile.customAnswers ?? [];
+  const questionOf = (stored: CustomAnswer): string => stored.question;
+  const stored =
+    uniqueMatch(customAnswers, (candidate) => questionsMatch(candidate.question, question)) ??
+    matchByOverlap(customAnswers, questionOf, question);
+  return stored?.answer;
 }
 
 /**

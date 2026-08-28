@@ -57,6 +57,7 @@ describe('POST /tailor-resume', () => {
     expect(mockTailorResume).toHaveBeenCalledWith(
       { workExperience: sampleProfile.workExperience, skills: sampleProfile.skills },
       sampleJobInfo,
+      expect.any(AbortSignal),
     );
   });
 

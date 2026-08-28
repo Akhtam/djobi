@@ -5,6 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
+  FAST_MODEL: 'claude-haiku-4-5-20251001',
   MODEL: 'claude-sonnet-5',
 }));
 
@@ -22,7 +23,7 @@ const profile: Profile = {
       title: 'Senior Software Engineer',
       startDate: '2022-01',
       endDate: null,
-      bullets: ['Led the billing service migration'],
+      bullets: ['Led the billing service migration', 'Owned the on-call rotation'],
     },
   ],
   education: [],
@@ -42,11 +43,6 @@ const jobInfo: JobInfo = {
   keywords: ['TypeScript', 'Postgres'],
 };
 
-const sampleTailoredResume = {
-  skills: ['TypeScript', 'PostgreSQL'],
-  workExperience: profile.workExperience,
-};
-
 function toolUseResponse(input: unknown) {
   return {
     content: [{ type: 'tool_use', id: 'toolu_1', name: 'report_tailored_resume', input }],
@@ -58,50 +54,14 @@ describe('tailorResume', () => {
     mockCreate.mockReset();
   });
 
-  it('calls the writing model with a forced tool call and returns the validated resume', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse(sampleTailoredResume));
-
-    const result = await tailorResume(profile, jobInfo);
-
-    expect(result).toEqual(sampleTailoredResume);
-    expect(TailoredResumeSchema.safeParse(result).success).toBe(true);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-
-    const request = mockCreate.mock.calls[0][0];
-    const content = request.messages[0].content;
-    expect(request.model).toBe('claude-sonnet-5');
-    expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_tailored_resume' });
-    expect(content).toContain(
-      JSON.stringify({
-        workExperience: profile.workExperience,
-        skills: profile.skills,
-      }),
-    );
-    expect(content).toContain(JSON.stringify(jobInfo));
-    expect(content).not.toContain(profile.fullName);
-    expect(content).not.toContain('"education"');
-    expect(content).not.toContain('\n  "workExperience"');
-  });
-
-  it('throws when the tool input fails schema validation', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ skills: 'not-an-array' }));
-
-    await expect(tailorResume(profile, jobInfo)).rejects.toThrow(
-      'report_tailored_resume produced input that failed validation',
-    );
-  });
-
-  it('rejects bullets from a fabricated entry and filters fabricated skills', async () => {
+  it('reconstructs a public resume from compact source indices', async () => {
     mockCreate.mockResolvedValue(
       toolUseResponse({
-        skills: ['Rust', ' typescript '],
+        skillIndices: [0, 1],
         workExperience: [
           {
-            company: 'Fabricated Inc',
-            title: 'Chief Architect',
-            startDate: '1999-01',
-            endDate: '2099-12',
-            bullets: ['Emphasized the real billing migration for this role'],
+            sourceIndex: 0,
+            bullets: [{ sourceIndex: 0, text: 'Led a job-relevant billing service migration' }],
           },
         ],
       }),
@@ -110,94 +70,132 @@ describe('tailorResume', () => {
     const result = await tailorResume(profile, jobInfo);
 
     expect(result).toEqual({
-      skills: ['TypeScript'],
+      skills: profile.skills,
       workExperience: [
         {
           ...profile.workExperience[0],
-          bullets: profile.workExperience[0].bullets,
+          bullets: ['Led a job-relevant billing service migration'],
         },
       ],
     });
+    expect(TailoredResumeSchema.safeParse(result).success).toBe(true);
+
+    const request = mockCreate.mock.calls[0][0];
+    expect(request.model).toBe('claude-sonnet-5');
+    expect(request.output_config).toEqual({ effort: 'medium' });
+    expect(request.max_tokens).toBe(1856);
+    expect(request.tools[0].input_schema.properties).toHaveProperty('skillIndices');
+    expect(JSON.stringify(request.tools[0].input_schema)).not.toContain('minimum');
+    expect(JSON.stringify(request.tools[0].input_schema)).not.toContain('minLength');
+    const roleProperties = request.tools[0].input_schema.properties.workExperience.items.properties;
+    expect(roleProperties).toHaveProperty('sourceIndex');
+    expect(roleProperties).not.toHaveProperty('company');
+    expect(request.messages[0].content).toContain(
+      JSON.stringify({ workExperience: profile.workExperience, skills: profile.skills }),
+    );
+    expect(request.messages[0].content).not.toContain(profile.fullName);
   });
 
-  it('never attaches invented-employer bullets to the one unmatched profile entry', async () => {
-    const twoJobProfile: Profile = {
-      ...profile,
-      workExperience: [
-        ...profile.workExperience,
-        {
-          company: 'Beta Corp',
-          title: 'Software Engineer',
-          startDate: '2020-01',
-          endDate: '2021-12',
-          bullets: ['Built authoritative internal developer tooling'],
-        },
-      ],
-    };
+  it('throws when compact tool input fails schema validation', async () => {
+    mockCreate.mockResolvedValue(toolUseResponse({ skillIndices: 'not-an-array' }));
+
+    await expect(tailorResume(profile, jobInfo)).rejects.toThrow(
+      'report_tailored_resume produced input that failed validation',
+    );
+  });
+
+  it('drops invalid and duplicate skill indices', async () => {
     mockCreate.mockResolvedValue(
       toolUseResponse({
-        skills: profile.skills,
+        skillIndices: [1, -1, 99, 1, 0],
+        workExperience: [{ sourceIndex: 0, bullets: [] }],
+      }),
+    );
+
+    const result = await tailorResume(profile, jobInfo);
+
+    expect(result.skills).toEqual(['PostgreSQL', 'TypeScript']);
+  });
+
+  it('uses complete unique role indices to preserve the model-selected role order', async () => {
+    const secondRole = {
+      company: 'Beta Corp',
+      title: 'Software Engineer',
+      startDate: '2020-01',
+      endDate: '2021-12',
+      bullets: ['Built internal developer tooling'],
+    };
+    const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skillIndices: [],
+        workExperience: [
+          { sourceIndex: 1, bullets: [{ sourceIndex: 0, text: 'Built developer tooling' }] },
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Led the billing migration' }] },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoRoleProfile, jobInfo);
+
+    expect(result.workExperience.map((role) => role.company)).toEqual(['Beta Corp', 'Acme Corp']);
+    expect(result.workExperience[0].bullets).toEqual(['Built developer tooling']);
+  });
+
+  it('falls back to profile order and content for missing, duplicate, or invalid role indices', async () => {
+    const secondRole = {
+      company: 'Beta Corp',
+      title: 'Software Engineer',
+      startDate: '2020-01',
+      endDate: '2021-12',
+      bullets: ['Built internal developer tooling'],
+    };
+    const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skillIndices: [],
+        workExperience: [
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Ambiguous first rewrite' }] },
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Ambiguous second rewrite' }] },
+          { sourceIndex: 99, bullets: [{ sourceIndex: 0, text: 'Invented role' }] },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoRoleProfile, jobInfo);
+
+    expect(result.workExperience).toEqual(twoRoleProfile.workExperience);
+  });
+
+  it('drops invalid bullet pointers and falls back when none of a supplied role resolves', async () => {
+    mockCreate.mockResolvedValue(
+      toolUseResponse({
+        skillIndices: [],
         workExperience: [
           {
-            ...twoJobProfile.workExperience[0],
-            bullets: ['Tailored the real Acme billing migration'],
-          },
-          {
-            company: 'Invented LLC',
-            title: 'Founder',
-            startDate: '2010-01',
-            endDate: null,
-            bullets: ['Fabricated an unrelated company achievement'],
+            sourceIndex: 0,
+            bullets: [
+              { sourceIndex: 0, text: 'Duplicate A' },
+              { sourceIndex: 0, text: 'Duplicate B' },
+              { sourceIndex: 99, text: 'Invalid' },
+            ],
           },
         ],
       }),
     );
 
-    const result = await tailorResume(twoJobProfile, jobInfo);
+    const result = await tailorResume(profile, jobInfo);
 
-    expect(result.workExperience).toEqual([
-      {
-        ...twoJobProfile.workExperience[0],
-        bullets: ['Tailored the real Acme billing migration'],
-      },
-      twoJobProfile.workExperience[1],
-    ]);
+    expect(result.workExperience[0].bullets).toEqual(profile.workExperience[0].bullets);
   });
 
-  it('drops invented entries while retaining safely keyed model reordering', async () => {
-    const twoJobProfile: Profile = {
-      ...profile,
-      workExperience: [
-        ...profile.workExperience,
-        {
-          company: 'Beta Corp',
-          title: 'Software Engineer',
-          startDate: '2020-01',
-          endDate: '2021-12',
-          bullets: ['Built internal developer tooling'],
-        },
-      ],
-    };
-    const reordered = [twoJobProfile.workExperience[1], twoJobProfile.workExperience[0]];
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skills: profile.skills,
-        workExperience: [
-          ...reordered,
-          {
-            company: 'Invented LLC',
-            title: 'Founder',
-            startDate: '2010-01',
-            endDate: null,
-            bullets: ['Founded an invented company'],
-          },
-        ],
-      }),
-    );
+  it('returns an empty resume without a model call when the profile has no resume content', async () => {
+    const emptyProfile = { ...profile, workExperience: [], skills: [] };
 
-    const result = await tailorResume(twoJobProfile, jobInfo);
-
-    expect(result.workExperience).toEqual(reordered);
-    expect(result.workExperience).toHaveLength(2);
+    await expect(tailorResume(emptyProfile, jobInfo)).resolves.toEqual({
+      skills: [],
+      workExperience: [],
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

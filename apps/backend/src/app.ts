@@ -90,6 +90,15 @@ app.use('*', async (c, next) => {
 app.onError((err, c) => {
   const context = `${c.req.method} ${c.req.path}`;
 
+  // The candidate closed the panel, navigated away, or hit Re-analyze — the request was abandoned
+  // and every model call under it was aborted on purpose. Nothing failed, so nothing is logged and
+  // no 500 is recorded: the same judgement the rejected-body branch below makes, for the same
+  // reason. Putting an ordinary user action through the channel that means "the backend is broken"
+  // is what makes that channel worth ignoring. The response goes nowhere; the status is for the log.
+  // 499 is the "client closed request" convention; Hono's `StatusCode` union is IANA-only, so the
+  // number is set on a plain `Response` rather than through `c.body`.
+  if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
+
   // A rejected body is the client's fault, so it is a 400 and it is not logged. Logging it would
   // put "the request was bad" through the same channel as "the backend is broken", which is the
   // channel someone reads when deciding whether to go looking at the backend.

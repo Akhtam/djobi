@@ -78,6 +78,7 @@ describe('POST /assess-requirements', () => {
         skills: sampleProfile.skills,
       },
       sampleJobInfo,
+      expect.any(AbortSignal),
     );
   });
 

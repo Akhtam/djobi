@@ -16,6 +16,28 @@ import type { ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
 
 /**
+ * How long any one backend call may take before it is abandoned.
+ *
+ * `fetch` has no timeout of its own, so a request that never completes never settles, and the
+ * Analysis Step's `Promise.all` waits on it forever — the panel spins on "Analyzing job posting…"
+ * with no failure to report and no way back except reloading the extension.
+ *
+ * Ninety seconds is well clear of what these calls actually cost (the slowest measured, a cold
+ * `/extract-job`, was ~17s) and short enough that a hung one becomes a visible error the candidate
+ * can retry. Aborting also reaches the model: the backend hands each request's signal down to the
+ * SDK, so giving up here stops the generation rather than merely stopping the wait.
+ */
+const REQUEST_TIMEOUT_MS = 90_000;
+
+/** A {@link BackendError} for a call that ran past {@link REQUEST_TIMEOUT_MS}. */
+export class BackendTimeoutError extends Error {
+  constructor(readonly path: string) {
+    super(`${path} did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+    this.name = 'BackendTimeoutError';
+  }
+}
+
+/**
  * A non-2xx response from the local djobi backend. Carries `status` and `path` alongside the
  * message so `background/applicationPipeline.ts` can report *which* call failed and why, instead of
  * the generic "something went wrong" the panel used to show for every failure alike.
@@ -91,13 +113,34 @@ function reasonFrom(raw: string): string {
  */
 type Method = 'GET' | 'POST' | 'PATCH';
 
-async function request(path: string, body: unknown, method: Method): Promise<Response> {
-  const res = await fetch(
-    `${BACKEND_ORIGIN}${path}`,
+async function request(
+  path: string,
+  body: unknown,
+  method: Method,
+  externalSignal?: AbortSignal,
+): Promise<Response> {
+  const init: RequestInit =
     method === 'GET'
       ? { method }
-      : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
-  );
+      : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+
+  let res: Response;
+  try {
+    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    res = await fetch(`${BACKEND_ORIGIN}${path}`, {
+      ...init,
+      // A pipeline run supplies the first signal so re-analysis stops superseded model work. The
+      // deadline remains independent: either reason is enough to abandon this particular request.
+      signal: externalSignal ? AbortSignal.any([externalSignal, timeoutSignal]) : timeoutSignal,
+    });
+  } catch (error) {
+    // A timeout reaches here as a bare `TimeoutError`, which says nothing about which call stalled.
+    // The panel reports the cause it is given, so the path has to be in it.
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new BackendTimeoutError(path);
+    }
+    throw error;
+  }
 
   if (!res.ok) {
     const reason = reasonFrom(await res.text());
@@ -134,8 +177,9 @@ export async function callBackend<Schema extends ZodTypeAny>(
   schema: Schema,
   body?: unknown,
   method: Method = 'POST',
+  signal?: AbortSignal,
 ): Promise<ZodTypeOf<Schema>> {
-  const raw = await (await request(path, body, method)).text();
+  const raw = await (await request(path, body, method, signal)).text();
   const decoded = schema.safeParse(raw ? JSON.parse(raw) : undefined);
 
   if (!decoded.success) {

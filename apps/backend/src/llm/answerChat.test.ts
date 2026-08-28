@@ -5,6 +5,7 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 
 vi.mock('./client.js', () => ({
   anthropic: { messages: { create: mockCreate } },
+  FAST_MODEL: 'claude-haiku-4-5-20251001',
   MODEL: 'claude-sonnet-5',
 }));
 
@@ -71,7 +72,7 @@ describe('answerChat', () => {
 
     await answerChat(request());
 
-    expect(mockCreate.mock.calls[0][0].model).toBe('claude-sonnet-5');
+    expect(mockCreate.mock.calls[0][0].model).toBe('claude-haiku-4-5-20251001');
   });
 
   it('grounds the turn in the profile and the job', async () => {
