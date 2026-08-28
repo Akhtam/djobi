@@ -23,6 +23,103 @@ function field(overrides: Partial<DetectedField>): DetectedField {
  */
 const FAST = { settleMs: 0, optionWaitAttempts: 3, optionWaitIntervalMs: 1 };
 
+/**
+ * Renders a stand-in for a **react-select** combobox — the widget Greenhouse's current job boards
+ * are built on, and the one this module kept reporting as filled while the ATS rejected it as empty.
+ *
+ * Modelled on its actual contract, read off the shipped bundle rather than imagined, because every
+ * one of these is a way the old fill path came apart:
+ *
+ * - the control opens on **`mousedown`**; the only thing bound to `click` is an option,
+ * - the trigger is a search `<input>`, and `isSearchable={false}` makes it `readOnly`,
+ * - accepting a choice **clears that input** (`onInputChange('', { action: 'set-value' })`) and
+ *   renders the label into a separate element,
+ * - a hidden `<input required>` sits beside the widget exactly while it holds no value — the
+ *   element behind every "This field is required." under a visibly-filled dropdown,
+ * - the announcement region and the field's own label are near neighbours of all of it, and both
+ *   carry text that reads like an answer.
+ *
+ * `ignoreSelect` models a press the widget doesn't act on, which is the case that has to verify
+ * `false` however convincing the leftover search text looks.
+ */
+function reactSelect(
+  optionLabels: string[],
+  { readOnly = false, ignoreSelect = false } = {},
+): void {
+  document.body.innerHTML = `
+    <div class="field">
+      <label id="f1-label" for="f1">How did you hear about us?</label>
+      <div class="shell">
+        <span aria-live="polite" role="log"></span>
+        <div class="inner">
+          <div class="control">
+            <div class="value-container">
+              <div class="placeholder">Select...</div>
+              <div class="input-container">
+                <input id="f1" role="combobox" aria-expanded="false" ${readOnly ? 'readonly' : ''} />
+              </div>
+            </div>
+          </div>
+        </div>
+        <input class="required-input" required tabindex="-1" aria-hidden="true" value="" />
+      </div>
+    </div>
+  `;
+
+  const inner = document.querySelector('.inner')!;
+  const input = document.querySelector<HTMLInputElement>('#f1')!;
+  let isOpen = false;
+
+  function select(label: string): void {
+    isOpen = false;
+    input.value = '';
+    document.querySelector('.placeholder')?.remove();
+    document.querySelector('.required-input')?.remove();
+
+    const chosen = document.createElement('div');
+    chosen.className = 'single-value';
+    chosen.textContent = label;
+    document.querySelector('.value-container')!.prepend(chosen);
+    render();
+  }
+
+  function render(): void {
+    inner.querySelector('[role="listbox"]')?.remove();
+    input.setAttribute('aria-expanded', String(isOpen));
+    if (!isOpen) return input.removeAttribute('aria-controls');
+
+    const listbox = document.createElement('div');
+    listbox.id = 'f1-listbox';
+    listbox.setAttribute('role', 'listbox');
+    input.setAttribute('aria-controls', listbox.id);
+
+    const query = input.value.toLowerCase();
+    for (const label of optionLabels.filter((l) => l.toLowerCase().includes(query))) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = label;
+      option.addEventListener('click', () => {
+        if (!ignoreSelect) select(label);
+      });
+      listbox.append(option);
+    }
+    inner.append(listbox);
+  }
+
+  const open = () => {
+    isOpen = true;
+    render();
+  };
+  document.querySelector('.control')!.addEventListener('mousedown', open);
+  input.addEventListener('input', open);
+  // Closes but deliberately does *not* clear: react-select drops its search text on blur too, and a
+  // fake that did the same would let this suite pass without the fill path taking its text back.
+  input.addEventListener('blur', () => {
+    isOpen = false;
+    render();
+  });
+}
+
 describe('fillForm', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -553,6 +650,82 @@ describe('fillForm', () => {
     ).resolves.not.toThrow();
 
     expect(document.querySelector<HTMLInputElement>('#f2')!.value).toBe('filled');
+  });
+
+  const COMBOBOX_FIELD = field({
+    id: 'f1',
+    selector: '#f1',
+    label: 'How did you hear about us?',
+    elementRole: 'combobox',
+    options: [
+      { label: 'LinkedIn', selector: null },
+      { label: 'Otta', selector: null },
+    ],
+  });
+
+  it('fills a react-select combobox, which opens on mousedown and clears its own search text on select', async () => {
+    // The widget this project kept failing on, reproduced from its actual contract rather than
+    // imagined: react-select binds its control to `onMouseDown` and *only* an option to `onClick`;
+    // its trigger is a search input whose text it wipes the moment a choice is accepted; and it
+    // renders the chosen label into a separate element, alongside a hidden `<input required>` that
+    // exists exactly while it holds no value — the element every "This field is required." under a
+    // visibly-filled Greenhouse dropdown was coming from.
+    reactSelect(['LinkedIn', 'Otta']);
+
+    const filled = await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST);
+
+    expect(document.querySelector('.single-value')!.textContent).toBe('LinkedIn');
+    // The widget's own account of being answered: no required-input left to fail validation.
+    expect(document.querySelector('.required-input')).toBeNull();
+    // And the fill is reported as the success it is, though the trigger it was typed into is empty.
+    expect(document.querySelector<HTMLInputElement>('#f1')!.value).toBe('');
+    expect(filled).toEqual(['f1']);
+  });
+
+  it('reports a react-select combobox unfilled when the widget ignored the option press, rather than trusting the search text left behind', async () => {
+    // The inversion that made the bug invisible. Search text renders identically to a chosen value,
+    // so reading the trigger reported *this* — a field the ATS will reject as empty — as filled,
+    // and the real success above as a failure.
+    reactSelect(['LinkedIn'], { ignoreSelect: true });
+
+    const filled = await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST);
+
+    expect(document.querySelector('.required-input')).not.toBeNull();
+    expect(filled).toEqual([]);
+  });
+
+  it('opens a combobox that cannot be searched, where the press is the only way in', async () => {
+    // `isSearchable={false}` renders a read-only input. Typing into it accomplishes nothing, so a
+    // fill that opened widgets only as a side effect of typing could never open this one at all.
+    reactSelect(['LinkedIn'], { readOnly: true });
+
+    const filled = await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST);
+
+    expect(document.querySelector('.single-value')!.textContent).toBe('LinkedIn');
+    expect(filled).toEqual(['f1']);
+  });
+
+  it('takes back the search text it typed into a combobox that never offered the choice', async () => {
+    // Text the widget hasn't accepted looks exactly like a value it has. Leaving it there hands the
+    // candidate a form that lies about its own state on the very fields about to be reported
+    // unfilled — and leaves a menu hanging open for the next field's option scan to trip over.
+    reactSelect(['Otta']);
+
+    const filled = await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST);
+
+    expect(document.querySelector<HTMLInputElement>('#f1')!.value).toBe('');
+    expect(document.querySelector('#f1')!.getAttribute('aria-expanded')).toBe('false');
+    expect(filled).toEqual([]);
+  });
+
+  it("does not read a neighbouring field's label or an open menu as this combobox's value", async () => {
+    // Both sit inside the markup around a widget and both carry the answer's own text — the label
+    // asks the question the answer belongs to, and an open menu literally contains the option. A
+    // value read that counted either would confirm every fill it was asked about.
+    reactSelect(['LinkedIn'], { ignoreSelect: true });
+    document.querySelector('label')!.textContent = 'Did you hear about us on LinkedIn?';
+
+    expect(await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST)).toEqual([]);
   });
 
   it("clicks the ARIA radio the option's recorded selector points at — an Ashby-style group whose choices are buttons, not inputs", () => {
