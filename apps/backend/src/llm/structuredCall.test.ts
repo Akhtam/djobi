@@ -61,7 +61,7 @@ describe('callStructured', () => {
     expect(tools ?? []).toEqual([]);
   });
 
-  it('routes only to upstreams that honour the schema without retaining candidate data', async () => {
+  it('prefers Anthropic and falls back only to Claude Platform on AWS', async () => {
     mockDoGenerate.mockResolvedValue(objectGeneration(SAMPLE));
 
     await callStructured(options());
@@ -70,6 +70,9 @@ describe('callStructured', () => {
       provider: {
         require_parameters: true,
         data_collection: 'deny',
+        order: ['anthropic', 'claude-on-aws'],
+        only: ['anthropic', 'claude-on-aws'],
+        allow_fallbacks: true,
       },
       // The point of routing per operation is that the routing can be judged with numbers.
       usage: { include: true },

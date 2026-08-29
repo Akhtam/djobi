@@ -287,11 +287,12 @@ response format, and the object is validated against that schema before it is re
 
 Structured output is now each provider's own mechanism rather than a forced tool call, and that
 trades one risk for another: OpenRouter's support varies by model **and** by which upstream serves
-it. Every call is therefore routed with
-`provider: { require_parameters: true, data_collection: 'deny' }`, which makes hosts that cannot
-honor the schema and any upstream that may retain candidate data ineligible. The local parse and the
-single retry stay regardless. The provider promise is the optimization; the local parse is the
-guarantee.
+it. Every call is therefore routed with `require_parameters: true` and `data_collection: 'deny'`,
+which makes hosts that cannot honor the schema and any upstream that may retain candidate data
+ineligible. Anthropic model slugs additionally order and allow only `anthropic` followed by
+`claude-on-aws`, so Sonnet silently falls back to Anthropic's Claude Platform on AWS but never to
+Azure, Vertex, Bedrock, or another upstream. The local parse and the single retry stay regardless.
+The provider promise is the optimization; the local parse is the guarantee.
 
 `strict` is off. Strict mode is OpenAI's JSON Schema subset — every property required, no defaults —
 and these schemas are not written in it: an omitted `revisedAnswer` and a defaulted `note` both mean

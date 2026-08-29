@@ -71,7 +71,8 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   `anthropic/claude-sonnet-5` serves `tailorResume`, `answerQuestions` and `answerChat`, the three
   calls where written judgement is the product. The map lives in `llm/client.ts` as `MODELS`, so a
   reroute is an edit to one object. There is no dual-client fallback path, deliberately: that is a
-  code path with no test coverage waiting to be wrong. Every call logs its resolved upstream and its
+  code path with no test coverage waiting to be wrong. Anthropic model slugs prefer the `anthropic`
+  upstream and may fall back only to `claude-on-aws`; every call logs its resolved upstream and its
   cost, so the routing is revisable with numbers rather than argument.
 - **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
   Duplicate Guard lookups match a derived `job_key` — the posting's URL identity — backed by a
@@ -242,6 +243,20 @@ what's kept here is the reasoning a later change would otherwise have to re-deri
 `PATCH /applications/:id/stage` and `POST /applications/:id/notes` are their own routes rather than
 fields on `PATCH /applications/:id`, whose body is an `ApplicationSnapshot` that deliberately
 excludes stage and notes. Folding them in would let a re-saved autofill stomp interview history.
+
+### Bullet reconciliation by source index
+
+`tailorResume` does not ask the model for resume prose. It returns
+`{ sourceIndex, bullets: [{ sourceIndex, text }] }` per role, and `reconcileResume` rejoins that to
+the authoritative Profile: company, title and dates come from the Profile, skills are copied
+unchanged, and every kept bullet must trace to a real profile bullet. Selection and rewording in one
+step are otherwise unverifiable — given only strings back, the backend cannot tell a legitimately
+reworded bullet from a silently invented one.
+
+Invalid pointers are treated as a malformed result, never as an instruction: a duplicate or
+out-of-range role index falls back to Profile order, and a role whose bullets all fail to resolve
+keeps its original bullets rather than being emitted empty. Bullets may already be reordered and
+omitted; what does not exist yet is any _cap_ on how many survive, which is Phase 10 below.
 
 ### The Log tab
 
@@ -473,9 +488,10 @@ Decisions:
       directly — no translation table needed after all. `tailorResume` now sends `none`: explicit
       medium effort measured at 22s, and leaving effort absent still allowed similarly expensive
       adaptive reasoning
-- [x] Writing routes use OpenRouter's normal Sonnet 5 routing and failover. `require_parameters`
-      protects structured generation and `data_collection: 'deny'` keeps candidate data away from
-      providers that may retain it
+- [x] Writing routes use Sonnet 5 through OpenRouter, preferring `anthropic` and falling back only to
+      `claude-on-aws`, with no other provider eligible
+- [x] `require_parameters` protects structured generation and `data_collection: 'deny'` keeps
+      candidate data away from providers that may retain it
 - [x] `outputTokenLimit` re-derived from measurement. Across 3/5/10-bullet profiles, reasoning was
       1.3k–2.3k tokens while content was 179–330; reasoning is now disabled and the limit again scales
       only with the compact object
@@ -511,78 +527,128 @@ and the phase-by-phase plan are in `docs/multi-tenant-auth.md`; the shape of it:
 - **One server-side `ANTHROPIC_API_KEY` funds every signup.** Either users bring their own key or
   there are hard per-user quotas. This gates going public and is not a later hardening task.
 
-### Phase 10 — Bullet selection: an unbounded bullet bank, capped per resume (proposed, not started)
+### Phase 10 — A deep bullet bank, starred bullets, and a per-role cap (proposed, not started)
 
-Let the candidate keep **every** bullet they have ever written for a role, and make `tailorResume`
-choose which of them belong on _this_ resume by weighing each against the posting's requirements —
-up to a bullet count the candidate controls.
+Let the candidate keep **every** bullet they have ever written for a role — a dozen or fifteen, not
+four — and make each resume a selection from that bank rather than the whole of it. Two controls
+decide what lands: the candidate **stars** the bullets that must always appear, and a per-role
+**cap** bounds how many more the model may add.
 
-Today the model rewords and reorders bullets but is never told to _drop_ any, so every bullet on a
-role lands on every resume. That makes the base profile a document the candidate has to keep
-pruned by hand, and it is what pushes a resume off one page: `renderResume.tsx` walks a density
-ladder to fit, and when the tightest step still spills it returns two pages, with its own comment
-naming the real fix as a content problem belonging upstream in `llm/tailorResume.ts`. This is that
-fix.
+Today every bullet on a role lands on every resume. `tailorResume` already permits omission and
+already verifies each kept bullet against the Profile (see _Bullet reconciliation by source index_
+above), but nothing bounds the count — so the bank cannot grow without the resume growing with it,
+and that is what pushes a resume off one page: `renderResume.tsx` walks a density ladder to fit, and
+when the tightest step still spills it returns two pages, its own comment naming the real fix as a
+content problem belonging upstream in `llm/tailorResume.ts`. This is that fix.
 
 Decisions:
 
-- **The bullet cap is a maximum, never a target.** A role with three bullets under a cap of six
-  stays at three. Padding to reach a number is fabrication, which the tailoring prompt already
-  forbids — the two rules must not be allowed to fight.
-- **The model returns the index of the source bullet it chose, not just prose.** Selection and
-  rewording in one step are otherwise unverifiable: given only strings back, the backend cannot tell
-  a legitimately reworded selection from a silently invented bullet or a miscounted one. With
-  `{ sourceIndex, text }`, `reconcileResume` verifies every kept bullet traces to a real profile
-  bullet, drops any out-of-range index, and **enforces the cap in code** rather than trusting the
-  prompt to have obeyed it.
-- **`sourceIndex` is a detail of the model call and is not persisted.** `reconcileResume` resolves
-  it away and still returns plain `string[]`, so `TailoredResumeSchema`, the stored
-  `Application.tailoredResume`, the PDF renderer and the dashboard all stay exactly as they are.
-  Only the tool schema inside `tailorResume.ts` carries the indices.
-- **The cap does not replace the density ladder.** The cap governs how much content there is; the
-  ladder governs the typography for whatever survives. Both stay. The two-page fallback should
-  simply become rare.
-- **Dropped bullets are shown as dropped.** The review UI reports what was left off (at minimum a
-  count per role) rather than silently presenting a shortened resume as the whole of it. Losing
-  content the candidate wrote without telling them is the failure mode the PDF renderer already
-  refuses to commit; a deliberate drop is fine, an invisible one is not.
-- **A manually logged application is not capped.** `baseResumeOf` projects the Profile with nothing
-  dropped, because a `source: 'manual'` record documents what the candidate actually sent. Capping
-  is a tailoring decision and belongs only on the tailoring path.
-- **Nothing today blocks an unbounded bullet bank.** `WorkExperienceSchema.bullets` is an uncapped
-  `z.array(z.string())` and the options page's "+ Add bullet" is unbounded, so the storage half of
-  this phase already works. The work is the selection and the cap — plus whatever the options page
-  needs to stay usable once a role holds fifteen bullets instead of four.
+- **The cap is a maximum, never a target.** A role with three bullets under a cap of six stays at
+  three. Padding to reach a number is fabrication, which the tailoring prompt already forbids — the
+  two rules must not be allowed to fight.
+- **The cap is enforced in `reconcileResume`, not asked for in the prompt.** A cap the model is
+  merely told about is a cap that holds until the run where it doesn't, and the failure is a
+  two-page PDF nobody attributes to tailoring. The code already resolves every bullet pointer; the
+  cap is a truncation on that same pass.
+- **One Profile-level default, overridable per role.** `Profile.maxBulletsPerRole` defaults to
+  **6**; a `WorkExperience.maxBullets` of `null` inherits it and a number overrides it. A recent role
+  deserves more lines than a job from a decade ago, and a flat number cannot express that — while
+  making every role carry its own required number is a fussier form for no gain on the common case.
+- **The cap lives on the Profile, not on the run.** A persisted preference applying to every
+  application, added as an optional field with a schema default exactly as `screeningAnswers` was, so
+  stored profiles keep parsing with no migration. A per-application override in the panel is a
+  plausible later addition, deliberately not built here; nothing in this shape blocks it.
+- **The bank itself is uncapped.** No `.max()` on `bullets`. Fifteen is guidance the options page
+  shows as a count, not a schema rule — a limit in `WorkExperienceSchema` is read back out of
+  `profiles.data` jsonb, so it would turn a profile that outgrew it into a row the options page
+  cannot render. The consequence is that prompt input grows with the bank, which is what makes the
+  two token decisions below load-bearing rather than tidy.
+- **Starred bullets are present and verbatim.** `WorkExperience.starredIndices` points into the
+  role's own `bullets`. The model may neither drop nor reword a starred bullet; `reconcileResume`
+  takes `role.bullets[i]` and ignores any text the model sent for it. A "permanent" bullet the model
+  can override is a hint, and a hint is what the prompt already is. Rewriting a starred bullet is the
+  **candidate's** job, in the options page, on the source text.
+- **Indices, not a second array.** `starredBullets: string[]` alongside `bullets: string[]` would
+  make resume order a concatenation rather than something the candidate authored, force
+  `baseResumeOf` to stop being a pure projection, and split the model's `sourceIndex` across two
+  index spaces. Indices keep one authored list, one index space, and an unchanged output schema. The
+  price is that deleting a bullet must remap `starredIndices` — one component's concern, and
+  testable.
+- **Starring is optional and unbounded.** Zero stars is every profile that exists today and must stay
+  valid. There is no ceiling either: stars are the candidate's own instruction, so when
+  `starredIndices.length` exceeds `maxBullets` the **starred count wins** and the effective cap is
+  `max(maxBullets, starredIndices.length)`. Silently discarding a pinned bullet would break the one
+  promise starring makes.
+- **Therefore nothing bounds resume length any more, and that is deliberate.** The success criterion
+  for this phase is that two-page resumes become rare _unless the candidate starred their way into
+  one_. The cap governs the model's discretion; it is not a censor on the candidate's choices. The
+  density ladder still degrades gracefully behind it.
+- **The model owns ordering; the code owns content and presence.** It returns every kept bullet as an
+  ordered source index, supplying `text` only for the ones it may reword. Ordering is real tailoring
+   — the strongest bullet for this posting belongs first — and it costs nothing to grant, since a
+  starred entry carries an index and no prose. Every starred index must appear exactly once; if not,
+  the pointers are malformed and the existing fall-back-to-the-source-role rule applies.
+- **Starred bullets still go into the prompt**, marked as already included and excluded from the
+  selectable set, so the model spends its remaining slots on something the resume does not already
+  say.
+- **Rewriting stays on for selected bullets, and "sounds natural, not robotic" is a prompt
+  instruction with nothing behind it.** Recorded as **unverified — revisit**: no test can assert it
+  and no reviewer sees the text before the PDF renders. A deterministic lint for the usual tells
+  ("Spearheaded", invented percentages) was considered and rejected — it fires on bullets the
+  candidate wrote themselves. What partially covers this instead is starring: a starred bullet is the
+  candidate's own sentence and cannot read as machine-written, because it isn't.
+- **Nothing about dropped bullets appears in the panel flow.** At a bank of fifteen and a cap of six,
+  dropping is the normal case; a per-role "9 dropped" notice is noise that always says the same thing
+  and gets ignored within a week. This reverses the earlier plan to report drops in the review UI.
+- **Keyword Coverage gets a fourth verdict, because capping breaks its central claim.**
+  `keywordCoverage.ts` reports against the tailored resume and its doc says the remedy for an
+  uncovered keyword is always the Profile. Once a run can drop a bullet that evidences a keyword, the
+  report says "missing" about something the Profile already has, and the advice is wrong. A verdict
+  meaning _evidenced in a bullet this run did not select_ turns that into the loop this phase needs:
+  it names the bullet worth starring. Coverage still never feeds back into tailoring — that rule is
+  load-bearing and is what keeps the report honest.
+- **A manually logged application is not capped and knows nothing about stars.** `baseResumeOf`
+  projects the Profile with nothing dropped, because a `source: 'manual'` record documents what the
+  candidate actually sent. Capping is a tailoring decision and belongs only on the tailoring path.
+- **`tailorResume`'s prompt must be split for caching.** It passes one interleaved `userContent`
+  string today and never sets `cachedPrefix`, so the Profile — the stable half — is re-sent at full
+  price on every posting, while `answerQuestions` does the split properly and measured 665 of ~868
+  input tokens served from cache. With an unbounded bank the stable half is the half that grows.
+- **`outputTokenLimit` must scale with the cap, not with the bank.** `bulletCount * 120` scales with
+  the source bullets; a capped output is bounded by `roles × cap`. At 5 roles × 15 bullets the
+  current formula pins to its 2048 ceiling — the exact condition that produced Phase 11's
+  `finishReason: 'length'` truncation — to hold an object about a third that size. Reasoning stays
+  `effort: 'none'`.
 
-- **One Profile-level default, overridable per role.** `Profile.maxBulletsPerRole` sets the cap for
-  every role; a `WorkExperience.maxBullets` of `null` inherits it and a number overrides it. Recent
-  roles usually deserve more lines than a job from a decade ago, and a single flat number cannot
-  express that — but making every role carry its own required number is a fussier form for no gain
-  on the common case.
-- **The cap lives on the Profile, not on the run — for now.** It is a persisted preference applying
-  to every application, added as an optional field with a schema default exactly as
-  `screeningAnswers` was, so stored profiles keep parsing with no migration. A per-application
-  override in the panel is a plausible later addition and is deliberately not built here; nothing in
-  this shape blocks it.
-
-- [ ] `packages/shared/src/schemas.ts`: `Profile.maxBulletsPerRole` (optional, schema default) and
-      `WorkExperience.maxBullets` (nullable, `null` = inherit); add both to `EMPTY_PROFILE`
-- [ ] Keep `maxBullets` out of the _resume_. Adding it to `WorkExperienceSchema` puts it on two
-      paths that hand a Profile's entries straight to a `TailoredResume`: `baseResumeOf` returns
-      `profile.workExperience` as-is, and `reconcileResume` spreads the whole profile entry
-      (`{ ...profileByKey.get(key)!, bullets }`). Neither re-parses, so the cap would ride into
-      `applications.tailoredResume` jsonb as a stored field of a resume, where it means nothing.
-      Project the entry explicitly in both places instead of spreading
-- [ ] `apps/backend/src/llm/tailorResume.ts`: tool schema returns `{ sourceIndex, text }` per bullet;
-      prompt instructs selection against `jobInfo.requirements`/`keywords`, states the cap as a
-      maximum, and forbids padding
-- [ ] `reconcileResume`: resolve `sourceIndex` against the profile entry's own bullets, drop
-      unresolvable ones, truncate to the cap, and return plain `string[]` — the existing entry-level
-      reconciliation is unchanged
-- [ ] Options page: the cap control(s), and a bullet editor that stays workable at fifteen bullets
-      per role
-- [ ] Panel review UI: surface what was dropped per role
-- [ ] Confirm the two-page case actually recedes — a fixture that previously spilled should now fit
+- [ ] `packages/shared/src/schemas.ts`: `Profile.maxBulletsPerRole` (optional, schema default 6),
+      `WorkExperience.maxBullets` (nullable, `null` = inherit) and `WorkExperience.starredIndices`
+      (optional, default `[]`, `.refine()`d so every index resolves against `bullets`); all three in
+      `EMPTY_PROFILE`. No `.max()` on `bullets`
+- [ ] Keep the three new fields out of the _resume_. They ride two paths that hand Profile entries
+      straight to a `TailoredResume`: `baseResumeOf` returns `profile.workExperience` as-is, and
+      `reconcileResume` spreads the whole profile entry. Neither re-parses, so they would land in
+      `applications.tailoredResume` jsonb as stored fields of a resume, where they mean nothing.
+      Project both entries explicitly instead of spreading
+- [ ] `apps/backend/src/llm/tailorResume.ts`: prompt states the cap as a maximum, forbids padding,
+      instructs selection against `jobInfo.requirements`/`keywords`, marks starred bullets as already
+      included and excluded from selection, and asks for ordered indices with `text` only on
+      non-starred entries
+- [ ] `reconcileResume`: substitute `role.bullets[i]` verbatim for every starred index, require each
+      to appear exactly once, truncate to `max(maxBullets ?? maxBulletsPerRole, starredIndices.length)`,
+      and keep returning plain `string[]`
+- [ ] `tailorResume`: move instructions + Profile into `cachedPrefix` and leave `<job_info>` in the
+      varying tail, matching `answerQuestions`; confirm cache reads in the structured-call metrics
+- [ ] `outputTokenLimit`: re-derive from the effective cap; re-measure on a 15-bullet-per-role
+      profile before this ships
+- [ ] `packages/shared/src/keywordCoverage.ts`: fourth `CoverageVerdict` for a keyword evidenced only
+      in an unselected bullet, plus the branch in `panel/CoverageReport.tsx` that says _star it_
+      rather than _add it to your Profile_
+- [ ] Options page: star toggle per bullet, per-role collapse, a bullet count, and the cap controls
+      (Profile default plus per-role override). Deleting or inserting a bullet remaps
+      `starredIndices` — one helper, its own tests. No drag-reordering: authored order stopped being
+      resume order once the model took ordering
+- [ ] Confirm the two-page case recedes — a fixture that previously spilled should now fit, and one
+      with more stars than its cap should still be allowed to spill
 - Build test-first, same as the rest
 
 ## Known loose ends

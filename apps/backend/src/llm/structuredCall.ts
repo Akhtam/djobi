@@ -220,6 +220,15 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
               // Prompts contain candidate profiles and application answers. Keep requests away
               // from upstreams that may retain that data, independent of account-level settings.
               data_collection: 'deny',
+              // An Anthropic model slug identifies the model family, not necessarily who serves it.
+              // Prefer Anthropic directly and allow only its Claude Platform on AWS as fallback.
+              ...(options.model.startsWith('anthropic/')
+                ? {
+                    order: ['anthropic', 'claude-on-aws'],
+                    only: ['anthropic', 'claude-on-aws'],
+                    allow_fallbacks: true,
+                  }
+                : {}),
             },
             // Cost and the resolved upstream come back only when this is asked for, and they are
             // the two numbers the routing decision is meant to be revisited with.
