@@ -169,7 +169,7 @@ export type JobInfo = z.infer<typeof JobInfoSchema>;
 export const TailoredResumeSchema = z.object({
   skills: z
     .array(z.string())
-    .describe("Subset/reordering of the base profile's skills most relevant to this job"),
+    .describe("The base profile's complete skills list, unchanged and in profile order"),
   workExperience: z.array(
     z.object({
       company: z.string(),

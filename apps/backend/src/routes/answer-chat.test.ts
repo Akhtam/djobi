@@ -112,7 +112,7 @@ describe('POST /answer-chat', () => {
       new StructuredCallError(
         'invalid-input',
         'report_chat_turn',
-        'report_chat_turn produced input that failed validation: revisedAnswer required',
+        'report_chat_turn produced output that failed validation: revisedAnswer required',
         'req-1',
       ),
     );

@@ -100,7 +100,14 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
         }),
       },
     },
-    runtime: { sendMessage, openOptionsPage, lastError: undefined },
+    runtime: {
+      sendMessage,
+      openOptionsPage,
+      lastError: undefined,
+      // Answers the service-worker heartbeat (`lib/keepAlive.ts`). Every routed pipeline step calls
+      // it, so a fake without it fails the panel tests for a reason that has nothing to do with them.
+      getPlatformInfo: () => Promise.resolve({ os: 'mac', arch: 'arm64', nacl_arch: 'arm64' }),
+    },
     storage,
   });
 

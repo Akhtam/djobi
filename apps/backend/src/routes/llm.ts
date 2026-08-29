@@ -15,7 +15,6 @@
 import {
   AnswerChatRequestSchema,
   AnswerQuestionsRequestSchema,
-  AssessRequirementsRequestSchema,
   ExtractJobRequestSchema,
   TailorResumeRequestSchema,
 } from '@djobi/shared';
@@ -24,7 +23,6 @@ import type { z } from 'zod';
 import { parseBody } from '../requestBody.js';
 import { answerChat } from '../llm/answerChat.js';
 import { answerQuestions } from '../llm/answerQuestions.js';
-import { assessRequirements } from '../llm/assessRequirements.js';
 import { extractJob } from '../llm/extractJob.js';
 import { tailorResume } from '../llm/tailorResume.js';
 
@@ -62,16 +60,6 @@ post('/extract-job', ExtractJobRequestSchema, (body, signal) =>
 post('/tailor-resume', TailorResumeRequestSchema, (body, signal) =>
   tailorResume(body.profile, body.jobInfo, signal),
 );
-
-/**
- * Judges the Profile against each requirement the posting states.
- *
- * Wrapped in `{ fit }` rather than returned as a bare array, because a JSON array is not an
- * extensible response shape and every other route here already answers with an object.
- */
-post('/assess-requirements', AssessRequirementsRequestSchema, async (body, signal) => ({
-  fit: await assessRequirements(body.profile, body.jobInfo, signal),
-}));
 
 /** Drafts answers to a form's freeform application questions. */
 post('/answer-questions', AnswerQuestionsRequestSchema, (body, signal) =>

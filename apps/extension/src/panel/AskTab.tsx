@@ -31,6 +31,8 @@ import type { BackendClient } from '../lib/backendClient';
 
 /** A question card handing this tab the answer it wants rewritten. */
 export interface AskSeed {
+  /** The run this field belongs to, so a tab switch cannot redirect the write-back. */
+  runId: string;
   /** The run answer "Use this answer" writes back to. */
   fieldId: string;
   question: string;
@@ -59,6 +61,7 @@ export function AskTab({
   client,
   profile,
   jobInfo,
+  activeRunId,
   seed,
   onUseAnswer,
 }: {
@@ -67,6 +70,8 @@ export function AskTab({
   profile: Profile;
   /** The run's job, when there is a run. Absent is normal: this tab works with no job page. */
   jobInfo: JobInfo | null;
+  /** The run currently visible in Autofill, or null when the active tab has none. */
+  activeRunId: string | null;
   seed: AskSeed | null;
   /** Writes an answer back onto the run's question card. Still hand-editable there afterward. */
   onUseAnswer: (fieldId: string, answer: string) => void;
@@ -74,7 +79,12 @@ export function AskTab({
   /** The question under discussion, fixed once the conversation has one. '' until then. */
   const [question, setQuestion] = useState('');
   /** The seeded draft and the field it came from, or null for a cold ask. */
-  const [refining, setRefining] = useState<{ fieldId: string; currentAnswer: string } | null>(null);
+  const [refining, setRefining] = useState<{
+    runId: string;
+    fieldId: string;
+    currentAnswer: string;
+    jobInfo: JobInfo | null;
+  } | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
@@ -88,6 +98,7 @@ export function AskTab({
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   const conversing = question !== '' || refining !== null;
+  const canUseAnswer = refining !== null && refining.runId === activeRunId;
 
   /**
    * Takes a hand-off from a question card. Keyed by the seed's token rather than its contents, so
@@ -98,7 +109,12 @@ export function AskTab({
     if (!seed) return;
     ++turnRequestRef.current;
     setQuestion(seed.question);
-    setRefining({ fieldId: seed.fieldId, currentAnswer: seed.currentAnswer });
+    setRefining({
+      runId: seed.runId,
+      fieldId: seed.fieldId,
+      currentAnswer: seed.currentAnswer,
+      jobInfo,
+    });
     setTurns([]);
     setDraft('');
     setPending(false);
@@ -152,7 +168,7 @@ export function AskTab({
       const { reply, revisedAnswer } = await client.answerChat({
         profile,
         question: askedQuestion,
-        jobInfo,
+        jobInfo: refining?.jobInfo ?? jobInfo,
         currentAnswer: refining?.currentAnswer,
         // Only the two fields the wire contract carries, and only the turns it should carry: the
         // opening question travels as `question`, and a turn's answer is display state here.
@@ -229,6 +245,12 @@ export function AskTab({
           </div>
         )}
 
+        {refining && !canUseAnswer && (
+          <p className="inline-warning" role="status">
+            Switch back to the application this answer came from to apply it.
+          </p>
+        )}
+
         {turns.map((turn, index) => (
           <div className={`ask-msg ${turn.role}`} key={index}>
             <span className="ask-msg-role">{turn.role === 'user' ? 'You' : 'djobi'}</span>
@@ -239,7 +261,7 @@ export function AskTab({
                   <span className="eyebrow">Answer</span>
                   <p>{turn.revisedAnswer}</p>
                   <div className="ask-answer-actions">
-                    {refining ? (
+                    {canUseAnswer ? (
                       <button
                         type="button"
                         className="btn-secondary"

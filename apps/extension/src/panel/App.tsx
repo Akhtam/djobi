@@ -101,7 +101,9 @@ export function App({ client }: { client: BackendClient }) {
    * from, and only a freeform one can take a rewritten answer back.
    */
   function refineAnswer(fieldId: string, question: string, currentAnswer: string) {
-    setAskSeed({ fieldId, question, currentAnswer, token: ++askSeedTokenRef.current });
+    const runId = activeRun.run?.runId;
+    if (!runId) return;
+    setAskSeed({ runId, fieldId, question, currentAnswer, token: ++askSeedTokenRef.current });
     setTab('ask');
   }
 
@@ -211,6 +213,7 @@ export function App({ client }: { client: BackendClient }) {
               client={client}
               profile={profile}
               jobInfo={activeRun.run?.jobInfo ?? null}
+              activeRunId={activeRun.run?.runId ?? null}
               seed={askSeed}
               onUseAnswer={activeRun.updateAnswer}
             />

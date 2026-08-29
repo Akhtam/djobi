@@ -12,7 +12,7 @@
  */
 import type { AnswerChatRequest, AnswerChatResponse } from '@djobi/shared';
 import { z } from 'zod';
-import { FAST_MODEL } from './client.js';
+import { MODELS } from './client.js';
 import { groundingContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -83,7 +83,7 @@ export async function answerChat(
 
   const result = await callStructured({
     signal,
-    model: FAST_MODEL,
+    model: MODELS.answerChat,
     maxTokens: 4096,
     toolName: 'report_chat_turn',
     toolDescription: 'Report your reply to the candidate, and the answer text when you wrote one.',

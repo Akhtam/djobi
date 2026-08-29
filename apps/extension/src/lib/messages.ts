@@ -158,13 +158,31 @@ export type ContentCommandMessage =
  * `boolean` that was always `false`. Every caller wrote `<…, void>` and discarded the promise. An
  * interface that describes capabilities the implementation doesn't have is worse than no types.
  */
+/**
+ * Panel -> background: the panel is watching a step that claims to still be running. No response.
+ *
+ * It carries no work of its own and its handler does nothing. **Waking a worker is the entire
+ * point.** A step's progress is only ever repaired by a worker starting — `service-worker.ts` runs
+ * `recoverInterruptedPipelineRuns` before it routes anything — and a panel sitting on `analyzing`
+ * sends nothing that would start one. So the run that Chrome stopped mid-step stays `analyzing`
+ * forever, with no error and no retry, which is the exact state the recovery sweep exists to clear.
+ *
+ * Harmless when the worker is alive and genuinely working: the sweep has already run for that
+ * instance, so this routes to a no-op and the real step keeps going.
+ */
+export interface CheckRunMessage {
+  type: 'CHECK_RUN';
+  tabId: number;
+}
+
 export type TypedMessage =
   | ReportJobPageMessage
   | StartAnalysisMessage
   | StartFillMessage
   | StartSaveApplicationMessage
   | UpdateRunMessage
-  | UpdateJobContextMessage;
+  | UpdateJobContextMessage
+  | CheckRunMessage;
 
 /**
  * Sends a coordination message to the background and returns immediately. There is no operation

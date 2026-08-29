@@ -29,9 +29,9 @@ All schemas, in the order data flows through the app:
   `requirements[]`, `keywords[]`. Those last two are separate arrays because they're used
   differently downstream — requirements shape which experience gets emphasized, keywords are terms
   worth echoing verbatim for resume scanners.
-- **`TailoredResumeSchema`** — the structured output of `tailorResume`: a job-specific skills subset
-  and reworded/reordered `workExperience[]`. Intentionally a _subset_ of Profile shape (no
-  `education`, no `links`) — those don't need tailoring per job.
+- **`TailoredResumeSchema`** — the output of `tailorResume`: the Profile's complete skills list,
+  unchanged and in profile order, plus reworded/reordered `workExperience[]`. Intentionally a
+  _subset_ of Profile shape (no `education`, no `links`) — those don't need tailoring per job.
 - **`QuestionAnswerSchema`** — one drafted answer to one `question` field. `sourceStoryIds[]`
   records which `Story.id`s the model drew on, so the review UI can say "this used your 'billing
   migration' story" instead of showing an opaque block of text.

@@ -13,7 +13,7 @@ import {
   type ScreeningAnswers,
   type ScreeningTopic,
 } from '@djobi/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import type { BackendClient } from '../lib/backendClient';
@@ -175,8 +175,10 @@ export function App({ client }: { client: BackendClient }) {
   const [newSkill, setNewSkill] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const editRevisionRef = useRef(0);
 
   function setProfile(next: Profile) {
+    ++editRevisionRef.current;
     setProfileState(next);
     setDirty(true);
     if (status?.kind === 'saved') setStatus(null);
@@ -236,6 +238,7 @@ export function App({ client }: { client: BackendClient }) {
     if (!profile) return;
     setStatus(null);
     setSaving(true);
+    const savedRevision = editRevisionRef.current;
     const toSave: Profile = {
       ...profile,
       workExperience: profile.workExperience.map((we) => ({
@@ -247,6 +250,9 @@ export function App({ client }: { client: BackendClient }) {
     client
       .saveProfile(toSave)
       .then((saved) => {
+        // The form remains editable while saving. Do not replace newer edits with the snapshot
+        // returned for an older request.
+        if (savedRevision !== editRevisionRef.current) return;
         setProfileState(parseProfile(saved));
         setDirty(false);
         setStatus({ kind: 'saved', message: 'Profile saved.' });

@@ -43,6 +43,7 @@ const jobInfo: JobInfo = {
 };
 
 const seed: AskSeed = {
+  runId: 'run-1',
   fieldId: 'field-7',
   question: 'Tell us about a challenge you faced.',
   currentAnswer: 'A long-winded first draft.',
@@ -89,6 +90,7 @@ function renderTab(overrides: Partial<Parameters<typeof AskTab>[0]> = {}) {
       client={client}
       profile={profile}
       jobInfo={null}
+      activeRunId={overrides.seed?.runId ?? null}
       seed={null}
       onUseAnswer={onUseAnswer}
       {...overrides}
@@ -191,7 +193,14 @@ describe('AskTab — a seeded refinement', () => {
     // Same question, same draft: only the token differs, which is exactly why the token exists.
     stubChat({ reply: 'Shortened it.', revisedAnswer: 'A short answer.' });
     const { rerender } = render(
-      <AskTab client={client} profile={profile} jobInfo={null} seed={seed} onUseAnswer={vi.fn()} />,
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={null}
+        activeRunId={seed.runId}
+        seed={seed}
+        onUseAnswer={vi.fn()}
+      />,
     );
 
     type('Shorter.');
@@ -202,6 +211,7 @@ describe('AskTab — a seeded refinement', () => {
         client={client}
         profile={profile}
         jobInfo={null}
+        activeRunId={seed.runId}
         seed={{ ...seed, token: 2 }}
         onUseAnswer={vi.fn()}
       />,
@@ -220,6 +230,39 @@ describe('AskTab — a seeded refinement', () => {
       expect(screen.getByText('Which of your two projects should this be about?')).toBeTruthy(),
     );
     expect(screen.queryByRole('button', { name: 'Use this answer' })).toBeNull();
+  });
+
+  it('does not apply a seeded answer after the active browser tab changes runs', async () => {
+    stubChat({ reply: 'Shortened it.', revisedAnswer: 'A short answer.' });
+    const onUseAnswer = vi.fn();
+    const view = render(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={jobInfo}
+        activeRunId={seed.runId}
+        seed={seed}
+        onUseAnswer={onUseAnswer}
+      />,
+    );
+
+    type('Shorter.');
+    await screen.findByRole('button', { name: 'Use this answer' });
+
+    view.rerender(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={null}
+        activeRunId="run-2"
+        seed={seed}
+        onUseAnswer={onUseAnswer}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Use this answer' })).toBeNull();
+    expect(screen.getByText(/switch back to the application/i)).toBeInTheDocument();
+    expect(onUseAnswer).not.toHaveBeenCalled();
   });
 });
 

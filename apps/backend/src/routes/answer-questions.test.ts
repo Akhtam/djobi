@@ -171,7 +171,7 @@ describe('POST /answer-questions', () => {
       new StructuredCallError(
         'no-tool-call',
         'report_answers',
-        'report_answers did not produce a tool call.',
+        'report_answers did not produce a structured object.',
         'req-final',
         false,
         'refusal',
@@ -195,7 +195,7 @@ describe('POST /answer-questions', () => {
     });
     expect(console.error).toHaveBeenCalledWith('[djobi] POST /answer-questions failed', {
       name: 'StructuredCallError',
-      message: 'report_answers did not produce a tool call.',
+      message: 'report_answers did not produce a structured object.',
       kind: 'no-tool-call',
       toolName: 'report_answers',
       requestId: 'req-final',

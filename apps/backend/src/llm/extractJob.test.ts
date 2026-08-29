@@ -1,13 +1,14 @@
 import { JobInfoSchema } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  generation,
+  mockDoGenerate,
+  modelCall,
+  objectGeneration,
+  promptText,
+} from './fakeModel.js';
 
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
-
-vi.mock('./client.js', () => ({
-  anthropic: { messages: { create: mockCreate } },
-  FAST_MODEL: 'claude-haiku-4-5-20251001',
-  MODEL: 'claude-sonnet-5',
-}));
+vi.mock('./client.js', () => import('./fakeModel.js'));
 
 const { extractJob } = await import('./extractJob.js');
 
@@ -21,48 +22,41 @@ const sampleJobInfo = {
   keywords: ['TypeScript', 'Postgres'],
 };
 
-function toolUseResponse(input: unknown) {
-  return {
-    content: [{ type: 'tool_use', id: 'toolu_1', name: 'report_job_info', input }],
-  };
-}
-
 describe('extractJob', () => {
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockDoGenerate.mockReset();
   });
 
-  it('calls the extraction model with a forced tool call and returns the validated job info', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse(sampleJobInfo));
+  it('calls the extraction model for the job-info object and returns it validated', async () => {
+    mockDoGenerate.mockResolvedValue(objectGeneration(sampleJobInfo));
 
     const result = await extractJob('Senior Software Engineer at Acme — Platform team...');
 
     expect(result).toEqual(sampleJobInfo);
     expect(JobInfoSchema.safeParse(result).success).toBe(true);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockDoGenerate).toHaveBeenCalledTimes(1);
 
-    const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-haiku-4-5-20251001');
-    expect(request.tool_choice).toEqual({ type: 'tool', name: 'report_job_info' });
-    expect(request.tools[0].name).toBe('report_job_info');
-    expect(request.messages).toHaveLength(1);
-    expect(request.messages[0].role).toBe('user');
-    expect(request.messages[0].content).toContain('Senior Software Engineer at Acme');
+    // The highest-volume call in the app, and the serial gate the rest of the Analysis Step waits
+    // behind — which is why it is routed to the cheapest model that can follow a schema.
+    expect(modelCall().responseFormat).toMatchObject({ type: 'json', name: 'report_job_info' });
+    expect(modelCall().prompt).toHaveLength(1);
+    expect(modelCall().prompt[0].role).toBe('user');
+    expect(promptText()).toContain('Senior Software Engineer at Acme');
   });
 
-  it('throws when the model does not return a tool call', async () => {
-    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'no can do' }] });
+  it('throws when the model answers with something that is not the object', async () => {
+    mockDoGenerate.mockResolvedValue(generation('no can do'));
 
     await expect(extractJob('some page text')).rejects.toThrow(
-      'report_job_info did not produce a tool call.',
+      'report_job_info did not produce a structured object.',
     );
   });
 
-  it('throws when the tool input fails schema validation', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ company: 'Acme' }));
+  it('throws when the generated object fails schema validation', async () => {
+    mockDoGenerate.mockResolvedValue(objectGeneration({ company: 'Acme' }));
 
     await expect(extractJob('some page text')).rejects.toThrow(
-      'report_job_info produced input that failed validation',
+      'report_job_info produced output that failed validation',
     );
   });
 });

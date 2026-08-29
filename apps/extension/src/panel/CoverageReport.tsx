@@ -7,9 +7,9 @@
  * have the skill; so the surface shows what is missing and points at the Profile, and keeps
  * everything already evidenced collapsed behind a count where it can't be read as a target.
  *
- * The remedy copy is load-bearing for the same reason `reconcileResume` filters tailored skills
- * through the Profile: a keyword the Profile does not support cannot honestly appear on the resume.
- * "Add it to your profile if you have it" is the only instruction this component may give.
+ * The remedy copy is load-bearing for the same reason `reconcileResume` takes the complete skills
+ * list only from the Profile: an unsupported keyword cannot honestly be added to the resume. "Add it
+ * to your profile if you have it" is the only instruction this component may give.
  */
 import type { KeywordCoverage } from '@djobi/shared';
 

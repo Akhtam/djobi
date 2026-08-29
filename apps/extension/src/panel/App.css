@@ -1096,8 +1096,7 @@ button:disabled {
   letter-spacing: 0;
 }
 
-/* Both reports' remedy copy: inside the gap box in Keyword Coverage, and standing alone as the
-   all-clear line in Requirement Fit. */
+/* Remedy copy inside the Keyword Coverage gap box. */
 .coverage .hint {
   margin: 0;
   font-size: 12px;

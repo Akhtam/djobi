@@ -1,5 +1,5 @@
 import { JobInfoSchema, type JobInfo } from '@djobi/shared';
-import { FAST_MODEL } from './client.js';
+import { MODELS } from './client.js';
 import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -18,7 +18,7 @@ import { callStructured } from './structuredCall.js';
 export async function extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo> {
   return callStructured({
     signal,
-    model: FAST_MODEL,
+    model: MODELS.extractJob,
     maxTokens: 2048,
     toolName: 'report_job_info',
     toolDescription:

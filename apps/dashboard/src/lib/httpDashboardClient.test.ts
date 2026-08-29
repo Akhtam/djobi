@@ -33,7 +33,9 @@ describe('listApplications', () => {
     const fetchMock = stubFetch({ jsonBody: [sample] });
 
     await expect(httpDashboardClient.listApplications()).resolves.toEqual([sample]);
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', undefined);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', {
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('rejects a row that is not an Application instead of handing it to the views', async () => {
@@ -54,6 +56,7 @@ describe('updateStage', () => {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ stage: 'rejected' }),
+        signal: expect.any(AbortSignal),
       },
     );
   });
@@ -94,6 +97,7 @@ describe('addNote', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
+        signal: expect.any(AbortSignal),
       },
     );
   });
@@ -119,5 +123,47 @@ describe('failures', () => {
     await expect(httpDashboardClient.listApplications()).rejects.toBeInstanceOf(
       DashboardBackendError,
     );
+  });
+
+  it('aborts a stalled request and reports a timeout', async () => {
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        });
+      }),
+    );
+
+    const request = httpDashboardClient.listApplications();
+    controller.abort(new DOMException('Timed out', 'TimeoutError'));
+
+    await expect(request).rejects.toThrow(/did not respond within 90 seconds/);
+  });
+
+  it('reports the same timeout when the backend stalls after sending headers', async () => {
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+            }),
+        }),
+      ),
+    );
+
+    const request = httpDashboardClient.listApplications();
+    await Promise.resolve();
+    controller.abort(new DOMException('Timed out', 'TimeoutError'));
+
+    await expect(request).rejects.toThrow(/did not respond within 90 seconds/);
   });
 });

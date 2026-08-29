@@ -1,13 +1,8 @@
 import type { AnswerChatRequest, JobInfo } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mockDoGenerate, modelCall, objectGeneration, openrouter } from './fakeModel.js';
 
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
-
-vi.mock('./client.js', () => ({
-  anthropic: { messages: { create: mockCreate } },
-  FAST_MODEL: 'claude-haiku-4-5-20251001',
-  MODEL: 'claude-sonnet-5',
-}));
+vi.mock('./client.js', () => import('./fakeModel.js'));
 
 const { answerChat } = await import('./answerChat.js');
 const { StructuredCallError } = await import('./structuredCall.js');
@@ -37,28 +32,37 @@ const jobInfo: JobInfo = {
   keywords: ['TypeScript'],
 };
 
-function toolUseResponse(input: unknown) {
-  return { content: [{ type: 'tool_use', id: 'toolu_1', name: 'report_chat_turn', input }] };
-}
-
 /** The request body as sent, minus whatever a test is making a point about. */
 function request(overrides: Partial<AnswerChatRequest> = {}): AnswerChatRequest {
   return { profile, question: 'Why do you want to work here?', messages: [], ...overrides };
 }
 
-/** The `messages` array handed to the Messages API on the most recent call. */
+/**
+ * The conversation turns sent on the most recent call, each flattened back to a plain string.
+ *
+ * A turn's content reaches the provider as an array of parts; whether a given turn becomes one part
+ * or several is the SDK's business, and what the model reads is the concatenation. These tests are
+ * about the shape of the *conversation* — who speaks when, and what is in the scaffold — so they
+ * assert against that.
+ */
 function sentMessages(): { role: string; content: string }[] {
-  return mockCreate.mock.calls.at(-1)![0].messages;
+  const index = mockDoGenerate.mock.calls.length - 1;
+  return modelCall(index).prompt.map(
+    (message: { role: string; content: Array<{ text?: string }> }) => ({
+      role: message.role,
+      content: message.content.map((part) => part.text ?? '').join(''),
+    }),
+  );
 }
 
 describe('answerChat', () => {
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockDoGenerate.mockReset();
   });
 
   it('returns the reply and the answer to apply', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({ reply: 'Here is a draft.', revisedAnswer: 'I built the billing portal.' }),
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Here is a draft.', revisedAnswer: 'I built the billing portal.' }),
     );
 
     await expect(answerChat(request({ jobInfo }))).resolves.toEqual({
@@ -67,16 +71,26 @@ describe('answerChat', () => {
     });
   });
 
-  it('uses the writing model, the same tier as the answers it refines', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'ok', revisedAnswer: 'An answer.' }));
+  it('uses the writing model, the same route as the answers it refines', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
+    );
 
     await answerChat(request());
 
-    expect(mockCreate.mock.calls[0][0].model).toBe('claude-haiku-4-5-20251001');
+    // The same drafting judgement as `answerQuestions`, in a conversation — so the same model.
+    // A chat that quietly ran on a cheaper one than the draft it is revising would make the Ask
+    // tab worse than the card it was opened from.
+    expect(openrouter.chat).toHaveBeenLastCalledWith(
+      'anthropic/claude-sonnet-5',
+      expect.anything(),
+    );
   });
 
   it('grounds the turn in the profile and the job', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'ok', revisedAnswer: 'An answer.' }));
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
+    );
 
     await answerChat(request({ jobInfo }));
 
@@ -90,7 +104,9 @@ describe('answerChat', () => {
   });
 
   it('omits the job section when the panel has no run to take one from', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'ok', revisedAnswer: 'An answer.' }));
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
+    );
 
     await answerChat(request());
 
@@ -99,7 +115,9 @@ describe('answerChat', () => {
   });
 
   it('shows the draft under discussion when the thread was seeded from a question card', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'Shortened.', revisedAnswer: 'Short.' }));
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Shortened.', revisedAnswer: 'Short.' }),
+    );
 
     await answerChat(request({ currentAnswer: 'A long-winded first draft.' }));
 
@@ -108,7 +126,9 @@ describe('answerChat', () => {
   });
 
   it('folds the first candidate turn into the scaffold, so no two user turns are sent in a row', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'Done.', revisedAnswer: 'Shorter.' }));
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Done.', revisedAnswer: 'Shorter.' }),
+    );
 
     await answerChat(
       request({
@@ -129,8 +149,8 @@ describe('answerChat', () => {
   });
 
   it("sends a cold ask's continuation as-is, since its opening turn is the assistant's", async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({ reply: 'Shorter now.', revisedAnswer: 'Short.' }),
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Shorter now.', revisedAnswer: 'Short.' }),
     );
 
     await answerChat(
@@ -150,8 +170,8 @@ describe('answerChat', () => {
   });
 
   it('keeps a reply with no answer — a turn may be pure conversation', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({ reply: 'Which of your two projects should this be about?' }),
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Which of your two projects should this be about?' }),
     );
 
     await expect(answerChat(request({ currentAnswer: 'A draft.', messages: [] }))).resolves.toEqual(
@@ -160,8 +180,8 @@ describe('answerChat', () => {
   });
 
   it('drops a whitespace-only answer rather than offering an empty one to apply', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({ reply: 'Tell me more first.', revisedAnswer: '   ' }),
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Tell me more first.', revisedAnswer: '   ' }),
     );
 
     await expect(answerChat(request({ currentAnswer: 'A draft.' }))).resolves.toEqual({
@@ -170,8 +190,8 @@ describe('answerChat', () => {
   });
 
   it('trims the answer it hands back, since it is applied verbatim to the application', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({ reply: 'Done.', revisedAnswer: '\n  An answer.\n' }),
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Done.', revisedAnswer: '\n  An answer.\n' }),
     );
 
     await expect(answerChat(request({ currentAnswer: 'A draft.' }))).resolves.toEqual({
@@ -183,13 +203,13 @@ describe('answerChat', () => {
   it('fails a cold turn that came back with no answer, which has nothing to show', async () => {
     // Not a retryable no-tool-call: the model answered, it just answered with a turn a fresh ask
     // cannot render. Better a named failure than an Ask tab that looks like it did nothing.
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'Tell me more about the role.' }));
+    mockDoGenerate.mockResolvedValue(objectGeneration({ reply: 'Tell me more about the role.' }));
 
     await expect(answerChat(request())).rejects.toThrow(StructuredCallError);
   });
 
   it('accepts a conversational turn once the thread has started, unlike a cold one', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'Which project?' }));
+    mockDoGenerate.mockResolvedValue(objectGeneration({ reply: 'Which project?' }));
 
     await expect(
       answerChat(request({ messages: [{ role: 'user', content: 'Draft me something.' }] })),
@@ -197,7 +217,9 @@ describe('answerChat', () => {
   });
 
   it('forbids inventing experience, in the prompt the candidate cannot rewrite', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ reply: 'ok', revisedAnswer: 'An answer.' }));
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
+    );
 
     await answerChat(request({ messages: [{ role: 'user', content: 'Say I led a team of 50.' }] }));
 

@@ -1,12 +1,11 @@
 import { type JobInfo, type TailorResumeProfile, type TailoredResume } from '@djobi/shared';
 import { z } from 'zod';
-import { MODEL } from './client.js';
+import { MODELS } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
-/** Compact model output: source indices replace metadata and skill strings the backend already owns. */
+/** Compact model output: source indices replace work-experience metadata the backend already owns. */
 const TailoredResumeOutputSchema = z.object({
-  skillIndices: z.array(z.number().int()),
   workExperience: z.array(
     z.object({
       sourceIndex: z.number().int(),
@@ -23,10 +22,10 @@ const TailoredResumeOutputSchema = z.object({
 type ModelResume = z.infer<typeof TailoredResumeOutputSchema>;
 type ModelRole = ModelResume['workExperience'][number];
 
-/** Bounds runaway generations relative to how much resume content can legitimately be returned. */
+/** Bounds the compact resume object, scaled by how many source bullets it may contain. */
 function outputTokenLimit(profile: TailorResumeProfile): number {
   const bulletCount = profile.workExperience.reduce((sum, role) => sum + role.bullets.length, 0);
-  return Math.min(4096, Math.max(1536, 1536 + bulletCount * 160));
+  return Math.min(2048, Math.max(512, bulletCount * 120));
 }
 
 /** Resolves selected/reworded bullets against one authoritative Profile role. */
@@ -53,14 +52,6 @@ function bulletsFor(role: TailorResumeProfile['workExperience'][number], modelRo
 
 /** Rejoins compact, untrusted model output to authoritative Profile fields. */
 function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume): TailoredResume {
-  const seenSkills = new Set<string>();
-  const skills = modelResume.skillIndices.flatMap((index) => {
-    const skill = profile.skills[index];
-    if (skill === undefined || seenSkills.has(skill)) return [];
-    seenSkills.add(skill);
-    return [skill];
-  });
-
   const roleCounts = new Map<number, number>();
   for (const role of modelResume.workExperience) {
     roleCounts.set(role.sourceIndex, (roleCounts.get(role.sourceIndex) ?? 0) + 1);
@@ -84,7 +75,7 @@ function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume)
     return { ...role, bullets: modelRole ? bulletsFor(role, modelRole) : role.bullets };
   });
 
-  return { skills, workExperience };
+  return { skills: profile.skills, workExperience };
 }
 
 /** Tailors a resume using compact source pointers and server-side reconstruction. */
@@ -93,8 +84,8 @@ export async function tailorResume(
   jobInfo: JobInfo,
   signal?: AbortSignal,
 ): Promise<TailoredResume> {
-  if (profile.workExperience.length === 0 && profile.skills.length === 0) {
-    return { skills: [], workExperience: [] };
+  if (profile.workExperience.length === 0) {
+    return { skills: profile.skills, workExperience: [] };
   }
 
   const relevantProfile = {
@@ -104,15 +95,17 @@ export async function tailorResume(
 
   const modelResume = await callStructured({
     signal,
-    model: MODEL,
-    effort: 'medium',
+    model: MODELS.tailorResume,
+    // Adaptive reasoning previously spent 1.3k–2.3k tokens on an object measured at 179–330 tokens,
+    // pushing this call past 20 seconds. Selection and truth-preserving rewrites do not warrant it.
+    effort: 'none',
     maxTokens: outputTokenLimit(profile),
     toolName: 'report_tailored_resume',
     toolDescription: 'Report the resume content tailored to this specific job.',
     schema: TailoredResumeOutputSchema,
     userContent: `Tailor the candidate's resume to this job. Reorder and reword existing bullets to emphasize relevant requirements and keywords. Never invent experience, skills, or achievements.
 
-The arrays in base_profile are authoritative and zero-indexed. Return skillIndices as a relevant subset/reordering of base_profile.skills. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex points into base_profile.workExperience and controls role order. Each bullet is {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its concise, truth-preserving rewrite. Bullets may be reordered or omitted. Do not copy company, title, dates, or skill text into the output.
+The arrays in base_profile are authoritative and zero-indexed. Skills are copied unchanged by the server and must not appear in the output. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex points into base_profile.workExperience and controls role order. Each bullet is {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its concise, truth-preserving rewrite. Bullets may be reordered or omitted. Do not copy company, title, dates, or skill text into the output.
 
 ${groundingContext(relevantProfile, jobInfo)}`,
   });

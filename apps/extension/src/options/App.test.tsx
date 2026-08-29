@@ -1,5 +1,5 @@
 import type { Profile } from '@djobi/shared';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { App } from './App';
@@ -132,6 +132,29 @@ describe('options App', () => {
         github: 'https://github.com/jane',
       },
     });
+  });
+
+  it('does not discard edits made while an older profile snapshot is saving', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe' };
+    let finishSave: ((profile: Profile) => void) | undefined;
+    const pendingSave = new Promise<Profile>((resolve) => {
+      finishSave = resolve;
+    });
+    client = fakeBackend({ get: () => loaded, save: () => pendingSave });
+
+    render(<App client={client} />);
+    const fullName = await screen.findByLabelText('Full name');
+    fireEvent.change(fullName, { target: { value: 'Jane Saved' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(saveProfile).toHaveBeenCalledWith({ ...loaded, fullName: 'Jane Saved' });
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    fireEvent.change(fullName, { target: { value: 'Jane Latest' } });
+
+    await act(async () => finishSave?.({ ...loaded, fullName: 'Jane Saved' }));
+
+    expect(fullName).toHaveValue('Jane Latest');
+    expect(screen.getByText('You have unsaved changes.')).toBeInTheDocument();
+    expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
   });
 
   it('saves a cleared optional field as null, not as an empty string the rest of the system has to treat as absent', async () => {

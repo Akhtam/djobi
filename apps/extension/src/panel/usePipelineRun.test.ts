@@ -1,6 +1,7 @@
 import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { callsOfType } from './panelTestHarness';
 import { fakeChrome } from '../lib/fakeChrome';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import {
@@ -34,7 +35,6 @@ const run: PipelineRunState = {
   tailoredResume,
   answers: [{ fieldId: 'f-why', question: 'Why us?', answer: 'Draft answer.', sourceStoryIds: [] }],
   coverage: [],
-  requirementFit: [],
   failure: null,
   unresolvedRequiredFields: [],
   filledFieldCount: 0,
@@ -519,6 +519,113 @@ describe('usePipelineRun', () => {
       jobDescription: 'pasted',
       status: 'analyzing',
       filledFieldCount: 7,
+    });
+  });
+
+  describe('checking on a step that may have been interrupted', () => {
+    // The failure this exists for: Chrome stops the worker mid-Analysis, the request dies (the
+    // backend logs a 499), and the checkpoint is left saying `analyzing`. The repair sweep runs
+    // when a worker *starts* — and an open panel watching a dead run sends nothing that starts one,
+    // so it spins with no error and no retry until the candidate clicks something else.
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    /**
+     * Lets the hook finish reading the store before the clock moves.
+     *
+     * Hydration is a promise, and the check interval only exists once its result has rendered.
+     * Advancing first would create the interval after the time it was supposed to elapse in.
+     */
+    const hydrate = async (): Promise<void> => {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+
+    it('asks the background to check on a run that claims to still be analyzing', async () => {
+      const { sendMessage } = stubChrome();
+      await setPipelineRun(7, { ...run, status: 'analyzing' });
+
+      renderHook(() => usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'));
+      await hydrate();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+
+      expect(callsOfType(sendMessage, 'CHECK_RUN')).toEqual([
+        [{ type: 'CHECK_RUN', tabId: 7 }, expect.any(Function)],
+      ]);
+    });
+
+    it.each(['filling', 'saving'] as const)(
+      'checks on an interrupted %s step too',
+      async (status) => {
+        // Fill and Save are shorter than Analysis but not instant, and both strand the panel the same
+        // way — the recovery sweep has a branch for each of them for exactly this reason.
+        const { sendMessage } = stubChrome();
+        await setPipelineRun(7, { ...run, status });
+
+        renderHook(() => usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'));
+        await hydrate();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15_000);
+        });
+
+        expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(1);
+      },
+    );
+
+    it('leaves a settled run alone, however long the panel stays open', async () => {
+      const { sendMessage } = stubChrome();
+      await setPipelineRun(7, run); // 'review'
+
+      renderHook(() => usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'));
+      await hydrate();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(0);
+    });
+
+    it('stops checking once the step reports it finished', async () => {
+      const { sendMessage, writeFromBackground } = stubChrome();
+      await setPipelineRun(7, { ...run, status: 'analyzing' });
+
+      renderHook(() => usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'));
+      await hydrate();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(1);
+
+      act(() => writeFromBackground(7, run));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(1);
+    });
+
+    it('does not check on a step this panel has only just asked for', async () => {
+      // An optimistic status stands for a request in flight from *this* panel. Nothing can have
+      // been interrupted yet, and the recovery sweep would demote a run that is about to be written.
+      const { sendMessage } = stubChrome();
+      await setPipelineRun(7, run);
+
+      const { result } = renderHook(() =>
+        usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'),
+      );
+      await hydrate();
+      expect(result.current.hydrated).toBe(true);
+      act(() => result.current.begin('filling'));
+      expect(result.current.status).toBe('filling');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(0);
     });
   });
 });

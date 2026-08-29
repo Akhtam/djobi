@@ -42,6 +42,7 @@ export interface DashboardClient {
 }
 
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
+const REQUEST_TIMEOUT_MS = 90_000;
 
 /**
  * A non-2xx response from the local djobi backend.
@@ -83,27 +84,39 @@ function reasonFrom(raw: string): string {
  * backend error too — "Failed to fetch" on its own tells the user nothing about what is wrong.
  */
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  let res: Response;
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
   try {
-    res = await fetch(`${BACKEND_ORIGIN}${path}`, init);
-  } catch {
-    throw new DashboardBackendError(
-      0,
-      path,
-      `Couldn't reach the djobi backend at ${BACKEND_ORIGIN}. Is it running? (pnpm dev:backend)`,
-    );
-  }
+    const res = await fetch(`${BACKEND_ORIGIN}${path}`, { ...init, signal });
 
-  if (!res.ok) {
-    const method = init?.method ?? 'GET';
-    throw new DashboardBackendError(
-      res.status,
-      path,
-      `${method} ${path} failed (${res.status}): ${reasonFrom(await res.text())}`,
-    );
-  }
+    if (!res.ok) {
+      const method = init?.method ?? 'GET';
+      throw new DashboardBackendError(
+        res.status,
+        path,
+        `${method} ${path} failed (${res.status}): ${reasonFrom(await res.text())}`,
+      );
+    }
 
-  return res.json();
+    return await res.json();
+  } catch (error) {
+    if (error instanceof DashboardBackendError) throw error;
+    if (timeoutSignal.aborted) {
+      throw new DashboardBackendError(
+        0,
+        path,
+        `The djobi backend did not respond within ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
+      );
+    }
+    if (error instanceof TypeError) {
+      throw new DashboardBackendError(
+        0,
+        path,
+        `Couldn't reach the djobi backend at ${BACKEND_ORIGIN}. Is it running? (pnpm dev:backend)`,
+      );
+    }
+    throw error;
+  }
 }
 
 /** A JSON-bodied write. The one place this app sets a request body. */

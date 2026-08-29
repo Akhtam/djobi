@@ -11,7 +11,7 @@ import {
   type QuestionForModel,
 } from '@djobi/shared';
 import { z } from 'zod';
-import { FAST_MODEL } from './client.js';
+import { MODELS } from './client.js';
 import { groundingContext, jobContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -24,10 +24,18 @@ import { callStructured } from './structuredCall.js';
  * operation's latency is made of. Measured at ~16% of the output tokens per call.
  */
 const AnswerQuestionsOutputSchema = z.object({
-  // A missing answer makes only that item unusable; it must not discard otherwise valid siblings.
-  answers: z.array(
-    QuestionAnswerSchema.omit({ question: true }).extend({ answer: z.string().optional() }),
-  ),
+  /**
+   * `answer` is **required**. It was optional while this operation sent one call for the whole
+   * form, where a missing answer had to cost one item rather than discard its valid siblings.
+   * Fanning out removed the siblings: one call answers one question, so an item without an answer
+   * is the entire call having produced nothing.
+   *
+   * Leaving it optional was actively harmful once generation stopped being a forced tool call. A
+   * live provider returned `{"fieldId":"q1","sourceStoryIds":[...]}` with no `answer`, which
+   * validated, reconciled to nothing, and surfaced as a form the model had declined to answer
+   * rather than as a failure. Required, the same omission is an `invalid-input` that says so.
+   */
+  answers: z.array(QuestionAnswerSchema.omit({ question: true })),
 });
 
 type ModelQuestionAnswer = z.infer<typeof AnswerQuestionsOutputSchema>['answers'][number];
@@ -257,7 +265,7 @@ export async function answerQuestions(
     try {
       const result = await callStructured({
         signal,
-        model: FAST_MODEL,
+        model: MODELS.answerQuestions,
         // One answer, and a capped one. The old 4096 sized a whole form's worth of answers; leaving
         // it there would let a single runaway answer cost more wall clock than the entire form.
         maxTokens: 1024,

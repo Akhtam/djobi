@@ -27,7 +27,6 @@ import { notify } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor } from '../lib/runAnswers';
 import { CoverageReport } from './CoverageReport';
-import { RequirementFitReport } from './RequirementFitReport';
 import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
@@ -100,7 +99,6 @@ export function AutofillTab({
   const tailoredResume: TailoredResume | null = run?.tailoredResume ?? null;
   const answers = run?.answers ?? [];
   const coverage = run?.coverage ?? [];
-  const requirementFit = run?.requirementFit ?? [];
   const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
   const filledFieldCount = run?.filledFieldCount ?? 0;
   /** How many fields the run's own re-scan saw — what separates the two zero-filled outcomes. */
@@ -189,6 +187,8 @@ export function AutofillTab({
   function handleAnalyze(force = false) {
     if (!jobDescription.text.trim() || tabId === null || !jobDescription.analysisUrl) return;
 
+    // The existing blob renders the previous analysis, even when this URL has not changed.
+    resumePreview.clear();
     begin('analyzing');
 
     notify(
@@ -496,8 +496,6 @@ export function AutofillTab({
                 />
               )}
             </div>
-
-            <RequirementFitReport fit={requirementFit} />
 
             <CoverageReport coverage={coverage} />
 

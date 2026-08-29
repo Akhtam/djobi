@@ -24,7 +24,6 @@
 import {
   AnswerChatResponseSchema,
   ApplicationWriteResultSchema,
-  AssessRequirementsResponseSchema,
   DuplicateApplicationSummarySchema,
   JobInfoSchema,
   ProfileSchema,
@@ -34,8 +33,6 @@ import {
   type AnswerChatResponse,
   type AnswerQuestionsRequest,
   type ApplicationSnapshot,
-  type AssessRequirementsRequest,
-  type AssessRequirementsResponse,
   type ChatMessage,
   type ApplicationWriteResult,
   type DuplicateApplicationSummary,
@@ -46,7 +43,6 @@ import {
   type QuestionAnswer,
   type QuestionForModel,
   type RenderResumePdfRequest,
-  type RequirementFit,
   type SaveProfileRequest,
   type TailorResumeRequest,
   type TailoredResume,
@@ -85,12 +81,6 @@ export interface BackendClient {
     questions: QuestionForModel[],
     signal?: AbortSignal,
   ): Promise<QuestionAnswer[]>;
-  /** How the Profile measures up to each requirement the posting states, one entry per requirement. */
-  assessRequirements(
-    profile: Profile,
-    jobInfo: JobInfo,
-    signal?: AbortSignal,
-  ): Promise<RequirementFit[]>;
   /** One turn of the Ask tab's conversation — cold ask and refinement alike. */
   answerChat(turn: AnswerChatTurn): Promise<AnswerChatResponse>;
   renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
@@ -148,26 +138,6 @@ export const httpBackendClient: BackendClient = {
       'POST',
       signal,
     ),
-
-  assessRequirements: async (profile, jobInfo, signal) =>
-    (
-      await callBackend(
-        '/assess-requirements',
-        AssessRequirementsResponseSchema,
-        {
-          // No `stories` and no `screeningAnswers`: a STAR anecdote is not a qualification, and a
-          // screening answer is a legal declaration that must never become grounding for a model.
-          profile: {
-            workExperience: profile.workExperience,
-            education: profile.education,
-            skills: profile.skills,
-          },
-          jobInfo,
-        } satisfies AssessRequirementsRequest,
-        'POST',
-        signal,
-      )
-    ).fit,
 
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
     callBackend('/answer-chat', AnswerChatResponseSchema, {
@@ -261,15 +231,6 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
           question: question.question,
           answer: question.knownAnswer ?? 'Draft answer.',
           sourceStoryIds: [],
-        })),
-      ),
-    assessRequirements: (_profile, jobInfo) =>
-      Promise.resolve(
-        jobInfo.requirements.map((requirement) => ({
-          requirement,
-          verdict: 'met' as const,
-          evidence: 'Some profile bullet',
-          note: '',
         })),
       ),
     answerChat: () => Promise.resolve({ reply: 'Here you go.' }),

@@ -63,11 +63,11 @@ The structured facts extracted from a job posting — company, team, role title,
 _Avoid_: job posting (the raw page/text), listing
 
 **Tailored Resume**:
-The resume shape an Application stores — skills and work experience, defined as a subset of the Profile's own. On an `autofill` Application it is what the name says: reworded and reordered from the Profile to emphasize what's relevant to a specific Job Info, never fabricating experience the Profile doesn't have. On a `manual` one it holds the Base Resume instead, untailored — which is why the Dashboard relabels it there rather than making a claim that isn't true of the row.
+The resume shape an Application stores — the Profile's complete skills list unchanged, plus work experience. On an `autofill` Application its work-experience bullets may be reworded and reordered from the Profile to emphasize what's relevant to a specific Job Info, never fabricating experience the Profile doesn't have. On a `manual` one it holds the Base Resume instead, untailored — which is why the Dashboard relabels it there rather than making a claim that isn't true of the row.
 _Avoid_: resume (ambiguous with the Profile's own experience data)
 
 **Base Resume**:
-The Profile projected straight into the Tailored Resume shape, nothing reworded — `baseResumeOf` in `@djobi/shared`. Possible only because Tailored Resume is defined as a subset of Profile. What a Log Tab entry stores in place of a Tailored Resume, since the candidate applied with their own resume and no model wrote anything.
+The Profile projected straight into the Tailored Resume shape, nothing reworded — `baseResumeOf` in `@djobi/shared`. What a Log Tab entry stores in place of a Tailored Resume, since the candidate applied with their own resume and no model wrote anything.
 _Avoid_: untailored resume (fine as UI copy, but it names the concept by what it isn't)
 
 **Question Answer**:
@@ -83,14 +83,6 @@ a gap is always the Profile. Matching is whole-word, by the same rule that keeps
 of "Norway".
 _Avoid_: match score, ATS score (both name it as a number to maximize, which is what invites
 keyword stuffing), keyword match rate
-
-**Requirement Fit**:
-A judgement of the Profile against each of a Job Info's `requirements`, as `met` / `partial` /
-`unmet` with the Profile text that evidences it. Drafted by a model that must return a **pointer**
-into the Profile rather than prose, so a verdict that cannot be resolved to a real skill or bullet
-is downgraded to `unmet` in code rather than taken on the model's word. Advice, not a gate: a run
-whose assessment fails still reaches review.
-_Avoid_: qualification score, screening result (nothing here is the employer's verdict), match
 
 **Detected Field**:
 One thing on a job application page a candidate fills in, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic. Usually one input, textarea or select — but a whole group of choices answering a single question (a fieldset, a `role="radiogroup"`, or radios sharing a `name`) is _one_ Detected Field, with the choices as its options.

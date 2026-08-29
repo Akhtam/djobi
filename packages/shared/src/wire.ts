@@ -108,48 +108,6 @@ export const AnswerQuestionsRequestSchema = z.object({
 /** Inferred type of {@link AnswerQuestionsRequestSchema}. */
 export type AnswerQuestionsRequest = z.infer<typeof AnswerQuestionsRequestSchema>;
 
-/** Profile fields a Requirement Fit assessment is judged against. */
-export const AssessRequirementsProfileSchema = ProfileSchema.pick({
-  workExperience: true,
-  education: true,
-  skills: true,
-});
-export type AssessRequirementsProfile = z.infer<typeof AssessRequirementsProfileSchema>;
-
-/**
- * One of a posting's stated requirements, and what the Profile has to show for it.
- *
- * `evidence` is the Profile text the verdict rests on, resolved server-side from an index the model
- * returned — never prose the model wrote. A verdict whose pointer doesn't resolve is downgraded to
- * `unmet` rather than kept, so this field is a claim the backend has already checked.
- */
-export const RequirementFitSchema = z.object({
-  /** Verbatim from `JobInfo.requirements`; anything else is dropped rather than reported. */
-  requirement: z.string(),
-  verdict: z.enum(['met', 'partial', 'unmet']),
-  /** The skill or bullet that evidences it; `null` for `unmet`, and never null otherwise. */
-  evidence: z.string().nullable(),
-  /** One short sentence on what is missing or partial. Empty for a plain `met`. */
-  note: z.string(),
-});
-/** Inferred type of {@link RequirementFitSchema}. */
-export type RequirementFit = z.infer<typeof RequirementFitSchema>;
-
-/** Body of `POST /assess-requirements`. */
-export const AssessRequirementsRequestSchema = z.object({
-  profile: AssessRequirementsProfileSchema,
-  jobInfo: JobInfoSchema,
-});
-/** Inferred type of {@link AssessRequirementsRequestSchema}. */
-export type AssessRequirementsRequest = z.infer<typeof AssessRequirementsRequestSchema>;
-
-/** Response of `POST /assess-requirements`. */
-export const AssessRequirementsResponseSchema = z.object({
-  fit: z.array(RequirementFitSchema),
-});
-/** Inferred type of {@link AssessRequirementsResponseSchema}. */
-export type AssessRequirementsResponse = z.infer<typeof AssessRequirementsResponseSchema>;
-
 /** Profile fields rendered into the PDF header and education section. */
 export const RenderResumePdfProfileSchema = ProfileSchema.pick({
   fullName: true,

@@ -93,7 +93,7 @@ function valueForCategory(
 
 type AnalysisResult = Pick<
   PipelineRunState,
-  'status' | 'tailoredResume' | 'answers' | 'coverage' | 'requirementFit'
+  'status' | 'tailoredResume' | 'answers' | 'coverage'
 > & { jobInfo: JobInfo };
 
 /** The Analysis Step: Job Info, then a Tailored Resume and Question Answers drafted from it. */
@@ -170,9 +170,7 @@ async function analysisStep(
   // costs no backend call and adds nothing to the worker's fetch exposure.
   const coverage = keywordCoverage(tailoredResume, jobInfo);
 
-  // Requirement Fit is advisory and is patched in after Review is available. Keeping the initial
-  // value explicit clears a previous run's report while the progressive assessment is pending.
-  return { status: 'review', jobInfo, tailoredResume, answers, coverage, requirementFit: [] };
+  return { status: 'review', jobInfo, tailoredResume, answers, coverage };
 }
 
 /**
@@ -471,7 +469,6 @@ export async function runAnalysis(
       tailoredResume: null,
       answers: [],
       coverage: [],
-      requirementFit: [],
       unresolvedRequiredFields: [],
       filledFieldCount: 0,
       fillOutcome: null,
@@ -508,24 +505,7 @@ export async function runAnalysis(
       deps,
       controller.signal,
     );
-    const reviewed = await patchPipelineRun(tabId, runId, analysis);
-    if (!reviewed || analysis.jobInfo.requirements.length === 0) return;
-
-    // The candidate can review and fill as soon as the resume and answers are ready. Requirement
-    // Fit is advice, so it runs afterward without competing for provider capacity and patches only
-    // its own field; a fill or save that starts meanwhile keeps its newer status.
-    try {
-      const requirementFit = await deps.backend.assessRequirements(
-        profile,
-        analysis.jobInfo,
-        controller.signal,
-      );
-      await patchPipelineRun(tabId, runId, { requirementFit });
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        console.warn('[djobi] requirement assessment failed after review', error);
-      }
-    }
+    await patchPipelineRun(tabId, runId, analysis);
   } catch (error) {
     // A newer run owns the tab now. Its initial checkpoint replaces this run, and cancellation is
     // expected control flow rather than an analysis failure for either run to display.

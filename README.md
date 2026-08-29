@@ -44,7 +44,7 @@ Edit `apps/backend/.env`:
 
 ```
 DATABASE_URL=postgres://user:password@your-neon-host/djobi?sslmode=require
-ANTHROPIC_API_KEY=sk-ant-...
+OPENROUTER_API_KEY=sk-or-v1-...
 PORT=5391
 ```
 

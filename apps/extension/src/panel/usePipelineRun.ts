@@ -10,6 +10,14 @@ import {
 import { notify } from '../lib/messages';
 
 /**
+ * How often an in-progress run is checked on.
+ *
+ * Long enough that a healthy step is barely pinged, short enough that a stranded panel clears
+ * within a few seconds of someone looking at it. The check costs one message and no storage read.
+ */
+const RUN_CHECK_MS = 15_000;
+
+/**
  * Keeps one tab's Application Pipeline run in sync with `lib/tabStore.ts`, and owns the status the
  * panel renders.
  *
@@ -109,7 +117,7 @@ function editsOf(run: PipelineRunState): Pick<PipelineRunState, 'answers' | 'job
  *
  * `JSON.stringify` on either side said the same thing in one line, but it *serializes* both: the
  * page-scoped half holds every Detected Field of every frame, and the run carries the tailored
- * resume, the requirement fit and the coverage report. This hook is called for every write to its
+ * resume, answers and the coverage report. This hook is called for every write to its
  * tab's key and the content script re-reports on each DOM mutation the form makes, so on a large ATS
  * form that was hundreds of KB of string built and thrown away per event, on the panel's main
  * thread. Reference equality is not an option in its place: `oldValue` and `newValue` reach a
@@ -218,6 +226,10 @@ export function usePipelineRun(
   // reconciliation exists to fix, one keystroke narrower.
   const pendingEditsRef = useRef<string[]>([]);
 
+  // The *stored* status, not the reconciled one the caller renders: an optimistic status stands for
+  // a step this panel has only just requested, which is not yet something that can be interrupted.
+  const storedStatus = run?.status ?? null;
+
   useEffect(() => {
     if (tabId === null) return;
 
@@ -323,6 +335,25 @@ export function usePipelineRun(
     },
     [run, tabId],
   );
+
+  // Unsticks a run whose worker died. A step reports progress by writing to the store, so a panel
+  // watching one that stopped has nothing to time out against and nothing that will ever arrive:
+  // Chrome stopped the worker, the checkpoint still says `analyzing`, and the sweep that would
+  // demote it only runs when a worker *starts*. An open panel starts none.
+  //
+  // So while a step claims to be running, ask. If the worker is alive the message is a no-op and
+  // the step continues; if it is gone, the message starts one, whose first act is the repair — and
+  // the resulting store write reaches this hook through the subscription above, like any other
+  // progress. `lib/keepAlive.ts` makes the death far less likely; this is what makes it survivable.
+  useEffect(() => {
+    if (tabId === null) return;
+    const inProgress =
+      storedStatus === 'analyzing' || storedStatus === 'filling' || storedStatus === 'saving';
+    if (!inProgress) return;
+
+    const interval = setInterval(() => notify({ type: 'CHECK_RUN', tabId }), RUN_CHECK_MS);
+    return () => clearInterval(interval);
+  }, [storedStatus, tabId]);
 
   const begin = useCallback((status: PipelineStatus) => {
     setDispatch(null);

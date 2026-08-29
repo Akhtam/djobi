@@ -56,9 +56,8 @@ _does_ run for a 404, which is a convincing way to look correct while logging al
 
 Most "the extension isn't working" questions end here. The Analysis Step awaits `/extract-job`, then
 fires `/tailor-resume` and `/answer-questions` in parallel. It checkpoints Review as soon as those
-finish and starts `/assess-requirements` afterward, so Requirement Fit does not compete with or block
-the primary result. If `/extract-job` 500s (usually a missing `ANTHROPIC_API_KEY`), none of the later
-routes are called and their absence from this log is expected.
+finish. If `/extract-job` 500s (usually a missing `OPENROUTER_API_KEY`), neither later route is called
+and their absence from this log is expected.
 
 Uncaught failures are already logged by `app.onError` with the method, path and stack.
 
@@ -263,31 +262,60 @@ since drizzle-kit runs outside the app's own env loading.
 
 ### `client.ts`
 
-The `Anthropic` SDK singleton (picks up credentials from `ANTHROPIC_API_KEY` or an `ant auth login`
-profile automatically), plus two pinned models. `MODEL` is `claude-sonnet-5` for resume rewriting.
-`FAST_MODEL` is `claude-haiku-4-5-20251001` for structured Job Info extraction, application answers,
-Ask turns, and Requirement Fit. Extraction is the serial first stage of Analysis, so leaving that
-bounded structured task on Sonnet delayed every later call even when resume and answer generation
-were optimized.
+The OpenRouter provider instance (credentials from `OPENROUTER_API_KEY`), plus `MODELS` — the map
+from _operation_ to pinned model slug that is the whole of the routing policy.
+
+| Operation         | Model                          | Why                                                                                                                         |
+| ----------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `extractJob`      | `google/gemini-3.1-flash-lite` | Highest call volume, and the serial gate the rest of Analysis waits behind. Transcription from text already in front of it. |
+| `tailorResume`    | `anthropic/claude-sonnet-5`    | The one call where nuance is the product.                                                                                   |
+| `answerQuestions` | `anthropic/claude-sonnet-5`    | Freeform prose grounded in Stories — the same judgement as tailoring.                                                       |
+| `answerChat`      | `anthropic/claude-sonnet-5`    | The same drafting task, in a conversation.                                                                                  |
+
+A tier split across one vendor's models (`MODEL`/`FAST_MODEL`) stopped meaning anything once the
+models come from several. Anthropic is still reachable — OpenRouter serves it — so putting a call
+back on `anthropic/claude-*` is an edit to this map and nothing else. No dual-client fallback path
+exists, deliberately: that is a code path with no test coverage waiting to be wrong.
+
+The slugs are exact and verified against OpenRouter's model list. A wrong one is a 404 at request
+time rather than a type error.
 
 ### `structuredCall.ts`
 
-**The one non-obvious file.** `callStructured()` forces a single tool call
-(`tool_choice: { type: 'tool', name }`) with `strict: true`, and validates the tool's `input`
-against the zod schema (`schema.safeParse`) before returning.
+**The one non-obvious file.** `callStructured()` calls `generateObject` with the zod schema as the
+response format, and the object is validated against that schema before it is returned.
 
-`strict: true` is what makes `input_schema` binding rather than advisory. Without it the model
-picks its own container whenever a shape is awkward: `assessRequirements` returned its `fit` array
-double-encoded as a **string** on 3 of 3 measured calls, which reaches the candidate as a 500 — the
-failure `asFitArray` was written to absorb.
+Structured output is now each provider's own mechanism rather than a forced tool call, and that
+trades one risk for another: OpenRouter's support varies by model **and** by which upstream serves
+it. Every call is therefore routed with
+`provider: { require_parameters: true, data_collection: 'deny' }`, which makes hosts that cannot
+honor the schema and any upstream that may retain candidate data ineligible. The local parse and the
+single retry stay regardless. The provider promise is the optimization; the local parse is the
+guarantee.
 
-This file used to say the design called for `client.messages.parse()` + `zodOutputFormat()`
-(structured outputs) and settled for a forced tool only because `@anthropic-ai/sdk` 0.68.0 had
-neither. The SDK is now on 0.122.0 and has both, and the plan was measured rather than adopted:
-on the same schema, `output_config.format` produced the same correct shape but took **11-20s
-against this path's 8-10s, on 1.5-2x the output tokens**. A schema-enforced tool call is the same
-guarantee at the lower price, so the forced tool stays on purpose, not for want of an alternative.
-(`zodOutputFormat` would also want a `zod/v4` schema, where this package's schemas are v3.)
+`strict` is off. Strict mode is OpenAI's JSON Schema subset — every property required, no defaults —
+and these schemas are not written in it: an omitted `revisedAnswer` and a defaulted `note` both mean
+something. Retiring it also removed the two findings that Anthropic's strict mode had raised
+(`minLength` from `z.string().min(1)`, and `["string","null"]` type arrays). The class of problem
+does not go away, though — every provider takes a different subset — so the four schemas have to
+stay inside the common one, and the tests assert against the keywords most likely to fall outside
+it. Only a live call catches an unsupported keyword; a unit test only catches a regression.
+
+`cachedPrefix` keeps stable text before the varying tail so any provider-side prompt cache can
+recognize a byte-identical prefix. Cache usage is reported in the structured-call metrics rather
+than assumed by the application.
+
+When selected, `effort` becomes OpenRouter's `reasoning: { effort }`, which each upstream normalizes
+to its own thinking budget or reasoning toggle. `tailorResume` selects `none`: leaving effort absent
+still allowed 1.3k–2.3k adaptive reasoning tokens and pushed the call past 20 seconds, while the
+structured resume itself measured only 179–330 tokens.
+
+### Live measurements
+
+The previous writing-model benchmark no longer represents current routing. Re-measure latency,
+reasoning tokens, cache reads and cost for `anthropic/claude-sonnet-5` before using historical
+numbers for capacity or pricing decisions. Every structured call already logs the resolved upstream,
+duration, token breakdown and cost needed for that comparison.
 
 The tool's `input_schema` is **derived from that same zod schema** via `zod-to-json-schema` (pinned
 exact at 3.24.6 to match the installed zod), with `$refStrategy: 'none'` so the schema stays flat —
@@ -309,29 +337,23 @@ else, the rule would refer to nothing. `jobInfo` is optional, so the Ask tab wor
 ### `extractJob.ts`
 
 Takes the candidate-reviewed **Job Description** field (whether manually pasted or
-populated by Autofill's focused page extractor), forces the `report_job_info` tool, and returns a
+populated by Autofill's focused page extractor), requests the `report_job_info` schema, and returns a
 validated `JobInfo`. The prompt deliberately does not describe the input as raw scraped page text;
-told that, a model tolerates and mines junk that the extractor is required to reject.
-It uses Haiku because this call is the serial gate before resume and answer generation can start;
-the strict schema and local validation bound its output without paying Sonnet latency for extraction.
+told that, a model tolerates and mines junk that the extractor is required to reject. It uses Gemini
+Flash Lite because this call is the serial gate before resume and answer generation can start; the
+schema and local validation bound its output without paying Sonnet latency for extraction.
 
 ### `tailorResume.ts`
 
 Takes the Profile's skills/work experience plus `JobInfo`, and returns a validated
-`TailoredResume`. Sonnet runs at medium effort and returns only source indices plus rewritten bullet
-text; post-processing resolves all skill strings and company/title/date metadata from the Profile.
-Missing, duplicate, or invalid pointers conservatively fall back to the source role.
-
-### `assessRequirements.ts`
-
-Runs one compact Haiku call per stated requirement, with at most four in flight. Each call returns a
-verdict, a short note, and a pointer into a skill, role, bullet, or education entry; requirement text
-and evidence prose are restored from authoritative input. A positive verdict whose pointer does not
-resolve is downgraded to `unmet`, and one failed call aborts its active siblings.
+`TailoredResume`. Skills are copied from the Profile unchanged and are not part of the model output.
+Sonnet 5 runs with reasoning disabled and returns only work-experience source indices plus rewritten
+bullet text; post-processing resolves company/title/date metadata from the Profile. Missing,
+duplicate, or invalid pointers conservatively fall back to the source role.
 
 ### `answerQuestions.ts`
 
-Haiku call. Takes the answer-writing projection of `Profile` (work experience, education, skills,
+Sonnet 5 call. Takes the answer-writing projection of `Profile` (work experience, education, skills,
 and stories), `JobInfo`, and a list of `{ fieldId, question, options?, knownAnswer? }`; returns
 validated `QuestionAnswer`s, each recording which `Story.id`s it drew on. Invalid choice answers are
 omitted during post-processing, so the result is not guaranteed to contain one answer per input.
@@ -384,11 +406,20 @@ than truncating. The common case costs exactly one render. See
 
 ## `*.test.ts`
 
-LLM modules follow one pattern: `vi.mock('./client.js', ...)` replaces `anthropic.messages.create`
-with a `vi.fn()` (via `vi.hoisted`, since `vi.mock` factories run before top-level `const`s), so no
-test ever calls the real API. Each checks the right model and forced `tool_choice`, that the prompt
-carries the data it should, the happy path, and a clear throw when the model returns no tool call or
-one that fails validation.
+LLM modules follow one pattern: `vi.mock('./client.js', () => import('./fakeModel.js'))` swaps the
+provider for `fakeModel.ts`, so no test ever calls the real API. Each checks that the prompt carries
+the data it should, the happy path, and a clear throw when the model returns something that isn't
+the object or one that fails validation.
+
+`fakeModel.ts` is the fake, in the `fakeChrome.ts` mould: one `MockLanguageModelV4` answering from a
+shared spy, plus helpers to build a generation and to read the request back. It exists because the
+provider contract is not guessable — token counts are grouped rather than flat and a finish reason
+is an object — so a plausible hand-rolled response is read as a generation that used no tokens and
+stopped for no reason, and a logging assertion then passes for the wrong reason. It fakes the
+_provider_, not `callStructured`: schema conversion, validation, the retry and the failure
+classification are the behaviour under test, which is what lets the other five assert on real
+prompts. Its copy of `MODELS` is deliberate — importing the real one would be a cycle, since this
+module _is_ the mock for `client.js` — and the tests that pin a route are what catch a drift.
 
 `renderResume.test.ts` uses no mocking — there's no network involved — and reads the rendered text
 back out with `unpdf`, so a layout regression can actually fail a test.
@@ -403,7 +434,7 @@ Same minimal Node-environment config as `packages/shared`.
 ## `.env.example`
 
 Template for the real `.env` (gitignored): `DATABASE_URL` (Neon connection string),
-`ANTHROPIC_API_KEY`, `PORT`.
+`OPENROUTER_API_KEY`, `PORT`.
 
 The package has its own `tsconfig.json` and builds JSX with the automatic `react-jsx` runtime. Run
 `pnpm --filter backend build` to compile it, `pnpm --filter backend test` for this package's tests,

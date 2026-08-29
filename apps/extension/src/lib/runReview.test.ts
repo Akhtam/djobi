@@ -13,7 +13,6 @@ function run(overrides: Partial<PipelineRunState> = {}): PipelineRunState {
     tailoredResume: null,
     answers: [],
     coverage: [],
-    requirementFit: [],
     failure: null,
     unresolvedRequiredFields: [],
     filledFieldCount: 0,

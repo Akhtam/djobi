@@ -3,7 +3,6 @@ import type {
   JobInfo,
   Profile,
   QuestionAnswer,
-  RequirementFit,
   TailoredResume,
 } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -156,7 +155,6 @@ function makeDeps(
     extractJob: vi.fn().mockResolvedValue(jobInfo),
     tailorResume: vi.fn().mockResolvedValue(tailoredResume),
     answerQuestions: vi.fn().mockResolvedValue(answers),
-    assessRequirements: vi.fn().mockResolvedValue([]),
     renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
     // The Ask tab's route, likewise never reached from the pipeline.
     answerChat: vi.fn().mockResolvedValue({ reply: 'unused' }),
@@ -497,7 +495,6 @@ describe('runAnalysis', () => {
       tailoredResume,
       answers,
       coverage: [],
-      requirementFit: [],
       unresolvedRequiredFields: [],
       filledFieldCount: 0,
       fillOutcome: null,
@@ -505,52 +502,6 @@ describe('runAnalysis', () => {
       failure: null,
       duplicateOf: null,
     });
-  });
-
-  it('opens review before progressively checkpointing Requirement Fit', async () => {
-    stubChrome();
-    const fit = [
-      { requirement: '5 years of Go', verdict: 'unmet' as const, evidence: null, note: 'Two.' },
-    ];
-    let resolveFit!: (fit: RequirementFit[]) => void;
-    const fitPending = new Promise<RequirementFit[]>((resolve) => {
-      resolveFit = resolve;
-    });
-    const jobWithRequirements = { ...jobInfo, requirements: ['5 years of Go'] };
-    const deps = makeDeps({
-      extractJob: vi.fn().mockResolvedValue(jobWithRequirements),
-      assessRequirements: vi.fn(() => fitPending),
-    });
-    await reportDetectedPage(7, 0, { fields: [questionField] });
-
-    const analysis = runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
-    await vi.waitFor(async () => {
-      expect(await getPipelineRun(7)).toMatchObject({ status: 'review', requirementFit: [] });
-    });
-
-    await runFill(7, profile, deps);
-    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled', requirementFit: [] });
-
-    resolveFit(fit);
-    await analysis;
-
-    expect(await getPipelineRun(7)).toMatchObject({ status: 'filled', requirementFit: fit });
-  });
-
-  it('completes the analysis when the requirement assessment fails — it is advice about the run, never the run itself', async () => {
-    stubChrome();
-    const deps = makeDeps({
-      extractJob: vi.fn().mockResolvedValue({ ...jobInfo, requirements: ['5 years of Go'] }),
-      assessRequirements: vi.fn().mockRejectedValue(new Error('backend is down')),
-    });
-    await reportDetectedPage(7, 0, { fields: [questionField] });
-
-    await runAnalysis(7, null, profile, 'Senior Engineer at Acme...', deps);
-
-    const run = await getPipelineRun(7);
-    expect(run?.status).toBe('review');
-    expect(run?.requirementFit).toEqual([]);
-    expect(run?.tailoredResume).toEqual(tailoredResume);
   });
 
   it('checkpoints what the tailored resume evidences of the posting keywords, so the panel reports the resume this run produced', async () => {
@@ -834,41 +785,6 @@ describe('runAnalysis', () => {
 
     expect(await getPipelineRun(7)).toMatchObject({
       runId: secondRun!.runId,
-      status: 'review',
-      jobDescription: 'Second posting',
-      jobInfo: newerJobInfo,
-    });
-  });
-
-  it('aborts a progressive Requirement Fit call when a newer analysis supersedes it', async () => {
-    stubChrome();
-    await reportDetectedPage(7, 0, { fields: [questionField] });
-    let firstSignal: AbortSignal | undefined;
-    const firstJobInfo = { ...jobInfo, requirements: ['5 years of Go'] };
-    const firstDeps = makeDeps({
-      extractJob: vi.fn().mockResolvedValue(firstJobInfo),
-      assessRequirements: vi.fn((_profile, _jobInfo, signal) => {
-        if (!signal) return Promise.reject(new Error('missing analysis signal'));
-        firstSignal = signal;
-        return new Promise<RequirementFit[]>((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
-      }),
-    });
-    const newerJobInfo = { ...jobInfo, company: 'Globex' };
-    const secondDeps = makeDeps({ extractJob: vi.fn().mockResolvedValue(newerJobInfo) });
-
-    const first = runAnalysis(7, JOB_URL, profile, 'First posting', firstDeps, true);
-    await vi.waitFor(async () => {
-      expect(firstDeps.backend.assessRequirements).toHaveBeenCalled();
-      expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
-    });
-
-    const second = runAnalysis(7, JOB_URL, profile, 'Second posting', secondDeps, true);
-    await Promise.all([first, second]);
-
-    expect(firstSignal?.aborted).toBe(true);
-    expect(await getPipelineRun(7)).toMatchObject({
       status: 'review',
       jobDescription: 'Second posting',
       jobInfo: newerJobInfo,

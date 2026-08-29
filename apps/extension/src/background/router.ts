@@ -1,4 +1,5 @@
 import { parseDetectedFields } from '@djobi/shared';
+import { withWorkerKeptAlive } from '../lib/keepAlive';
 import type { TypedMessage } from '../lib/messages';
 import { patchPipelineRun, setJobContext } from '../lib/tabStore';
 import { recordReport } from './detectedFields';
@@ -63,25 +64,33 @@ export function handleTypedMessage(
     case 'START_ANALYSIS':
       // `runAnalysis` checkpoints progress into `tabStore` itself, so the panel reads results from
       // there rather than from a reply it would have to stay open to receive.
-      return runAnalysis(
-        message.tabId,
-        message.tabUrl,
-        message.profile,
-        message.jobDescription,
-        deps,
-        message.force,
+      return withWorkerKeptAlive(() =>
+        runAnalysis(
+          message.tabId,
+          message.tabUrl,
+          message.profile,
+          message.jobDescription,
+          deps,
+          message.force,
+        ),
       );
 
     case 'START_FILL':
-      return runFill(message.tabId, message.profile, deps);
+      return withWorkerKeptAlive(() => runFill(message.tabId, message.profile, deps));
 
     case 'START_SAVE_APPLICATION':
-      return runSaveApplication(message.tabId, deps);
+      return withWorkerKeptAlive(() => runSaveApplication(message.tabId, deps));
 
     case 'UPDATE_RUN':
       return patchPipelineRun(message.tabId, message.runId, message.updates).then(() => undefined);
 
     case 'UPDATE_JOB_CONTEXT':
       return setJobContext(message.tabId, message.tabUrl, message.jobDescription, message.source);
+
+    case 'CHECK_RUN':
+      // Nothing to do, deliberately. The work this message asks for has already happened by the
+      // time it is routed: `service-worker.ts` runs the recovery sweep before dispatching anything,
+      // so simply *arriving* — and starting a worker if none was running — is the whole effect.
+      return Promise.resolve();
   }
 }

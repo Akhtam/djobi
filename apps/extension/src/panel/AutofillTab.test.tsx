@@ -917,6 +917,26 @@ describe('AutofillTab', () => {
     expect(renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
   });
 
+  it('clears the previous resume preview when re-analysis starts on the same page', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      renderResumePdf: async () => new Uint8Array([37, 80, 68, 70]).buffer,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
+    await screen.findByTitle('Tailored resume');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
+
+    expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:resume-preview');
+  });
+
   it('shows an error message when the resume PDF fails to render', async () => {
     const renderResumePdf = () => Promise.reject(new Error('render failed'));
     await stubChrome({

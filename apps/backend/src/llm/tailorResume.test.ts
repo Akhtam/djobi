@@ -1,13 +1,15 @@
 import { TailoredResumeSchema, type JobInfo, type Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  generation,
+  mockDoGenerate,
+  modelCall,
+  objectGeneration,
+  openrouter,
+  promptText,
+} from './fakeModel.js';
 
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
-
-vi.mock('./client.js', () => ({
-  anthropic: { messages: { create: mockCreate } },
-  FAST_MODEL: 'claude-haiku-4-5-20251001',
-  MODEL: 'claude-sonnet-5',
-}));
+vi.mock('./client.js', () => import('./fakeModel.js'));
 
 const { tailorResume } = await import('./tailorResume.js');
 
@@ -43,21 +45,14 @@ const jobInfo: JobInfo = {
   keywords: ['TypeScript', 'Postgres'],
 };
 
-function toolUseResponse(input: unknown) {
-  return {
-    content: [{ type: 'tool_use', id: 'toolu_1', name: 'report_tailored_resume', input }],
-  };
-}
-
 describe('tailorResume', () => {
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockDoGenerate.mockReset();
   });
 
   it('reconstructs a public resume from compact source indices', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skillIndices: [0, 1],
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
         workExperience: [
           {
             sourceIndex: 0,
@@ -79,42 +74,55 @@ describe('tailorResume', () => {
       ],
     });
     expect(TailoredResumeSchema.safeParse(result).success).toBe(true);
+    expect(openrouter.chat).toHaveBeenLastCalledWith(
+      'anthropic/claude-sonnet-5',
+      expect.anything(),
+    );
 
-    const request = mockCreate.mock.calls[0][0];
-    expect(request.model).toBe('claude-sonnet-5');
-    expect(request.output_config).toEqual({ effort: 'medium' });
-    expect(request.max_tokens).toBe(1856);
-    expect(request.tools[0].input_schema.properties).toHaveProperty('skillIndices');
-    expect(JSON.stringify(request.tools[0].input_schema)).not.toContain('minimum');
-    expect(JSON.stringify(request.tools[0].input_schema)).not.toContain('minLength');
-    const roleProperties = request.tools[0].input_schema.properties.workExperience.items.properties;
+    const request = modelCall();
+    // Leaving effort unspecified still enabled adaptive reasoning and pushed this small structured
+    // call past 20 seconds. Disable it rather than merely declining to request an effort level.
+    expect(request.providerOptions?.openrouter).toMatchObject({ reasoning: { effort: 'none' } });
+    expect(request.maxOutputTokens).toBe(512);
+
+    const schema = request.responseFormat.schema;
+    expect(schema.properties).not.toHaveProperty('skillIndices');
+    expect(schema.properties).not.toHaveProperty('skills');
+    // Keywords each provider takes a different view of. `strict: true` used to reject these before
+    // a request was ever sent; nothing does now, so the schemas have to stay inside the subset
+    // every route can serve, and this is what says so.
+    expect(JSON.stringify(schema)).not.toContain('minimum');
+    expect(JSON.stringify(schema)).not.toContain('minLength');
+    const roleProperties = schema.properties.workExperience.items.properties;
     expect(roleProperties).toHaveProperty('sourceIndex');
     expect(roleProperties).not.toHaveProperty('company');
-    expect(request.messages[0].content).toContain(
+    expect(promptText()).toContain(
       JSON.stringify({ workExperience: profile.workExperience, skills: profile.skills }),
     );
-    expect(request.messages[0].content).not.toContain(profile.fullName);
+    expect(promptText()).not.toContain(profile.fullName);
   });
 
-  it('throws when compact tool input fails schema validation', async () => {
-    mockCreate.mockResolvedValue(toolUseResponse({ skillIndices: 'not-an-array' }));
+  it('throws when the compact output fails schema validation', async () => {
+    mockDoGenerate.mockResolvedValue(objectGeneration({ workExperience: 'not-an-array' }));
 
     await expect(tailorResume(profile, jobInfo)).rejects.toThrow(
-      'report_tailored_resume produced input that failed validation',
+      'report_tailored_resume produced output that failed validation',
     );
   });
 
-  it('drops invalid and duplicate skill indices', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skillIndices: [1, -1, 99, 1, 0],
+  it('keeps every profile skill unchanged and in profile order', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        // Even a stale or malicious model response cannot choose a subset: this property is outside
+        // the output schema, and reconciliation reads skills only from the authoritative Profile.
+        skillIndices: [],
         workExperience: [{ sourceIndex: 0, bullets: [] }],
       }),
     );
 
     const result = await tailorResume(profile, jobInfo);
 
-    expect(result.skills).toEqual(['PostgreSQL', 'TypeScript']);
+    expect(result.skills).toEqual(profile.skills);
   });
 
   it('uses complete unique role indices to preserve the model-selected role order', async () => {
@@ -126,9 +134,8 @@ describe('tailorResume', () => {
       bullets: ['Built internal developer tooling'],
     };
     const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skillIndices: [],
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
         workExperience: [
           { sourceIndex: 1, bullets: [{ sourceIndex: 0, text: 'Built developer tooling' }] },
           { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Led the billing migration' }] },
@@ -151,9 +158,8 @@ describe('tailorResume', () => {
       bullets: ['Built internal developer tooling'],
     };
     const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skillIndices: [],
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
         workExperience: [
           { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Ambiguous first rewrite' }] },
           { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Ambiguous second rewrite' }] },
@@ -168,9 +174,8 @@ describe('tailorResume', () => {
   });
 
   it('drops invalid bullet pointers and falls back when none of a supplied role resolves', async () => {
-    mockCreate.mockResolvedValue(
-      toolUseResponse({
-        skillIndices: [],
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
         workExperience: [
           {
             sourceIndex: 0,
@@ -196,6 +201,16 @@ describe('tailorResume', () => {
       skills: [],
       workExperience: [],
     });
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockDoGenerate).not.toHaveBeenCalled();
+  });
+
+  it('returns every skill without a model call when there is no work experience to tailor', async () => {
+    const skillsOnlyProfile = { ...profile, workExperience: [] };
+
+    await expect(tailorResume(skillsOnlyProfile, jobInfo)).resolves.toEqual({
+      skills: profile.skills,
+      workExperience: [],
+    });
+    expect(mockDoGenerate).not.toHaveBeenCalled();
   });
 });
