@@ -22,11 +22,21 @@ const AnswerChatOutputSchema = z.object({
 });
 
 /**
- * A cold turn's schema. `revisedAnswer` is required rather than requested, because a cold ask has
- * nothing else to show: a reply alone would render an Ask tab whose one purpose — producing an
- * answer — visibly didn't happen, and the model omitting it is a failure worth naming as one.
+ * A cold ask has to come back with an answer: a reply alone renders an Ask tab whose one purpose —
+ * producing an answer — visibly didn't happen, and the model omitting it is worth naming as a
+ * failure rather than showing as an empty result.
+ *
+ * Stated as a `requires` rather than as a `.min(1)` on the schema, which is where it used to live.
+ * Every other turn already treats an absent answer and an empty one as the same thing (see the
+ * trim below), so the model has two ways to say "no answer here" and only one of them was survivable
+ * on this path: the instructions tell it to leave `revisedAnswer` out when a turn is conversational,
+ * a model that complies by sending `''` fails the schema, and a schema violation is classified
+ * non-retryable — so a recoverable coin-flip reached the candidate as a 500. As a `requires` the
+ * same turn gets the second attempt every other model misstep gets.
  */
-const ColdTurnOutputSchema = AnswerChatOutputSchema.extend({ revisedAnswer: z.string().min(1) });
+function coldTurnRequires(value: z.infer<typeof AnswerChatOutputSchema>): string | undefined {
+  return value.revisedAnswer?.trim() ? undefined : 'revisedAnswer required';
+}
 
 /** How the model is told to behave, once. The rules are the same on every turn of every thread. */
 const INSTRUCTIONS = `You are helping a job candidate write their answer to one application question. You are talking to the candidate, in a conversation about that answer.
@@ -37,6 +47,8 @@ Write answers in the candidate's own voice as implied by their profile, concise 
 
 If a prepared answer in base_profile.customAnswers is about the question under discussion, the candidate has already decided what they say about it — build on that answer rather than writing a different one beside it, and keep its specifics unless the candidate asks you to change them.
 
+Keep "reply" to at most two sentences by default: precise, plain, no preamble, no restating what you just wrote in "revisedAnswer". Go longer only when the candidate explicitly asks for more — for detail, for options, for an explanation. This is a limit on your side of the conversation only; the answer itself in "revisedAnswer" is as long as the question needs.
+
 Return your side of the conversation as "reply", and — whenever you have produced or updated the answer itself — the full answer text as "revisedAnswer". "revisedAnswer" is what the candidate applies to their application, so it must be the complete answer on its own, not a fragment or a description of what changed. Leave it out when the turn is purely conversational, such as when you are asking the candidate which of two directions they want.`;
 
 /**
@@ -46,7 +58,8 @@ Return your side of the conversation as "reply", and — whenever you have produ
  *   question under discussion, the optional job and current draft, and the thread so far.
  * @returns The reply to show in the thread, and the answer to apply when the turn produced one.
  * @throws {StructuredCallError} If the model doesn't return a tool call, or returns one that fails
- *   validation — including a cold turn that came back without an answer.
+ *   validation — including a cold turn that came back without an answer, which is retried once
+ *   before it is reported.
  */
 export async function answerChat(
   request: AnswerChatRequest,
@@ -87,7 +100,8 @@ export async function answerChat(
     maxTokens: 4096,
     toolName: 'report_chat_turn',
     toolDescription: 'Report your reply to the candidate, and the answer text when you wrote one.',
-    schema: coldTurn ? ColdTurnOutputSchema : AnswerChatOutputSchema,
+    schema: AnswerChatOutputSchema,
+    ...(coldTurn ? { requires: coldTurnRequires } : {}),
     userContent: `${INSTRUCTIONS}
 
 ${groundingContext(relevantProfile, jobInfo)}

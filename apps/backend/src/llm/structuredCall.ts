@@ -49,6 +49,22 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
   /** Zod schema used both to constrain generation and to validate what comes back. */
   schema: Schema;
   /**
+   * A requirement on the parsed object that the schema deliberately does not state, checked inside
+   * the retried unit. Return the reason it failed, or `undefined` when it holds.
+   *
+   * It exists because putting such a rule in the schema costs the retry. The schema is sent to the
+   * model to constrain generation *and* used to validate what comes back, and a violation of it is
+   * classified `invalid-input` — non-retryable, on the reasoning that a re-generation from the same
+   * prompt reproduces the same misreading. That reasoning holds for a model that misunderstood the
+   * *shape*; it does not hold for one that got the shape right and merely spelled "nothing here"
+   * as an empty string, which is a coin-flip a second attempt usually wins. `answerChat` needs
+   * exactly that: a cold ask must come back with an answer, and `''` is not one.
+   *
+   * Failing here is reported as `no-tool-call` and retried once, so the rule is stated where it is
+   * true rather than being enforced by a `.min(1)` that turns a recoverable turn into a 500.
+   */
+  requires?: (value: z.infer<Schema>) => string | undefined;
+  /**
    * Aborts the request in flight — the HTTP request's own signal, which fires when the candidate's
    * browser gives up on it.
    *
@@ -247,10 +263,23 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
         requestId: result.response?.id,
       });
 
+      const unmet = options.requires?.(result.object);
+      if (unmet) {
+        throw new StructuredCallError(
+          'no-tool-call',
+          options.toolName,
+          `${options.toolName} produced output that failed validation: ${unmet}.`,
+          result.response?.id,
+          true,
+          result.finishReason,
+        );
+      }
+
       return result.object;
     } catch (error) {
       // Anything that isn't "the model didn't give us the object" is a provider or transport
-      // failure, and belongs to the caller unchanged.
+      // failure — or an unmet `requires`, already classified above — and belongs to the caller
+      // unchanged. The call is logged either way: the `requires` path logs before it throws.
       if (!NoObjectGeneratedError.isInstance(error)) throw error;
 
       const requestId = error.response?.id;

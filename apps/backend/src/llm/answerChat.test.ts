@@ -103,6 +103,18 @@ describe('answerChat', () => {
     expect(scaffold.content).toContain('Why do you want to work here?');
   });
 
+  it('caps its side of the conversation at two sentences unless more is asked for', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
+    );
+
+    await answerChat(request());
+
+    // The Ask tab shows the reply beside the answer: a chatty reply pushes the thing the candidate
+    // came for off the screen, so brevity is a rule of the prompt rather than a hope.
+    expect(sentMessages()[0].content).toContain('at most two sentences');
+  });
+
   it('omits the job section when the panel has no run to take one from', async () => {
     mockDoGenerate.mockResolvedValue(
       objectGeneration({ reply: 'ok', revisedAnswer: 'An answer.' }),
@@ -201,11 +213,29 @@ describe('answerChat', () => {
   });
 
   it('fails a cold turn that came back with no answer, which has nothing to show', async () => {
-    // Not a retryable no-tool-call: the model answered, it just answered with a turn a fresh ask
-    // cannot render. Better a named failure than an Ask tab that looks like it did nothing.
+    // Better a named failure than an Ask tab that looks like it did nothing. Retried first, though:
+    // the model answered in the right shape and merely produced no answer, which a second attempt
+    // usually gets right — so both generations have to come back empty for this to fail.
     mockDoGenerate.mockResolvedValue(objectGeneration({ reply: 'Tell me more about the role.' }));
 
     await expect(answerChat(request())).rejects.toThrow(StructuredCallError);
+    expect(mockDoGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a cold turn whose answer came back empty rather than absent', async () => {
+    // The two are the same thing everywhere else in this module, and the instructions tell the model
+    // to *leave out* an answer it hasn't written — so a model complying with `''` used to fail the
+    // schema, which is classified non-retryable, and reached the candidate as a 500.
+    mockDoGenerate
+      .mockResolvedValueOnce(objectGeneration({ reply: 'Here you go.', revisedAnswer: '   ' }))
+      .mockResolvedValueOnce(
+        objectGeneration({ reply: 'Here you go.', revisedAnswer: 'An answer.' }),
+      );
+
+    await expect(answerChat(request())).resolves.toEqual({
+      reply: 'Here you go.',
+      revisedAnswer: 'An answer.',
+    });
   });
 
   it('accepts a conversational turn once the thread has started, unlike a cold one', async () => {

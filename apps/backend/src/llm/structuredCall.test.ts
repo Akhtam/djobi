@@ -209,6 +209,38 @@ describe('callStructured', () => {
     );
   });
 
+  it('retries a requirement the schema deliberately does not state, unlike a schema violation', async () => {
+    // The point of the option. A rule like "this field must be non-empty" put in the schema is
+    // enforced as a schema violation — non-retryable, on the reasoning that a re-generation
+    // reproduces the same misreading. That reasoning is about a model that got the *shape* wrong; a
+    // model that got the shape right and left one field empty usually fills it on a second attempt.
+    mockDoGenerate
+      .mockResolvedValueOnce(objectGeneration({ ...SAMPLE, title: '' }))
+      .mockResolvedValueOnce(objectGeneration(SAMPLE));
+
+    const result = await callStructured(
+      options({ requires: (value: typeof SAMPLE) => (value.title ? undefined : 'title required') }),
+    );
+
+    expect(result).toEqual(SAMPLE);
+    expect(mockDoGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an unmet requirement after the same single retry, naming what was missing', async () => {
+    mockDoGenerate.mockResolvedValue(objectGeneration({ ...SAMPLE, title: '' }));
+
+    const error = await callStructured(
+      options({ requires: (value: typeof SAMPLE) => (value.title ? undefined : 'title required') }),
+    ).catch((err: unknown) => err);
+
+    expect(error).toMatchObject({
+      kind: 'no-tool-call',
+      toolName: 'report_sample',
+      message: 'report_sample produced output that failed validation: title required.',
+    });
+    expect(mockDoGenerate).toHaveBeenCalledTimes(2);
+  });
+
   it('logs the shape of the output that failed, and never its content', async () => {
     // Zod says which path was wrong and what it expected; without the shape alongside it the log
     // never says what the model actually sent, and a deviation nothing normalizes yet — an array
