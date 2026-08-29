@@ -17,6 +17,7 @@ import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/
 import type { DetectedField, JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
 import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
+import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
 import { answersFor } from '../lib/runAnswers';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
@@ -59,36 +60,24 @@ export const productionDeps: PipelineDeps = {
   page: chromePageClient,
 };
 
-/** The live Analysis Step for each tab, replaced and aborted by the next run for that tab. */
-const analysisControllers = new Map<number, AbortController>();
+/**
+ * The cancellable backend work in flight for each tab — one entry, replaced and aborted by whatever
+ * supersedes it.
+ *
+ * It holds the Fill Step as well as the Analysis Step because both spend real model time
+ * (`/render-resume-pdf` renders inside the fill) and because there is only ever one live run per
+ * tab: a new Analyze supersedes a fill still rendering, and a second Fill supersedes the first. The
+ * run-identity re-checks in `fillStep` stop a superseded run from *acting* on the page; they cannot
+ * stop the generation it already paid for, which is what this does.
+ */
+const runControllers = new Map<number, AbortController>();
 
-/** Maps a scalar (non-question, non-upload) field category to the base profile value that fills it. */
-function valueForCategory(
-  category: DetectedField['category'],
-  profile: Profile,
-): string | undefined {
-  switch (category) {
-    case 'first_name':
-      return profile.fullName.split(' ')[0];
-    case 'last_name':
-      return profile.fullName.split(' ').slice(1).join(' ') || undefined;
-    case 'full_name':
-      return profile.fullName;
-    case 'email':
-      return profile.email;
-    case 'phone':
-      return profile.phone ?? undefined;
-    case 'location':
-      return profile.location ?? undefined;
-    case 'linkedin_url':
-      return profile.links.linkedin ?? undefined;
-    case 'portfolio_url':
-      return profile.links.portfolio ?? undefined;
-    case 'github_url':
-      return profile.links.github ?? undefined;
-    default:
-      return undefined;
-  }
+/** Claims the tab's one cancellable slot, aborting whatever held it. */
+function claimRunController(tabId: number): AbortController {
+  const controller = new AbortController();
+  runControllers.get(tabId)?.abort();
+  runControllers.set(tabId, controller);
+  return controller;
 }
 
 type AnalysisResult = Pick<
@@ -107,7 +96,7 @@ async function analysisStep(
   const jobInfo = await deps.backend.extractJob(jobDescription, signal);
 
   const questions = jobPageData.fields
-    .filter((field) => field.category === 'question')
+    .filter((field) => autofillSource(field.category) === 'question')
     // Only the labels cross to the backend — a choice's DOM selector is meaningless there, and
     // the drafted answer comes back as one of these label strings, which `fillForm.ts` matches
     // against this same `field.options` array to recover the element.
@@ -187,6 +176,7 @@ async function fillStep(
   profile: Profile,
   tabId: number,
   deps: PipelineDeps,
+  signal: AbortSignal,
 ): Promise<Pick<
   PipelineRunState,
   | 'status'
@@ -229,20 +219,34 @@ async function fillStep(
   // in `unresolvedRequiredFields` below, which is what the panel lists.
   const values: Record<string, string> = {};
   for (const field of fields) {
-    if (field.category === 'question') {
-      const answer = drafted.valueFor(field);
-      if (answer !== undefined) values[field.id] = answer;
-      continue;
+    // Every category has a disposition, and `lib/fieldDisposition.ts` is where it is stated. A
+    // category this app deliberately leaves alone — a cover letter — takes the same path as one
+    // nothing recognizes, which is what it did before; the difference is that saying so is now a
+    // table entry rather than a `default` branch indistinguishable from an oversight.
+    switch (autofillSource(field.category)) {
+      case 'question': {
+        const answer = drafted.valueFor(field);
+        if (answer !== undefined) values[field.id] = answer;
+        break;
+      }
+      case 'profile': {
+        const value = valueForCategory(field.category, profile);
+        if (value !== undefined) values[field.id] = value;
+        break;
+      }
+      // The resume is attached as a file rather than written as a value, below; `unsupported` is
+      // the recorded decision not to fill this category at all.
+      case 'resume':
+      case 'unsupported':
+        break;
     }
-    const value = valueForCategory(field.category, profile);
-    if (value !== undefined) values[field.id] = value;
   }
 
   // Whether to render a resume at all — not which input it lands on. An ATS can render several
   // `resume_upload`-classified inputs (Ashby pairs an unlabeled decoy with the real, required one),
   // and picking between them needs the live page, so `content/fillForm.ts` does it. This module used
   // to pick one too, purely to decide this boolean, and the two copies of that rule could disagree.
-  const needsResume = fields.some((field) => field.category === 'resume_upload');
+  const needsResume = fields.some((field) => autofillSource(field.category) === 'resume');
   // Rendering and filling can outlive a navigation or replacement analysis. Re-check after the
   // awaited scan before either operation can produce an upload or click against the wrong page.
   if ((await getPipelineRun(tabId))?.runId !== run.runId) return null;
@@ -250,7 +254,9 @@ async function fillStep(
     ? {
         name: resumeFileName(profile.fullName),
         type: 'application/pdf',
-        bytes: await deps.backend.renderResumePdf(profile, tailoredResume),
+        // The one place this step spends model time, and therefore the one worth cancelling: a
+        // superseding run aborts it rather than leaving a PDF rendering for a run nothing will use.
+        bytes: await deps.backend.renderResumePdf(profile, tailoredResume, signal),
       }
     : undefined;
 
@@ -279,7 +285,7 @@ async function fillStep(
   const unresolvedRequiredFields = fields.filter(
     (field) =>
       field.required &&
-      (field.category === 'resume_upload' ? !resumeLanded : !landed.has(field.id)),
+      (autofillSource(field.category) === 'resume' ? !resumeLanded : !landed.has(field.id)),
   );
 
   // How much this run actually wrote. `unresolvedRequiredFields` can't answer that on its own:
@@ -349,7 +355,7 @@ export async function runSaveApplication(
 }
 
 /**
- * The reason to show the user for a failed step — usually a `BackendError` naming the path and
+ * The reason to show the user for a failed step — usually an `HttpError` naming the path and
  * status.
  *
  * The real cause is used verbatim rather than wrapped in a step-specific error type. Which step
@@ -451,9 +457,7 @@ export async function runAnalysis(
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
-  const controller = new AbortController();
-  analysisControllers.get(tabId)?.abort();
-  analysisControllers.set(tabId, controller);
+  const controller = claimRunController(tabId);
 
   // Claim the tab before any detection or backend await. Every completion below is scoped to this
   // identity, so a later Analyze click or a navigation can supersede it safely.
@@ -514,7 +518,7 @@ export async function runAnalysis(
     controller.abort(error);
     await checkpointFailure(tabId, runId, 'analyze-error', 'analysis', error);
   } finally {
-    if (analysisControllers.get(tabId) === controller) analysisControllers.delete(tabId);
+    if (runControllers.get(tabId) === controller) runControllers.delete(tabId);
   }
 }
 
@@ -553,10 +557,17 @@ export async function runFill(
   if (!run) return;
   const { runId } = run;
 
+  const controller = claimRunController(tabId);
+
   try {
-    const result = await fillStep(run, profile, tabId, deps);
+    const result = await fillStep(run, profile, tabId, deps, controller.signal);
     if (result) await patchPipelineRun(tabId, runId, result);
   } catch (error) {
+    // Superseded, not failed — same reading as `runAnalysis`. The run that took the tab owns what
+    // the panel shows, and checkpointing a fill error over it would report a cancellation as one.
+    if (controller.signal.aborted) return;
     await checkpointFailure(tabId, runId, 'fill-error', 'fill', error);
+  } finally {
+    if (runControllers.get(tabId) === controller) runControllers.delete(tabId);
   }
 }

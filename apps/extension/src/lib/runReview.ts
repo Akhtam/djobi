@@ -1,4 +1,11 @@
-import type { FillOutcome, PipelineRunState, PipelineStatus } from './tabStore';
+import type { DetectedField } from '@djobi/shared';
+import type {
+  DuplicateApplication,
+  FillOutcome,
+  PipelineFailure,
+  PipelineRunState,
+  PipelineStatus,
+} from './tabStore';
 
 export type { FillOutcome } from './tabStore';
 
@@ -40,6 +47,78 @@ export interface StatusPill {
   tone: 'busy' | 'success' | 'error';
 }
 
+/**
+ * The recovery a Run Notice offers, named rather than bound.
+ *
+ * An identity and not a callback, so `reviewOf` stays a pure function of the run: the moment it
+ * takes handlers it needs spies to test and grows an argument that changes on every render. The
+ * panel maps these onto the three `notify` calls it already has.
+ */
+export type RunNoticeAction = 'analyze-anyway' | 'retry-analysis' | 'retry-fill' | 'retry-save';
+
+/**
+ * One thing a run has to tell the candidate — a **Run Notice**. Not an Application's Note, which is
+ * a persisted entry in its interview log; this exists for the length of a run and is never stored.
+ *
+ * Each member carries exactly what its copy interpolates and nothing else, which is the point:
+ * `duplicate` cannot exist without the application it is about, so the panel's hand-written
+ * `status === 'duplicate' && duplicateOf` guard becomes structural. The **words** are deliberately
+ * not here — "reload the page" versus "fill it in by hand" is a product judgement about not sending
+ * someone after the wrong problem, and it belongs beside the JSX a person reads. This module names
+ * the situation; `panel/AutofillTab.tsx` says the sentence.
+ *
+ * `slot` reads like layout and isn't: `'outcome'` is *how the run went*, reported above the review,
+ * and `'inline'` is *this step failed, retry it from where you are*, reported beside the answers it
+ * would have you re-fill. It is the same axis `canReview` already sits on.
+ */
+export type RunNotice =
+  | {
+      kind: 'duplicate';
+      slot: 'outcome';
+      tone: 'error';
+      action: 'analyze-anyway';
+      duplicate: DuplicateApplication;
+    }
+  | {
+      kind: 'analyze-failed';
+      slot: 'outcome';
+      tone: 'error';
+      action: 'retry-analysis';
+      /** The underlying cause, or `null` for a failure that arrived without one. */
+      cause: string | null;
+    }
+  | { kind: 'fill-unverified'; slot: 'outcome'; tone: 'error' }
+  | { kind: 'no-fields-detected'; slot: 'outcome'; tone: 'error' }
+  | {
+      kind: 'nothing-filled';
+      slot: 'outcome';
+      tone: 'error';
+      /** What the run's own re-scan saw — what separates this from `no-fields-detected`. */
+      detectedFieldCount: number;
+    }
+  | { kind: 'fill-complete'; slot: 'outcome'; tone: 'success'; filledFieldCount: number }
+  | {
+      kind: 'fill-incomplete';
+      slot: 'outcome';
+      tone: 'error';
+      unresolvedRequiredFields: DetectedField[];
+    }
+  | { kind: 'saved'; slot: 'outcome'; tone: 'success' }
+  | {
+      kind: 'fill-failed';
+      slot: 'inline';
+      tone: 'error';
+      action: 'retry-fill';
+      cause: string | null;
+    }
+  | {
+      kind: 'save-failed';
+      slot: 'inline';
+      tone: 'error';
+      action: 'retry-save';
+      cause: string | null;
+    };
+
 export interface RunReview {
   /** The pill to show, or `null` when the run warrants none. */
   pill: StatusPill | null;
@@ -57,10 +136,19 @@ export interface RunReview {
   canReview: boolean;
   /** How the Fill Step went, or `null` if it hasn't completed. */
   outcome: FillOutcome | null;
+  /**
+   * Everything this run has to tell the candidate, in render order.
+   *
+   * A list, not one notice per slot, because two can stand at once: a run saved with required
+   * fields still unresolved reports both — saving didn't fill them, and the form is still sitting
+   * there unsubmitted. Only `fill-complete` is superseded by `saved`, because "Save the application
+   * when you're ready" stops being true the moment it is saved.
+   */
+  notices: RunNotice[];
 }
 
 /** The review with nothing to show — no run yet, or one that has produced nothing worth reporting. */
-const IDLE: RunReview = { pill: null, canReview: false, outcome: null };
+const IDLE: Omit<RunReview, 'notices'> = { pill: null, canReview: false, outcome: null };
 
 const OUTCOME_PILL: Record<FillOutcome, StatusPill> = {
   unverified: { label: 'Fill unverified', tone: 'error' },
@@ -86,10 +174,10 @@ const OUTCOME_PILL: Record<FillOutcome, StatusPill> = {
  *
  * Defaults to the stored status, which is the whole reading for a caller with no optimism to apply.
  */
-export function reviewOf(
+function readingOf(
   run: PipelineRunState | null,
-  status: PipelineStatus | null = run?.status ?? null,
-): RunReview {
+  status: PipelineStatus | null,
+): Omit<RunReview, 'notices'> {
   if (!status) return IDLE;
 
   switch (status) {
@@ -132,4 +220,121 @@ export function reviewOf(
       return { pill, canReview: true, outcome };
     }
   }
+}
+
+/** The Run Notice for one completed Fill Step, carrying whatever its copy has to interpolate. */
+function outcomeNotice(run: PipelineRunState | null, outcome: FillOutcome): RunNotice {
+  switch (outcome) {
+    case 'unverified':
+      return { kind: 'fill-unverified', slot: 'outcome', tone: 'error' };
+    case 'no-fields-detected':
+      return { kind: 'no-fields-detected', slot: 'outcome', tone: 'error' };
+    case 'nothing-filled':
+      return {
+        kind: 'nothing-filled',
+        slot: 'outcome',
+        tone: 'error',
+        // The run's own checkpointed re-scan, not panel-side detection: this number is about the
+        // fill that happened, and it is the whole of what distinguishes this from a page never found.
+        detectedFieldCount: run?.jobPageData.fields.length ?? 0,
+      };
+    case 'complete':
+      return {
+        kind: 'fill-complete',
+        slot: 'outcome',
+        tone: 'success',
+        filledFieldCount: run?.filledFieldCount ?? 0,
+      };
+    case 'incomplete':
+      return {
+        kind: 'fill-incomplete',
+        slot: 'outcome',
+        tone: 'error',
+        unresolvedRequiredFields: run?.unresolvedRequiredFields ?? [],
+      };
+  }
+}
+
+/**
+ * What this run has to tell the candidate, in render order.
+ *
+ * `failure` is taken as an argument rather than read off `run` for the same reason `status` is: the
+ * panel reconciles a *delivery* failure — a command Chrome never got to the service worker — ahead
+ * of anything the run checkpointed, and `panel/usePipelineRun.ts` is explicit that the two always
+ * describe the same failure. Reading the cause from the run here would re-split that pair one layer
+ * down, which is how the tab body once showed an error the header pill knew nothing about.
+ */
+function noticesFor(
+  run: PipelineRunState | null,
+  status: PipelineStatus | null,
+  failure: PipelineFailure | null,
+  outcome: FillOutcome | null,
+): RunNotice[] {
+  const cause = failure?.message ?? null;
+
+  // A guard the run did not get past. Each ends the run where it stands, so none of them can be
+  // accompanied by a fill outcome.
+  if (status === 'duplicate') {
+    // No past application, no notice: a duplicate guard with nothing to name has nothing to say,
+    // and the payload is what makes that unrepresentable rather than a guard to remember.
+    return run?.duplicateOf
+      ? [
+          {
+            kind: 'duplicate',
+            slot: 'outcome',
+            tone: 'error',
+            action: 'analyze-anyway',
+            duplicate: run.duplicateOf,
+          },
+        ]
+      : [];
+  }
+
+  if (status === 'analyze-error') {
+    return [
+      { kind: 'analyze-failed', slot: 'outcome', tone: 'error', action: 'retry-analysis', cause },
+    ];
+  }
+
+  if (status === 'fill-error') {
+    return [{ kind: 'fill-failed', slot: 'inline', tone: 'error', action: 'retry-fill', cause }];
+  }
+
+  if (!outcome) return [];
+
+  const notices: RunNotice[] = [];
+
+  // Saving supersedes `fill-complete` alone. "Save the application when you're ready" stops being
+  // true once it is saved — but a required field the page rejected is still unfilled on a form the
+  // candidate has yet to submit, and the save says nothing about that.
+  if (!(status === 'saved' && outcome === 'complete')) notices.push(outcomeNotice(run, outcome));
+  if (status === 'saved') notices.push({ kind: 'saved', slot: 'outcome', tone: 'success' });
+  if (status === 'save-error') {
+    notices.push({
+      kind: 'save-failed',
+      slot: 'inline',
+      tone: 'error',
+      action: 'retry-save',
+      cause,
+    });
+  }
+
+  return notices;
+}
+
+/**
+ * Everything the panel needs to render `run` — the header pill, whether a review still stands, how
+ * the Fill Step went, and every Run Notice the run raises.
+ *
+ * @param status - The *reconciled* status; see {@link readingOf}.
+ * @param failure - The reconciled cause that goes with `status`; see {@link noticesFor}. Defaults to
+ *   the run's own, which is the whole answer for a caller with no delivery failure to apply.
+ */
+export function reviewOf(
+  run: PipelineRunState | null,
+  status: PipelineStatus | null = run?.status ?? null,
+  failure: PipelineFailure | null = run?.failure ?? null,
+): RunReview {
+  const reading = readingOf(run, status);
+  return { ...reading, notices: noticesFor(run, status, failure, reading.outcome) };
 }

@@ -8,7 +8,8 @@
  */
 import type { Application } from '@djobi/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DashboardBackendError, httpDashboardClient } from './dashboardClient';
+import { HttpError } from '@djobi/http-client';
+import { httpDashboardClient } from './dashboardClient';
 import { fixtureApplications } from './fixtures';
 
 const sample: Application = fixtureApplications[0];
@@ -34,6 +35,7 @@ describe('listApplications', () => {
 
     await expect(httpDashboardClient.listApplications()).resolves.toEqual([sample]);
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', {
+      method: 'GET',
       signal: expect.any(AbortSignal),
     });
   });
@@ -120,9 +122,7 @@ describe('failures', () => {
 
     // "Failed to fetch" on its own tells the user nothing actionable.
     await expect(httpDashboardClient.listApplications()).rejects.toThrow(/Is it running/);
-    await expect(httpDashboardClient.listApplications()).rejects.toBeInstanceOf(
-      DashboardBackendError,
-    );
+    await expect(httpDashboardClient.listApplications()).rejects.toBeInstanceOf(HttpError);
   });
 
   it('aborts a stalled request and reports a timeout', async () => {
@@ -140,7 +140,7 @@ describe('failures', () => {
     const request = httpDashboardClient.listApplications();
     controller.abort(new DOMException('Timed out', 'TimeoutError'));
 
-    await expect(request).rejects.toThrow(/did not respond within 90 seconds/);
+    await expect(request).rejects.toThrow(/did not respond within 90s/);
   });
 
   it('reports the same timeout when the backend stalls after sending headers', async () => {
@@ -152,7 +152,7 @@ describe('failures', () => {
         Promise.resolve({
           ok: true,
           status: 200,
-          json: () =>
+          text: () =>
             new Promise((_resolve, reject) => {
               init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
             }),
@@ -164,6 +164,6 @@ describe('failures', () => {
     await Promise.resolve();
     controller.abort(new DOMException('Timed out', 'TimeoutError'));
 
-    await expect(request).rejects.toThrow(/did not respond within 90 seconds/);
+    await expect(request).rejects.toThrow(/did not respond within 90s/);
   });
 });

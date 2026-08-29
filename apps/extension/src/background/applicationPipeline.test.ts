@@ -1080,7 +1080,11 @@ describe('runFill', () => {
     await runFill(7, profile, deps);
 
     expect(deps.backend.renderResumePdf).toHaveBeenCalledTimes(1);
-    expect(deps.backend.renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+    expect(deps.backend.renderResumePdf).toHaveBeenCalledWith(
+      profile,
+      tailoredResume,
+      expect.any(AbortSignal),
+    );
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       {
@@ -1228,6 +1232,39 @@ describe('runFill', () => {
 
     expect(staleDeps.backend.renderResumePdf).not.toHaveBeenCalled();
     expect(staleDeps.page.fill).not.toHaveBeenCalled();
+  });
+
+  it('aborts a resume render a newer analysis has superseded, rather than paying for it in full', async () => {
+    // The run-identity re-checks stop a superseded run from *acting* on the page; they cannot stop
+    // the generation it already started. `/render-resume-pdf` is the one place a Fill Step spends
+    // model time, and it used to run to completion for a run whose result nothing would use.
+    stubChrome();
+    await seedReviewRun(7, [resumeField]);
+    let renderSignal: AbortSignal | undefined;
+    const staleDeps = makeDeps({
+      renderResumePdf: vi.fn(
+        (_profile: Profile, _resume: TailoredResume, signal?: AbortSignal) => {
+          renderSignal = signal;
+          return new Promise<ArrayBuffer>(() => {});
+        },
+      ),
+    });
+
+    const staleFill = runFill(7, profile, staleDeps);
+    await vi.waitFor(() => expect(staleDeps.backend.renderResumePdf).toHaveBeenCalled());
+    expect(renderSignal?.aborted).toBe(false);
+
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+
+    expect(renderSignal?.aborted).toBe(true);
+    // And the superseded fill neither touches the page nor checkpoints its cancellation as a
+    // failure over the run that now owns the tab.
+    expect(staleDeps.page.fill).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobDescription: 'New posting',
+    });
+    void staleFill;
   });
 
   it('drops a stale Save completion after a newer analysis claims the tab', async () => {

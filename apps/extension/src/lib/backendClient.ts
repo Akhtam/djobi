@@ -83,7 +83,11 @@ export interface BackendClient {
   ): Promise<QuestionAnswer[]>;
   /** One turn of the Ask tab's conversation — cold ask and refinement alike. */
   answerChat(turn: AnswerChatTurn): Promise<AnswerChatResponse>;
-  renderResumePdf(profile: Profile, tailoredResume: TailoredResume): Promise<ArrayBuffer>;
+  renderResumePdf(
+    profile: Profile,
+    tailoredResume: TailoredResume,
+    signal?: AbortSignal,
+  ): Promise<ArrayBuffer>;
   /** The single stored Profile, or `null` before the candidate has saved one. */
   getProfile(): Promise<Profile | null>;
   /** Stores the Profile whole and resolves with what was stored. */
@@ -158,18 +162,22 @@ export const httpBackendClient: BackendClient = {
       messages,
     } satisfies AnswerChatRequest),
 
-  renderResumePdf: (profile, tailoredResume) =>
-    callBackendBinary('/render-resume-pdf', {
-      profile: {
-        fullName: profile.fullName,
-        email: profile.email,
-        phone: profile.phone,
-        location: profile.location,
-        links: profile.links,
-        education: profile.education,
-      },
-      tailoredResume,
-    } satisfies RenderResumePdfRequest),
+  renderResumePdf: (profile, tailoredResume, signal) =>
+    callBackendBinary(
+      '/render-resume-pdf',
+      {
+        profile: {
+          fullName: profile.fullName,
+          email: profile.email,
+          phone: profile.phone,
+          location: profile.location,
+          links: profile.links,
+          education: profile.education,
+        },
+        tailoredResume,
+      } satisfies RenderResumePdfRequest,
+      signal,
+    ),
 
   getProfile: () => callBackend('/profile', MaybeProfileSchema, undefined, 'GET'),
 

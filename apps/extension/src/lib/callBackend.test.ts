@@ -83,7 +83,7 @@ describe('callBackend', () => {
     );
   });
 
-  it('carries the status and path on the thrown BackendError, so callers can report which step failed', async () => {
+  it('carries the status and path on the thrown HttpError, so callers can report which step failed', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'report_answers did not produce a tool call.' }), {
         status: 500,
@@ -92,7 +92,7 @@ describe('callBackend', () => {
     );
 
     await expect(callBackend('/answer-questions', Result, {})).rejects.toMatchObject({
-      name: 'BackendError',
+      kind: 'http',
       status: 500,
       path: '/answer-questions',
       message: expect.stringContaining('report_answers did not produce a tool call.'),
@@ -116,12 +116,15 @@ describe('callBackend', () => {
     );
 
     expect(error).toMatchObject({
-      name: 'BackendError',
+      kind: 'http',
       status: 500,
       path: '/answer-questions',
       message: expect.stringContaining('report_answers did not produce a tool call.'),
     });
-    expect(error).not.toHaveProperty('kind');
+    // The body's own `kind` is backend metadata with no extension consumer. The error's `kind` is
+    // the transport's discriminant — `'http'` here — and must not be overwritten by what a route
+    // happened to put in its payload.
+    expect((error as { kind: string }).kind).toBe('http');
   });
 
   it('reports an empty error body rather than throwing on the empty string', async () => {
@@ -142,7 +145,7 @@ describe('callBackend', () => {
 
     const error = await callBackend('/applications', Result, {}).catch((caught: unknown) => caught);
 
-    expect(error).toMatchObject({ name: 'BackendResponseError', path: '/applications' });
+    expect(error).toMatchObject({ kind: 'invalid-response', path: '/applications' });
     expect((error as Error).message).toContain(
       'POST /applications returned an unexpected response',
     );
@@ -203,7 +206,7 @@ describe('callBackendBinary', () => {
     expect(new Uint8Array(result)).toEqual(pdfBytes);
   });
 
-  it('rejects with the same BackendError shape as callBackend, rather than handing back an error page as if it were a PDF', async () => {
+  it('rejects with the same HttpError shape as callBackend, rather than handing back an error page as if it were a PDF', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'profile is required' }), {
         status: 400,
@@ -212,7 +215,7 @@ describe('callBackendBinary', () => {
     );
 
     await expect(callBackendBinary('/render-resume-pdf', {})).rejects.toMatchObject({
-      name: 'BackendError',
+      kind: 'http',
       status: 400,
       path: '/render-resume-pdf',
       message: expect.stringContaining('profile is required'),

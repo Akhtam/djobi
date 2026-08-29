@@ -274,6 +274,9 @@ importers:
 
   apps/dashboard:
     dependencies:
+      '@djobi/http-client':
+        specifier: workspace:*
+        version: link:../../packages/http-client
       '@djobi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -317,6 +320,9 @@ importers:
 
   apps/extension:
     dependencies:
+      '@djobi/http-client':
+        specifier: workspace:*
+        version: link:../../packages/http-client
       '@djobi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -359,6 +365,22 @@ importers:
         version: 8.2.1(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.9)
       vitest:
         specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.1)(jsdom@30.0.1(@noble/hashes@1.8.0))(lightningcss@1.33.0)
+
+  packages/http-client:
+    dependencies:
+      '@djobi/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)(jsdom@30.0.1(@noble/hashes@1.8.0))(lightningcss@1.33.0)
 
   packages/shared:

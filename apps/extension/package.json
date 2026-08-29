@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "pnpm -w run build:shared",
+    "prebuild": "pnpm -w run build:packages",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@djobi/http-client": "workspace:*",
     "@djobi/shared": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

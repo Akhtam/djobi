@@ -73,19 +73,26 @@ describe('httpBackendClient', () => {
   });
 
   it('renders the resume through the binary transport, not the JSON one', async () => {
-    await httpBackendClient.renderResumePdf(profile, tailoredResume);
+    // The signal goes with it: this is the Fill Step's model work, and forwarding it here is what
+    // makes the one route that used to be uncancellable cancellable.
+    const signal = new AbortController().signal;
+    await httpBackendClient.renderResumePdf(profile, tailoredResume, signal);
 
-    expect(callBackendBinary).toHaveBeenCalledWith('/render-resume-pdf', {
-      profile: {
-        fullName: profile.fullName,
-        email: profile.email,
-        phone: profile.phone,
-        location: profile.location,
-        links: profile.links,
-        education: profile.education,
+    expect(callBackendBinary).toHaveBeenCalledWith(
+      '/render-resume-pdf',
+      {
+        profile: {
+          fullName: profile.fullName,
+          email: profile.email,
+          phone: profile.phone,
+          location: profile.location,
+          links: profile.links,
+          education: profile.education,
+        },
+        tailoredResume,
       },
-      tailoredResume,
-    });
+      signal,
+    );
     expect(callBackend).not.toHaveBeenCalled();
   });
 

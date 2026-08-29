@@ -52,6 +52,18 @@ is a starting state, not a mode)
 The panel's second flow, alongside the Application Pipeline: records an Application the candidate made _themselves_ — their own resume, or LinkedIn Easy Apply — so it lands in the same history. Deliberately not a step of the pipeline and not a mode toggle on it: it has no Detected Fields, page writes or pipeline run state. Its URL field follows the active tab until the candidate edits it. It extracts Job Info from a pasted Job Description and writes an Application with Application Source `manual`, running the same Duplicate Guard lookup first — warning, but never blocking.
 _Avoid_: manual mode, log mode (it is a tab; a mode would imply the pipeline has two meanings)
 
+**Run Notice**:
+One thing a pipeline run has to tell the candidate — that this posting is already applied to, that
+the Analysis Step failed, how the Fill Step went, that the page kept nothing it was given. Derived
+from the run rather than stored on it, and it lives only as long as the run does. A Run Notice names
+the _situation_ and carries what its wording has to interpolate; the wording itself belongs beside
+the surface that renders it, because the difference between "reload the page" and "fill it in by
+hand" is a judgement about which problem to send the candidate after. More than one can stand at
+once: an Application saved with required fields still unresolved reports both, since saving did not
+fill them.
+_Avoid_: Note (an Application's persisted interview-log entry — a different thing with a nearly
+identical name), banner, alert (both name the pixels rather than the meaning)
+
 ### Application data
 
 **Profile**:

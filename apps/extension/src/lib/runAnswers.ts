@@ -14,6 +14,7 @@
  * So the run is the argument. The map is built once, inside, from the one source that can be right.
  */
 import { matchAnswerToField, normalizeLabel, type DetectedField } from '@djobi/shared';
+import { autofillSource } from './fieldDisposition';
 import type { PipelineRunState } from './tabStore';
 
 /** The run's answers, resolved against whatever fields a caller has in hand. */
@@ -58,7 +59,7 @@ export function answersFor(
       const named = new Set<string>();
       const unanswered: DetectedField[] = [];
       for (const field of fields) {
-        if (field.category !== 'question') continue;
+        if (autofillSource(field.category) !== 'question') continue;
         if (matchAnswerToField(field, answers, labelByAnalyzedId) !== undefined) continue;
         const name = normalizeLabel(field.label);
         if (named.has(name)) continue;

@@ -52,7 +52,7 @@ interface Turn extends ChatMessage {
   opening?: true;
 }
 
-/** What went wrong, for the inline error line — a `BackendError` names the path and status. */
+/** What went wrong, for the inline error line — an `HttpError` names the path and status. */
 function failureMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
 }

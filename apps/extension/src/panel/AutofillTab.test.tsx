@@ -420,6 +420,28 @@ describe('AutofillTab', () => {
     await screen.findByText('Senior Engineer at Acme');
   });
 
+  it('names the delivery failure, not the failure the previous run left on the stored run', async () => {
+    // The two causes are separate: a delivery failure belongs to the command this panel just sent
+    // and is never written to the run. Reading the cause off the run instead is how a retry that
+    // never left the panel reported the *previous* attempt's backend error.
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      analysisFailures: ['backend unreachable'],
+      dispatchFailures: [null, 'Could not establish connection.'],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('backend unreachable');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await screen.findByText('Could not establish connection.');
+    expect(screen.queryByText('backend unreachable')).not.toBeInTheDocument();
+  });
+
   it('stops on a job already applied to, naming when it was applied for', async () => {
     const { sendMessage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',

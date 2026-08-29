@@ -16,8 +16,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --if-present run typecheck",
-    "build": "pnpm --filter @djobi/shared build && pnpm -r --if-present run build",
-    "test": "pnpm -r --if-present run test"
+    "build": "pnpm -w run build:packages && pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
+    "build:packages": "pnpm --filter @djobi/shared build && pnpm --filter @djobi/http-client build"
   },
   "keywords": [],
   "author": "",

@@ -21,11 +21,13 @@
 import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
+import { autofillSource } from '../lib/fieldDisposition';
 import { formatAppliedDate, formatStage } from '../lib/format';
 import type { JobPageData } from '../lib/messages';
 import { notify } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor } from '../lib/runAnswers';
+import type { RunNotice, RunNoticeAction } from '../lib/runReview';
 import { CoverageReport } from './CoverageReport';
 import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
 import type { ActiveRun } from './useActiveRun';
@@ -75,7 +77,6 @@ export function AutofillTab({
     changeToken,
     run,
     status: runStatus,
-    failure,
     review,
     begin,
     fail,
@@ -91,7 +92,11 @@ export function AutofillTab({
   const jobDescription = useJobDescription(activeRun, readPosting);
 
   const status: AutofillStatus = runStatus ?? 'ready';
-  const { canReview, outcome } = review;
+  const { canReview, outcome, notices } = review;
+  // Two places, one list. `slot` is the run's own axis — *how it went* versus *this step failed,
+  // retry it from here* — so the split is a filter rather than a second reading of `status`.
+  const outcomeNotices = notices.filter((notice) => notice.slot === 'outcome');
+  const inlineNotices = notices.filter((notice) => notice.slot === 'inline');
 
   // The run's snapshot wins once analysis has started; before that, the live detection does.
   const jobPageData = run?.jobPageData ?? detectedPage;
@@ -99,11 +104,6 @@ export function AutofillTab({
   const tailoredResume: TailoredResume | null = run?.tailoredResume ?? null;
   const answers = run?.answers ?? [];
   const coverage = run?.coverage ?? [];
-  const unresolvedRequiredFields = run?.unresolvedRequiredFields ?? [];
-  const filledFieldCount = run?.filledFieldCount ?? 0;
-  /** How many fields the run's own re-scan saw — what separates the two zero-filled outcomes. */
-  const detectedFieldCount = jobPageData?.fields.length ?? 0;
-  const duplicateOf = run?.duplicateOf ?? null;
   /**
    * Which answers may be handed to the Ask Tab: the freeform ones. A `question`-category Detected
    * Field rendered as a select, combobox or radiogroup answers from the page's own fixed options,
@@ -113,7 +113,9 @@ export function AutofillTab({
     (jobPageData?.fields ?? [])
       .filter(
         (field) =>
-          field.category === 'question' && field.elementRole === 'native' && !field.options,
+          autofillSource(field.category) === 'question' &&
+          field.elementRole === 'native' &&
+          !field.options,
       )
       .map((field) => field.id),
   );
@@ -223,6 +225,170 @@ export function AutofillTab({
     );
   }
 
+  /** The three retries and the duplicate override, named by `reviewOf` and bound here. */
+  function runNoticeAction(action: RunNoticeAction): () => void {
+    switch (action) {
+      case 'analyze-anyway':
+        return () => handleAnalyze(true);
+      case 'retry-analysis':
+        return () => handleAnalyze();
+      case 'retry-fill':
+        return handleFill;
+      case 'retry-save':
+        return handleSaveApplication;
+    }
+  }
+
+  /**
+   * The words for one Run Notice.
+   *
+   * `reviewOf` says which situation the run is in; this says the sentence, because the wording is a
+   * product judgement — "reload the page" versus "fill it in by hand" sends the candidate after two
+   * different problems — and it belongs next to the JSX a person reads. The `switch` is exhaustive
+   * over `RunNotice['kind']`, so a notice added there fails to compile until it has copy here.
+   */
+  function renderNotice(notice: RunNotice) {
+    switch (notice.kind) {
+      case 'duplicate':
+        return (
+          <div className="state" role="status" key={notice.kind}>
+            <span className="state-icon">📮</span>
+            <p>
+              {notice.duplicate.count > 1
+                ? `You've already applied to this job ${notice.duplicate.count} times, most recently on ${formatAppliedDate(notice.duplicate.createdAt)}.`
+                : `You already applied to this job on ${formatAppliedDate(notice.duplicate.createdAt)}.`}
+            </p>
+            <p className="failure-detail">
+              {notice.duplicate.roleTitle} at {notice.duplicate.company} ·{' '}
+              {formatStage(notice.duplicate.stage)}
+            </p>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={runNoticeAction(notice.action)}
+            >
+              Analyze and apply anyway
+            </button>
+          </div>
+        );
+
+      case 'analyze-failed':
+        return (
+          <div className="state error" role="alert" key={notice.kind}>
+            <span className="state-icon error">⚠️</span>
+            <p>Something went wrong analyzing this job posting.</p>
+            {notice.cause && <p className="failure-detail">{notice.cause}</p>}
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={runNoticeAction(notice.action)}
+            >
+              Try again
+            </button>
+          </div>
+        );
+
+      case 'fill-unverified':
+        return (
+          <div className="state error" role="alert" key={notice.kind}>
+            <span className="state-icon error">⚠️</span>
+            <p>
+              The fill could not be verified because this page did not answer. Check the form before
+              submitting or saving, and reload the page before trying again if fields are still
+              empty.
+            </p>
+          </div>
+        );
+
+      case 'no-fields-detected':
+        return (
+          <div className="state error" role="alert" key={notice.kind}>
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Nothing was filled — no form fields were found on this page, including in a fresh scan
+              taken just now. You'll need to fill the form yourself before saving this application.
+              If the form is visibly there, reload the page and try again: this extension can't
+              reach a page that was already open when it was last reloaded.
+            </p>
+          </div>
+        );
+
+      // The other zero-filled outcome, and a different problem: the form was read fine and then
+      // kept none of what was written into it. Reloading is not the advice here — the list of
+      // fields to fill by hand is.
+      case 'nothing-filled':
+        return (
+          <div className="state error" role="alert" key={notice.kind}>
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Nothing was filled — this page's form was found ({notice.detectedFieldCount} field
+              {notice.detectedFieldCount === 1 ? '' : 's'}), but it kept none of the values written
+              into it. You'll need to fill it in yourself before saving this application.
+            </p>
+          </div>
+        );
+
+      case 'fill-complete':
+        return (
+          <div className="state success compact" role="status" key={notice.kind}>
+            <span className="state-icon success">✅</span>
+            <p>
+              Filled {notice.filledFieldCount} field{notice.filledFieldCount === 1 ? '' : 's'}. Save
+              the application when you're ready.
+            </p>
+          </div>
+        );
+
+      case 'fill-incomplete':
+        return (
+          <div className="state error" role="alert" key={notice.kind}>
+            <span className="state-icon error">⚠️</span>
+            <p>
+              Filled, but {notice.unresolvedRequiredFields.length} required field
+              {notice.unresolvedRequiredFields.length === 1 ? '' : 's'} didn't take a value — fill{' '}
+              {notice.unresolvedRequiredFields.length === 1 ? 'it' : 'them'} in by hand before
+              submitting:
+            </p>
+            <ul className="unresolved-fields">
+              {notice.unresolvedRequiredFields.map((field) => (
+                <li key={field.id}>{field.label || field.category}</li>
+              ))}
+            </ul>
+          </div>
+        );
+
+      case 'saved':
+        return (
+          <div className="state success compact" role="status" key={notice.kind}>
+            <span className="state-icon success">✅</span>
+            <p>Application saved.</p>
+          </div>
+        );
+
+      case 'fill-failed':
+      case 'save-failed':
+        return (
+          <div className="inline-error" role="alert" key={notice.kind}>
+            <div className="inline-error-body">
+              <p>
+                {notice.kind === 'fill-failed'
+                  ? 'Something went wrong filling the form.'
+                  : 'Something went wrong saving the application.'}
+              </p>
+              {notice.cause && <p className="failure-detail">{notice.cause}</p>}
+            </div>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={runNoticeAction(notice.action)}
+            >
+              Try again
+            </button>
+          </div>
+        );
+    }
+  }
+
   return (
     <>
       <div className="panel-body" hidden={hidden}>
@@ -296,105 +462,10 @@ export function AutofillTab({
           </div>
         )}
 
-        {status === 'duplicate' && duplicateOf && (
-          <div className="state" role="status">
-            <span className="state-icon">📮</span>
-            <p>
-              {duplicateOf.count > 1
-                ? `You've already applied to this job ${duplicateOf.count} times, most recently on ${formatAppliedDate(duplicateOf.createdAt)}.`
-                : `You already applied to this job on ${formatAppliedDate(duplicateOf.createdAt)}.`}
-            </p>
-            <p className="failure-detail">
-              {duplicateOf.roleTitle} at {duplicateOf.company} · {formatStage(duplicateOf.stage)}
-            </p>
-            <button type="button" className="btn-primary" onClick={() => handleAnalyze(true)}>
-              Analyze and apply anyway
-            </button>
-          </div>
-        )}
-
-        {status === 'analyze-error' && (
-          <div className="state error" role="alert">
-            <span className="state-icon error">⚠️</span>
-            <p>Something went wrong analyzing this job posting.</p>
-            {failure && <p className="failure-detail">{failure.message}</p>}
-            <button type="button" className="btn-secondary" onClick={() => handleAnalyze()}>
-              Try again
-            </button>
-          </div>
-        )}
-
-        {/* The Fill Step's outcome sits above the review, not below it: the review is long, and a
-            result the user has to scroll past it to find is a result they won't see. */}
-        {outcome === 'unverified' && (
-          <div className="state error" role="alert">
-            <span className="state-icon error">⚠️</span>
-            <p>
-              The fill could not be verified because this page did not answer. Check the form before
-              submitting or saving, and reload the page before trying again if fields are still
-              empty.
-            </p>
-          </div>
-        )}
-
-        {outcome === 'no-fields-detected' && (
-          <div className="state error" role="alert">
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Nothing was filled — no form fields were found on this page, including in a fresh scan
-              taken just now. You'll need to fill the form yourself before saving this application.
-              If the form is visibly there, reload the page and try again: this extension can't
-              reach a page that was already open when it was last reloaded.
-            </p>
-          </div>
-        )}
-
-        {/* The other zero-filled outcome, and a different problem: the form was read fine and then
-            kept none of what was written into it. Reloading is not the advice here — the list of
-            fields to fill by hand is. */}
-        {outcome === 'nothing-filled' && (
-          <div className="state error" role="alert">
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Nothing was filled — this page's form was found ({detectedFieldCount} field
-              {detectedFieldCount === 1 ? '' : 's'}), but it kept none of the values written into
-              it. You'll need to fill it in yourself before saving this application.
-            </p>
-          </div>
-        )}
-
-        {outcome === 'complete' && status !== 'saved' && (
-          <div className="state success compact" role="status">
-            <span className="state-icon success">✅</span>
-            <p>
-              Filled {filledFieldCount} field{filledFieldCount === 1 ? '' : 's'}. Save the
-              application when you're ready.
-            </p>
-          </div>
-        )}
-
-        {outcome === 'incomplete' && (
-          <div className="state error" role="alert">
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Filled, but {unresolvedRequiredFields.length} required field
-              {unresolvedRequiredFields.length === 1 ? '' : 's'} didn't take a value — fill{' '}
-              {unresolvedRequiredFields.length === 1 ? 'it' : 'them'} in by hand before submitting:
-            </p>
-            <ul className="unresolved-fields">
-              {unresolvedRequiredFields.map((field) => (
-                <li key={field.id}>{field.label || field.category}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {status === 'saved' && (
-          <div className="state success compact" role="status">
-            <span className="state-icon success">✅</span>
-            <p>Application saved.</p>
-          </div>
-        )}
+        {/* Everything this run has to say about how it went, in `reviewOf`'s order. Above the review
+            and not below it: the review is long, and a result the user has to scroll past it to
+            find is a result they won't see. */}
+        {outcomeNotices.map(renderNotice)}
 
         {canReview && jobInfo && tailoredResume && jobPageData && (
           <div className="review">
@@ -528,28 +599,8 @@ export function AutofillTab({
               </div>
             )}
 
-            {status === 'fill-error' && (
-              <div className="inline-error" role="alert">
-                <div className="inline-error-body">
-                  <p>Something went wrong filling the form.</p>
-                  {failure && <p className="failure-detail">{failure.message}</p>}
-                </div>
-                <button type="button" className="btn-secondary" onClick={handleFill}>
-                  Try again
-                </button>
-              </div>
-            )}
-            {status === 'save-error' && (
-              <div className="inline-error" role="alert">
-                <div className="inline-error-body">
-                  <p>Something went wrong saving the application.</p>
-                  {failure && <p className="failure-detail">{failure.message}</p>}
-                </div>
-                <button type="button" className="btn-secondary" onClick={handleSaveApplication}>
-                  Try again
-                </button>
-              </div>
-            )}
+            {/* This step failed — retry it from beside the answers it would have you re-fill. */}
+            {inlineNotices.map(renderNotice)}
           </div>
         )}
       </div>

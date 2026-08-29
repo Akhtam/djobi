@@ -1,4 +1,5 @@
 import { containsLabel, labelsMatch, type DetectedField } from '@djobi/shared';
+import { autofillSource } from '../lib/fieldDisposition';
 import type { FillFormResult } from '../lib/messages';
 import { resolveChoice, resolveField } from './detectedFieldDom';
 import { collapseWhitespace, isInstanceOf } from './pageSignals';
@@ -503,9 +504,9 @@ async function fillOwnedPage(
   if (resumeFile) {
     // Some ATS platforms render an unlabeled decoy alongside the validated upload. Required wins;
     // field order is only the tie-break between equally eligible inputs.
+    const isResume = (field: DetectedField) => autofillSource(field.category) === 'resume';
     const uploadField =
-      fields.find((field) => field.category === 'resume_upload' && field.required) ??
-      fields.find((field) => field.category === 'resume_upload');
+      fields.find((field) => isResume(field) && field.required) ?? fields.find(isResume);
     const input = uploadField ? resolveField<HTMLInputElement>(doc, uploadField) : null;
 
     if (input) {

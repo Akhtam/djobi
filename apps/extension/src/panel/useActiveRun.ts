@@ -31,14 +31,16 @@ export interface ActiveRun {
   run: PipelineRunState | null;
   /** What to render: the run's status, or `null` before anything has been analyzed on this page. */
   status: PipelineStatus | null;
-  /** Why the current step failed — a delivery failure or the run's own cause — or `null`. */
-  failure: PipelineFailure | null;
   /**
-   * The one reading of this run, derived from `status` rather than from the stored run.
+   * The one reading of this run, derived from `status` and `failure` rather than from the stored run.
    *
    * Both readers take it from here: the shell's header pill and the Autofill Tab's own body. They
    * used to derive it separately from `reviewOf(run)`, which is how the pill came to contradict the
    * tab it describes for the length of every click.
+   *
+   * The reconciled `failure` is deliberately *not* offered alongside it. Its only consumer was the
+   * tab's hand-written error copy, which is now a `RunNotice` carrying its own `cause` — and a
+   * second way to reach the same message is how the two came to disagree in the first place.
    */
   review: RunReview;
   /** Shows `status` immediately, for the gap between a click and the background's own write. */
@@ -79,7 +81,10 @@ export function useActiveRun(enabled: boolean): ActiveRun {
   const { run, status, failure, begin, fail, edit } = usePipelineRun(tabId, jobScope, (candidate) =>
     isSameJobUrl(candidate.tabUrl, tabUrl),
   );
-  const review = reviewOf(run, status);
+  // `failure` is handed over with `status`: the two describe the same failure, and a delivery
+  // failure this panel is holding is never on the stored run. Reading the cause off the run instead
+  // is how a Run Notice came to name the previous step's error, or none at all.
+  const review = reviewOf(run, status, failure);
 
   function updateAnswer(fieldId: string, answer: string) {
     if (!run || status === 'saving') return;
@@ -100,7 +105,6 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     changeToken,
     run,
     status,
-    failure,
     review,
     begin,
     fail,
