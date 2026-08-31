@@ -17,9 +17,7 @@
  * keyword no recruiter search will ever find. Not an oversight.
  *
  * **What this cannot see.** Synonyms. A Profile saying "K8s" against a posting saying "Kubernetes"
- * is reported missing, and there is no alias table to fix it: encoding one means turning
- * `JobInfoSchema.keywords` from `string[]` into objects, which lands in stored `job_info` jsonb, the
- * dashboard's rendering and every prompt's `<job_info>` block. A false "missing" costs the candidate
+ * is reported missing, and there is no alias table to fix it. A false "missing" costs the candidate
  * one glance at a keyword they can dismiss; a false "covered" costs them the gap they came here to
  * find. Erring toward missing is the whole reason this is worth shipping without aliases.
  */
@@ -55,7 +53,7 @@ export function keywordCoverage(
   const bullets = resume.workExperience.flatMap((entry) => entry.bullets);
   const sourceBullets = profile.workExperience.flatMap((entry) => entry.bullets);
 
-  return jobInfo.keywords.flatMap((keyword): KeywordCoverage[] => {
+  return jobInfo.keywords.flatMap(({ term: keyword }): KeywordCoverage[] => {
     const needle = normalizeLabel(keyword);
     if (!needle) return [];
 

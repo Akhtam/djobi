@@ -177,6 +177,88 @@ export function parseProfile(value: unknown): Profile {
 }
 
 /**
+ * Whether a posting stated a requirement plainly, under its own heading ("Requirements" versus
+ * "Nice to have") — or drew no distinction at all. `'unspecified'` is the common case and must not
+ * be treated as a fourth kind of `false`: a requirement stored before this field existed lifts to
+ * `'unspecified'` rather than `'required'`, since stamping every old row `'required'` would fabricate
+ * a fact the posting never stated (see {@link JobInfoSchema}).
+ */
+export const RequirementKindSchema = z.enum(['required', 'preferred', 'unspecified']);
+/** Inferred type of {@link RequirementKindSchema}. */
+export type RequirementKind = z.infer<typeof RequirementKindSchema>;
+
+/**
+ * One qualification a posting states, with the structure Phase 12's analytics aggregates over.
+ * `yearsOfExperience` is null unless the posting states a number — never a guess.
+ */
+export const JobRequirementSchema = z.object({
+  text: z.string().describe("The requirement in the posting's own words"),
+  kind: RequirementKindSchema,
+  yearsOfExperience: z
+    .number()
+    .nullable()
+    .describe('Years the posting states for this requirement, if any; null otherwise'),
+});
+/** Inferred type of {@link JobRequirementSchema}. */
+export type JobRequirement = z.infer<typeof JobRequirementSchema>;
+
+/**
+ * A {@link JobRequirement}, or the bare string every `requirements` row stored before this shape
+ * existed — `jobInfo` is jsonb read back exactly as written, so an old row parses through this
+ * branch and lifts to `kind: 'unspecified'`, `yearsOfExperience: null`. This is a tolerant *read*,
+ * not a migration: nothing rewrites the stored row, and every consumer downstream of
+ * {@link JobInfoSchema} sees only the canonical object shape, the same way {@link parseProfile}
+ * completes a Profile saved before a field existed.
+ */
+export const JobRequirementInputSchema = z.union([
+  z.string().transform((text): JobRequirement => ({
+    text,
+    kind: 'unspecified',
+    yearsOfExperience: null,
+  })),
+  JobRequirementSchema,
+]);
+
+/**
+ * The closed set a keyword is categorized into. `'soft-skill'` gets no coverage badge downstream —
+ * `keywordCoverage`'s literal match cannot conclude a Profile lacks "leadership" because it says
+ * "mentored" instead, and a wrong `missing` verdict is worse than an unscored row.
+ */
+export const KeywordCategorySchema = z.enum([
+  'language',
+  'framework',
+  'tool',
+  'platform',
+  'domain',
+  'soft-skill',
+]);
+/** Inferred type of {@link KeywordCategorySchema}. */
+export type KeywordCategory = z.infer<typeof KeywordCategorySchema>;
+
+/**
+ * One skill/technology/domain term a posting is worth echoing, grouped by {@link KeywordCategory}
+ * so "my gaps are all in platform" is a thing analytics can show rather than something the reader
+ * has to notice. `category` is null when a term predates categorization or the extractor found no
+ * fit — never guessed.
+ */
+export const JobKeywordSchema = z.object({
+  term: z.string().describe('Canonical, expanded, industry-standard name, e.g. Kubernetes not K8s'),
+  category: KeywordCategorySchema.nullable(),
+});
+/** Inferred type of {@link JobKeywordSchema}. */
+export type JobKeyword = z.infer<typeof JobKeywordSchema>;
+
+/**
+ * A {@link JobKeyword}, or the bare string every `keywords` row stored before this shape existed —
+ * lifts to `category: null` on read, the same tolerant-read reasoning as
+ * {@link JobRequirementInputSchema}.
+ */
+export const JobKeywordInputSchema = z.union([
+  z.string().transform((term): JobKeyword => ({ term, category: null })),
+  JobKeywordSchema,
+]);
+
+/**
  * Structured job-posting information extracted by `extractJob` from the candidate-reviewed Job
  * Description (see `apps/backend/src/llm/extractJob.ts`).
  */
@@ -187,10 +269,10 @@ export const JobInfoSchema = z.object({
   seniority: z.string().nullable().describe('e.g. Junior, Senior, Staff'),
   location: z.string().nullable(),
   requirements: z
-    .array(z.string())
+    .array(JobRequirementInputSchema)
     .describe('Concrete required/preferred qualifications extracted from the posting'),
   keywords: z
-    .array(z.string())
+    .array(JobKeywordInputSchema)
     .describe('Skills/technologies/domain terms worth echoing in a tailored resume'),
 });
 /** Inferred type of {@link JobInfoSchema}. */

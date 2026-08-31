@@ -45,8 +45,8 @@ const jobInfo: JobInfo = {
   roleTitle: 'Senior Engineer',
   seniority: 'Senior',
   location: null,
-  requirements: ['5+ years'],
-  keywords: ['TypeScript'],
+  requirements: [{ text: '5+ years', kind: 'unspecified', yearsOfExperience: 5 }],
+  keywords: [{ term: 'TypeScript', category: 'language' }],
 };
 
 const JOB_URL = 'https://acme.com/jobs/123';

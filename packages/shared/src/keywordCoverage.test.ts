@@ -10,7 +10,7 @@ function jobInfo(keywords: string[]): JobInfo {
     seniority: null,
     location: null,
     requirements: [],
-    keywords,
+    keywords: keywords.map((term) => ({ term, category: null })),
   };
 }
 

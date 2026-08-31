@@ -275,6 +275,68 @@ describe('JobInfoSchema', () => {
     const { roleTitle: _roleTitle, ...withoutRole } = validJobInfo;
     expect(JobInfoSchema.safeParse(withoutRole).success).toBe(false);
   });
+
+  it('lifts a legacy bare-string requirement/keyword to the canonical shape, the way a row stored before this shape existed reads back', () => {
+    const parsed = JobInfoSchema.parse(validJobInfo);
+
+    expect(parsed.requirements).toEqual([
+      { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+    ]);
+    expect(parsed.keywords).toEqual([
+      { term: 'TypeScript', category: null },
+      { term: 'Postgres', category: null },
+    ]);
+  });
+
+  it('accepts a requirement/keyword already in the canonical shape and passes it through unchanged', () => {
+    const parsed = JobInfoSchema.parse({
+      ...validJobInfo,
+      requirements: [
+        { text: '5+ years of backend experience', kind: 'required', yearsOfExperience: 5 },
+      ],
+      keywords: [{ term: 'TypeScript', category: 'language' }],
+    });
+
+    expect(parsed.requirements).toEqual([
+      { text: '5+ years of backend experience', kind: 'required', yearsOfExperience: 5 },
+    ]);
+    expect(parsed.keywords).toEqual([{ term: 'TypeScript', category: 'language' }]);
+  });
+
+  it('rejects a requirement kind or keyword category outside the closed set, rather than guessing', () => {
+    expect(
+      JobInfoSchema.safeParse({
+        ...validJobInfo,
+        requirements: [{ text: 'x', kind: 'nice-to-have', yearsOfExperience: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      JobInfoSchema.safeParse({
+        ...validJobInfo,
+        keywords: [{ term: 'TypeScript', category: 'backend' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('a mix of legacy and canonical rows in one posting parses to canonical shape throughout', () => {
+    const parsed = JobInfoSchema.parse({
+      ...validJobInfo,
+      requirements: [
+        '5+ years of backend experience',
+        { text: 'Owns incidents', kind: 'preferred', yearsOfExperience: null },
+      ],
+      keywords: ['TypeScript', { term: 'Postgres', category: 'tool' }],
+    });
+
+    expect(parsed.requirements).toEqual([
+      { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+      { text: 'Owns incidents', kind: 'preferred', yearsOfExperience: null },
+    ]);
+    expect(parsed.keywords).toEqual([
+      { term: 'TypeScript', category: null },
+      { term: 'Postgres', category: 'tool' },
+    ]);
+  });
 });
 
 describe('TailoredResumeSchema', () => {

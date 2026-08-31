@@ -504,9 +504,13 @@ describe('runAnalysis', () => {
     stubChrome();
     const bullet = 'Migrated the fleet to Kubernetes';
     const deps = makeDeps();
-    deps.backend.extractJob = vi
-      .fn()
-      .mockResolvedValue({ ...jobInfo, keywords: ['Kubernetes', 'Terraform'] });
+    deps.backend.extractJob = vi.fn().mockResolvedValue({
+      ...jobInfo,
+      keywords: [
+        { term: 'Kubernetes', category: null },
+        { term: 'Terraform', category: null },
+      ],
+    });
     deps.backend.tailorResume = vi.fn().mockResolvedValue({
       skills: [],
       workExperience: [

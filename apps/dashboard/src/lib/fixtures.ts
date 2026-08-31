@@ -10,7 +10,15 @@
  * one row per `ApplicationStage`, both `ApplicationSource`s, an empty notes log, a log with all
  * three note categories, an application with no drafted answers, and one deliberately oversized row
  * (long role title, twelve resume bullets, long answers) to stress the layout.
+ *
+ * Most `jobInfo.requirements`/`.keywords` below are written directly in the shape `JobInfoSchema`
+ * now states — `{ text, kind, yearsOfExperience }` and `{ term, category }` — with enough spread
+ * across `kind` and `category` to exercise the required/preferred roll-up and category grouping.
+ * The Stripe row is deliberately left as bare strings, its earliest `createdAt` standing in for a
+ * row logged before this shape existed, and is run through `JobInfoSchema.parse` so it exercises
+ * the tolerant read the same way a stored row would rather than merely satisfying the type.
  */
+import { JobInfoSchema } from '@djobi/shared';
 import type { Application } from '@djobi/shared';
 
 export const fixtureApplications: Application[] = [
@@ -28,8 +36,19 @@ export const fixtureApplications: Application[] = [
       roleTitle: 'Member of Technical Staff, Product',
       seniority: null,
       location: 'Remote',
-      requirements: ['Strong React and TypeScript', 'Comfort owning a product surface end to end'],
-      keywords: ['React', 'TypeScript', 'Next.js'],
+      requirements: [
+        { text: 'Strong React and TypeScript', kind: 'required', yearsOfExperience: null },
+        {
+          text: 'Comfort owning a product surface end to end',
+          kind: 'preferred',
+          yearsOfExperience: null,
+        },
+      ],
+      keywords: [
+        { term: 'React', category: 'framework' },
+        { term: 'TypeScript', category: 'language' },
+        { term: 'Next.js', category: 'framework' },
+      ],
     },
     // The base profile as-is — nothing was tailored, because the candidate applied themselves.
     tailoredResume: {
@@ -65,11 +84,28 @@ export const fixtureApplications: Application[] = [
       seniority: 'Senior',
       location: 'Remote (US)',
       requirements: [
-        '5+ years building production React applications',
-        'Experience with design systems at scale',
-        'Comfort owning a service end to end',
+        {
+          text: '5+ years building production React applications',
+          kind: 'required',
+          yearsOfExperience: 5,
+        },
+        {
+          text: 'Experience with design systems at scale',
+          kind: 'preferred',
+          yearsOfExperience: null,
+        },
+        {
+          text: 'Comfort owning a service end to end',
+          kind: 'unspecified',
+          yearsOfExperience: null,
+        },
       ],
-      keywords: ['React', 'TypeScript', 'design systems', 'GraphQL'],
+      keywords: [
+        { term: 'React', category: 'framework' },
+        { term: 'TypeScript', category: 'language' },
+        { term: 'design systems', category: 'domain' },
+        { term: 'GraphQL', category: 'tool' },
+      ],
     },
     tailoredResume: {
       skills: ['TypeScript', 'React', 'GraphQL', 'Design systems', 'Node.js'],
@@ -157,8 +193,15 @@ export const fixtureApplications: Application[] = [
       roleTitle: 'Staff Engineer, Platform',
       seniority: 'Staff',
       location: 'Geneva, Switzerland',
-      requirements: ['Deep JVM experience', 'Static analysis background a plus'],
-      keywords: ['Java', 'static analysis', 'platform'],
+      requirements: [
+        { text: 'Deep JVM experience', kind: 'required', yearsOfExperience: null },
+        { text: 'Static analysis background a plus', kind: 'preferred', yearsOfExperience: null },
+      ],
+      keywords: [
+        { term: 'Java', category: 'language' },
+        { term: 'static analysis', category: 'domain' },
+        { term: 'platform', category: 'domain' },
+      ],
     },
     tailoredResume: {
       skills: ['Java', 'TypeScript', 'Static analysis'],
@@ -189,8 +232,15 @@ export const fixtureApplications: Application[] = [
       roleTitle: 'Product Engineer',
       seniority: null,
       location: 'New York, NY',
-      requirements: ['Shipped user-facing product', 'Strong product instincts'],
-      keywords: ['React', 'product', 'fintech'],
+      requirements: [
+        { text: 'Shipped user-facing product', kind: 'unspecified', yearsOfExperience: null },
+        { text: 'Strong product instincts', kind: 'preferred', yearsOfExperience: null },
+      ],
+      keywords: [
+        { term: 'React', category: 'framework' },
+        { term: 'product', category: 'domain' },
+        { term: 'fintech', category: 'domain' },
+      ],
     },
     tailoredResume: {
       skills: ['React', 'TypeScript', 'Product engineering'],
@@ -239,8 +289,15 @@ export const fixtureApplications: Application[] = [
       roleTitle: 'Software Engineer, Developer Experience',
       seniority: null,
       location: 'Remote',
-      requirements: ['Open-source contributions', 'Next.js familiarity'],
-      keywords: ['Next.js', 'DX', 'open source'],
+      requirements: [
+        { text: 'Open-source contributions', kind: 'preferred', yearsOfExperience: null },
+        { text: 'Next.js familiarity', kind: 'required', yearsOfExperience: null },
+      ],
+      keywords: [
+        { term: 'Next.js', category: 'framework' },
+        { term: 'DX', category: 'domain' },
+        { term: 'open source', category: 'domain' },
+      ],
     },
     tailoredResume: {
       skills: ['Next.js', 'TypeScript', 'Developer tooling'],
@@ -292,8 +349,15 @@ export const fixtureApplications: Application[] = [
       roleTitle: 'Frontend Engineer',
       seniority: null,
       location: 'Remote (Europe)',
-      requirements: ['An eye for interaction detail', 'Performance-minded'],
-      keywords: ['React', 'performance', 'animation'],
+      requirements: [
+        { text: 'An eye for interaction detail', kind: 'preferred', yearsOfExperience: null },
+        { text: 'Performance-minded', kind: 'preferred', yearsOfExperience: null },
+      ],
+      keywords: [
+        { term: 'React', category: 'framework' },
+        { term: 'performance', category: 'domain' },
+        { term: 'animation', category: 'domain' },
+      ],
     },
     tailoredResume: {
       skills: ['React', 'TypeScript', 'Performance'],
@@ -327,7 +391,7 @@ export const fixtureApplications: Application[] = [
     createdAt: '2026-01-19T07:30:00.000Z',
     source: 'autofill',
     stage: 'interviewing',
-    jobInfo: {
+    jobInfo: JobInfoSchema.parse({
       company: 'Stripe',
       team: 'Payments Infrastructure',
       roleTitle: 'Senior Software Engineer, Payments Infrastructure',
@@ -340,7 +404,7 @@ export const fixtureApplications: Application[] = [
         'Comfort with on-call ownership and incident command',
       ],
       keywords: ['distributed systems', 'reliability', 'payments', 'Ruby', 'Go', 'observability'],
-    },
+    }),
     tailoredResume: {
       skills: ['Go', 'Ruby', 'Distributed systems', 'Observability', 'Incident response', 'SQL'],
       workExperience: [

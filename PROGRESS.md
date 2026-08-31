@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1241 tests**
-(200 shared / 16 http-client / 232 backend / 676 extension / 117 dashboard), `pnpm test` from the
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1246 tests**
+(204 shared / 16 http-client / 233 backend / 676 extension / 117 dashboard), `pnpm test` from the
 repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -589,9 +589,15 @@ Decisions — the extraction that feeds it:
   than a wrong keyword ever could. `kind` defaults to `'required'` only when the posting draws no
   distinction — never as a way to avoid saying null.
 
-- [ ] `packages/shared/src/schemas.ts`: widen `JobInfoSchema.requirements` and `.keywords`, each behind
+- [x] `packages/shared/src/schemas.ts`: widen `JobInfoSchema.requirements` and `.keywords`, each behind
       a union that lifts a bare string to the new shape, so stored jsonb keeps parsing. Tests for both
-      old and new rows
+      old and new rows. Landed together with the ripple this forces: `keywordCoverage.ts` reads
+      `keyword.term`; `dashboard/lib/fixtures.ts` and `extension/panel/LogApplication.test.tsx` and
+      every backend test fixturing a `JobInfo` now build the canonical object shape (the Stripe fixture
+      row is deliberately left as bare strings and run through `JobInfoSchema.parse` to keep the
+      tolerant read exercised); `ApplicationDetail.tsx`'s requirements/keywords lists render `.text`/
+      `.term` (category/kind-aware rendering is still open, for the view work below). Suite green at
+      **1246 tests** (204 shared / 16 http-client / 233 backend / 676 extension / 117 dashboard).
 - [ ] `apps/backend/src/llm/extractJob.ts`: canonical-name/length/count guidance for keywords, and the
       required-versus-preferred and stated-years instructions for requirements, with null over a guess
       restated for the number

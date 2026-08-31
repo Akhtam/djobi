@@ -40,8 +40,13 @@ const sampleJobInfo: JobInfo = {
   roleTitle: 'Senior Software Engineer',
   seniority: 'Senior',
   location: 'Remote',
-  requirements: ['5+ years of backend experience'],
-  keywords: ['TypeScript', 'Postgres'],
+  requirements: [
+    { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+  ],
+  keywords: [
+    { term: 'TypeScript', category: null },
+    { term: 'Postgres', category: null },
+  ],
 };
 
 const sampleQuestions = [{ fieldId: 'q1', question: 'Why do you want to work here?' }];

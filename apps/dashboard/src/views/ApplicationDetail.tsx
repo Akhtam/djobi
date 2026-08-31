@@ -100,7 +100,7 @@ export function ApplicationDetail({
             <h3>Requirements</h3>
             <ul className="bullets">
               {jobInfo.requirements.map((requirement) => (
-                <li key={requirement}>{requirement}</li>
+                <li key={requirement.text}>{requirement.text}</li>
               ))}
             </ul>
           </>
@@ -110,8 +110,8 @@ export function ApplicationDetail({
             <h3>Keywords</h3>
             <ul className="tags">
               {jobInfo.keywords.map((keyword) => (
-                <li key={keyword} className="tag">
-                  {keyword}
+                <li key={keyword.term} className="tag">
+                  {keyword.term}
                 </li>
               ))}
             </ul>

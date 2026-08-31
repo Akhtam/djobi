@@ -25,8 +25,10 @@ const jobInfo: JobInfo = {
   roleTitle: 'Senior Software Engineer',
   seniority: 'Senior',
   location: 'Remote',
-  requirements: ['5+ years of backend experience'],
-  keywords: ['TypeScript'],
+  requirements: [
+    { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+  ],
+  keywords: [{ term: 'TypeScript', category: null }],
 };
 
 function post(body: unknown) {
