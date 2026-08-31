@@ -3,12 +3,12 @@
  * currently lives, however it got there.
  *
  * The term has three homes and no single owner, which is what this module fixes. Before a run there
- * is an editable draft, held here and mirrored into `lib/tabStore.ts` as a {@link JobContext} so it
- * survives the panel closing; once the Analysis Step has started, the run's own `jobDescription` is
- * authoritative and the draft stops mattering. Which of the two is showing, which URL the analysis
- * will be filed under, and what happens when the candidate types while a scrape is in flight were
- * all inline in `panel/AutofillTab.tsx`, spread across two `useState`s, two `useRef`s and three
- * functions — reachable only by rendering the whole tab.
+ * is an editable draft, held here and mirrored into `lib/tabStore/jobContext.ts` as a
+ * {@link JobContext} so it survives the panel closing; once the Analysis Step has started, the
+ * run's own `jobDescription` is authoritative and the draft stops mattering. Which of the two is
+ * showing, which URL the analysis will be filed under, and what happens when the candidate types
+ * while a scrape is in flight were all inline in `panel/AutofillTab.tsx`, spread across two
+ * `useState`s, two `useRef`s and three functions — reachable only by rendering the whole tab.
  *
  * Scoping is by **Job Key**, not by URL: a candidate commonly collects the posting on an ATS
  * overview route and navigates to the application route before analyzing, and the draft has to
@@ -18,7 +18,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { jobKeyForUrl, type JobDescriptionSource } from '../lib/jobContext';
 import { notify } from '../lib/messages';
 import { readPostingFromTab, type PostingReadOutcome } from '../lib/postingReader';
-import { getJobContext } from '../lib/tabStore';
+import { canEditRun } from '../lib/run';
+import { getJobContext } from '../lib/tabStore/jobContext';
 import type { ActiveRun } from './useActiveRun';
 
 /** The pre-analysis draft, scoped to the tab and job it was written for. */
@@ -115,7 +116,7 @@ export function useJobDescription(
 
   const edit = useCallback(
     (value: string) => {
-      if (status === 'saving') return;
+      if (!canEditRun(status)) return;
 
       if (run) {
         editRun({ answers: run.answers, jobDescription: value });

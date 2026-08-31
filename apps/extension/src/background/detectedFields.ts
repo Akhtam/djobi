@@ -4,8 +4,8 @@
  *
  * That lifecycle used to be reconstructed by whoever needed part of it. `background/router.ts`
  * bumped a frame's revision and then fired an API-oracle fetch it did not wait for;
- * `lib/tabStore.ts` held the revisions, the stale-enrichment guard and the best-frame rule;
- * `background/apiDetectors.ts` knew how to carry enrichment onto a later scan; and
+ * `lib/tabStore/detectedPage.ts` held the revisions, the stale-enrichment guard and the best-frame
+ * rule; `background/apiDetectors.ts` knew how to carry enrichment onto a later scan; and
  * `background/applicationPipeline.ts` took the snapshot. No module knew the whole sequence, so
  * nothing was in a position to notice that its two ends disagreed about *when* fields are ready.
  *
@@ -23,22 +23,21 @@
  * would break the match and report the field as unresolved. See `carryEnrichment` in
  * `background/apiDetectors.ts`, which makes the same argument from the other side.
  *
- * `lib/tabStore.ts` keeps the storage primitives underneath this — the per-frame revision, the
- * atomic write, the best-frame choice. Deleting them would only move that complexity into callers.
- * What was missing was a module *above* them that owns the order things happen in.
+ * `lib/tabStore/detectedPage.ts` keeps the storage primitives underneath this — the per-frame
+ * revision, the atomic write (`tabStore/record.ts`), the best-frame choice. Deleting them would
+ * only move that complexity into callers. What was missing was a module *above* them that owns the
+ * order things happen in.
  */
 import type { DetectedField } from '@djobi/shared';
 import type { JobPageData } from '../lib/messages';
 import {
+  type DetectedFrameRef,
   enrichDetectedFields,
   getDetectedFrame,
   getDetectedPage,
   reportDetectedPage,
-  type DetectedFrameRef,
-} from '../lib/tabStore';
+} from '../lib/tabStore/detectedPage';
 import { enrichWithApiOracle } from './apiDetectors';
-
-export type { DetectedFrameRef } from '../lib/tabStore';
 
 /**
  * The re-scan merge, under the name the rest of the pipeline knows it by.

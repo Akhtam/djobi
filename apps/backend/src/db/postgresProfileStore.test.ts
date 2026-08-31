@@ -13,7 +13,8 @@ vi.mock('./client.js', () => ({
   db: { insert: mockInsert, select: mockSelect },
 }));
 
-const { getProfile, PROFILE_ID, saveProfile } = await import('./profileRepository.js');
+const { PROFILE_ID, postgresProfileStore } = await import('./postgresProfileStore.js');
+const { get: getProfile, save: saveProfile } = postgresProfileStore;
 
 const profile: Profile = { ...EMPTY_PROFILE, fullName: 'Jane Doe', email: 'jane@example.com' };
 

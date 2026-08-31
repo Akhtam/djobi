@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationWriteResultSchema, DuplicateApplicationSummarySchema } from '@djobi/shared';
+import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { callBackend, callBackendBinary } from './callBackend';
 
 /**
@@ -27,7 +28,7 @@ describe('callBackend', () => {
     });
 
     expect(result).toEqual({ id: 'application-1' });
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/extract-job', {
+    expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/extract-job`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jobDescription: 'Senior Engineer at Acme...' }),
@@ -178,7 +179,7 @@ describe('callBackend', () => {
     );
 
     expect(result).toEqual({ count: 0, latest: null });
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
+    expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/profile`, {
       method: 'GET',
       signal: expect.any(AbortSignal),
     });
@@ -197,7 +198,7 @@ describe('callBackendBinary', () => {
     const profile = { fullName: 'Jane Doe' };
     const result = await callBackendBinary('/render-resume-pdf', { profile });
 
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:5391/render-resume-pdf', {
+    expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/render-resume-pdf`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ profile }),

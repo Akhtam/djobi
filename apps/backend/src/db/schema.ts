@@ -27,7 +27,7 @@ export const applications = pgTable(
     jobUrl: text('job_url').notNull(),
     /**
      * `jobUrl` reduced to a posting identity by `jobKeyForUrl` — the Duplicate Guard's real match
-     * column. Derived in `applicationsRepository`, never accepted from a client: a key the caller
+     * column. Derived in `postgresApplicationStore`, never accepted from a client: a key the caller
      * chose would let two different postings collide.
      *
      * Nullable because rows written before this column existed have no key, and because a `jobUrl`

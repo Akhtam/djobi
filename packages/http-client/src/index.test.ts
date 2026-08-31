@@ -55,6 +55,26 @@ describe('createHttpTransport', () => {
     expect((error as HttpError).message).toContain('Application not found');
   });
 
+  it('preserves a safe backend error code separately from the response message', async () => {
+    const { fetchImpl } = respondWith(
+      () =>
+        new Response(
+          JSON.stringify({ error: 'Internal server error', code: 'invalid-model-output' }),
+          { status: 500 },
+        ),
+    );
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error = await client.json('/answer-questions', Schema).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      kind: 'http',
+      status: 500,
+      backendCode: 'invalid-model-output',
+    });
+    expect((error as HttpError).message).toContain('Internal server error');
+  });
+
   it('checks the status before reading the body, so a 500 is not reported as a parse error', async () => {
     // A plain-text `Internal Server Error` throws `Unexpected token 'I'` if parsed first, which is
     // how a real backend failure used to reach the UI wearing an unrelated cause.

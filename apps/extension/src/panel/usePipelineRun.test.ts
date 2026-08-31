@@ -1,87 +1,55 @@
-import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callsOfType } from './panelTestHarness';
 import { fakeChrome } from '../lib/fakeChrome';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
-import {
-  getPipelineRun,
-  patchPipelineRun,
-  setPipelineRun,
-  storageKey,
-  type PipelineRunState,
-} from '../lib/tabStore';
+import { TypedMessageEnvelopeSchema, typedMessageEnvelope } from '../lib/messages';
+import { type PipelineRunState } from '../lib/run';
+import { reportDetectedPage } from '../lib/tabStore/detectedPage';
+import { clearTabState } from '../lib/tabStore/lifecycle';
+import { getPipelineRun, patchPipelineRun, setPipelineRun } from '../lib/tabStore/pipelineRun';
 import { usePipelineRun } from './usePipelineRun';
+import { jobInfo, pipelineRunFixture } from '../lib/testFixtures';
 
-const jobInfo: JobInfo = {
-  company: 'Acme',
-  team: null,
-  roleTitle: 'Senior Engineer',
-  seniority: 'Senior',
-  location: null,
-  requirements: [],
-  keywords: [],
-};
-
-const tailoredResume: TailoredResume = { skills: [], workExperience: [] };
-
-const run: PipelineRunState = {
-  runId: 'run-1',
-  status: 'review',
-  tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-  jobPageData: { fields: [] },
-  jobDescription: 'Senior Engineer at Acme...',
-  jobInfo,
-  tailoredResume,
+const run = pipelineRunFixture({
   answers: [{ fieldId: 'f-why', question: 'Why us?', answer: 'Draft answer.', sourceStoryIds: [] }],
-  coverage: [],
-  failure: null,
-  unresolvedRequiredFields: [],
-  filledFieldCount: 0,
-  fillOutcome: null,
-  applicationId: null,
-  duplicateOf: null,
-};
+});
 
 /** The shared in-memory `chrome.storage.session`, which fires `onChanged` on write as Chrome does. */
 function stubChrome() {
-  const { sendMessage, storage } = fakeChrome({
+  const { sendMessage } = fakeChrome({
     sendMessage: (message, callback) => {
-      if (message.type === 'UPDATE_RUN') {
+      const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+      if (typedMessage.type === 'UPDATE_RUN') {
         void patchPipelineRun(
-          message.tabId as number,
-          message.runId as string,
-          message.updates as Partial<PipelineRunState>,
+          typedMessage.tabId,
+          typedMessage.runId,
+          typedMessage.updates as Partial<PipelineRunState>,
         );
       }
       callback(undefined);
     },
   });
 
-  /**
-   * Simulates `background/applicationPipeline.ts` checkpointing progress from outside this hook.
-   * Returns nothing on purpose: the fake notifies its listeners synchronously, and handing `act` a
-   * promise would put it in async mode and defer the very re-render the caller asserts on next.
-   */
-  const writeFromBackground = (tabId: number, next: PipelineRunState): void => {
-    void storage.session.set({ [storageKey(tabId)]: { frames: {}, run: next } });
-  };
+  /** Simulates `background/applicationPipeline.ts` checkpointing progress outside this hook. */
+  const writeFromBackground = (tabId: number, next: PipelineRunState) =>
+    setPipelineRun(tabId, next);
 
   /**
    * Simulates a write to the *rest* of the tab's key — what the content script's detection and the
    * API-oracle enrichment do, several times per page, sharing one key with the run.
    */
-  const reportFrameFromContentScript = (tabId: number, current: PipelineRunState | null): void => {
-    void storage.session.set({
-      [storageKey(tabId)]: {
-        frames: { 0: { data: { fields: [] }, revision: Date.now() } },
-        jobContext: null,
-        run: current,
-      },
-    });
-  };
+  const reportFrameFromContentScript = (tabId: number, _current: PipelineRunState | null) =>
+    reportDetectedPage(tabId, 0, { fields: [] });
 
   return { sendMessage, writeFromBackground, reportFrameFromContentScript };
+}
+
+/** Lets the hook's promise-based initial store read and resulting React update settle. */
+async function settleInitialRead(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 describe('usePipelineRun', () => {
@@ -93,7 +61,7 @@ describe('usePipelineRun', () => {
 
     const { result } = renderHook(() => usePipelineRun(1));
 
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
     expect(result.current.run).toEqual(run);
   });
 
@@ -102,7 +70,7 @@ describe('usePipelineRun', () => {
 
     const { result } = renderHook(() => usePipelineRun(1));
 
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
     expect(result.current.run).toBeNull();
   });
 
@@ -125,27 +93,36 @@ describe('usePipelineRun', () => {
     const { writeFromBackground } = stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => writeFromBackground(1, { ...run, status: 'filled', filledFieldCount: 3 }));
+    await act(() => writeFromBackground(1, { ...run, status: 'filled', filledFieldCount: 3 }));
 
     expect(result.current.run).toMatchObject({ status: 'filled', filledFieldCount: 3 });
   });
 
   it.each([
-    ['null', {}],
-    ['old', { [storageKey(1)]: { frames: {}, run } }],
+    ['null', false],
+    ['old', true],
   ])(
     'does not let a late %s initial read overwrite a newer storage event',
-    async (_name, snapshot) => {
+    async (_name, startsWithRun) => {
       const storage = fakeSessionStorage();
+      fakeChrome({ storage });
+      if (startsWithRun) await setPipelineRun(1, run);
+
+      const get = storage.session.get;
       let resolveRead!: (value: Record<string, unknown>) => void;
       const initialRead = new Promise<Record<string, unknown>>((resolve) => {
         resolveRead = resolve;
       });
-      storage.session.get = vi.fn(() => initialRead);
-      // The same fake, handed the store this case controls — the point here is the deferred read.
-      fakeChrome({ storage });
+      let snapshot: Promise<Record<string, unknown>> | null = null;
+      storage.session.get = vi.fn((key) => {
+        if (snapshot === null) {
+          snapshot = get(key);
+          return initialRead;
+        }
+        return get(key);
+      });
       const incoming = {
         ...run,
         runId: 'run-2',
@@ -153,11 +130,10 @@ describe('usePipelineRun', () => {
       };
       const { result } = renderHook(() => usePipelineRun(1, 1));
 
-      act(() => void storage.session.set({ [storageKey(1)]: { frames: {}, run: incoming } }));
+      await act(() => setPipelineRun(1, incoming));
       expect(result.current.run).toEqual(incoming);
-      expect(result.current.hydrated).toBe(true);
 
-      await act(async () => resolveRead(snapshot));
+      await act(async () => resolveRead(await snapshot!));
 
       expect(result.current.run).toEqual(incoming);
     },
@@ -169,7 +145,7 @@ describe('usePipelineRun', () => {
     const { result } = renderHook(() => usePipelineRun(1));
     await waitFor(() => expect(result.current.run).toEqual(run));
 
-    act(() => void chrome.storage.session.remove(storageKey(1)));
+    await act(() => clearTabState(1));
 
     expect(result.current.run).toBeNull();
     expect(result.current.status).toBeNull();
@@ -179,9 +155,9 @@ describe('usePipelineRun', () => {
     stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
+    act(() => result.current.beginCommand('fill'));
 
     expect(result.current.status).toBe('filling');
   });
@@ -194,12 +170,12 @@ describe('usePipelineRun', () => {
     const filled = { ...run, status: 'filled' as const, filledFieldCount: 3 };
     await setPipelineRun(1, filled);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
+    act(() => result.current.beginCommand('fill'));
     expect(result.current.status).toBe('filling');
 
-    act(() => writeFromBackground(1, filled));
+    await act(() => writeFromBackground(1, filled));
 
     expect(result.current.status).toBe('filled');
   });
@@ -211,10 +187,10 @@ describe('usePipelineRun', () => {
     const { reportFrameFromContentScript } = stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
-    act(() => reportFrameFromContentScript(1, run));
+    act(() => result.current.beginCommand('fill'));
+    await act(() => reportFrameFromContentScript(1, run));
 
     expect(result.current.status).toBe('filling');
   });
@@ -225,9 +201,9 @@ describe('usePipelineRun', () => {
     const { writeFromBackground } = stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
+    act(() => result.current.beginCommand('fill'));
     act(() =>
       result.current.edit({ answers: run.answers, jobDescription: 'edited while filling' }),
     );
@@ -236,7 +212,7 @@ describe('usePipelineRun', () => {
     expect(result.current.status).toBe('filling');
 
     // The background's own answer still stands it down.
-    act(() =>
+    await act(() =>
       writeFromBackground(1, {
         ...run,
         status: 'filled',
@@ -262,15 +238,16 @@ describe('usePipelineRun', () => {
       updates: Partial<PipelineRunState>;
     }[] = [];
     const sendMessage = vi.fn((message, callback: () => void) => {
-      queued.push(message);
+      const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+      if (typedMessage.type === 'UPDATE_RUN') queued.push(typedMessage);
       callback();
     });
     vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
+    act(() => result.current.beginCommand('fill'));
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'A' }));
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
 
@@ -290,26 +267,44 @@ describe('usePipelineRun', () => {
     expect(result.current.run?.jobDescription).toBe('AB');
   });
 
+  it('discards a delivery failure from a command a newer one has already superseded', async () => {
+    // The callback is scoped to the attempt that raised it. Chrome can report an undelivered START
+    // after the candidate has already started something else, and a shared `fail` stood *that*
+    // step's status down — reporting an error for a step still running, and taking the spinner off
+    // it. Only the current attempt may speak for the panel.
+    stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await settleInitialRead();
+
+    let undeliveredFill!: (message: string) => void;
+    act(() => {
+      undeliveredFill = result.current.beginCommand('fill');
+    });
+    act(() => {
+      result.current.beginCommand('save');
+    });
+    act(() => undeliveredFill('Could not establish connection.'));
+
+    expect(result.current.status).toBe('saving');
+    expect(result.current.failure).toBeNull();
+  });
+
   it('shows a delivery failure at once and stands the optimistic status down with it', async () => {
     // A START that never reached the worker produces no run and no storage event at all, so nothing
     // else will ever correct the spinner it was raised for.
     stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() => result.current.begin('filling'));
-    act(() =>
-      result.current.fail('fill-error', {
-        step: 'fill',
-        message: 'Could not establish connection.',
-      }),
-    );
+    act(() => result.current.beginCommand('fill'));
+    act(() => result.current.beginCommand('fill')('Could not establish connection.'));
 
     expect(result.current.status).toBe('fill-error');
     expect(result.current.failure).toEqual({
       step: 'fill',
-      message: 'Could not establish connection.',
+      kind: 'temporary',
     });
   });
 
@@ -317,15 +312,10 @@ describe('usePipelineRun', () => {
     const { writeFromBackground } = stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() =>
-      result.current.fail('fill-error', {
-        step: 'fill',
-        message: 'Could not establish connection.',
-      }),
-    );
-    act(() => writeFromBackground(1, { ...run, status: 'filling' }));
+    act(() => result.current.beginCommand('fill')('Could not establish connection.'));
+    await act(() => writeFromBackground(1, { ...run, status: 'filling' }));
 
     expect(result.current.status).toBe('filling');
     expect(result.current.failure).toBeNull();
@@ -339,20 +329,15 @@ describe('usePipelineRun', () => {
     stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1, 1, () => false));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
-    act(() =>
-      result.current.fail('analyze-error', {
-        step: 'analysis',
-        message: 'Could not establish connection.',
-      }),
-    );
+    act(() => result.current.beginCommand('analysis')('Could not establish connection.'));
 
     expect(result.current.run).toBeNull();
     expect(result.current.status).toBe('analyze-error');
     expect(result.current.failure).toEqual({
       step: 'analysis',
-      message: 'Could not establish connection.',
+      kind: 'temporary',
     });
   });
 
@@ -361,18 +346,18 @@ describe('usePipelineRun', () => {
     await setPipelineRun(1, { ...run, status: 'filled' });
     const { result } = renderHook(() => usePipelineRun(1, 1, () => false));
 
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
     expect(result.current.run).toBeNull();
     expect(result.current.status).toBeNull();
   });
 
   it("reports the run's own checkpointed failure when no delivery failure stands", async () => {
     stubChrome();
-    const failure = { step: 'analysis' as const, message: 'POST /extract-job failed (500)' };
+    const failure = { step: 'analysis' as const, kind: 'temporary' as const };
     await setPipelineRun(1, { ...run, status: 'analyze-error', failure });
     const { result } = renderHook(() => usePipelineRun(1));
 
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
     expect(result.current.failure).toEqual(failure);
   });
 
@@ -382,12 +367,12 @@ describe('usePipelineRun', () => {
     const { result, rerender } = renderHook(({ tabId }) => usePipelineRun(tabId), {
       initialProps: { tabId: 1 },
     });
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
-    act(() => result.current.begin('filling'));
+    await settleInitialRead();
+    act(() => result.current.beginCommand('fill'));
 
     rerender({ tabId: 2 });
 
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
     expect(result.current.status).toBeNull();
   });
 
@@ -398,20 +383,19 @@ describe('usePipelineRun', () => {
       initialProps: { scopeToken: 1 },
     });
     await waitFor(() => expect(result.current.run).toEqual(run));
-    act(() => result.current.begin('filling'));
+    act(() => result.current.beginCommand('fill'));
 
     rerender({ scopeToken: 2 });
 
     expect(result.current.run).toBeNull();
     expect(result.current.status).toBeNull();
-    expect(result.current.hydrated).toBe(false);
   });
 
   it('applies an edit locally at once, so a controlled textarea never lags a storage round-trip', async () => {
     stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
     act(() =>
       result.current.edit({
@@ -427,7 +411,7 @@ describe('usePipelineRun', () => {
     stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
     act(() =>
       result.current.edit({
@@ -440,7 +424,7 @@ describe('usePipelineRun', () => {
     await vi.waitFor(async () => expect((await getPipelineRun(1))?.jobDescription).toBe('pasted'));
 
     const reopened = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(reopened.result.current.hydrated).toBe(true));
+    await waitFor(() => expect(reopened.result.current.run).not.toBeNull());
     expect(reopened.result.current.run).toMatchObject({
       answers: [expect.objectContaining({ answer: 'Edited.' })],
       jobDescription: 'pasted',
@@ -451,17 +435,17 @@ describe('usePipelineRun', () => {
     const { sendMessage } = stubChrome();
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'edited' }));
 
     expect(sendMessage).toHaveBeenCalledWith(
-      {
+      typedMessageEnvelope({
         type: 'UPDATE_RUN',
         tabId: 1,
         runId: 'run-1',
         updates: { answers: run.answers, jobDescription: 'edited' },
-      },
+      }),
       expect.any(Function),
     );
   });
@@ -475,7 +459,8 @@ describe('usePipelineRun', () => {
       updates: Partial<PipelineRunState>;
     }[] = [];
     const sendMessage = vi.fn((message, callback: () => void) => {
-      queued.push(message);
+      const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+      if (typedMessage.type === 'UPDATE_RUN') queued.push(typedMessage);
       callback();
     });
     vi.stubGlobal('chrome', {
@@ -484,7 +469,7 @@ describe('usePipelineRun', () => {
     });
     await setPipelineRun(1, run);
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'B' }));
     act(() => result.current.edit({ answers: run.answers, jobDescription: run.jobDescription }));
@@ -509,7 +494,7 @@ describe('usePipelineRun', () => {
     // A run mid-Analysis Step, with results the background is the authority on.
     await setPipelineRun(1, { ...run, status: 'analyzing', filledFieldCount: 7 });
     const { result } = renderHook(() => usePipelineRun(1));
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
+    await settleInitialRead();
 
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'pasted' }));
 
@@ -599,7 +584,7 @@ describe('usePipelineRun', () => {
       });
       expect(callsOfType(sendMessage, 'CHECK_RUN')).toHaveLength(1);
 
-      act(() => writeFromBackground(7, run));
+      await act(() => writeFromBackground(7, run));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(120_000);
       });
@@ -617,8 +602,7 @@ describe('usePipelineRun', () => {
         usePipelineRun(7, 'https://boards.greenhouse.io/acme/jobs/1'),
       );
       await hydrate();
-      expect(result.current.hydrated).toBe(true);
-      act(() => result.current.begin('filling'));
+      act(() => result.current.beginCommand('fill'));
       expect(result.current.status).toBe('filling');
 
       await act(async () => {

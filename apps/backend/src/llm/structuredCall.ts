@@ -2,15 +2,14 @@ import type { ChatMessage } from '@djobi/shared';
 import { generateObject, NoObjectGeneratedError, TypeValidationError } from 'ai';
 import type { z } from 'zod';
 import { openrouter } from './client.js';
+import { routeFor, type LlmOperation } from './routing.js';
 
 /** Options for {@link callStructured}. */
 export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
-  /** Model id to call — an OpenRouter slug, normally read from `MODELS`. */
-  model: string;
-  /** Max output tokens for the request. */
-  maxTokens: number;
-  /** Model reasoning effort, when the selected model supports it. */
-  effort?: 'none' | 'low' | 'medium' | 'high';
+  /** The application operation whose route policy this call uses. */
+  operation: LlmOperation;
+  /** Request-derived override for the operation's default output limit. */
+  maxTokens?: number;
   /** The full first user-turn prompt content — the grounding scaffold and the instructions. */
   userContent: string;
   /**
@@ -109,21 +108,13 @@ export class StructuredCallError extends Error {
  * container is what a validation failure is actually about — `fit` arriving as an `object{…}` rather
  * than an `array(n)` is the whole diagnosis.
  */
-function shapeOf(value: unknown): unknown {
+function shapeOf(value: unknown, depth = 1): unknown {
   if (Array.isArray(value)) return `array(${value.length})`;
   if (value === null) return 'null';
   if (typeof value !== 'object') return typeof value;
+  if (depth === 0) return `object{${Object.keys(value).join(',')}}`;
   return Object.fromEntries(
-    Object.entries(value).map(([key, member]) => [
-      key,
-      Array.isArray(member)
-        ? `array(${member.length})`
-        : member === null
-          ? 'null'
-          : typeof member === 'object'
-            ? `object{${Object.keys(member).join(',')}}`
-            : typeof member,
-    ]),
+    Object.entries(value).map(([key, member]) => [key, shapeOf(member, depth - 1)]),
   );
 }
 
@@ -155,7 +146,9 @@ function openRouterMetadata(metadata: unknown): OpenRouterCallMetadata {
 export async function callStructured<Schema extends z.ZodTypeAny>(
   options: StructuredToolCallOptions<Schema>,
 ): Promise<z.infer<Schema>> {
-  const model = openrouter.chat(options.model, {
+  const route = routeFor(options.operation);
+  const maxTokens = options.maxTokens ?? route.defaultMaxTokens;
+  const model = openrouter.chat(route.model, {
     // Strict mode is OpenAI's JSON Schema subset — every property required, no defaults — and these
     // schemas are not written in it: an omitted `revisedAnswer` and a defaulted `note` are both
     // meaningful. It was Anthropic's forced-tool guarantee that needed it; here the schema is the
@@ -196,9 +189,10 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
     // Profile and the posting, and `promptChars` is here to say how big that was, not what it said.
     console.log('[djobi] structured_call', {
       toolName: options.toolName,
-      model: options.model,
+      operation: options.operation,
+      model: route.model,
       provider: provider ?? null,
-      effort: options.effort ?? null,
+      effort: route.effort ?? null,
       attempt: fields.attempt,
       ms: Date.now() - fields.startedAt,
       promptChars: (options.cachedPrefix?.length ?? 0) + options.userContent.length,
@@ -220,7 +214,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
         schema: options.schema,
         schemaName: options.toolName,
         schemaDescription: options.toolDescription,
-        maxOutputTokens: options.maxTokens,
+        maxOutputTokens: maxTokens,
         messages,
         abortSignal: options.signal,
         // The SDK otherwise retries selected transport/status failures itself. Keep the total
@@ -238,7 +232,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
               data_collection: 'deny',
               // An Anthropic model slug identifies the model family, not necessarily who serves it.
               // Prefer Anthropic directly and allow only its Claude Platform on AWS as fallback.
-              ...(options.model.startsWith('anthropic/')
+              ...(route.model.startsWith('anthropic/')
                 ? {
                     order: ['anthropic', 'claude-on-aws'],
                     only: ['anthropic', 'claude-on-aws'],
@@ -249,7 +243,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
             // Cost and the resolved upstream come back only when this is asked for, and they are
             // the two numbers the routing decision is meant to be revisited with.
             usage: { include: true },
-            ...(options.effort ? { reasoning: { effort: options.effort } } : {}),
+            ...(route.effort ? { reasoning: { effort: route.effort } } : {}),
           },
         },
       });
@@ -345,7 +339,8 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
     console.warn('[djobi] structured_call_retry', {
       kind: error.kind,
       toolName: error.toolName,
-      model: options.model,
+      operation: options.operation,
+      model: route.model,
       attempt: 2,
       maxAttempts: 2,
       firstAttemptMs: Date.now() - callStartedAt,

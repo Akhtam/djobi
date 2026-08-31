@@ -17,8 +17,8 @@
 import type { QuestionAnswer } from '@djobi/shared';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
-import type { PipelineFailure, PipelineRunState, PipelineStatus } from '../lib/tabStore';
-import { reviewOf, type RunReview } from '../lib/runReview';
+import type { PipelineRunState, PipelineStatus, RunStep } from '../lib/run';
+import { canEditRun, hasRecordedFill, reviewOf, STEP_STATUS, type RunReview } from '../lib/run';
 import { isSameJobUrl, jobKeyForUrl } from '../lib/jobContext';
 
 export interface ActiveRun {
@@ -43,23 +43,31 @@ export interface ActiveRun {
    * second way to reach the same message is how the two came to disagree in the first place.
    */
   review: RunReview;
-  /** Shows `status` immediately, for the gap between a click and the background's own write. */
-  begin: (status: PipelineStatus) => void;
-  /** Stands `begin` back down when Chrome couldn't deliver the command it was raised for. */
-  fail: (status: 'analyze-error' | 'fill-error' | 'save-error', failure: PipelineFailure) => void;
+  /**
+   * Raises a step's running status immediately and returns that attempt's way to stand it down —
+   * see `panel/usePipelineRun.ts`. Bound to the messages it belongs with in
+   * `panel/pipelineCommands.ts`, which is what every caller should use.
+   */
+  beginCommand: (step: RunStep) => (message: string) => void;
   /** Persists the candidate's edits to the run. */
   edit: (
     edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
   ) => void;
   /**
-   * Rewrites one drafted Question Answer.
+   * Rewrites one drafted Question Answer, on the run the caller means.
    *
    * An operation rather than something each caller assembles from `edit`, because two of them do
    * it — the Autofill Tab's question card and the Ask Tab's "Use this answer" — and both have to
-   * apply the same two rules: refuse while a save is in flight, and take a `saved` run back to
-   * `filled`, since a record whose answers have changed is no longer the record that was saved.
+   * apply the same rules: refuse while a save is in flight, take a `saved` run back to `filled`
+   * (a record whose answers have changed is no longer the record that was saved), and **refuse a
+   * write meant for a run this panel is no longer showing**.
+   *
+   * `runId` is a parameter rather than something read from the current run because of that last
+   * rule. The Ask Tab's answer belongs to the run its thread was seeded from, which may not be the
+   * run in front of the candidate by the time they click; checking it only while rendering — which
+   * is what the tab did — leaves the click itself unguarded.
    */
-  updateAnswer: (fieldId: string, answer: string) => void;
+  updateAnswer: (runId: string, fieldId: string, answer: string) => void;
 }
 
 /**
@@ -78,16 +86,20 @@ export function useActiveRun(enabled: boolean): ActiveRun {
   // four sources its `status` reconciles: an optimistic status and a delivery failure belong to a
   // command *this* panel just sent, and dropping them alongside the stale run is how an undelivered
   // START in that same gap left the panel with no spinner and no error — see the hook's `accepts`.
-  const { run, status, failure, begin, fail, edit } = usePipelineRun(tabId, jobScope, (candidate) =>
-    isSameJobUrl(candidate.tabUrl, tabUrl),
+  const { run, status, failure, beginCommand, edit } = usePipelineRun(
+    tabId,
+    jobScope,
+    (candidate) => isSameJobUrl(candidate.tabUrl, tabUrl),
   );
   // `failure` is handed over with `status`: the two describe the same failure, and a delivery
   // failure this panel is holding is never on the stored run. Reading the cause off the run instead
   // is how a Run Notice came to name the previous step's error, or none at all.
   const review = reviewOf(run, status, failure);
 
-  function updateAnswer(fieldId: string, answer: string) {
-    if (!run || status === 'saving') return;
+  function updateAnswer(runId: string, fieldId: string, answer: string) {
+    // Not this panel's run any more: the candidate moved to another tab or re-analyzed between the
+    // answer being drafted and it being applied.
+    if (!run || run.runId !== runId || !canEditRun(status)) return;
 
     const answers: QuestionAnswer[] = run.answers.map((existing) =>
       existing.fieldId === fieldId ? { ...existing, answer } : existing,
@@ -95,7 +107,7 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     edit({
       answers,
       jobDescription: run.jobDescription,
-      ...(status === 'saved' ? { status: 'filled' as const } : {}),
+      ...(hasRecordedFill(status) ? { status: STEP_STATUS.fill.succeeded } : {}),
     });
   }
 
@@ -106,8 +118,7 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     run,
     status,
     review,
-    begin,
-    fail,
+    beginCommand,
     edit,
     updateAnswer,
   };

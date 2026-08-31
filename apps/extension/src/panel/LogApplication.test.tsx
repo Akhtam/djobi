@@ -52,6 +52,8 @@ const JOB_DESCRIPTION = 'Senior Engineer at Acme, building the platform team.';
 interface StubOptions {
   /** Applications already stored against this job URL — what the duplicate warning reads. */
   existing?: Application[];
+  /** The duplicate lookup itself failing — a warning the backend couldn't answer. */
+  duplicateFailure?: string;
   extractFailure?: string;
   saveFailure?: string;
   saveResult?: Promise<unknown>;
@@ -67,6 +69,7 @@ function stubBackend(options: StubOptions = {}) {
       return jobInfo;
     }),
     findApplicationDuplicates: async () => {
+      if (options.duplicateFailure) throw new Error(options.duplicateFailure);
       const existing = options.existing ?? [];
       const latest = existing[0];
       return {
@@ -76,6 +79,7 @@ function stubBackend(options: StubOptions = {}) {
               id: latest.id,
               company: latest.company,
               roleTitle: latest.roleTitle,
+              stage: latest.stage,
               createdAt: latest.createdAt,
             }
           : null,
@@ -237,6 +241,30 @@ describe('the Log tab', () => {
 
     expect(screen.getByRole('textbox', { name: 'Company' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Role' })).toBeDisabled();
+  });
+
+  it('logs the application anyway when the duplicate lookup itself fails', async () => {
+    // The Duplicate Guard warns; it never gates. This flow used to run the lookup beside the
+    // extraction in one `Promise.all` and call the pair, so a backend that couldn't answer a
+    // *warning* reported the extraction as failed — throwing away a model call that had already
+    // succeeded and leaving the candidate unable to record an application they had made. The rule
+    // now lives in `lib/duplicateGuard.ts`, which resolves rather than rejects.
+    const { saved } = stubBackend({ duplicateFailure: 'Failed to fetch' });
+    // The guard's own warning; asserted where failing open is the subject, in
+    // `background/applicationPipeline.test.ts`.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    renderTab();
+
+    await extract();
+
+    expect(screen.queryByText(/Something went wrong/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/already logged this job/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log application' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log application' }));
+    await screen.findByText(/Logged Senior Engineer at Acme/);
+    expect(saved).toHaveLength(1);
+    warn.mockRestore();
   });
 
   it('warns about a job already logged, without blocking it', async () => {

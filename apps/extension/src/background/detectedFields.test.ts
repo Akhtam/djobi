@@ -11,7 +11,7 @@
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeChrome } from '../lib/fakeChrome';
-import { getDetectedPage } from '../lib/tabStore';
+import { getDetectedPage } from '../lib/tabStore/detectedPage';
 import { frameForFill, recordReport, snapshotForRun } from './detectedFields';
 
 /** A Greenhouse posting, which the oracle recognizes and will fetch a schema for. */
@@ -176,9 +176,10 @@ describe('detectedFields', () => {
   });
 
   it('still drops a stale enrichment whose frame was re-reported while it was in flight', async () => {
-    // The revision guard lives in `lib/tabStore.ts` and is not bypassed by routing reports through
-    // here: a slow response for a page the tab has navigated away from must not land on fresher
-    // detection, even though this module now waits for responses rather than firing and forgetting.
+    // The revision guard lives in `lib/tabStore/detectedPage.ts` and is not bypassed by routing
+    // reports through here: a slow response for a page the tab has navigated away from must not
+    // land on fresher detection, even though this module now waits for responses rather than firing
+    // and forgetting.
     const { fetchImpl, release } = gatedFetch(SCHEMA);
     vi.stubGlobal('fetch', fetchImpl);
 

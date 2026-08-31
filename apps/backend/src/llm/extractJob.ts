@@ -1,5 +1,4 @@
 import { JobInfoSchema, type JobInfo } from '@djobi/shared';
-import { MODELS } from './client.js';
 import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -18,8 +17,7 @@ import { callStructured } from './structuredCall.js';
 export async function extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo> {
   return callStructured({
     signal,
-    model: MODELS.extractJob,
-    maxTokens: 2048,
+    operation: 'extractJob',
     toolName: 'report_job_info',
     toolDescription:
       'Report the structured job posting information extracted from the description.',

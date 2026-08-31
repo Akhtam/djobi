@@ -1,6 +1,6 @@
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chromePageClient } from './pageClient';
+import { chromePageClient, PageResponseError } from './pageClient';
 
 /**
  * These rules used to live inline in `background/applicationPipeline.ts`'s default deps, where the
@@ -80,6 +80,15 @@ describe('chromePageClient.scan', () => {
 
     expect(readLastError).toHaveBeenCalled();
   });
+
+  it('rejects a malformed scan reply at the content-script boundary', async () => {
+    stubTabs({ fields: 'not-an-array' });
+
+    await expect(chromePageClient.scan(7)).rejects.toMatchObject({
+      name: 'PageResponseError',
+      command: 'SCAN_PAGE',
+    } satisfies Partial<PageResponseError>);
+  });
 });
 
 describe('chromePageClient.fill', () => {
@@ -152,5 +161,43 @@ describe('chromePageClient.fill', () => {
     stubTabs(undefined);
 
     await expect(chromePageClient.fill(7, { fields: [], values: {} })).resolves.toBeNull();
+  });
+
+  it('rejects a malformed fill reply at the content-script boundary', async () => {
+    stubTabs({ ok: true, filledFieldIds: 'not-an-array', resumeAttached: false });
+
+    await expect(chromePageClient.fill(7, { fields: [], values: {} })).rejects.toMatchObject({
+      name: 'PageResponseError',
+      command: 'FILL_FORM',
+    } satisfies Partial<PageResponseError>);
+  });
+
+  it.each([
+    [{ ok: false, filledFieldIds: [], resumeAttached: false }, {}, 'ok'],
+    [
+      { ok: true, filledFieldIds: ['not-requested'], resumeAttached: false },
+      {},
+      'unrequested field',
+    ],
+    [{ ok: true, filledFieldIds: [], resumeAttached: true }, {}, 'no resume was sent'],
+  ])('rejects a contradictory fill reply: %s', async (reply, values, detail) => {
+    stubTabs(reply);
+
+    await expect(chromePageClient.fill(7, { fields: [], values })).rejects.toMatchObject({
+      name: 'PageResponseError',
+      command: 'FILL_FORM',
+      message: expect.stringContaining(detail),
+    } satisfies Partial<PageResponseError>);
+  });
+
+  it("rejects a requested field that wasn't actually given a value", async () => {
+    stubTabs({ ok: true, filledFieldIds: [resumeField.id], resumeAttached: false });
+
+    await expect(
+      chromePageClient.fill(7, { fields: [resumeField], values: {} }),
+    ).rejects.toMatchObject({
+      name: 'PageResponseError',
+      message: expect.stringContaining('unrequested field'),
+    } satisfies Partial<PageResponseError>);
   });
 });

@@ -14,8 +14,10 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1002 tests** (172 shared / 182 backend / 543
-extension / 105 dashboard), `pnpm test` from the repo root. CI (`.github/workflows/ci.yml`) runs
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1108 tests** (182 shared / 15 http-client / 186 backend / 608
+extension / 117 dashboard), `pnpm test` from the repo root. A green run prints nothing: every
+deliberate log line a failure path writes is either asserted or silenced where it is expected, so
+anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
 `format:check`, `typecheck`, `build` and `test` on Linux for every PR and every push to `main`.
 
 - **`packages/shared`** — the zod schemas and the rules both processes must agree on: `schemas.ts`
@@ -28,7 +30,9 @@ extension / 105 dashboard), `pnpm test` from the repo root. CI (`.github/workflo
 - **`apps/backend`** — Hono on `127.0.0.1:5391`. Four LLM calls (`extractJob`, `tailorResume`,
   `answerQuestions`, `answerChat`) through `structuredCall.ts` — one seam over
   the Vercel AI SDK and OpenRouter, routed per operation by `client.ts`'s `MODELS` — all grounded by
-  one `promptContext.ts` scaffold; a one-page-fitting resume PDF renderer, and
+  one `promptContext.ts` scaffold — each grounded in a Profile _projection_ the operation parses
+  from `wire.ts` rather than restating, so widening one is a deliberate disclosure change; a
+  one-page-fitting resume PDF renderer, and
   Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
 build` compiles the shared package and emits a plain-Node production server to `dist/`.
 - **`apps/dashboard`** — Vite + React on `localhost:5174`, browsing past Applications and tracking
@@ -38,14 +42,18 @@ build` compiles the shared package and emits a plain-Node production server to `
 - **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
   (`detect.ts`) and classify its fields (`detectFields.ts`) and fill them (`fillForm.ts`); the
   service worker (`background/service-worker.ts` → `background/router.ts`) runs the pipeline
-  (`applicationPipeline.ts`); the options page edits the Profile; the side panel is the review
-  surface. Light/dark theme shared by both pages (`lib/theme.tsx`), persisted in
+  (`applicationPipeline.ts`, each step held by `background/runClaim.ts`); the options page edits the
+  Profile; the side panel is the review surface, sending its three commands through
+  `panel/pipelineCommands.ts` and holding one conversation in `panel/useAskThread.ts`. A tab's
+  stored record is one entry under one lock behind four focused interfaces (`lib/tabStore/`). Light/dark theme shared by both pages (`lib/theme.tsx`), persisted in
   `chrome.storage.local`.
 
 The Application Pipeline as it runs today: **scrape or paste a job description → duplicate guard →
 Analysis Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
-checkpointed to `lib/tabStore.ts` at every stage, so closing it mid-run loses nothing.
-Every run has a unique id; asynchronous completions patch only that id. Navigation always clears
+checkpointed to `lib/tabStore/` at every stage, so closing it mid-run loses nothing.
+Every run has a unique id; asynchronous completions patch only that id, and every step takes the run
+through one claim (`background/runClaim.ts`) that owns acquisition, supersession, checkpointing and
+release — with cancellation a per-step policy, since the Save Step's write cannot be safely aborted. Navigation always clears
 page-specific frames, but the Job Context and run survive when the URL still identifies the same
 job (including Ashby `/application`). Panel edits route through the service worker so every storage
 mutation shares one per-tab queue. Fill and Save claim statuses atomically before starting.
@@ -224,7 +232,7 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   not a stylesheet one.
 
 - **`chrome.tabs.sendMessage` is always given a `frameId` when one is known** (`lib/pageClient.ts`,
-  fed by `getDetectedFrame` in `lib/tabStore.ts`). Without it the runtime delivers to _every_ frame
+  fed by `getDetectedFrame` in `lib/tabStore/`). Without it the runtime delivers to _every_ frame
   and resolves with whichever answers first, dropping the rest — and the content script is injected
   into all frames, third-party ones included. A page carrying an invisible hCaptcha or a
   tag-manager pixel therefore had those frames answering `FILL_FORM` with an empty result before
@@ -343,12 +351,12 @@ _nearly_ right could only be hand-edited in a textarea.
 ### MV3 durability — a worker that can be killed mid-step
 
 MV3 gives no guarantee that the service worker survives an operation it started. The pipeline was
-already checkpointed into `lib/tabStore.ts`, so nothing was ever _lost_ — but three ways of getting
+already checkpointed into `lib/tabStore/`, so nothing was ever _lost_ — but three ways of getting
 stuck had no handling, and all three ended the same way for the candidate: a panel showing
 `analyzing` forever, with no error and no retry.
 
 - **A new worker repairs what the last one abandoned.** `recoverInterruptedPipelineRuns` in
-  `lib/tabStore.ts` sweeps every `tab:<id>` entry and turns `analyzing`/`filling`/`saving` into the
+  `lib/tabStore/` sweeps every `tab:<id>` entry and turns `analyzing`/`filling`/`saving` into the
   matching `*-error`, with a message saying what may have half-happened — fill says to check the
   application page, save says to check the Dashboard, because those two may have landed. It needs
   **no timeout**: an in-progress status already present when a worker starts necessarily belonged to
@@ -585,7 +593,7 @@ Decisions:
   density ladder still degrades gracefully behind it.
 - **The model owns ordering; the code owns content and presence.** It returns every kept bullet as an
   ordered source index, supplying `text` only for the ones it may reword. Ordering is real tailoring
-   — the strongest bullet for this posting belongs first — and it costs nothing to grant, since a
+  — the strongest bullet for this posting belongs first — and it costs nothing to grant, since a
   starred entry carries an index and no prose. Every starred index must appear exactly once; if not,
   the pointers are malformed and the existing fall-back-to-the-source-role rule applies.
 - **Starred bullets still go into the prompt**, marked as already included and excluded from the

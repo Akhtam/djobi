@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  getPipelineRun,
-  storageKey as tabStorageKey,
   type PipelineFailure,
   type PipelineRunState,
   type PipelineStatus,
-  type TabState,
-} from '../lib/tabStore';
+  type RunStep,
+  isBusy,
+  STEP_STATUS,
+} from '../lib/run';
+import { getPipelineRun, subscribePipelineRun } from '../lib/tabStore/pipelineRun';
 import { notify } from '../lib/messages';
 
 /**
@@ -18,8 +19,8 @@ import { notify } from '../lib/messages';
 const RUN_CHECK_MS = 15_000;
 
 /**
- * Keeps one tab's Application Pipeline run in sync with `lib/tabStore.ts`, and owns the status the
- * panel renders.
+ * Keeps one tab's Application Pipeline run in sync with `lib/tabStore/pipelineRun.ts`, and owns the
+ * status the panel renders.
  *
  * The panel used to hold each of the run's fields in its own `useState` and reassemble them by hand
  * in three places — the initial read, the write-back, and the storage subscription. Every one of
@@ -43,7 +44,7 @@ const RUN_CHECK_MS = 15_000;
  * layered it over the optimistic status, while the shell's header pill derived itself from the
  * stored run alone — so for the whole gap between a click and the background's own write the pill
  * said "Ready to fill" while the body and footer said "Filling…". One run has one meaning; this is
- * where it is decided. See {@link begin} and {@link fail}.
+ * where it is decided. See {@link PipelineRunHandle.beginCommand}.
  */
 export interface PipelineRunHandle {
   /**
@@ -67,40 +68,35 @@ export interface PipelineRunHandle {
    */
   failure: PipelineFailure | null;
   /**
-   * Whether the initial read for the current tab has completed.
+   * Raises `step`'s running status immediately, and hands back **that attempt's** way to stand it
+   * back down.
    *
-   * The panel doesn't render this — it renders `run` and `status`, both of which read as "nothing
-   * yet" until the read lands, so it has nothing to wait for. It is here for tests, which need a
-   * precise barrier to await before asserting: without it they would have to wait on the *effect*
-   * of hydration and would pass or fail on timing. An affordance that exists only for the test
-   * surface is still part of the interface, so it's stated rather than quietly present.
+   * One call rather than the `begin`/`fail` pair it replaces, because the two were only ever
+   * correct together: raising `filling` and reporting `save-error` were independent calls that
+   * type-checked fine, and every caller restated the same three facts (which status means running,
+   * which means failed, which step to name). Now a caller names the step and nothing else.
+   *
+   * The optimistic status covers the gap between a click and the background writing its own — the
+   * UI would otherwise sit unchanged long enough for the user to click twice. Never persisted.
+   * Raising one also clears any standing delivery failure: a new command is starting, so the last
+   * one's is no longer the news.
+   *
+   * The returned callback records that *this* command never reached the service worker. `notify`
+   * reports whether Chrome managed to deliver a START, and an undelivered one produces no run and
+   * no storage event at all — so without it the tab spins forever on a step nothing is running.
+   * It is **attempt-scoped**: a delivery error that arrives after a newer command has been raised
+   * is discarded, where a shared `fail` would stand the newer command's status down and report an
+   * error for a step that is still running.
+   *
+   * "Until the background answers" is narrower than it used to be, and deliberately. The status
+   * stood down on *any* write to the tab's storage key — but that key holds the tab's detected
+   * frames and its Job Context as well as the run, and the content script re-reports on every DOM
+   * change the form makes. So a frame report, an API-oracle enrichment, a Job Description keystroke
+   * or a same-job navigation each dropped the optimism and snapped the panel back to "Ready to
+   * fill" mid-click. It now stands down only for a write that is actually the background answering;
+   * see {@link answersTheCommand}.
    */
-  hydrated: boolean;
-  /**
-   * Shows `status` immediately, until the background answers for the step it was raised for.
-   *
-   * For the gap between a click and the background writing its own status — without it the UI sits
-   * unchanged long enough for the user to click twice. Never persisted. Also clears any standing
-   * delivery failure: a new command is starting, so the last one's is no longer the news.
-   *
-   * "Until the background answers" is narrower than it used to be, and deliberately. This stood
-   * down on *any* write to the tab's storage key — but that key holds the tab's detected frames and
-   * its Job Context as well as the run, and the content script re-reports on every DOM change the
-   * form makes. So a frame report, an API-oracle enrichment, a Job Description keystroke or a
-   * same-job navigation each dropped the optimism and snapped the panel back to "Ready to fill"
-   * mid-click. It now stands down only for a write that is actually the background answering; see
-   * {@link answersTheCommand}.
-   */
-  begin: (status: PipelineStatus) => void;
-  /**
-   * Records that a command never reached the service worker, standing the optimistic status down.
-   *
-   * `notify` reports whether Chrome managed to *deliver* a START, and an undelivered one produces no
-   * run and no storage event at all — so without this the tab spins forever on a step nothing is
-   * running. Panel-local and never persisted: the background never learned of the step, so there is
-   * nothing on the run to correct.
-   */
-  fail: (status: 'analyze-error' | 'fill-error' | 'save-error', failure: PipelineFailure) => void;
+  beginCommand: (step: RunStep) => (message: string) => void;
   /** Persists the user's edits, updating `run` immediately so typing stays responsive. */
   edit: (
     edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
@@ -113,52 +109,12 @@ function editsOf(run: PipelineRunState): Pick<PipelineRunState, 'answers' | 'job
 }
 
 /**
- * Structural equality, stopping at the first difference and allocating nothing.
- *
- * `JSON.stringify` on either side said the same thing in one line, but it *serializes* both: the
- * page-scoped half holds every Detected Field of every frame, and the run carries the tailored
- * resume, answers and the coverage report. This hook is called for every write to its
- * tab's key and the content script re-reports on each DOM mutation the form makes, so on a large ATS
- * form that was hundreds of KB of string built and thrown away per event, on the panel's main
- * thread. Reference equality is not an option in its place: `oldValue` and `newValue` reach a
- * `chrome.storage.onChanged` listener separately deserialized, so nothing unchanged shares identity.
- *
- * Both sides come from `JSON.parse`, so there are no `undefined` members, no cycles and no
- * non-plain objects to account for.
- */
-function same(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((item, index) => same(item, b[index]));
-  }
-
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  const right = b as Record<string, unknown>;
-  return keys.every((key) => key in right && same((a as Record<string, unknown>)[key], right[key]));
-}
-
-/** The page-scoped half of a tab's entry: everything under its key that is not the run. */
-function pageStateOf(state: TabState | undefined): object {
-  return { frames: state?.frames ?? {}, jobContext: state?.jobContext ?? null };
-}
-
-/** The half of the run the *background* owns — everything but this hook's own optimistic edits. */
-function progressOf(run: PipelineRunState | null | undefined): object | null {
-  if (!run) return null;
-  const { answers: _answers, jobDescription: _jobDescription, ...progress } = run;
-  return progress;
-}
-
-/**
  * Whether a storage event is the background answering for the step an optimistic status was raised
  * for — which is when that status has served its purpose and should stand down.
  *
- * Decided from the event's own `oldValue`/`newValue`, so it needs no baseline of its own and cannot
- * be confused by the order events arrive in. Three simpler rules were each tried and are each wrong:
+ * The store derives both movement flags from the event's own `oldValue`/`newValue`, so this needs no
+ * baseline of its own and cannot be confused by the order events arrive in. Three simpler rules were
+ * each tried and are each wrong:
  *
  * - "any write to the tab's key" — what this replaces, and the bug. The key holds the tab's detected
  *   frames and its Job Context as well as the run, and the content script re-reports on every DOM
@@ -177,14 +133,12 @@ function progressOf(run: PipelineRunState | null | undefined): object | null {
  * for. Note the asymmetry: the two exemptions are recognized positively, so an event this function
  * cannot classify stands the optimism down rather than leaving the panel spinning.
  */
-function answersTheCommand(change: chrome.storage.StorageChange, isOwnEditEcho: boolean): boolean {
-  const before = change.oldValue as TabState | undefined;
-  const after = change.newValue as TabState | undefined;
-  // First, and on its own: a moved progress half settles the question without the page half — the
-  // more expensive of the two comparisons — ever being walked.
-  if (!same(progressOf(before?.run), progressOf(after?.run))) return true;
-
-  const pageStateMoved = !same(pageStateOf(before), pageStateOf(after));
+function answersTheCommand(
+  progressMoved: boolean,
+  pageStateMoved: boolean,
+  isOwnEditEcho: boolean,
+) {
+  if (progressMoved) return true;
   return !pageStateMoved && !isOwnEditEcho;
 }
 
@@ -205,7 +159,6 @@ export function usePipelineRun(
   accepts: (run: PipelineRunState) => boolean = () => true,
 ): PipelineRunHandle {
   const [run, setRun] = useState<PipelineRunState | null>(null);
-  const [hydrated, setHydrated] = useState(false);
   const [pending, setPending] = useState<PipelineStatus | null>(null);
   const [dispatch, setDispatch] = useState<{
     status: 'analyze-error' | 'fill-error' | 'save-error';
@@ -214,6 +167,8 @@ export function usePipelineRun(
   const scopeTokenRef = useRef(scopeToken);
   // Advances whenever a store event supersedes the snapshot captured by an in-flight initial read.
   const revisionRef = useRef(0);
+  // Which command this panel most recently raised — see {@link PipelineRunHandle.beginCommand}.
+  const attemptRef = useRef(0);
 
   // The edits last persisted, serialized. Storage echoes every write back through `onChanged`,
   // including this hook's own; without this the echo would be applied and written straight back out.
@@ -236,10 +191,12 @@ export function usePipelineRun(
     let current = true;
     const revision = ++revisionRef.current;
     scopeTokenRef.current = scopeToken;
-    setHydrated(false);
     setRun(null);
     setPending(null);
     setDispatch(null);
+    // The page changed under whatever command was outstanding; its delivery error is not this
+    // page's news.
+    ++attemptRef.current;
     lastSyncedEditsRef.current = null;
     pendingEditsRef.current = [];
 
@@ -248,7 +205,6 @@ export function usePipelineRun(
       if (!current || revision !== revisionRef.current) return;
       if (stored) lastSyncedEditsRef.current = JSON.stringify(editsOf(stored));
       setRun(stored);
-      setHydrated(true);
     });
 
     return () => {
@@ -257,15 +213,14 @@ export function usePipelineRun(
   }, [scopeToken, tabId]);
 
   // Keeps the run live as `background/applicationPipeline.ts` checkpoints progress into the store.
+  //
+  // The store owns the key, record projection, and movement flags. This hook only decides whether
+  // that classified write answers its current command — see {@link answersTheCommand}.
   useEffect(() => {
     if (tabId === null) return;
-    const key = tabStorageKey(tabId);
 
-    function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
-      if (areaName !== 'session' || !(key in changes)) return;
-
+    return subscribePipelineRun(tabId, ({ current: incoming, progressMoved, pageStateMoved }) => {
       ++revisionRef.current;
-      const incoming = (changes[key].newValue as TabState | undefined)?.run ?? null;
       const incomingEdits = incoming ? JSON.stringify(editsOf(incoming)) : null;
       const pendingEdits = pendingEditsRef.current;
       // The oldest send this echo could be answering. Oldest rather than any, because an undo can
@@ -292,22 +247,17 @@ export function usePipelineRun(
       // again, and leaving them would make a repeated value match an already-answered entry.
       if (isOwnEditEcho) pendingEditsRef.current = pendingEdits.slice(echoed + 1);
       lastSyncedEditsRef.current = incomingEdits;
-      setHydrated(true);
-
       // The background has answered for the step, rather than merely written to the tab's key, so
       // the optimistic status has served its purpose — stand it down here, where the update actually
       // arrives. See {@link answersTheCommand} for why this is the test and the simpler ones are not.
-      if (answersTheCommand(changes[key], isOwnEditEcho)) {
+      if (answersTheCommand(progressMoved, pageStateMoved, isOwnEditEcho)) {
         setPending(null);
         // Any persisted progress supersedes a panel-local delivery error from the command that
         // requested it. Usually an undelivered command produces no storage event at all; this covers
         // the narrower race where Chrome reports an error as a worker is coming back.
         setDispatch(null);
       }
-    }
-
-    chrome.storage.onChanged.addListener(onChanged);
-    return () => chrome.storage.onChanged.removeListener(onChanged);
+    });
   }, [scopeToken, tabId]);
 
   const edit = useCallback(
@@ -347,26 +297,25 @@ export function usePipelineRun(
   // progress. `lib/keepAlive.ts` makes the death far less likely; this is what makes it survivable.
   useEffect(() => {
     if (tabId === null) return;
-    const inProgress =
-      storedStatus === 'analyzing' || storedStatus === 'filling' || storedStatus === 'saving';
-    if (!inProgress) return;
+    if (!isBusy(storedStatus)) return;
 
     const interval = setInterval(() => notify({ type: 'CHECK_RUN', tabId }), RUN_CHECK_MS);
     return () => clearInterval(interval);
   }, [storedStatus, tabId]);
 
-  const begin = useCallback((status: PipelineStatus) => {
+  const beginCommand = useCallback((step: RunStep) => {
+    const attempt = ++attemptRef.current;
     setDispatch(null);
-    setPending(status);
-  }, []);
+    setPending(STEP_STATUS[step].running);
 
-  const fail = useCallback(
-    (status: 'analyze-error' | 'fill-error' | 'save-error', failure: PipelineFailure) => {
+    return (_message: string) => {
+      // Whatever this attempt has been superseded by owns the panel now. A late delivery error from
+      // a command the user has already replaced would otherwise stand the newer one's status down.
+      if (attempt !== attemptRef.current) return;
       setPending(null);
-      setDispatch({ status, failure });
-    },
-    [],
-  );
+      setDispatch({ status: STEP_STATUS[step].failed, failure: { step, kind: 'temporary' } });
+    };
+  }, []);
 
   // Effects reset the state after a scope change; hide it during that render as well.
   const scopeIsCurrent = scopeTokenRef.current === scopeToken;
@@ -376,9 +325,7 @@ export function usePipelineRun(
     run: visibleRun,
     status: scopeIsCurrent ? (dispatch?.status ?? pending ?? visibleRun?.status ?? null) : null,
     failure: scopeIsCurrent ? (dispatch?.failure ?? visibleRun?.failure ?? null) : null,
-    hydrated: scopeIsCurrent && hydrated,
-    begin,
-    fail,
+    beginCommand,
     edit,
   };
 }

@@ -7,16 +7,14 @@
  * bootstrap plus tab state, and every further tab adds to it again.
  *
  * The steps themselves run in `background/applicationPipeline.ts`, not here: the panel closing
- * mid-request must not kill a run. `START_ANALYSIS`/`START_FILL`/`START_SAVE_APPLICATION` carry no
- * response — real progress arrives through the run this module is handed. `begin` is only instant
- * feedback until the background writes its own status, and is never persisted; see the ownership
- * note on `usePipelineRun`.
+ * mid-request must not kill a run. Progress arrives through the run this module is handed, never as
+ * a response to the command that started it.
  *
- * The one thing that comes back from a `notify` is whether Chrome managed to *deliver* it. A START
- * that never reached the worker will produce no run and no storage event at all, so `activeRun.fail`
- * stands the optimistic status back down rather than leaving the tab spinning on a step nothing is
- * running. That failure is held by `usePipelineRun` and not here, so the shell's header pill sees it
- * too — held locally, this module reported an error the pill knew nothing about.
+ * The commands are `panel/pipelineCommands.ts`, not messages built here. Each of them pairs a
+ * message with the optimistic status it raises and the failure that stands that status down, and
+ * the pairing is exactly what this module kept getting to restate. What is left here is the tab's
+ * own: whether a command is *eligible* — which the buttons' `disabled` and the review guards say —
+ * the resume preview's lifecycle, and the words for every Run Notice.
  */
 import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
@@ -24,12 +22,13 @@ import type { BackendClient } from '../lib/backendClient';
 import { autofillSource } from '../lib/fieldDisposition';
 import { formatAppliedDate, formatStage } from '../lib/format';
 import type { JobPageData } from '../lib/messages';
-import { notify } from '../lib/messages';
+import { pipelineCommands } from './pipelineCommands';
 import type { PostingReadOutcome } from '../lib/postingReader';
-import { answersFor } from '../lib/runAnswers';
-import type { RunNotice, RunNoticeAction } from '../lib/runReview';
+import { answersFor, canEditRun, canFill, canSave, hasFilled, hasUnsavedFill } from '../lib/run';
+import type { RunFailureKind, RunNotice, RunNoticeAction, RunStep } from '../lib/run';
 import { CoverageReport } from './CoverageReport';
-import { getDetectedPage, storageKey, type PipelineStatus } from '../lib/tabStore';
+import { getDetectedPage, subscribeDetectedPage } from '../lib/tabStore/detectedPage';
+import { type PipelineStatus } from '../lib/run';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
@@ -40,6 +39,33 @@ import { useResumePreview } from './useResumePreview';
  * here: they are the shell's, and this module is only mounted once a Profile exists.
  */
 type AutofillStatus = 'ready' | PipelineStatus;
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled run notice: ${JSON.stringify(value)}`);
+}
+
+function failureReason(kind: RunFailureKind, step: RunStep): string {
+  switch (kind) {
+    case 'temporary':
+      if (step === 'fill') {
+        return 'The form may have been partially filled. Check the application page before trying again.';
+      }
+      if (step === 'save') {
+        return 'The save may have completed. Check the Dashboard before trying again.';
+      }
+      return 'This service is temporarily unavailable. Try again.';
+    case 'backend-unreachable':
+      return 'Djobi could not reach its backend. Check that it is running, then try again.';
+    case 'invalid-page':
+      return 'This page returned data the extension could not use. Reload the page before trying again.';
+    case 'invalid-model-output':
+      return 'The model returned an unusable result. Try again.';
+    case 'cancelled':
+      return 'This attempt was cancelled.';
+    case 'unknown':
+      return 'An unexpected error occurred. Try again.';
+  }
+}
 
 export function AutofillTab({
   client,
@@ -71,18 +97,7 @@ export function AutofillTab({
    */
   hidden: boolean;
 }) {
-  const {
-    tabId,
-    tabUrl,
-    changeToken,
-    run,
-    status: runStatus,
-    review,
-    begin,
-    fail,
-    edit,
-    updateAnswer,
-  } = activeRun;
+  const { tabId, tabUrl, changeToken, run, status: runStatus, review, updateAnswer } = activeRun;
 
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
@@ -90,8 +105,14 @@ export function AutofillTab({
   // The Job Description, wherever it currently lives — see `panel/useJobDescription.ts`. Draft
   // versus run, Job Key scoping and the scrape's races are all its business, not this module's.
   const jobDescription = useJobDescription(activeRun, readPosting);
+  const commands = pipelineCommands(activeRun, profile, jobDescription);
 
   const status: AutofillStatus = runStatus ?? 'ready';
+  const fillEnabled = canFill(runStatus);
+  const saveEnabled = canSave(runStatus);
+  const editEnabled = canEditRun(runStatus);
+  const showSave = hasUnsavedFill(runStatus);
+  const refill = hasFilled(runStatus);
   const { canReview, outcome, notices } = review;
   // Two places, one list. `slot` is the run's own axis — *how it went* versus *this step failed,
   // retry it from here* — so the split is a filter rather than a second reading of `status`.
@@ -166,63 +187,34 @@ export function AutofillTab({
     }
 
     refreshDetectedPage();
-    const key = storageKey(activeTabId);
-    function onStorageChanged(
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string,
-    ) {
-      if (areaName === 'session' && key in changes) refreshDetectedPage();
-    }
-    chrome.storage.onChanged.addListener(onStorageChanged);
+    // The content script re-reports as the form mounts, and an API-oracle enrichment lands
+    // separately. The store owns which shared-record writes affect this projection.
+    const unsubscribe = subscribeDetectedPage(activeTabId, refreshDetectedPage);
     return () => {
       current = false;
-      chrome.storage.onChanged.removeListener(onStorageChanged);
+      unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- route identity is the reset signal
   }, [tabId, tabUrl, changeToken]);
 
-  /**
-   * `force` is set only by "Analyze and apply anyway", after the background told us this job URL
-   * already has a saved Application. The Duplicate Guard itself runs in the background, not here,
-   * so every entry point into analysis is covered by it.
-   */
   function handleAnalyze(force = false) {
-    if (!jobDescription.text.trim() || tabId === null || !jobDescription.analysisUrl) return;
-
-    // The existing blob renders the previous analysis, even when this URL has not changed.
-    resumePreview.clear();
-    begin('analyzing');
-
-    notify(
-      {
-        type: 'START_ANALYSIS',
-        tabId,
-        tabUrl: jobDescription.analysisUrl,
-        profile,
-        jobDescription: jobDescription.text,
-        force,
-      },
-      (message) => fail('analyze-error', { step: 'analysis', message }),
-    );
+    // The existing blob renders the previous analysis, even when this URL has not changed. The
+    // preview is this module's, so clearing it is too — the command knows nothing about it. Only
+    // once the command has actually started, though: the Re-analyze beside the unfilled-questions
+    // notice is enabled whatever the Job Description says, so a candidate who has emptied the
+    // textarea can press it, and dropping the rendered preview for an analysis that never ran
+    // would cost them the render for nothing.
+    if (commands.analyze(force)) resumePreview.clear();
   }
 
   function handleFill() {
-    if (!jobPageData || !jobInfo || !tailoredResume || tabId === null) return;
-
-    begin('filling');
-
-    notify({ type: 'START_FILL', tabId, profile }, (message) =>
-      fail('fill-error', { step: 'fill', message }),
-    );
+    if (!jobPageData || !jobInfo || !tailoredResume) return;
+    commands.fill();
   }
 
   function handleSaveApplication() {
-    if (tabId === null || (status !== 'filled' && status !== 'save-error')) return;
-
-    begin('saving');
-    notify({ type: 'START_SAVE_APPLICATION', tabId }, (message) =>
-      fail('save-error', { step: 'save', message }),
-    );
+    if (!saveEnabled) return;
+    commands.save();
   }
 
   /** The three retries and the duplicate override, named by `reviewOf` and bound here. */
@@ -262,11 +254,7 @@ export function AutofillTab({
               {notice.duplicate.roleTitle} at {notice.duplicate.company} ·{' '}
               {formatStage(notice.duplicate.stage)}
             </p>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={runNoticeAction(notice.action)}
-            >
+            <button type="button" className="btn-primary" onClick={runNoticeAction(notice.action)}>
               Analyze and apply anyway
             </button>
           </div>
@@ -277,7 +265,7 @@ export function AutofillTab({
           <div className="state error" role="alert" key={notice.kind}>
             <span className="state-icon error">⚠️</span>
             <p>Something went wrong analyzing this job posting.</p>
-            {notice.cause && <p className="failure-detail">{notice.cause}</p>}
+            <p>{failureReason(notice.reason, 'analysis')}</p>
             <button
               type="button"
               className="btn-secondary"
@@ -375,7 +363,7 @@ export function AutofillTab({
                   ? 'Something went wrong filling the form.'
                   : 'Something went wrong saving the application.'}
               </p>
-              {notice.cause && <p className="failure-detail">{notice.cause}</p>}
+              <p>{failureReason(notice.reason, notice.kind === 'fill-failed' ? 'fill' : 'save')}</p>
             </div>
             <button
               type="button"
@@ -387,6 +375,7 @@ export function AutofillTab({
           </div>
         );
     }
+    return assertNever(notice);
   }
 
   return (
@@ -525,14 +514,14 @@ export function AutofillTab({
                     id="review-job-description"
                     className="page-text-input"
                     value={jobDescription.text}
-                    disabled={status === 'saving'}
+                    disabled={!editEnabled}
                     onChange={(e) => jobDescription.edit(e.target.value)}
                   />
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => handleAnalyze()}
-                    disabled={!jobDescription.text.trim() || status === 'saving'}
+                    disabled={!jobDescription.text.trim() || !editEnabled}
                   >
                     Re-analyze
                   </button>
@@ -570,7 +559,7 @@ export function AutofillTab({
 
             <CoverageReport coverage={coverage} />
 
-            {answers.length > 0 && (
+            {run && answers.length > 0 && (
               <div className="questions">
                 {answers.map((answer) => (
                   <div className="question-card-group" key={answer.fieldId}>
@@ -578,15 +567,15 @@ export function AutofillTab({
                       <span>{answer.question}</span>
                       <textarea
                         value={answer.answer}
-                        disabled={status === 'saving'}
-                        onChange={(e) => updateAnswer(answer.fieldId, e.target.value)}
+                        disabled={!editEnabled}
+                        onChange={(e) => updateAnswer(run.runId, answer.fieldId, e.target.value)}
                       />
                     </label>
                     {refinableFieldIds.has(answer.fieldId) && (
                       <button
                         type="button"
                         className="btn-link"
-                        disabled={status === 'saving'}
+                        disabled={!editEnabled}
                         onClick={() =>
                           onRefineAnswer(answer.fieldId, answer.question, answer.answer)
                         }
@@ -613,12 +602,12 @@ export function AutofillTab({
             reads "Fill form again" — a repeat, not the way forward. Ordering the repeat first put
             the recovery action where the next action belongs.
           */}
-          {(status === 'filled' || status === 'save-error' || status === 'saving') && (
+          {showSave && (
             <button
               type="button"
               className="btn-secondary"
               onClick={handleSaveApplication}
-              disabled={status === 'saving'}
+              disabled={!saveEnabled}
             >
               {status === 'saving' && <span className="spinner" />}
               {status === 'saving' ? 'Saving...' : 'Save application'}
@@ -628,12 +617,10 @@ export function AutofillTab({
             type="button"
             className="btn-primary"
             onClick={handleFill}
-            disabled={status === 'filling' || status === 'saving'}
+            disabled={!fillEnabled}
           >
             {status === 'filling' && <span className="spinner" />}
-            {status === 'filled' || status === 'saved' || status === 'save-error'
-              ? 'Fill form again'
-              : 'Fill form'}
+            {refill ? 'Fill form again' : 'Fill form'}
           </button>
         </footer>
       )}

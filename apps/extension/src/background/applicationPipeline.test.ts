@@ -6,18 +6,18 @@ import type {
   TailoredResume,
 } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import type { JobPageData } from '../lib/messages';
-import {
-  getPipelineRun,
-  patchPipelineRun,
-  reportDetectedPage,
-  type PipelineStatus,
-} from '../lib/tabStore';
+import { reportDetectedPage } from '../lib/tabStore/detectedPage';
+import { type PipelineStatus } from '../lib/run';
+import { getPipelineRun, patchPipelineRun } from '../lib/tabStore/pipelineRun';
 import type { BackendClient } from '../lib/backendClient';
+import { HttpError } from '../lib/callBackend';
 import type { FillPageCommand, PageClient } from '../lib/pageClient';
 import { recordReport } from './detectedFields';
 import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
+import { jobInfo, profile, tailoredResume } from '../lib/testFixtures';
 
 /**
  * Every test here goes through `runAnalysis`/`runFill`/`runSaveApplication` and reads the result out
@@ -32,35 +32,6 @@ import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './a
 const JOB_URL = 'https://boards.greenhouse.io/acme/jobs/1';
 const EARLIER = '2026-07-02T10:00:00.000Z';
 const LATER = '2026-08-03T10:00:00.000Z';
-
-const profile: Profile = {
-  fullName: 'Jane Doe',
-  email: 'jane@example.com',
-  phone: null,
-  location: null,
-  links: { linkedin: null, portfolio: null, github: null },
-  workExperience: [],
-  education: [],
-  skills: [],
-  stories: [],
-  screeningAnswers: {},
-  customAnswers: [],
-};
-
-const jobInfo: JobInfo = {
-  company: 'Acme',
-  team: null,
-  roleTitle: 'Senior Engineer',
-  seniority: 'Senior',
-  location: null,
-  requirements: [],
-  keywords: [],
-};
-
-const tailoredResume: TailoredResume = {
-  skills: [],
-  workExperience: [],
-};
 
 const questionField: DetectedField = {
   id: 'f-why',
@@ -145,17 +116,42 @@ function stubChrome(scanReply?: JobPageData) {
 }
 
 /**
+ * A fake answer that settles on a later tick and **rejects the moment its `AbortSignal` fires**.
+ *
+ * `mockResolvedValue` cannot express the only interesting thing about a cancellable call: that it
+ * is still outstanding when something aborts it. Every fake below used to resolve regardless of its
+ * signal, so the pipeline's abort paths never ran in this suite — and a Fill/Analyze ordering bug
+ * that wedged a run at `analyzing` in production kept a race test green here for a year. A fake
+ * that ignores the one input the code under test passes it is not a fake of that call.
+ */
+function cancellable<T>(value: T) {
+  return (...args: unknown[]): Promise<T> => {
+    const signal = args.find((arg): arg is AbortSignal => arg instanceof AbortSignal);
+    return new Promise<T>((resolve, reject) => {
+      const abort = () =>
+        reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
+      if (signal?.aborted) return abort();
+      signal?.addEventListener('abort', abort);
+      setTimeout(() => resolve(value), 0);
+    });
+  };
+}
+
+/**
  * A fake for each collaborator. Overrides are flat — `makeDeps({ scan: … })` — since a test only
  * ever wants to replace one behaviour, and naming which of the two objects it belongs to is noise.
+ *
+ * The five calls the pipeline hands a signal to are {@link cancellable}; the two write calls are
+ * not, because the Save Step is deliberately not cancellable (`background/runClaim.ts`).
  */
 function makeDeps(
   overrides: Partial<BackendClient> & Partial<PageClient> = {},
 ): PipelineDeps & { backend: BackendClient; page: PageClient } {
   const backend: BackendClient = {
-    extractJob: vi.fn().mockResolvedValue(jobInfo),
-    tailorResume: vi.fn().mockResolvedValue(tailoredResume),
-    answerQuestions: vi.fn().mockResolvedValue(answers),
-    renderResumePdf: vi.fn().mockResolvedValue(pdfBytes.buffer),
+    extractJob: vi.fn(cancellable(jobInfo)),
+    tailorResume: vi.fn(cancellable(tailoredResume)),
+    answerQuestions: vi.fn(cancellable(answers)),
+    renderResumePdf: vi.fn(cancellable(pdfBytes.buffer)),
     // The Ask tab's route, likewise never reached from the pipeline.
     answerChat: vi.fn().mockResolvedValue({ reply: 'unused' }),
     // The Profile routes are the panel's and options page's, not the pipeline's — present because
@@ -166,7 +162,7 @@ function makeDeps(
     updateApplication: vi.fn().mockResolvedValue({ id: 'application-1' }),
     // No past application for this URL by default, so the duplicate guard lets every other test
     // through untouched.
-    findApplicationDuplicates: vi.fn().mockResolvedValue({ count: 0, latest: null }),
+    findApplicationDuplicates: vi.fn(cancellable({ count: 0, latest: null })),
   };
   const page: PageClient = {
     fill: vi.fn().mockImplementation((_tabId: number, command: FillPageCommand) =>
@@ -590,7 +586,7 @@ describe('runAnalysis', () => {
     expect(await getPipelineRun(7)).toMatchObject({ status: 'analyze-error' });
   });
 
-  it("checkpoints the underlying cause alongside 'analyze-error', so the panel can report which call failed instead of a generic message", async () => {
+  it("checkpoints the safe backend classification alongside 'analyze-error'", async () => {
     stubChrome();
     // A required question, so the drafting call is actually made and can be the one that fails.
     await reportDetectedPage(7, 0, { fields: [questionField] });
@@ -598,8 +594,12 @@ describe('runAnalysis', () => {
       answerQuestions: vi
         .fn()
         .mockRejectedValue(
-          new Error(
+          new HttpError(
+            'http',
+            '/answer-questions',
             'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+            500,
+            { backendCode: 'invalid-model-output' },
           ),
         ),
     });
@@ -610,7 +610,7 @@ describe('runAnalysis', () => {
       status: 'analyze-error',
       failure: {
         step: 'analysis',
-        message: 'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+        kind: 'invalid-model-output',
       },
     });
   });
@@ -629,7 +629,7 @@ describe('runAnalysis', () => {
 
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'analyze-error',
-      failure: { step: 'analysis', message: 'session read failed' },
+      failure: { step: 'analysis', kind: 'unknown' },
     });
   });
 
@@ -694,6 +694,7 @@ describe('runAnalysis', () => {
           id: 'application-2',
           company: 'Acme',
           roleTitle: 'Senior Engineer',
+          stage: 'interviewing',
           createdAt: LATER,
         },
       }),
@@ -719,7 +720,13 @@ describe('runAnalysis', () => {
     const deps = makeDeps({
       findApplicationDuplicates: vi.fn().mockResolvedValue({
         count: 1,
-        latest: { id: 'application-1', company: 'Acme', roleTitle: 'X', createdAt: LATER },
+        latest: {
+          id: 'application-1',
+          company: 'Acme',
+          roleTitle: 'X',
+          stage: 'applied',
+          createdAt: LATER,
+        },
       }),
     });
 
@@ -730,9 +737,11 @@ describe('runAnalysis', () => {
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review', duplicateOf: null });
   });
 
-  it('analyzes anyway when the duplicate check itself fails', async () => {
+  it('analyzes anyway when the duplicate check itself fails, and says so once', async () => {
     // The guard is advisory — a backend that isn't running must not be why Analyze stops working.
+    // Swallowed, but not silently: the warning is the only trace that the candidate went unwarned.
     stubChrome();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const deps = makeDeps({
       findApplicationDuplicates: vi.fn().mockRejectedValue(new Error('backend unreachable')),
     });
@@ -740,6 +749,46 @@ describe('runAnalysis', () => {
     await runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', deps);
 
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review', duplicateOf: null });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('duplicate check failed, continuing without it: backend unreachable'),
+    );
+    warn.mockRestore();
+  });
+
+  /**
+   * The one failure the Duplicate Guard does *not* swallow. It fails open so a backend that can't
+   * answer never stops the candidate — but a cancellation is not the lookup failing, it is this run
+   * being superseded, and reading it as "no duplicates" would send a run the candidate replaced on
+   * to spend the model calls the guard exists to save.
+   */
+  it('does not read a superseded duplicate lookup as "no duplicates" and carry on', async () => {
+    stubChrome();
+    let releaseLookup!: () => void;
+    const lookup = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const staleDeps = makeDeps({
+      findApplicationDuplicates: vi.fn((_jobUrl: string, signal?: AbortSignal) =>
+        lookup.then(() => {
+          if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+          return { count: 0, latest: null };
+        }),
+      ),
+    });
+
+    const stale = runAnalysis(7, JOB_URL, profile, 'Old posting', staleDeps);
+    await vi.waitFor(() => expect(staleDeps.backend.findApplicationDuplicates).toHaveBeenCalled());
+    await runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    releaseLookup();
+    await stale;
+
+    expect(staleDeps.backend.extractJob).not.toHaveBeenCalled();
+    // The newer run owns the tab, and the superseded one reported nothing over it.
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobDescription: 'New posting',
+      failure: null,
+    });
   });
 
   it('skips the check when Chrome never exposed a URL for the tab', async () => {
@@ -1159,7 +1208,7 @@ describe('runFill', () => {
     await runSaveApplication(7, deps);
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'save-error',
-      failure: { step: 'save', message: 'backend unreachable' },
+      failure: { step: 'save', kind: 'unknown' },
     });
 
     await runSaveApplication(7, deps);
@@ -1215,6 +1264,82 @@ describe('runFill', () => {
     });
   });
 
+  /**
+   * The ordering fix in `background/runClaim.ts`. A Fill claims its run by awaiting an atomic
+   * transition; an Analyze dispatched in that gap takes the tab. Claiming the tab's cancellable
+   * slot *before* winning the run — which is what the Fill Step used to do — aborted the newer
+   * Analysis, whose own catch then read `signal.aborted` and returned silently, leaving the run at
+   * `analyzing` with `failure: null`: a spinner with no error and no retry.
+   *
+   * This is the case the suite could not see until its fakes honoured their signals.
+   */
+  it('leaves a newer Analysis running when a Fill claims the tab in the same tick', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+
+    const staleFill = runFill(7, profile, makeDeps());
+    const newerAnalysis = runAnalysis(7, JOB_URL, profile, 'New posting', makeDeps(), true);
+    await Promise.all([staleFill, newerAnalysis]);
+
+    expect(await getPipelineRun(7)).toMatchObject({
+      status: 'review',
+      jobDescription: 'New posting',
+      failure: null,
+    });
+  });
+
+  /**
+   * The same rule from the other side: a Fill that never wins the run must abort nobody. It used to
+   * claim the cancellable slot first and check the run afterwards, so a Fill commanded during an
+   * Analysis killed that Analysis and then declined to do anything itself.
+   */
+  it('does not cancel an Analysis in flight when a Fill it cannot claim arrives', async () => {
+    stubChrome();
+    const analysisDeps = makeDeps();
+    const analysis = runAnalysis(7, JOB_URL, profile, 'Senior Engineer at Acme...', analysisDeps);
+
+    const fillDeps = makeDeps();
+    await runFill(7, profile, fillDeps);
+    await analysis;
+
+    expect(fillDeps.page.fill).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review', failure: null });
+  });
+
+  /**
+   * `START_FILL` names the run the panel meant. Delivery can be delayed past a re-analysis, and a
+   * command that claims whichever run happens to be current by then fills a different posting's
+   * form with a different posting's answers. `UPDATE_RUN` has always carried its `runId`.
+   */
+  it('ignores a Fill that names a run the tab no longer holds', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const deps = makeDeps();
+
+    await runFill(7, profile, deps, 'a-run-from-a-previous-posting');
+
+    expect(deps.page.fill).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
+  });
+
+  /**
+   * The precondition is part of the claim, not something checked after it. Narrowing the run
+   * *after* `filling` was committed left a run that failed to narrow in a busy status with no
+   * controller, no failure and nothing that would ever move it off.
+   */
+  it('does not commit "filling" for a run whose Analysis Step data is missing', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const run = await getPipelineRun(7);
+    await patchPipelineRun(7, run!.runId, { tailoredResume: null });
+    const deps = makeDeps();
+
+    await runFill(7, profile, deps);
+
+    expect(deps.page.fill).not.toHaveBeenCalled();
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
+  });
+
   it('stops a Fill superseded during its scan before rendering or touching the page', async () => {
     stubChrome();
     await seedReviewRun(7, [resumeField]);
@@ -1242,12 +1367,10 @@ describe('runFill', () => {
     await seedReviewRun(7, [resumeField]);
     let renderSignal: AbortSignal | undefined;
     const staleDeps = makeDeps({
-      renderResumePdf: vi.fn(
-        (_profile: Profile, _resume: TailoredResume, signal?: AbortSignal) => {
-          renderSignal = signal;
-          return new Promise<ArrayBuffer>(() => {});
-        },
-      ),
+      renderResumePdf: vi.fn((_profile: Profile, _resume: TailoredResume, signal?: AbortSignal) => {
+        renderSignal = signal;
+        return new Promise<ArrayBuffer>(() => {});
+      }),
     });
 
     const staleFill = runFill(7, profile, staleDeps);
@@ -1409,7 +1532,7 @@ describe('the backend adapter', () => {
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...');
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/extract-job',
+      `${EXTENSION_BACKEND_ORIGIN}/extract-job`,
       expect.objectContaining({
         body: JSON.stringify({ jobDescription: 'Senior Engineer at Acme...' }),
       }),
@@ -1478,13 +1601,13 @@ describe('the backend adapter', () => {
       expect.any(Function),
     );
     expect(fetch).not.toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/applications?response=compact',
+      `${EXTENSION_BACKEND_ORIGIN}/applications?response=compact`,
       expect.anything(),
     );
 
     await runSaveApplication(7);
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/applications?response=compact',
+      `${EXTENSION_BACKEND_ORIGIN}/applications?response=compact`,
       expect.objectContaining({ method: 'POST' }),
     );
     expect(await getPipelineRun(7)).toMatchObject({

@@ -5,32 +5,29 @@
  *
  * Deliberately not part of the Application Pipeline. This flow needs no detected form and never
  * reads page content; it only follows the active tab's URL as a prefill until the candidate edits it.
- * It therefore doesn't go through `lib/tabStore.ts` or `PipelineStatus`. Its form and request state
+ * It therefore doesn't go through `lib/tabStore/` or `PipelineStatus`. Its form and request state
  * are local.
  *
  * The two calls are the ones that already exist: `POST /extract-job` for the job details, then
  * `POST /applications` with `source: 'manual'` and the base profile as the stored resume (see
  * `baseResumeOf`). No tailoring, no answers — the candidate wrote those themselves.
  */
-import {
-  baseResumeOf,
-  type DuplicateApplicationSummary,
-  type JobInfo,
-  type Profile,
-} from '@djobi/shared';
+import { baseResumeOf, failureMessage, type JobInfo, type Profile } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
+import { findDuplicate } from '../lib/duplicateGuard';
 import { formatAppliedDate } from '../lib/format';
+import type { DuplicateApplication } from '../lib/run';
 
 /** What the review screen is about: the extracted details, plus whatever the Duplicate Guard found. */
 interface Reviewed {
   jobInfo: JobInfo;
   /**
-   * Applications already saved against this job URL, most recent first — the Duplicate Guard's
-   * hits. Empty is the normal case. Warns, never blocks: logging the same posting twice is the
-   * candidate's call to make.
+   * What the candidate has already saved for this posting, or `null` — the Duplicate Guard's hit.
+   * `null` is the normal case. Warns, never blocks: logging the same posting twice is the
+   * candidate's call to make, and so is logging one the guard couldn't check.
    */
-  duplicates: DuplicateApplicationSummary;
+  duplicate: DuplicateApplication | null;
 }
 
 /**
@@ -50,11 +47,6 @@ type LogState =
   | ({ kind: 'saving' } & Reviewed)
   | ({ kind: 'save-error'; message: string } & Reviewed)
   | { kind: 'saved'; company: string; roleTitle: string };
-
-/** What went wrong, for the inline error line — an `HttpError` names the path and status. */
-function failureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error';
-}
 
 /**
  * `jobUrl` is required and validated as a URL by `NewApplicationSchema`, and it's also the key the
@@ -116,13 +108,18 @@ export function LogApplication({
     try {
       // Both requests go out together: the duplicate check doesn't depend on the extraction, and
       // serializing them would put a database round-trip behind a model call for no reason.
-      const [jobInfo, duplicates] = await Promise.all([
+      //
+      // Sharing a `Promise.all` with the extraction is only safe because the guard resolves rather
+      // than rejects — see `lib/duplicateGuard.ts`. Calling the lookup directly here, as this did,
+      // meant a backend hiccup on a *warning* rejected the pair and reported an extraction failure
+      // for an extraction that had succeeded, discarding the model call it had just paid for.
+      const [jobInfo, duplicate] = await Promise.all([
         client.extractJob(jobDescription),
-        client.findApplicationDuplicates(jobUrl.trim()),
+        findDuplicate(client, jobUrl.trim()),
       ]);
       setCompany(jobInfo.company);
       setRoleTitle(jobInfo.roleTitle);
-      setState({ kind: 'extracted', jobInfo, duplicates });
+      setState({ kind: 'extracted', jobInfo, duplicate });
     } catch (error) {
       setState({ kind: 'extract-error', message: failureMessage(error) });
     }
@@ -190,7 +187,7 @@ export function LogApplication({
   // than as three near-identical blocks.
   if (state.kind === 'extracted' || state.kind === 'saving' || state.kind === 'save-error') {
     const saving = state.kind === 'saving';
-    const { count, latest: mostRecent } = state.duplicates;
+    const duplicate = state.duplicate;
 
     return (
       <div className="review">
@@ -199,13 +196,13 @@ export function LogApplication({
           <h2>Check the details</h2>
         </div>
 
-        {mostRecent && (
+        {duplicate && (
           <div className="state error" role="alert">
             <span className="state-icon error">📮</span>
             <p>
-              {count > 1
-                ? `You've already logged this job ${count} times, most recently on ${formatAppliedDate(mostRecent.createdAt)}.`
-                : `You already logged this job on ${formatAppliedDate(mostRecent.createdAt)}.`}
+              {duplicate.count > 1
+                ? `You've already logged this job ${duplicate.count} times, most recently on ${formatAppliedDate(duplicate.createdAt)}.`
+                : `You already logged this job on ${formatAppliedDate(duplicate.createdAt)}.`}
             </p>
           </div>
         )}
@@ -247,7 +244,7 @@ export function LogApplication({
           disabled={saving || !company.trim() || !roleTitle.trim()}
         >
           {saving && <span className="spinner" />}
-          {saving ? 'Logging…' : mostRecent ? 'Log it anyway' : 'Log application'}
+          {saving ? 'Logging…' : duplicate ? 'Log it anyway' : 'Log application'}
         </button>
         <button
           type="button"

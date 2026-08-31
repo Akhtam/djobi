@@ -7,23 +7,14 @@
  * against a real route. And a wildcard origin would also pass any test that only checked the
  * dashboard's own origin is allowed, hence the disallowed-origin case.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-// Mirrors the module's full export surface. An incomplete factory is a time bomb: Vitest replaces
-// the whole module, so a route importing a name this object omits fails at import time with an
-// error that points at the route rather than at this mock.
-vi.mock('./db/applicationsRepository.js', () => ({
-  listApplications: vi.fn(async () => []),
-  listApplicationsByJobUrl: vi.fn(async () => []),
-  getApplicationDuplicateSummary: vi.fn(async () => ({ count: 0, latest: null })),
-  getApplicationById: vi.fn(async () => null),
-  saveApplication: vi.fn(),
-  updateApplication: vi.fn(),
-  updateApplicationStage: vi.fn(),
-  addApplicationNote: vi.fn(),
-}));
+// The assertions below run against `/applications`, a real route, because middleware registered
+// after the routes still answers a 404 while doing nothing for a request a route handles. An
+// in-memory store is what lets that route answer without a database — there is no module to mock.
+import { createTestApp } from './testApp.js';
 
-const { app } = await import('./app.js');
+const { app } = createTestApp();
 
 const DASHBOARD_ORIGIN = 'http://localhost:5174';
 

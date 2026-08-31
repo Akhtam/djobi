@@ -1,7 +1,9 @@
-import type { Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getDetectedPage, getJobContext, getPipelineRun, setPipelineRun } from '../lib/tabStore';
+import { getDetectedPage } from '../lib/tabStore/detectedPage';
+import { getJobContext } from '../lib/tabStore/jobContext';
+import { getPipelineRun, setPipelineRun } from '../lib/tabStore/pipelineRun';
 import { handleTypedMessage } from './router';
+import { pipelineRunFixture, profile } from '../lib/testFixtures';
 
 const {
   mockEnrichWithApiOracle,
@@ -25,20 +27,6 @@ vi.mock('./applicationPipeline', () => ({
   runFill: mockRunFill,
   runSaveApplication: mockRunSaveApplication,
 }));
-
-const profile: Profile = {
-  fullName: 'Jane Doe',
-  email: 'jane@example.com',
-  phone: null,
-  location: null,
-  links: { linkedin: null, portfolio: null, github: null },
-  workExperience: [],
-  education: [],
-  skills: [],
-  stories: [],
-  screeningAnswers: {},
-  customAnswers: [],
-};
 
 describe('handleTypedMessage', () => {
   let tabsSendMessage: ReturnType<typeof vi.fn>;
@@ -227,21 +215,21 @@ describe('handleTypedMessage', () => {
 
   it('returns the Fill task for rejection observation', async () => {
     const returned = handleTypedMessage(
-      { type: 'START_FILL', tabId: 7, profile },
+      { type: 'START_FILL', tabId: 7, profile, expectedRunId: 'run-1' },
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunFill).toHaveBeenCalledWith(7, profile, productionDeps);
+    expect(mockRunFill).toHaveBeenCalledWith(7, profile, productionDeps, 'run-1');
     await expect(returned).resolves.toBeUndefined();
   });
 
   it('returns the Save task for rejection observation', async () => {
     const returned = handleTypedMessage(
-      { type: 'START_SAVE_APPLICATION', tabId: 7 },
+      { type: 'START_SAVE_APPLICATION', tabId: 7, expectedRunId: 'run-1' },
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps);
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps, 'run-1');
     await expect(returned).resolves.toBeUndefined();
   });
 
@@ -251,7 +239,7 @@ describe('handleTypedMessage', () => {
 
     await expect(
       handleTypedMessage(
-        { type: 'START_FILL', tabId: 7, profile },
+        { type: 'START_FILL', tabId: 7, profile, expectedRunId: 'run-1' },
         {} as chrome.runtime.MessageSender,
       ),
     ).rejects.toBe(failure);
@@ -277,32 +265,33 @@ describe('handleTypedMessage', () => {
       sender,
       deps,
     );
-    handleTypedMessage({ type: 'START_FILL', tabId: 7, profile }, sender, deps);
-    handleTypedMessage({ type: 'START_SAVE_APPLICATION', tabId: 7 }, sender, deps);
+    handleTypedMessage(
+      { type: 'START_FILL', tabId: 7, profile, expectedRunId: 'run-1' },
+      sender,
+      deps,
+    );
+    handleTypedMessage(
+      { type: 'START_SAVE_APPLICATION', tabId: 7, expectedRunId: 'run-1' },
+      sender,
+      deps,
+    );
 
     expect(mockRunAnalysis.mock.calls[0][4]).toBe(deps);
-    expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps);
-    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps);
+    expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps, 'run-1');
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps, 'run-1');
   });
 
   it('routes UPDATE_RUN through the background store queue and scopes it to its run', async () => {
-    await setPipelineRun(7, {
-      runId: 'run-7',
-      status: 'review',
-      tabUrl: null,
-      jobPageData: { fields: [] },
-      jobDescription: 'original',
-      jobInfo: null,
-      tailoredResume: null,
-      answers: [],
-      coverage: [],
-      failure: null,
-      unresolvedRequiredFields: [],
-      filledFieldCount: 0,
-      fillOutcome: null,
-      applicationId: null,
-      duplicateOf: null,
-    });
+    await setPipelineRun(
+      7,
+      pipelineRunFixture({
+        runId: 'run-7',
+        tabUrl: null,
+        jobDescription: 'original',
+        jobInfo: null,
+        tailoredResume: null,
+      }),
+    );
 
     handleTypedMessage(
       {

@@ -5,6 +5,8 @@ import {
   ApplicationStageSchema,
   baseResumeOf,
   EducationSchema,
+  EMPTY_PROFILE,
+  parseProfile,
   JobInfoSchema,
   NewApplicationSchema,
   NewNoteSchema,
@@ -163,6 +165,49 @@ describe('ProfileSchema', () => {
     const invalidStory = { ...validStory, tags: undefined };
     const result = ProfileSchema.safeParse({ ...validProfile, stories: [invalidStory] });
     expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * The bootstrap every extension surface runs through. A Profile is read back from jsonb exactly as
+ * it was written, so one saved before a field existed comes back without it — and the options form
+ * binds straight to those keys, so a missing one used to crash the page on render.
+ */
+describe('parseProfile', () => {
+  it('completes a Profile saved before a field existed, rather than rejecting it', () => {
+    const { screeningAnswers: _screening, customAnswers: _custom, ...stored } = EMPTY_PROFILE;
+
+    const parsed = parseProfile({ ...stored, fullName: 'Jane Doe' });
+
+    expect(parsed).toMatchObject({
+      fullName: 'Jane Doe',
+      screeningAnswers: {},
+      customAnswers: [],
+    });
+  });
+
+  /**
+   * The nested case a single spread cannot reach, and why this is a function rather than a literal:
+   * a stored `links` object missing a key would leave `profile.links.github` undefined, which the
+   * options form binds to directly.
+   */
+  it('completes the nested links a top-level merge would leave half-filled', () => {
+    const parsed = parseProfile({ ...EMPTY_PROFILE, links: { linkedin: 'https://li/jane' } });
+
+    expect(parsed.links).toEqual({
+      linkedin: 'https://li/jane',
+      portfolio: null,
+      github: null,
+    });
+  });
+
+  it.each([
+    ['nothing stored yet', undefined],
+    ['a null column', null],
+    ['a value that is not a Profile at all', { fullName: 42, skills: 'TypeScript' }],
+  ])('falls back to an empty Profile for %s', (_label, stored) => {
+    // A blank form the candidate can fill in beats a page that won't load.
+    expect(parseProfile(stored)).toEqual(EMPTY_PROFILE);
   });
 });
 

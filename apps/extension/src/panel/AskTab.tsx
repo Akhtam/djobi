@@ -16,46 +16,27 @@
  * grow as the exchange goes on. That is why the *question* is typed into the composer too: a cold
  * ask's first message is the question, so there is one place to type on every turn instead of a
  * question box that stops mattering after the first send. It is sent as the request's `question`
- * rather than as a thread message — hence {@link Turn.opening}, which marks the one turn the
- * transcript shows but the wire doesn't carry.
+ * rather than as a thread message — hence `Turn.opening` in `panel/useAskThread.ts`, which marks
+ * the one turn the transcript shows but the wire doesn't carry.
  *
  * The thread is React-local and lost when the panel closes. A cold ask has no run to hang off, and
  * `PipelineRunState` is keyed by tab — the wrong shape for a conversation that may be about no page
  * at all. A seeded thread plausibly belongs there, but persisting only half the tab's threads would
  * make "will this still be here later" depend on where the thread started, which is worse than a
  * rule the candidate can hold: the answer applied to the run survives, the conversation doesn't.
+ *
+ * The conversation itself is `panel/useAskThread.ts`. What is left here is the surface: the
+ * transcript, the composer that grows with what is typed into it, the scroll, the clipboard and the
+ * copy. The two were one module, which meant the thread's rules — which turn is the scaffold's,
+ * which answers belong to a thread that has been replaced, what crosses the wire — could only be
+ * reached by rendering and typing.
  */
-import type { ChatMessage, JobInfo, Profile } from '@djobi/shared';
+import type { JobInfo, Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
+import { useAskThread, type AskSeed, type Turn } from './useAskThread';
 
-/** A question card handing this tab the answer it wants rewritten. */
-export interface AskSeed {
-  /** The run this field belongs to, so a tab switch cannot redirect the write-back. */
-  runId: string;
-  /** The run answer "Use this answer" writes back to. */
-  fieldId: string;
-  question: string;
-  currentAnswer: string;
-  /** Bumped by every hand-off, so refining the same card twice starts a fresh thread. */
-  token: number;
-}
-
-/** One turn as the transcript shows it — the assistant's carries the answer that turn produced. */
-interface Turn extends ChatMessage {
-  revisedAnswer?: string;
-  /**
-   * A turn the transcript shows but the request's `messages` must not carry: the question itself,
-   * on a cold ask. It travels as the `question` field, and sending it twice would show the model
-   * its own scaffold back as something the candidate said.
-   */
-  opening?: true;
-}
-
-/** What went wrong, for the inline error line — an `HttpError` names the path and status. */
-function failureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error';
-}
+export type { AskSeed } from './useAskThread';
 
 export function AskTab({
   client,
@@ -73,53 +54,33 @@ export function AskTab({
   /** The run currently visible in Autofill, or null when the active tab has none. */
   activeRunId: string | null;
   seed: AskSeed | null;
-  /** Writes an answer back onto the run's question card. Still hand-editable there afterward. */
-  onUseAnswer: (fieldId: string, answer: string) => void;
+  /**
+   * Writes an answer back onto the run's question card. Still hand-editable there afterward.
+   *
+   * `runId` travels with it: which run an answer belongs to is a fact about the answer, and
+   * checking it only while rendering left a write-back racing a tab switch able to land on
+   * whichever run was current when the click was handled.
+   */
+  onUseAnswer: (runId: string, fieldId: string, answer: string) => void;
 }) {
-  /** The question under discussion, fixed once the conversation has one. '' until then. */
-  const [question, setQuestion] = useState('');
-  /** The seeded draft and the field it came from, or null for a cold ask. */
-  const [refining, setRefining] = useState<{
-    runId: string;
-    fieldId: string;
-    currentAnswer: string;
-    jobInfo: JobInfo | null;
-  } | null>(null);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const thread = useAskThread(client, profile, jobInfo, seed);
+  const { subject, turns, pending, error } = thread;
   const [draft, setDraft] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Which answer was copied, not just that one was — otherwise every turn's button reads "Copied".
-  const [copiedAnswer, setCopiedAnswer] = useState<string | null>(null);
-  // Answers a turn that has already been superseded — by a reset, or by starting over — must not
-  // land in the thread they were not asked in.
-  const turnRequestRef = useRef(0);
+  // Which *turn's* answer was copied. Keyed by the answer's text, two turns that produced the same
+  // answer both read "Copied".
+  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
-  const conversing = question !== '' || refining !== null;
+  const refining = subject?.refining ?? null;
+  const conversing = subject !== null;
   const canUseAnswer = refining !== null && refining.runId === activeRunId;
 
-  /**
-   * Takes a hand-off from a question card. Keyed by the seed's token rather than its contents, so
-   * refining the same card again — same question, same draft — still starts a fresh thread instead
-   * of silently continuing the old one.
-   */
+  // The composer belongs to the surface, so clearing it does too — a new hand-off is a new thread.
   useEffect(() => {
     if (!seed) return;
-    ++turnRequestRef.current;
-    setQuestion(seed.question);
-    setRefining({
-      runId: seed.runId,
-      fieldId: seed.fieldId,
-      currentAnswer: seed.currentAnswer,
-      jobInfo,
-    });
-    setTurns([]);
     setDraft('');
-    setPending(false);
-    setError(null);
-    setCopiedAnswer(null);
+    setCopiedTurnId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the token is the hand-off signal
   }, [seed?.token]);
 
@@ -141,71 +102,24 @@ export function AskTab({
   }, [draft]);
 
   function startOver() {
-    ++turnRequestRef.current;
-    setQuestion('');
-    setRefining(null);
-    setTurns([]);
+    thread.startOver();
     setDraft('');
-    setPending(false);
-    setError(null);
-    setCopiedAnswer(null);
-  }
-
-  /**
-   * Sends one turn.
-   *
-   * `nextTurns` is the transcript as it will read while the request is in flight — the candidate's
-   * new message is already in it. Retrying after a failure passes the transcript unchanged, which
-   * is exactly what the route wants: it already ends with the turn that went unanswered.
-   */
-  async function send(askedQuestion: string, nextTurns: Turn[]) {
-    const requestToken = ++turnRequestRef.current;
-    setTurns(nextTurns);
-    setDraft('');
-    setError(null);
-    setPending(true);
-    try {
-      const { reply, revisedAnswer } = await client.answerChat({
-        profile,
-        question: askedQuestion,
-        jobInfo: refining?.jobInfo ?? jobInfo,
-        currentAnswer: refining?.currentAnswer,
-        // Only the two fields the wire contract carries, and only the turns it should carry: the
-        // opening question travels as `question`, and a turn's answer is display state here.
-        messages: nextTurns
-          .filter((turn) => !turn.opening)
-          .map(({ role, content }) => ({ role, content })),
-      });
-      if (requestToken !== turnRequestRef.current) return;
-      setTurns([...nextTurns, { role: 'assistant', content: reply, revisedAnswer }]);
-    } catch (failure) {
-      if (requestToken !== turnRequestRef.current) return;
-      // The candidate's turn stays in the transcript: it is what Retry re-sends.
-      setError(failureMessage(failure));
-    } finally {
-      if (requestToken === turnRequestRef.current) setPending(false);
-    }
+    setCopiedTurnId(null);
   }
 
   /** Sends what's in the composer — the question on the first turn of a cold ask, a message after. */
   function submit() {
     const text = draft.trim();
     if (!text || pending) return;
-
-    if (!question) {
-      // The question is passed explicitly: this state update won't have landed by the time the
-      // request is built.
-      setQuestion(text);
-      void send(text, [{ role: 'user', content: text, opening: true }]);
-      return;
-    }
-    void send(question, [...turns, { role: 'user', content: text }]);
+    thread.ask(text);
+    setDraft('');
   }
 
-  function copyAnswer(answer: string) {
-    void navigator.clipboard?.writeText(answer).then(
-      () => setCopiedAnswer(answer),
-      () => setCopiedAnswer(null),
+  function copyAnswer(turn: Turn) {
+    if (!turn.revisedAnswer) return;
+    void navigator.clipboard?.writeText(turn.revisedAnswer).then(
+      () => setCopiedTurnId(turn.id),
+      () => setCopiedTurnId(null),
     );
   }
 
@@ -215,7 +129,7 @@ export function AskTab({
         <div className="ask-subject">
           <div className="ask-subject-text">
             <span className="eyebrow">{refining ? 'Refining an answer' : 'Question'}</span>
-            <p>{question}</p>
+            <p>{subject.question}</p>
           </div>
           <button type="button" className="btn-link" onClick={startOver} disabled={pending}>
             New question
@@ -251,8 +165,8 @@ export function AskTab({
           </p>
         )}
 
-        {turns.map((turn, index) => (
-          <div className={`ask-msg ${turn.role}`} key={index}>
+        {turns.map((turn) => (
+          <div className={`ask-msg ${turn.role}`} key={turn.id}>
             <span className="ask-msg-role">{turn.role === 'user' ? 'You' : 'djobi'}</span>
             <div className="ask-msg-body">
               <p>{turn.content}</p>
@@ -265,17 +179,15 @@ export function AskTab({
                       <button
                         type="button"
                         className="btn-secondary"
-                        onClick={() => onUseAnswer(refining.fieldId, turn.revisedAnswer!)}
+                        onClick={() =>
+                          onUseAnswer(refining.runId, refining.fieldId, turn.revisedAnswer!)
+                        }
                       >
                         Use this answer
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      className="btn-link"
-                      onClick={() => copyAnswer(turn.revisedAnswer!)}
-                    >
-                      {copiedAnswer === turn.revisedAnswer ? 'Copied' : 'Copy answer'}
+                    <button type="button" className="btn-link" onClick={() => copyAnswer(turn)}>
+                      {copiedTurnId === turn.id ? 'Copied' : 'Copy answer'}
                     </button>
                   </div>
                 </div>
@@ -306,7 +218,7 @@ export function AskTab({
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void send(question, turns)}
+              onClick={thread.retry}
               disabled={pending}
             >
               Try again

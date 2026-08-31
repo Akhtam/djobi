@@ -9,8 +9,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeChrome } from '../lib/fakeChrome';
+import { TypedMessageEnvelopeSchema } from '../lib/messages';
 import type { PostingReadOutcome } from '../lib/postingReader';
-import { getJobContext, setJobContext } from '../lib/tabStore';
+import { getJobContext, setJobContext } from '../lib/tabStore/jobContext';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 
@@ -27,8 +28,7 @@ function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
     run: null,
     status: null,
     review: { pill: null, canReview: false, outcome: null, notices: [] },
-    begin: vi.fn(),
-    fail: vi.fn(),
+    beginCommand: vi.fn(() => vi.fn()),
     edit: vi.fn(),
     updateAnswer: vi.fn(),
     ...overrides,
@@ -63,12 +63,13 @@ describe('useJobDescription', () => {
     fakeChrome({
       tab: { id: 1, url: OVERVIEW },
       sendMessage: (message, callback) => {
-        if (message.type === 'UPDATE_JOB_CONTEXT') {
+        const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+        if (typedMessage.type === 'UPDATE_JOB_CONTEXT') {
           void setJobContext(
-            message.tabId as number,
-            message.tabUrl as string,
-            message.jobDescription as string,
-            message.source as 'manual' | 'scraped',
+            typedMessage.tabId,
+            typedMessage.tabUrl,
+            typedMessage.jobDescription,
+            typedMessage.source,
           );
         }
         callback(undefined);

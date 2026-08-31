@@ -4,10 +4,11 @@ import type {
   FillOutcome,
   PipelineFailure,
   PipelineRunState,
-  PipelineStatus,
-} from './tabStore';
+  RunFailureKind,
+} from './state';
+import { canReview, type PipelineStatus } from './status';
 
-export type { FillOutcome } from './tabStore';
+export type { FillOutcome } from './state';
 
 /**
  * What an Application Pipeline run means to the person watching it.
@@ -84,8 +85,7 @@ export type RunNotice =
       slot: 'outcome';
       tone: 'error';
       action: 'retry-analysis';
-      /** The underlying cause, or `null` for a failure that arrived without one. */
-      cause: string | null;
+      reason: RunFailureKind;
     }
   | { kind: 'fill-unverified'; slot: 'outcome'; tone: 'error' }
   | { kind: 'no-fields-detected'; slot: 'outcome'; tone: 'error' }
@@ -109,14 +109,14 @@ export type RunNotice =
       slot: 'inline';
       tone: 'error';
       action: 'retry-fill';
-      cause: string | null;
+      reason: RunFailureKind;
     }
   | {
       kind: 'save-failed';
       slot: 'inline';
       tone: 'error';
       action: 'retry-save';
-      cause: string | null;
+      reason: RunFailureKind;
     };
 
 export interface RunReview {
@@ -180,26 +180,40 @@ function readingOf(
 ): Omit<RunReview, 'notices'> {
   if (!status) return IDLE;
 
+  // Whether a review still stands is the status table's answer, not a second one written here —
+  // `background/applicationPipeline.ts` starts a Fill Step from the same fact, and the two used to
+  // be separate lists kept in agreement by a comment. What is left below is the *wording*, which is
+  // genuinely this module's.
+  const reviewable = canReview(status);
+
   switch (status) {
     case 'analyzing':
-      return { pill: { label: 'Analyzing…', tone: 'busy' }, canReview: false, outcome: null };
+      return { pill: { label: 'Analyzing…', tone: 'busy' }, canReview: reviewable, outcome: null };
 
     case 'analyze-error':
-      return { pill: { label: 'Error', tone: 'error' }, canReview: false, outcome: null };
+      return { pill: { label: 'Error', tone: 'error' }, canReview: reviewable, outcome: null };
 
     // Not an error — the run did exactly what it should have. The pill says what happened; the
     // panel's own branch offers the way past it.
     case 'duplicate':
-      return { pill: { label: 'Already applied', tone: 'error' }, canReview: false, outcome: null };
+      return {
+        pill: { label: 'Already applied', tone: 'error' },
+        canReview: reviewable,
+        outcome: null,
+      };
 
     case 'review':
-      return { pill: { label: 'Ready to fill', tone: 'success' }, canReview: true, outcome: null };
+      return {
+        pill: { label: 'Ready to fill', tone: 'success' },
+        canReview: reviewable,
+        outcome: null,
+      };
 
     case 'filling':
-      return { pill: { label: 'Filling…', tone: 'busy' }, canReview: true, outcome: null };
+      return { pill: { label: 'Filling…', tone: 'busy' }, canReview: reviewable, outcome: null };
 
     case 'fill-error':
-      return { pill: { label: 'Error', tone: 'error' }, canReview: true, outcome: null };
+      return { pill: { label: 'Error', tone: 'error' }, canReview: reviewable, outcome: null };
 
     case 'filled':
     case 'saving':
@@ -217,7 +231,7 @@ function readingOf(
             : status === 'saved'
               ? { label: 'Saved', tone: 'success' as const }
               : OUTCOME_PILL[outcome];
-      return { pill, canReview: true, outcome };
+      return { pill, canReview: reviewable, outcome };
     }
   }
 }
@@ -270,7 +284,7 @@ function noticesFor(
   failure: PipelineFailure | null,
   outcome: FillOutcome | null,
 ): RunNotice[] {
-  const cause = failure?.message ?? null;
+  const reason = failure?.kind ?? 'unknown';
 
   // A guard the run did not get past. Each ends the run where it stands, so none of them can be
   // accompanied by a fill outcome.
@@ -292,12 +306,12 @@ function noticesFor(
 
   if (status === 'analyze-error') {
     return [
-      { kind: 'analyze-failed', slot: 'outcome', tone: 'error', action: 'retry-analysis', cause },
+      { kind: 'analyze-failed', slot: 'outcome', tone: 'error', action: 'retry-analysis', reason },
     ];
   }
 
   if (status === 'fill-error') {
-    return [{ kind: 'fill-failed', slot: 'inline', tone: 'error', action: 'retry-fill', cause }];
+    return [{ kind: 'fill-failed', slot: 'inline', tone: 'error', action: 'retry-fill', reason }];
   }
 
   if (!outcome) return [];
@@ -315,7 +329,7 @@ function noticesFor(
       slot: 'inline',
       tone: 'error',
       action: 'retry-save',
-      cause,
+      reason,
     });
   }
 
@@ -327,13 +341,12 @@ function noticesFor(
  * the Fill Step went, and every Run Notice the run raises.
  *
  * @param status - The *reconciled* status; see {@link readingOf}.
- * @param failure - The reconciled cause that goes with `status`; see {@link noticesFor}. Defaults to
- *   the run's own, which is the whole answer for a caller with no delivery failure to apply.
+ * @param failure - The reconciled cause that goes with `status`; see {@link noticesFor}.
  */
 export function reviewOf(
   run: PipelineRunState | null,
-  status: PipelineStatus | null = run?.status ?? null,
-  failure: PipelineFailure | null = run?.failure ?? null,
+  status: PipelineStatus | null,
+  failure: PipelineFailure | null,
 ): RunReview {
   const reading = readingOf(run, status);
   return { ...reading, notices: noticesFor(run, status, failure, reading.outcome) };

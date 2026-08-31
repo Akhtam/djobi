@@ -1,6 +1,11 @@
+/**
+ * The production `ProfileStore`: Neon Postgres through Drizzle. The interface, and the in-memory
+ * adapter this is held against, are in `db/profileStore.ts`.
+ */
 import { ProfileSchema, type Profile } from '@djobi/shared';
 import { eq } from 'drizzle-orm';
 import { db } from './client.js';
+import type { ProfileStore } from './profileStore.js';
 import { profiles } from './schema.js';
 
 export const PROFILE_ID = '00000000-0000-4000-8000-000000000001';
@@ -15,7 +20,7 @@ export const PROFILE_ID = '00000000-0000-4000-8000-000000000001';
  * one. Parsing repairs fields with explicit schema defaults; missing required data still fails here,
  * naming the field instead of surfacing somewhere further downstream.
  */
-export async function getProfile(): Promise<Profile | null> {
+async function getProfile(): Promise<Profile | null> {
   const [row] = await db.select().from(profiles).where(eq(profiles.id, PROFILE_ID));
   if (!row) return null;
   return ProfileSchema.parse(row.data);
@@ -24,7 +29,7 @@ export async function getProfile(): Promise<Profile | null> {
 /**
  * Atomically inserts or updates the singleton row in one database statement.
  */
-export async function saveProfile(profile: Profile): Promise<Profile> {
+async function saveProfile(profile: Profile): Promise<Profile> {
   await db
     .insert(profiles)
     .values({ id: PROFILE_ID, data: profile })
@@ -35,3 +40,8 @@ export async function saveProfile(profile: Profile): Promise<Profile> {
 
   return profile;
 }
+
+export const postgresProfileStore: ProfileStore = {
+  get: getProfile,
+  save: saveProfile,
+};

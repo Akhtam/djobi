@@ -17,20 +17,9 @@ vi.mock('./llm/extractJob.js', () => ({
   extractJob: (...args: unknown[]) => mockExtractJob(...args),
 }));
 
-// Mirrors the module's full export surface — an incomplete factory fails at import time inside the
-// route rather than here.
-vi.mock('./db/applicationsRepository.js', () => ({
-  listApplications: vi.fn(async () => []),
-  listApplicationsByJobUrl: vi.fn(async () => []),
-  getApplicationDuplicateSummary: vi.fn(async () => ({ count: 0, latest: null })),
-  getApplicationById: vi.fn(async () => null),
-  saveApplication: vi.fn(),
-  updateApplication: vi.fn(),
-  updateApplicationStage: vi.fn(),
-  addApplicationNote: vi.fn(),
-}));
+const { createTestApp } = await import('./testApp.js');
 
-const { app } = await import('./app.js');
+const { app } = createTestApp();
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
@@ -60,11 +49,16 @@ describe('request body validation', () => {
 
   it('returns 500 with a generic message when a valid body causes a runtime error, never leaking internal details', async () => {
     mockExtractJob.mockReset().mockRejectedValue(new Error('model unavailable'));
+    // `app.onError` logs this deliberately — that a genuine fault *is* logged is the point of the
+    // case below. Silenced here so a green run doesn't print a stack trace nobody needs to read.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const res = await post(JSON.stringify({ jobDescription: 'a real posting' }));
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'Internal server error' });
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it('does not log a rejected body as a server failure', async () => {

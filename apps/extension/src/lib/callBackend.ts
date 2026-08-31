@@ -9,12 +9,13 @@
  *
  * There is deliberately no relay through the service worker for the pages' calls. A relay would rest
  * on the premise that extension pages can't reach the backend themselves, and they can:
- * `manifest.ts` grants `http://127.0.0.1:5391/*` to the whole extension, not just the worker. Adding
- * one back would put a second message protocol on `background/service-worker.ts`'s single
+ * `manifest.ts` grants the configured backend origin to the whole extension, not just the worker.
+ * Adding one back would put a second message protocol on `background/service-worker.ts`'s single
  * `onMessage` listener and give the codebase two origins and two error types where one of each does.
  */
 import { createHttpTransport } from '@djobi/http-client';
 import type { ZodTypeAny, ZodTypeOf } from '@djobi/shared';
+import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 
 export { HttpError, type HttpErrorKind } from '@djobi/http-client';
 
@@ -26,8 +27,6 @@ export { HttpError, type HttpErrorKind } from '@djobi/http-client';
  * doesn't grant is blocked before it is sent. When ADR-0001's deployed Worker lands, these two move
  * together. The dashboard has the opposite constraint and takes a relative `/api`.
  */
-const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
-
 /**
  * Ninety seconds is well clear of what these calls actually cost (the slowest measured, a cold
  * `/extract-job`, was ~17s) and short enough that a hung one becomes a visible error the candidate
@@ -36,7 +35,7 @@ const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
 const REQUEST_TIMEOUT_MS = 90_000;
 
 const transport = createHttpTransport({
-  baseUrl: BACKEND_ORIGIN,
+  baseUrl: EXTENSION_BACKEND_ORIGIN,
   timeoutMs: REQUEST_TIMEOUT_MS,
   // Not the dashboard's wording, which sends the reader straight to `pnpm dev:backend`. In the
   // extension a `TypeError` out of `fetch` has a second common cause with a different fix: the
@@ -44,7 +43,7 @@ const transport = createHttpTransport({
   // edit takes effect only on reload). Naming the backend alone sent candidates to restart one that
   // was already running.
   unreachableMessage:
-    `Couldn't reach the djobi backend at ${BACKEND_ORIGIN}. Check it's running (pnpm dev:backend), ` +
+    `Couldn't reach the djobi backend at ${EXTENSION_BACKEND_ORIGIN}. Check it's running (pnpm dev:backend), ` +
     `and that the extension was reloaded since its host permissions last changed.`,
 });
 

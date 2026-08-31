@@ -1,26 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { PipelineRunState, PipelineStatus } from './tabStore';
-import { reviewOf } from './runReview';
+import { reviewOf, type PipelineRunState, type PipelineStatus } from '.';
+import { pipelineRunFixture } from '../testFixtures';
+
+/** Stored-state convenience for projection tests; production callers must pass reconciled values. */
+function reviewStored(run: PipelineRunState | null) {
+  return reviewOf(run, run?.status ?? null, run?.failure ?? null);
+}
 
 function run(overrides: Partial<PipelineRunState> = {}): PipelineRunState {
-  return {
-    runId: 'run-1',
-    status: 'review',
-    tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-    jobPageData: { fields: [] },
+  return pipelineRunFixture({
     jobDescription: 'A job',
     jobInfo: null,
     tailoredResume: null,
-    answers: [],
-    coverage: [],
-    failure: null,
-    unresolvedRequiredFields: [],
-    filledFieldCount: 0,
-    fillOutcome: null,
-    applicationId: null,
-    duplicateOf: null,
     ...overrides,
-  };
+  });
 }
 
 const filled = (overrides: Partial<PipelineRunState>) =>
@@ -28,13 +21,18 @@ const filled = (overrides: Partial<PipelineRunState>) =>
 
 describe('reviewOf', () => {
   it('shows nothing at all before a run exists', () => {
-    expect(reviewOf(null)).toEqual({ pill: null, canReview: false, outcome: null, notices: [] });
+    expect(reviewStored(null)).toEqual({
+      pill: null,
+      canReview: false,
+      outcome: null,
+      notices: [],
+    });
   });
 
   it('reads a run that wrote nothing as a failure, though its status says filled', () => {
     // The case the run's own `status` cannot express: every step "succeeded" because the Fill Step
     // was handed no fields at all.
-    const review = reviewOf(filled({ filledFieldCount: 0, fillOutcome: 'no-fields-detected' }));
+    const review = reviewStored(filled({ filledFieldCount: 0, fillOutcome: 'no-fields-detected' }));
 
     expect(review.outcome).toBe('no-fields-detected');
     expect(review.pill).toEqual({ label: 'No form found', tone: 'error' });
@@ -44,7 +42,7 @@ describe('reviewOf', () => {
     // Same `filledFieldCount: 0`, opposite problems — and the panel's advice differs, so these must
     // not collapse into one outcome. Here the re-scan saw the form perfectly well and the page
     // rejected every write.
-    const review = reviewOf(
+    const review = reviewStored(
       filled({
         filledFieldCount: 0,
         fillOutcome: 'nothing-filled',
@@ -69,7 +67,7 @@ describe('reviewOf', () => {
   });
 
   it('reads a run that left a required field unresolved as incomplete', () => {
-    const review = reviewOf(
+    const review = reviewStored(
       filled({
         fillOutcome: 'incomplete',
         unresolvedRequiredFields: [
@@ -91,14 +89,14 @@ describe('reviewOf', () => {
   });
 
   it('reads a run that filled everything as complete', () => {
-    const review = reviewOf(filled({}));
+    const review = reviewStored(filled({}));
 
     expect(review.outcome).toBe('complete');
     expect(review.pill).toEqual({ label: 'Done', tone: 'success' });
   });
 
   it('never reads an unanswered fill as success, regardless of its optimistic counts', () => {
-    const review = reviewOf(filled({ filledFieldCount: 3, fillOutcome: 'unverified' }));
+    const review = reviewStored(filled({ filledFieldCount: 3, fillOutcome: 'unverified' }));
 
     expect(review.outcome).toBe('unverified');
     expect(review.pill).toEqual({ label: 'Fill unverified', tone: 'error' });
@@ -113,7 +111,7 @@ describe('reviewOf', () => {
       'filling',
       'fill-error',
     ] as const) {
-      expect(reviewOf(run({ status })).outcome).toBeNull();
+      expect(reviewStored(run({ status })).outcome).toBeNull();
     }
   });
 
@@ -131,8 +129,8 @@ describe('reviewOf', () => {
     ];
     const drops: PipelineStatus[] = ['analyzing', 'analyze-error', 'duplicate'];
 
-    for (const status of keeps) expect(reviewOf(run({ status })).canReview).toBe(true);
-    for (const status of drops) expect(reviewOf(run({ status })).canReview).toBe(false);
+    for (const status of keeps) expect(reviewStored(run({ status })).canReview).toBe(true);
+    for (const status of drops) expect(reviewStored(run({ status })).canReview).toBe(false);
   });
 
   it('gives every status a pill, so a new one cannot silently render a blank header', () => {
@@ -149,7 +147,7 @@ describe('reviewOf', () => {
       'saved',
     ];
 
-    for (const status of statuses) expect(reviewOf(run({ status })).pill).not.toBeNull();
+    for (const status of statuses) expect(reviewStored(run({ status })).pill).not.toBeNull();
   });
 
   it('follows the status it is given, so the pill agrees with the tab it describes', () => {
@@ -158,25 +156,25 @@ describe('reviewOf', () => {
     // and the background's own write it said "Ready to fill" over a body that said "Filling…".
     const stored = run({ status: 'review' });
 
-    expect(reviewOf(stored, 'filling').pill).toEqual({ label: 'Filling…', tone: 'busy' });
-    expect(reviewOf(stored, 'fill-error').pill).toEqual({ label: 'Error', tone: 'error' });
+    expect(reviewOf(stored, 'filling', null).pill).toEqual({ label: 'Filling…', tone: 'busy' });
+    expect(reviewOf(stored, 'fill-error', null).pill).toEqual({ label: 'Error', tone: 'error' });
   });
 
   it('pills an optimistic status raised before any run exists to store it', () => {
     // The first Analyze on a page. An idle guard on the run rather than the status left the header
     // blank while the body already said "Analyzing…".
-    expect(reviewOf(null, 'analyzing').pill).toEqual({ label: 'Analyzing…', tone: 'busy' });
+    expect(reviewOf(null, 'analyzing', null).pill).toEqual({ label: 'Analyzing…', tone: 'busy' });
   });
 
   it('reads a completed run through its own outcome even when the status is optimistic', () => {
     const stored = filled({ filledFieldCount: 0, fillOutcome: 'nothing-filled' });
 
-    expect(reviewOf(stored, 'saving').pill).toEqual({ label: 'Saving...', tone: 'busy' });
-    expect(reviewOf(stored, 'saving').outcome).toBe('nothing-filled');
+    expect(reviewOf(stored, 'saving', null).pill).toEqual({ label: 'Saving...', tone: 'busy' });
+    expect(reviewOf(stored, 'saving', null).outcome).toBe('nothing-filled');
   });
   it('raises no notice for a run that has nothing to report yet', () => {
     for (const status of ['analyzing', 'review', 'filling'] as const) {
-      expect(reviewOf(run({ status })).notices).toEqual([]);
+      expect(reviewStored(run({ status })).notices).toEqual([]);
     }
   });
 
@@ -190,7 +188,7 @@ describe('reviewOf', () => {
       count: 2,
     };
 
-    expect(reviewOf(run({ status: 'duplicate', duplicateOf })).notices).toEqual([
+    expect(reviewStored(run({ status: 'duplicate', duplicateOf })).notices).toEqual([
       {
         kind: 'duplicate',
         slot: 'outcome',
@@ -204,11 +202,11 @@ describe('reviewOf', () => {
   it('raises no duplicate notice without the application it is about', () => {
     // The panel used to guard this by hand as `status === 'duplicate' && duplicateOf`. A notice
     // that cannot exist without its payload makes the second half of that guard structural.
-    expect(reviewOf(run({ status: 'duplicate', duplicateOf: null })).notices).toEqual([]);
+    expect(reviewStored(run({ status: 'duplicate', duplicateOf: null })).notices).toEqual([]);
   });
 
-  it('carries the cause of a failed analysis, and offers the retry', () => {
-    const failure = { step: 'analysis' as const, message: 'POST /extract-job failed (500): boom' };
+  it('carries the classified reason for a failed analysis, and offers the retry', () => {
+    const failure = { step: 'analysis' as const, kind: 'invalid-model-output' as const };
 
     expect(
       reviewOf(run({ status: 'analyze-error', failure }), 'analyze-error', failure).notices,
@@ -218,20 +216,20 @@ describe('reviewOf', () => {
         slot: 'outcome',
         tone: 'error',
         action: 'retry-analysis',
-        cause: 'POST /extract-job failed (500): boom',
+        reason: 'invalid-model-output',
       },
     ]);
   });
 
   it('reports a failed step whose cause never arrived, rather than nothing at all', () => {
     // A delivery failure the panel raised itself can be message-only; a malformed run can have none.
-    expect(reviewOf(run({ status: 'analyze-error' })).notices).toEqual([
+    expect(reviewStored(run({ status: 'analyze-error' })).notices).toEqual([
       {
         kind: 'analyze-failed',
         slot: 'outcome',
         tone: 'error',
         action: 'retry-analysis',
-        cause: null,
+        reason: 'unknown',
       },
     ]);
   });
@@ -240,10 +238,10 @@ describe('reviewOf', () => {
     // The same reconciliation `status` gets: a delivery failure from this panel outranks whatever
     // the stored run last checkpointed. Deriving them separately is how the body once showed an
     // error the header knew nothing about.
-    const stored = run({ status: 'review', failure: { step: 'fill', message: 'stale' } });
+    const stored = run({ status: 'review', failure: { step: 'fill', kind: 'unknown' } });
     const delivery = {
       step: 'analysis' as const,
-      message: 'Could not reach the background worker',
+      kind: 'temporary' as const,
     };
 
     expect(reviewOf(stored, 'analyze-error', delivery).notices).toEqual([
@@ -252,21 +250,21 @@ describe('reviewOf', () => {
         slot: 'outcome',
         tone: 'error',
         action: 'retry-analysis',
-        cause: 'Could not reach the background worker',
+        reason: 'temporary',
       },
     ]);
   });
 
   it('reports each fill outcome as its own notice, carrying what its copy has to interpolate', () => {
-    expect(reviewOf(filled({ fillOutcome: 'unverified' })).notices).toEqual([
+    expect(reviewStored(filled({ fillOutcome: 'unverified' })).notices).toEqual([
       { kind: 'fill-unverified', slot: 'outcome', tone: 'error' },
     ]);
 
     expect(
-      reviewOf(filled({ fillOutcome: 'no-fields-detected', filledFieldCount: 0 })).notices,
+      reviewStored(filled({ fillOutcome: 'no-fields-detected', filledFieldCount: 0 })).notices,
     ).toEqual([{ kind: 'no-fields-detected', slot: 'outcome', tone: 'error' }]);
 
-    expect(reviewOf(filled({ fillOutcome: 'complete', filledFieldCount: 4 })).notices).toEqual([
+    expect(reviewStored(filled({ fillOutcome: 'complete', filledFieldCount: 4 })).notices).toEqual([
       { kind: 'fill-complete', slot: 'outcome', tone: 'success', filledFieldCount: 4 },
     ]);
   });
@@ -274,7 +272,7 @@ describe('reviewOf', () => {
   it("counts the fields the run's own re-scan saw on a page that kept nothing", () => {
     // What separates the two zero-filled outcomes for the reader: this page's form was found, and
     // it is the run's checkpointed scan that says how much of it there was.
-    const review = reviewOf(
+    const review = reviewStored(
       filled({
         fillOutcome: 'nothing-filled',
         filledFieldCount: 0,
@@ -322,7 +320,8 @@ describe('reviewOf', () => {
     ];
 
     expect(
-      reviewOf(filled({ fillOutcome: 'incomplete', unresolvedRequiredFields: unresolved })).notices,
+      reviewStored(filled({ fillOutcome: 'incomplete', unresolvedRequiredFields: unresolved }))
+        .notices,
     ).toEqual([
       {
         kind: 'fill-incomplete',
@@ -336,7 +335,7 @@ describe('reviewOf', () => {
   it('replaces the completed-fill notice once the application is saved', () => {
     // "Filled 4 fields. Save the application when you're ready." is not true of a saved run, and
     // the two notices would otherwise sit one above the other saying different things.
-    const review = reviewOf(
+    const review = reviewStored(
       filled({ status: 'saved', fillOutcome: 'complete', filledFieldCount: 4 }),
     );
 
@@ -357,7 +356,7 @@ describe('reviewOf', () => {
         elementRole: 'combobox' as const,
       },
     ];
-    const review = reviewOf(
+    const review = reviewStored(
       filled({ status: 'saved', fillOutcome: 'incomplete', unresolvedRequiredFields: unresolved }),
     );
 
@@ -373,7 +372,7 @@ describe('reviewOf', () => {
   });
 
   it('puts a step retry beside the review it is retried from, not above it', () => {
-    const failure = { step: 'fill' as const, message: 'FILL_FORM failed' };
+    const failure = { step: 'fill' as const, kind: 'invalid-page' as const };
     const review = reviewOf(run({ status: 'fill-error', failure }), 'fill-error', failure);
 
     expect(review.notices).toEqual([
@@ -382,7 +381,7 @@ describe('reviewOf', () => {
         slot: 'inline',
         tone: 'error',
         action: 'retry-fill',
-        cause: 'FILL_FORM failed',
+        reason: 'invalid-page',
       },
     ]);
   });
@@ -390,7 +389,7 @@ describe('reviewOf', () => {
   it('reports how the fill went alongside the save that failed, in that order', () => {
     // A save-error run has a completed Fill Step behind it, so both are news: the outcome above the
     // review, the retry inside it.
-    const failure = { step: 'save' as const, message: 'POST /applications failed (500)' };
+    const failure = { step: 'save' as const, kind: 'backend-unreachable' as const };
     const review = reviewOf(
       filled({ status: 'save-error', fillOutcome: 'complete', filledFieldCount: 4, failure }),
       'save-error',
@@ -404,7 +403,7 @@ describe('reviewOf', () => {
         slot: 'inline',
         tone: 'error',
         action: 'retry-save',
-        cause: 'POST /applications failed (500)',
+        reason: 'backend-unreachable',
       },
     ]);
   });
@@ -427,7 +426,7 @@ describe('reviewOf', () => {
     ];
 
     for (const status of statuses) {
-      const review = reviewOf(filled({ status, duplicateOf: null }));
+      const review = reviewStored(filled({ status, duplicateOf: null }));
       for (const notice of review.notices) expect(tones.has(notice.tone)).toBe(true);
     }
   });

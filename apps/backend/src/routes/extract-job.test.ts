@@ -6,7 +6,10 @@ vi.mock('../llm/extractJob.js', () => ({
   extractJob: mockExtractJob,
 }));
 
-const { app } = await import('../app.js');
+const { createTestApp } = await import('../testApp.js');
+
+// These routes touch no store; the in-memory ones exist only so the app can be built.
+const { app } = createTestApp();
 
 const sampleJobInfo = {
   company: 'Acme',

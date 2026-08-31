@@ -5,73 +5,18 @@
  * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
  * named.
  */
-import {
-  EMPTY_PROFILE,
-  parseProfile,
-  SCREENING_TOPICS,
-  type Profile,
-  type ScreeningAnswers,
-  type ScreeningTopic,
-} from '@djobi/shared';
+import { EMPTY_PROFILE, parseProfile, SCREENING_TOPICS, type Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import type { BackendClient } from '../lib/backendClient';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
-
-/**
- * Sets one screening topic's answer, dropping the key entirely when cleared. An empty string would
- * otherwise read as "answered, with nothing" — and `preparedAnswerFor` would have to special-case
- * it — where the absence of a key already means the unambiguous thing: not answered.
- */
-function withScreeningAnswer(
-  answers: ScreeningAnswers,
-  topic: ScreeningTopic,
-  value: string,
-): ScreeningAnswers {
-  if (!value.trim()) {
-    const { [topic]: _removed, ...rest } = answers;
-    return rest;
-  }
-  return { ...answers, [topic]: value };
-}
-
-/**
- * A cleared optional field, as `null` rather than `''`.
- *
- * The Profile's optional scalars — `phone`, `location`, every `links` entry, an education's `field`
- * and `graduationYear`, a role's `endDate` — are typed `string | null`, and `null` is what the rest
- * of the system reads as "not provided". Binding an input straight to `e.target.value` wrote `''`
- * into all of them instead, so a field the candidate cleared came back as present-but-empty and had
- * to be treated as absent by everything downstream that cared.
- *
- * This is the same rule {@link withScreeningAnswer} applies to screening answers, which stated it
- * first and stated it alone: one module held two contradictory ideas of what empty means.
- */
-function orNull(value: string): string | null {
-  return value.trim() ? value : null;
-}
-
-/** Repairs legacy Story identity without changing IDs that are already unambiguous. */
-function normalizeStoryIds(stories: Profile['stories']): Profile['stories'] {
-  const counts = new Map<string, number>();
-  const usedIds = new Set<string>();
-  for (const story of stories) {
-    if (story.id.trim()) {
-      counts.set(story.id, (counts.get(story.id) ?? 0) + 1);
-      usedIds.add(story.id);
-    }
-  }
-
-  return stories.map((story) => {
-    if (story.id.trim() && counts.get(story.id) === 1) return story;
-
-    let id = crypto.randomUUID();
-    while (usedIds.has(id)) id = crypto.randomUUID();
-    usedIds.add(id);
-    return { ...story, id };
-  });
-}
+import {
+  normalizeProfileDraft,
+  optionalText,
+  storyTags,
+  withScreeningAnswer,
+} from './profileDraft';
 
 /** The Profile keys holding an editable list of entries. */
 type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
@@ -239,14 +184,7 @@ export function App({ client }: { client: BackendClient }) {
     setStatus(null);
     setSaving(true);
     const savedRevision = editRevisionRef.current;
-    const toSave: Profile = {
-      ...profile,
-      workExperience: profile.workExperience.map((we) => ({
-        ...we,
-        bullets: we.bullets.filter((bullet) => bullet.trim() !== ''),
-      })),
-      stories: normalizeStoryIds(profile.stories),
-    };
+    const toSave = normalizeProfileDraft(profile, () => crypto.randomUUID());
     client
       .saveProfile(toSave)
       .then((saved) => {
@@ -322,7 +260,7 @@ export function App({ client }: { client: BackendClient }) {
                 type="tel"
                 autoComplete="tel"
                 value={profile.phone ?? ''}
-                onChange={(e) => setProfile({ ...profile, phone: orNull(e.target.value) })}
+                onChange={(e) => setProfile({ ...profile, phone: optionalText(e.target.value) })}
               />
             </div>
 
@@ -332,7 +270,7 @@ export function App({ client }: { client: BackendClient }) {
                 id="location"
                 autoComplete="address-level2"
                 value={profile.location ?? ''}
-                onChange={(e) => setProfile({ ...profile, location: orNull(e.target.value) })}
+                onChange={(e) => setProfile({ ...profile, location: optionalText(e.target.value) })}
               />
             </div>
           </div>
@@ -351,7 +289,7 @@ export function App({ client }: { client: BackendClient }) {
                 onChange={(e) =>
                   setProfile({
                     ...profile,
-                    links: { ...profile.links, linkedin: orNull(e.target.value) },
+                    links: { ...profile.links, linkedin: optionalText(e.target.value) },
                   })
                 }
               />
@@ -367,7 +305,7 @@ export function App({ client }: { client: BackendClient }) {
                 onChange={(e) =>
                   setProfile({
                     ...profile,
-                    links: { ...profile.links, portfolio: orNull(e.target.value) },
+                    links: { ...profile.links, portfolio: optionalText(e.target.value) },
                   })
                 }
               />
@@ -383,7 +321,7 @@ export function App({ client }: { client: BackendClient }) {
                 onChange={(e) =>
                   setProfile({
                     ...profile,
-                    links: { ...profile.links, github: orNull(e.target.value) },
+                    links: { ...profile.links, github: optionalText(e.target.value) },
                   })
                 }
               />
@@ -474,7 +412,7 @@ export function App({ client }: { client: BackendClient }) {
                   <input
                     id={`weEndDate${n}`}
                     value={entry.endDate ?? ''}
-                    onChange={(e) => work.update(index, { endDate: orNull(e.target.value) })}
+                    onChange={(e) => work.update(index, { endDate: optionalText(e.target.value) })}
                   />
                 </div>
 
@@ -555,7 +493,9 @@ export function App({ client }: { client: BackendClient }) {
                   <input
                     id={`eduField${n}`}
                     value={entry.field ?? ''}
-                    onChange={(e) => education.update(index, { field: orNull(e.target.value) })}
+                    onChange={(e) =>
+                      education.update(index, { field: optionalText(e.target.value) })
+                    }
                   />
                 </div>
 
@@ -565,7 +505,7 @@ export function App({ client }: { client: BackendClient }) {
                     id={`eduGradYear${n}`}
                     value={entry.graduationYear ?? ''}
                     onChange={(e) =>
-                      education.update(index, { graduationYear: orNull(e.target.value) })
+                      education.update(index, { graduationYear: optionalText(e.target.value) })
                     }
                   />
                 </div>
@@ -678,10 +618,7 @@ export function App({ client }: { client: BackendClient }) {
                     value={entry.tags.join(', ')}
                     onChange={(e) =>
                       stories.update(index, {
-                        tags: e.target.value
-                          .split(',')
-                          .map((tag) => tag.trim())
-                          .filter(Boolean),
+                        tags: storyTags(e.target.value),
                       })
                     }
                   />

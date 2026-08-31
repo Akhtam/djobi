@@ -13,7 +13,12 @@
  * {@link Mutation} for why the revert is per-record and why it reports whether the write landed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
+import {
+  failureMessage,
+  type Application,
+  type ApplicationStage,
+  type NewNote,
+} from '@djobi/shared';
 import type { DashboardClient } from './dashboardClient';
 
 export interface ApplicationStore {
@@ -58,10 +63,6 @@ interface Mutation<Result> {
   rollback(application: Application, previous: Application): Application;
 }
 
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 export function useApplicationStore(client: DashboardClient): ApplicationStore {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +87,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
       })
       .catch((err: unknown) => {
         if (!current) return;
-        setLoadError(messageOf(err));
+        setLoadError(failureMessage(err));
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -185,7 +186,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
           setApplications((current) =>
             current.map((a) => (a.id === id ? rollback(a, previous) : a)),
           );
-          setWriteError(messageOf(err));
+          setWriteError(failureMessage(err));
         }
         return false;
       }

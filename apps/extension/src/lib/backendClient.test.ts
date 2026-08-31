@@ -345,3 +345,90 @@ describe('httpBackendClient.answerChat', () => {
     expect(vi.mocked(callBackend).mock.calls[0][1]).not.toHaveProperty('jobInfo');
   });
 });
+
+/**
+ * What must not leave the browser.
+ *
+ * Each of these four routes takes a *projection* of the Profile — the fields that ground one model
+ * call — and the projection is stated once, as a `.pick` in `@djobi/shared`'s `wire.ts`. These
+ * cases name the fields that stay behind, so widening one of those picks fails here rather than
+ * quietly starting to send a phone number to a model.
+ *
+ * They are worth having beside the exact-body cases above, which would also catch a leak: those
+ * read as "this is the body", and this reads as "this is the rule". A `satisfies` annotation, which
+ * is what these bodies used to be built with, passes both readings and enforces neither — a full
+ * Profile is structurally assignable to every one of these narrow types.
+ */
+describe('Profile projections', () => {
+  /** A Profile with something in every field a projection is supposed to leave behind. */
+  const disclosing: Profile = {
+    ...profile,
+    phone: '+1 555 0100',
+    location: 'Berlin, Germany',
+    screeningAnswers: { work_authorization: 'Yes', sponsorship_required: 'No' },
+    customAnswers: [{ question: 'Why us?', answer: 'Because of the product.' }],
+    skills: ['TypeScript'],
+  };
+
+  /** Every key in a body, at any depth, so a field nested under `profile` is caught too. */
+  function keysIn(value: unknown): string[] {
+    if (Array.isArray(value)) return value.flatMap(keysIn);
+    if (value === null || typeof value !== 'object') return [];
+    return Object.entries(value).flatMap(([key, member]) => [key, ...keysIn(member)]);
+  }
+
+  /**
+   * The Profile projection a route actually sent.
+   *
+   * Scoped to the `profile` half rather than the whole body on purpose: a Job Info carries its own
+   * `location`, and asserting over the body would make this pass or fail on the *job's* fields.
+   */
+  async function profileSentBy(send: () => Promise<unknown>, binary = false): Promise<unknown> {
+    await send();
+    const call = binary
+      ? vi.mocked(callBackendBinary).mock.calls[0]
+      : vi.mocked(callBackend).mock.calls[0];
+    return (call[binary ? 1 : 2] as { profile: unknown }).profile;
+  }
+
+  it('grounds tailoring in work history alone — no contact details, no screening declarations', async () => {
+    const sent = await profileSentBy(() => httpBackendClient.tailorResume(disclosing, jobInfo));
+
+    expect(keysIn(sent)).not.toContain('phone');
+    expect(keysIn(sent)).not.toContain('location');
+    expect(keysIn(sent)).not.toContain('email');
+    expect(keysIn(sent)).not.toContain('screeningAnswers');
+    expect(keysIn(sent)).not.toContain('customAnswers');
+  });
+
+  it.each([
+    ['answerQuestions', () => httpBackendClient.answerQuestions(disclosing, jobInfo, [])],
+    [
+      'answerChat',
+      () => httpBackendClient.answerChat({ profile: disclosing, question: 'Why?', messages: [] }),
+    ],
+  ])('keeps contact details and screening declarations out of %s', async (_name, send) => {
+    const sent = await profileSentBy(send);
+
+    // A screening answer is a legal declaration, matched onto a form's own options by
+    // `splitPreparedQuestions` and never handed to a model to draft around.
+    expect(keysIn(sent)).not.toContain('screeningAnswers');
+    expect(keysIn(sent)).not.toContain('phone');
+    expect(keysIn(sent)).not.toContain('email');
+    expect(keysIn(sent)).not.toContain('fullName');
+  });
+
+  it('sends the PDF renderer contact details and no stories', async () => {
+    // The one route that *should* see them: they are printed in the resume header. Stated here so
+    // the rule above reads as a projection rather than as "never send contact details".
+    const sent = await profileSentBy(
+      () => httpBackendClient.renderResumePdf(disclosing, tailoredResume),
+      true,
+    );
+
+    expect(keysIn(sent)).toContain('phone');
+    expect(keysIn(sent)).toContain('location');
+    expect(keysIn(sent)).not.toContain('stories');
+    expect(keysIn(sent)).not.toContain('screeningAnswers');
+  });
+});

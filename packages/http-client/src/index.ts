@@ -25,7 +25,7 @@
  * {@link HttpTransportOptions.baseUrl}.
  */
 import { BackendErrorBodySchema } from '@djobi/shared';
-import type { ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
+import type { BackendErrorCode, ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 
 /**
  * Why a call failed, as a closed set.
@@ -57,11 +57,15 @@ export class HttpError extends Error {
      * `'network'` message written for the common cause, and without the original there is nothing
      * left to tell a genuinely unreachable backend from a request `fetch` refused to construct.
      */
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; backendCode?: BackendErrorCode },
   ) {
     super(message, options);
     this.name = 'HttpError';
+    this.backendCode = options?.backendCode;
   }
+
+  /** A safe semantic classification supplied by the backend, independent of transport kind. */
+  readonly backendCode?: BackendErrorCode;
 }
 
 export interface HttpTransportOptions {
@@ -131,20 +135,20 @@ function issuesFrom(error: ZodError): string {
  * text for anything that isn't JSON at all — a crash outside the backend's own error handling, or
  * nothing listening on the port, still produces a readable message.
  */
-function reasonFrom(raw: string): string {
+function errorBodyFrom(raw: string): { reason: string; backendCode?: BackendErrorCode } {
   try {
     const parsed: unknown = JSON.parse(raw);
 
     const body = BackendErrorBodySchema.safeParse(parsed);
-    if (body.success) return body.data.error;
+    if (body.success) return { reason: body.data.error, backendCode: body.data.code };
 
     // A route that put an `Error`-like object under `error` rather than a string.
     const message = (parsed as { error?: { message?: unknown } })?.error?.message;
-    if (typeof message === 'string') return message;
+    if (typeof message === 'string') return { reason: message };
   } catch {
     // Not JSON — fall through and use the raw body below.
   }
-  return raw.trim().slice(0, 300) || 'empty response body';
+  return { reason: raw.trim().slice(0, 300) || 'empty response body' };
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -228,22 +232,23 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
       const readBody = <R>(consume: Promise<R>) => Promise.race([consume, abortedWith(deadline)]);
 
       if (!response.ok) {
-        const reason = reasonFrom(await readBody(response.text()));
+        const { reason, backendCode } = errorBodyFrom(await readBody(response.text()));
         throw new HttpError(
           'http',
           path,
           `${method} ${path} failed (${response.status}): ${reason}`,
           response.status,
+          { backendCode },
         );
       }
 
       return await readBody(read(response));
     } catch (error) {
-      if (error instanceof HttpError) throw error;
-
       // The caller cancelled. Theirs to know about, not a failure to report — and checked before
       // the deadline, because an aborted call can surface as either.
       if (signal?.aborted) throw error;
+
+      if (error instanceof HttpError) throw error;
 
       if (timeoutSignal.aborted) {
         throw new HttpError(

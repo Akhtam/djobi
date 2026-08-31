@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EXTENSION_BACKEND_ORIGIN } from './extensionConfig';
 import manifestExport from './manifest';
 
 // manifest.ts passes defineManifest a plain object, not a function/Promise, so this is safe.
@@ -16,7 +17,7 @@ describe('manifest', () => {
   });
 
   it('still declares the local backend host permission', () => {
-    expect(manifest.host_permissions).toContain('http://127.0.0.1:5391/*');
+    expect(manifest.host_permissions).toContain(`${EXTENSION_BACKEND_ORIGIN}/*`);
   });
 
   it("injects the content script on every http(s) page, not a fixed ATS-domain allowlist, so white-labeled ATS embeds on a company's own domain (e.g. Ashby on superhuman.com) are reachable", () => {

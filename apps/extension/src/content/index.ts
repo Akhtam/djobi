@@ -4,7 +4,7 @@
  * changes (see `detect.ts`); answers `SCRAPE_JOB_DESCRIPTION` with focused posting text,
  * `SCAN_PAGE` with a fresh form scan, and `FILL_FORM` by filling the page.
  */
-import type { ContentCommandMessage, JobPageData } from '../lib/messages';
+import { notify, type ContentCommandMessage, type JobPageData } from '../lib/messages';
 import { detectFields } from './detectFields';
 import { watchForJobApplicationPage } from './detect';
 import { fillPage } from './fillForm';
@@ -18,8 +18,8 @@ function scan(): JobPageData {
 /**
  * The last payload sent, so a re-scan triggered by an unrelated DOM change (a React re-render, the
  * candidate typing) doesn't re-send an identical report. Each report bumps the frame's revision in
- * `lib/tabStore.ts`, which invalidates any in-flight API-oracle enrichment for that frame — so
- * chattering here would keep cancelling the enrichment before it can ever land.
+ * `lib/tabStore/detectedPage.ts`, which invalidates any in-flight API-oracle enrichment for that
+ * frame — so chattering here would keep cancelling the enrichment before it can ever land.
  */
 let lastReported: string | null = null;
 
@@ -44,7 +44,7 @@ function report(): void {
   if (payload === lastReported) return;
 
   try {
-    chrome.runtime.sendMessage({ type: 'REPORT_JOB_PAGE', ...data });
+    notify({ type: 'REPORT_JOB_PAGE', ...data });
     lastReported = payload;
   } catch (error) {
     // The `orphaned` flag, rather than `stopWatching()` alone: a page that already qualified is

@@ -4,18 +4,9 @@ import {
   NewApplicationSchema,
   UpdateApplicationStageRequestSchema,
 } from '@djobi/shared';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import type { ApplicationStore } from '../db/applicationStore.js';
 import { parseBody } from '../requestBody.js';
-import {
-  addApplicationNote,
-  getApplicationDuplicateSummary,
-  getApplicationById,
-  listApplications,
-  listApplicationsByJobUrl,
-  saveApplication,
-  updateApplication,
-  updateApplicationStage,
-} from '../db/applicationsRepository.js';
 
 /**
  * Everything addressed at `/applications`: reading saved snapshots, creating one after an explicit
@@ -25,84 +16,95 @@ import {
  * Tracking gets its own paths rather than riding on `PATCH /applications/:id`. That route's body is
  * an `ApplicationSnapshot`, which excludes stage and notes precisely so re-saving an autofill can't
  * overwrite them — folding them back in would undo the separation.
+ *
+ * `store` is a parameter for the same reason `client` is a prop in the extension's pages: these
+ * routes are exercised end to end against an in-memory adapter, and `index.ts` is the only place the
+ * Postgres one is named. See `db/applicationStore.ts`.
  */
-export const applicationsRoute = new Hono();
+export function applicationsRoute(store: ApplicationStore): Hono {
+  const route = new Hono();
 
-async function requireApplication(id: string) {
-  const application = await getApplicationById(id);
-  if (!application) throw new Error(`Application ${id} disappeared after a successful write`);
-  return application;
+  /**
+   * Answers a write: the compact acknowledgement the route already produced, or the full row read
+   * back, or a 404 when there was nothing to write to.
+   *
+   * The four writes below each spelled this out — the `if (!result) 404`, the `response=compact`
+   * check, and the read-back — which is one protocol restated four times and got the last part wrong
+   * in all four. The read-back used to `throw` when the row was gone, and `app.onError` turns a
+   * throw into a 500: a row deleted between a write and its read-back was reported as "the backend
+   * is broken", down the same channel as the model failing and Postgres being unreachable. It is the
+   * same condition the line above it already answers with a 404, arriving a few milliseconds later.
+   *
+   * `result` is what the store returned — `null` when no row has that id.
+   */
+  async function writeResponse<Result extends { id: string }>(
+    c: Context,
+    result: Result | null,
+  ): Promise<Response> {
+    if (!result) return c.json({ error: 'Application not found' }, 404);
+    if (c.req.query('response') === 'compact') return c.json(result);
+
+    const application = await store.byId(result.id);
+    if (!application) return c.json({ error: 'Application not found' }, 404);
+    return c.json(application);
+  }
+
+  /**
+   * `?jobUrl=` keeps the legacy full-row lookup. Current clients add `response=compact` to get the
+   * Duplicate Guard's summary without loading snapshots. This remains a query rather than its own
+   * path because `/applications/…` is already claimed by the `:id` route below.
+   */
+  route.get('/applications', async (c) => {
+    const jobUrl = c.req.query('jobUrl');
+    if (jobUrl) {
+      return c.json(
+        c.req.query('response') === 'compact'
+          ? await store.duplicateSummary(jobUrl)
+          : await store.byJobUrl(jobUrl),
+      );
+    }
+    return c.json(await store.list());
+  });
+
+  route.get('/applications/:id', async (c) => {
+    const application = await store.byId(c.req.param('id'));
+    if (!application) {
+      return c.json({ error: 'Application not found' }, 404);
+    }
+    return c.json(application);
+  });
+
+  route.post('/applications', async (c) =>
+    writeResponse(c, await store.create(await parseBody(c, NewApplicationSchema))),
+  );
+
+  route.patch('/applications/:id', async (c) =>
+    writeResponse(
+      c,
+      await store.replaceSnapshot(c.req.param('id'), await parseBody(c, ApplicationSnapshotSchema)),
+    ),
+  );
+
+  /**
+   * Registered before `PATCH /applications/:id`? No — order doesn't matter between these two,
+   * because `/applications/:id/stage` has a path segment the `:id` pattern can't match. It is
+   * written after the plain `:id` routes only to keep the file's read order (reads, create, update,
+   * then tracking).
+   */
+  route.patch('/applications/:id/stage', async (c) => {
+    const { stage } = await parseBody(c, UpdateApplicationStageRequestSchema);
+    return writeResponse(c, await store.setStage(c.req.param('id'), stage));
+  });
+
+  route.post('/applications/:id/notes', async (c) =>
+    writeResponse(
+      c,
+      await store.appendNote(
+        c.req.param('id'),
+        await parseBody(c, AddApplicationNoteRequestSchema),
+      ),
+    ),
+  );
+
+  return route;
 }
-
-/**
- * `?jobUrl=` keeps the legacy full-row lookup. Current clients add `response=compact` to get the
- * Duplicate Guard's summary without loading snapshots. This remains a query rather than its own
- * path because `/applications/…` is already claimed by the `:id` route below.
- */
-applicationsRoute.get('/applications', async (c) => {
-  const jobUrl = c.req.query('jobUrl');
-  if (jobUrl) {
-    return c.json(
-      c.req.query('response') === 'compact'
-        ? await getApplicationDuplicateSummary(jobUrl)
-        : await listApplicationsByJobUrl(jobUrl),
-    );
-  }
-  return c.json(await listApplications());
-});
-
-applicationsRoute.get('/applications/:id', async (c) => {
-  const application = await getApplicationById(c.req.param('id'));
-  if (!application) {
-    return c.json({ error: 'Application not found' }, 404);
-  }
-  return c.json(application);
-});
-
-applicationsRoute.post('/applications', async (c) => {
-  const parsed = await parseBody(c, NewApplicationSchema);
-
-  const saved = await saveApplication(parsed);
-  return c.json(c.req.query('response') === 'compact' ? saved : await requireApplication(saved.id));
-});
-
-applicationsRoute.patch('/applications/:id', async (c) => {
-  const parsed = await parseBody(c, ApplicationSnapshotSchema);
-
-  const updated = await updateApplication(c.req.param('id'), parsed);
-  if (!updated) {
-    return c.json({ error: 'Application not found' }, 404);
-  }
-  return c.json(
-    c.req.query('response') === 'compact' ? updated : await requireApplication(updated.id),
-  );
-});
-
-/**
- * Registered before `PATCH /applications/:id`? No — order doesn't matter between these two, because
- * `/applications/:id/stage` has a path segment the `:id` pattern can't match. It is written after
- * the plain `:id` routes only to keep the file's read order (reads, create, update, then tracking).
- */
-applicationsRoute.patch('/applications/:id/stage', async (c) => {
-  const parsed = await parseBody(c, UpdateApplicationStageRequestSchema);
-
-  const updated = await updateApplicationStage(c.req.param('id'), parsed.stage);
-  if (!updated) {
-    return c.json({ error: 'Application not found' }, 404);
-  }
-  return c.json(
-    c.req.query('response') === 'compact' ? updated : await requireApplication(updated.id),
-  );
-});
-
-applicationsRoute.post('/applications/:id/notes', async (c) => {
-  const parsed = await parseBody(c, AddApplicationNoteRequestSchema);
-
-  const updated = await addApplicationNote(c.req.param('id'), parsed);
-  if (!updated) {
-    return c.json({ error: 'Application not found' }, 404);
-  }
-  return c.json(
-    c.req.query('response') === 'compact' ? updated : await requireApplication(updated.id),
-  );
-});

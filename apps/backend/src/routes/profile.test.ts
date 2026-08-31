@@ -1,17 +1,15 @@
+/**
+ * The two Profile routes, driven against in-memory persistence.
+ *
+ * The assertions are about what is *stored* rather than about which function was called with what:
+ * a saved Profile is asserted by reading it back, and a rejected body by the store still holding
+ * what it held before. That is the whole reason the seam exists — `expect(mockSaveProfile).not
+ * .toHaveBeenCalled()` proves a call didn't happen, which is a weaker claim than the profile being
+ * unchanged, and it goes on passing if the route starts writing through some other path.
+ */
 import type { Profile } from '@djobi/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const { mockGetProfile, mockSaveProfile } = vi.hoisted(() => ({
-  mockGetProfile: vi.fn(),
-  mockSaveProfile: vi.fn(),
-}));
-
-vi.mock('../db/profileRepository.js', () => ({
-  getProfile: mockGetProfile,
-  saveProfile: mockSaveProfile,
-}));
-
-const { app } = await import('../app.js');
+import { describe, expect, it } from 'vitest';
+import { createTestApp } from '../testApp.js';
 
 const sampleProfile: Profile = {
   fullName: 'Jane Doe',
@@ -27,14 +25,11 @@ const sampleProfile: Profile = {
   customAnswers: [],
 };
 
-describe('GET /profile', () => {
-  beforeEach(() => {
-    mockGetProfile.mockReset();
-    mockSaveProfile.mockReset();
-  });
+const JSON_HEADERS = { 'content-type': 'application/json' };
 
+describe('GET /profile', () => {
   it('returns the stored profile', async () => {
-    mockGetProfile.mockResolvedValue(sampleProfile);
+    const { app } = createTestApp({ profile: sampleProfile });
 
     const res = await app.request('/profile');
 
@@ -43,7 +38,7 @@ describe('GET /profile', () => {
   });
 
   it('returns null when no profile has been saved yet', async () => {
-    mockGetProfile.mockResolvedValue(null);
+    const { app } = createTestApp();
 
     const res = await app.request('/profile');
 
@@ -53,35 +48,31 @@ describe('GET /profile', () => {
 });
 
 describe('POST /profile', () => {
-  beforeEach(() => {
-    mockGetProfile.mockReset();
-    mockSaveProfile.mockReset();
-  });
-
-  it('saves a valid profile and returns it', async () => {
-    mockSaveProfile.mockResolvedValue(sampleProfile);
+  it('saves a valid profile, returns it, and stores it for the next read', async () => {
+    const { app, profileStore } = createTestApp();
 
     const res = await app.request('/profile', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: JSON_HEADERS,
       body: JSON.stringify(sampleProfile),
     });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleProfile);
-    expect(mockSaveProfile).toHaveBeenCalledWith(sampleProfile);
+    expect(await profileStore.get()).toEqual(sampleProfile);
   });
 
-  it('returns 400 and does not save when the body fails validation', async () => {
+  it('returns 400 and leaves the stored profile alone when the body fails validation', async () => {
+    const { app, profileStore } = createTestApp({ profile: sampleProfile });
     const { fullName: _fullName, ...invalidProfile } = sampleProfile;
 
     const res = await app.request('/profile', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: JSON_HEADERS,
       body: JSON.stringify(invalidProfile),
     });
 
     expect(res.status).toBe(400);
-    expect(mockSaveProfile).not.toHaveBeenCalled();
+    expect(await profileStore.get()).toEqual(sampleProfile);
   });
 });

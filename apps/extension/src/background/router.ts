@@ -1,7 +1,7 @@
-import { parseDetectedFields } from '@djobi/shared';
 import { withWorkerKeptAlive } from '../lib/keepAlive';
 import type { TypedMessage } from '../lib/messages';
-import { patchPipelineRun, setJobContext } from '../lib/tabStore';
+import { setJobContext } from '../lib/tabStore/jobContext';
+import { patchPipelineRun } from '../lib/tabStore/pipelineRun';
 import { recordReport } from './detectedFields';
 import {
   productionDeps,
@@ -12,7 +12,7 @@ import {
 } from './applicationPipeline';
 
 /**
- * Routes a coordination message, using `lib/tabStore.ts` as the hand-off point.
+ * Routes a coordination message, using `lib/tabStore/` as the hand-off point.
  *
  * Returns the routed task so the service worker can observe terminal rejection. The service-worker
  * listener deliberately does not return this promise to Chrome, and this takes no `sendResponse`,
@@ -42,10 +42,9 @@ export function handleTypedMessage(
       const frameId = sender.frameId ?? 0;
       if (tabId === undefined) return Promise.resolve();
 
-      // Parsed, not trusted. A content script keeps running against the build that injected it, so
-      // after an extension reload a tab left open reports the field shape *that* build produced.
-      // `content/index.ts` already handles the send side of this case; this is the receive side.
-      const fields = parseDetectedFields(message.fields);
+      // Already parsed at the service-worker boundary. A content script keeps running against the
+      // build that injected it, so the protocol version rejects an old shape after an extension
+      // reload before this router sees it.
       // The *sending document's* URL, not the tab's. These differ in the case that matters: an ATS
       // form is usually an iframe on a company's own careers domain, so `sender.tab.url` is
       // `careers.acme.com` while the form — and the posting id every oracle parses out of it — is at
@@ -58,12 +57,12 @@ export function handleTypedMessage(
       // Storing the report and upgrading it from the platform's API are one sequence, and
       // `background/detectedFields.ts` owns it — including the part this dispatch is in no position
       // to know, that a run started before the oracle answers must wait for it.
-      return recordReport(tabId, frameId, fields, url);
+      return recordReport(tabId, frameId, message.fields, url);
     }
 
     case 'START_ANALYSIS':
-      // `runAnalysis` checkpoints progress into `tabStore` itself, so the panel reads results from
-      // there rather than from a reply it would have to stay open to receive.
+      // `runAnalysis` checkpoints progress into `tabStore/pipelineRun.ts` itself, so the panel
+      // reads results from there rather than from a reply it would have to stay open to receive.
       return withWorkerKeptAlive(() =>
         runAnalysis(
           message.tabId,
@@ -76,10 +75,14 @@ export function handleTypedMessage(
       );
 
     case 'START_FILL':
-      return withWorkerKeptAlive(() => runFill(message.tabId, message.profile, deps));
+      return withWorkerKeptAlive(() =>
+        runFill(message.tabId, message.profile, deps, message.expectedRunId),
+      );
 
     case 'START_SAVE_APPLICATION':
-      return withWorkerKeptAlive(() => runSaveApplication(message.tabId, deps));
+      return withWorkerKeptAlive(() =>
+        runSaveApplication(message.tabId, deps, message.expectedRunId),
+      );
 
     case 'UPDATE_RUN':
       return patchPipelineRun(message.tabId, message.runId, message.updates).then(() => undefined);

@@ -2,12 +2,26 @@
  * The local backend's routes as typed calls, and the only place in the extension that names a
  * backend path.
  *
- * Each method builds its body against the shared request schema from `@djobi/shared`'s `wire.ts` —
- * the same schema the route parses — via `satisfies`. That is what this module is for: it turns a
- * drift between what the extension sends and what the backend accepts into a compile error, in the
- * one place where the two halves meet. They used to be related only by both being written
- * correctly, and when that stopped being true (a `knownAnswer` the route's private schema didn't
- * declare, silently stripped by zod) nothing on either side could notice.
+ * Each method builds its body by **parsing** the shared request schema from `@djobi/shared`'s
+ * `wire.ts` — the same schema the route parses. That is what this module is for: it turns a drift
+ * between what the extension sends and what the backend accepts into a failure at the one place
+ * where the two halves meet. They used to be related only by both being written correctly, and when
+ * that stopped being true (a `knownAnswer` the route's private schema didn't declare, silently
+ * stripped by zod) nothing on either side could notice.
+ *
+ * **The parse is what minimizes what leaves the browser, and a `satisfies` cannot do it.** Three of
+ * these routes take a *projection* of the Profile — the fields that ground one model call — and each
+ * projection used to be spelled out here as an object literal, a second time as a `.pick` in
+ * `wire.ts`, and a third time as a `relevantProfile` in the backend operation. `satisfies` checks
+ * assignability and strips nothing: a full Profile is structurally assignable to every one of these
+ * narrow types, so `{ profile, jobInfo } satisfies TailorResumeRequest` compiles and sends the
+ * candidate's phone number, location and screening declarations to the model. `Schema.parse` builds
+ * the body the schema describes and drops the rest, so the projection is enforced where it is
+ * stated instead of being re-typed by hand at each end.
+ *
+ * Widening one of those `.pick`s is therefore a **disclosure change**: the field starts crossing to
+ * the backend and reaching the model with no further edit. `backendClient.test.ts` asserts the
+ * absent ones by name.
  *
  * The same guarantee now runs the other way too. `callBackend` takes the response schema as a
  * required argument, so every route here states what it expects back and gets it checked — where
@@ -22,29 +36,29 @@
  * call sites that go through it, so the Profile routes live here too and the claim above holds.
  */
 import {
+  AnswerChatRequestSchema,
   AnswerChatResponseSchema,
+  AnswerQuestionsRequestSchema,
   ApplicationWriteResultSchema,
   DuplicateApplicationSummarySchema,
+  ExtractJobRequestSchema,
   JobInfoSchema,
   ProfileSchema,
   QuestionAnswerSchema,
+  RenderResumePdfRequestSchema,
+  TailorResumeRequestSchema,
   TailoredResumeSchema,
-  type AnswerChatRequest,
   type AnswerChatResponse,
-  type AnswerQuestionsRequest,
   type ApplicationSnapshot,
   type ChatMessage,
   type ApplicationWriteResult,
   type DuplicateApplicationSummary,
-  type ExtractJobRequest,
   type JobInfo,
   type NewApplicationRequest,
   type Profile,
   type QuestionAnswer,
   type QuestionForModel,
-  type RenderResumePdfRequest,
   type SaveProfileRequest,
-  type TailorResumeRequest,
   type TailoredResume,
 } from '@djobi/shared';
 import { callBackend, callBackendBinary } from './callBackend';
@@ -107,7 +121,7 @@ export const httpBackendClient: BackendClient = {
     callBackend(
       '/extract-job',
       JobInfoSchema,
-      { jobDescription } satisfies ExtractJobRequest,
+      ExtractJobRequestSchema.parse({ jobDescription }),
       'POST',
       signal,
     ),
@@ -116,10 +130,7 @@ export const httpBackendClient: BackendClient = {
     callBackend(
       '/tailor-resume',
       TailoredResumeSchema,
-      {
-        profile: { workExperience: profile.workExperience, skills: profile.skills },
-        jobInfo,
-      } satisfies TailorResumeRequest,
+      TailorResumeRequestSchema.parse({ profile, jobInfo }),
       'POST',
       signal,
     ),
@@ -128,54 +139,30 @@ export const httpBackendClient: BackendClient = {
     callBackend(
       '/answer-questions',
       QuestionAnswerSchema.array(),
-      {
-        profile: {
-          workExperience: profile.workExperience,
-          education: profile.education,
-          skills: profile.skills,
-          stories: profile.stories,
-          customAnswers: profile.customAnswers,
-        },
-        jobInfo,
-        questions,
-      } satisfies AnswerQuestionsRequest,
+      AnswerQuestionsRequestSchema.parse({ profile, jobInfo, questions }),
       'POST',
       signal,
     ),
 
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
-    callBackend('/answer-chat', AnswerChatResponseSchema, {
-      profile: {
-        workExperience: profile.workExperience,
-        education: profile.education,
-        skills: profile.skills,
-        stories: profile.stories,
-        // The Ask tab drafts an answer to an application question, same as `/answer-questions`, so
-        // it grounds on the candidate's prepared answers for the same reason.
-        customAnswers: profile.customAnswers,
-      },
-      question,
-      // `null` is the panel's "no run yet"; the wire contract's absent job is `undefined`, and
-      // `JSON.stringify` drops the key rather than sending a job whose every field is unknown.
-      ...(jobInfo ? { jobInfo } : {}),
-      ...(currentAnswer ? { currentAnswer } : {}),
-      messages,
-    } satisfies AnswerChatRequest),
+    callBackend(
+      '/answer-chat',
+      AnswerChatResponseSchema,
+      AnswerChatRequestSchema.parse({
+        profile,
+        question,
+        // `null` is the panel's "no run yet"; the wire contract's absent job is `undefined`, and an
+        // omitted key is not a job whose every field is unknown.
+        ...(jobInfo ? { jobInfo } : {}),
+        ...(currentAnswer ? { currentAnswer } : {}),
+        messages,
+      }),
+    ),
 
   renderResumePdf: (profile, tailoredResume, signal) =>
     callBackendBinary(
       '/render-resume-pdf',
-      {
-        profile: {
-          fullName: profile.fullName,
-          email: profile.email,
-          phone: profile.phone,
-          location: profile.location,
-          links: profile.links,
-          education: profile.education,
-        },
-        tailoredResume,
-      } satisfies RenderResumePdfRequest,
+      RenderResumePdfRequestSchema.parse({ profile, tailoredResume }),
       signal,
     ),
 

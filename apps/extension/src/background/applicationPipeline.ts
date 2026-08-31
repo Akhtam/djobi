@@ -1,38 +1,36 @@
 /**
  * The Application Pipeline: Analysis, Fill and explicit Save Steps, checkpointed into
- * `lib/tabStore.ts`.
+ * `lib/tabStore/pipelineRun.ts`.
  *
  * It runs in the background service worker rather than the panel, so an in-flight step survives the
  * panel that requested it closing mid-run — a panel-driven version drops the result on the floor in
  * that case, because closing the panel tears down the `chrome.runtime.sendMessage` port a direct
- * call would be waiting on. Progress is checkpointed into `lib/tabStore.ts` as it happens; the panel
- * observes it via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`) rather than a message
- * response.
+ * call would be waiting on. Progress is checkpointed into `lib/tabStore/pipelineRun.ts` as it
+ * happens; the panel observes it via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`) rather
+ * than a message response.
  *
- * Each step returns the patch it checkpoints, and the run's shape lives only in `lib/tabStore.ts`.
- * Splitting the steps from their checkpointing models a run twice — every new step output then has
- * to be added to the step, to whatever spreads its result, and to the store.
+ * Each step returns the patch it checkpoints, and the run's shape lives only in
+ * `lib/tabStore/pipelineRun.ts`. Splitting the steps from their checkpointing models a run twice —
+ * every new step output then has to be added to the step, to whatever spreads its result, and to
+ * the store.
  */
 import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
 import type { DetectedField, JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
 import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
-import { answersFor } from '../lib/runAnswers';
+import { answersFor, STEP_STATUS } from '../lib/run';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
 import {
-  asAnalyzedRun,
-  getPipelineRun,
-  patchPipelineRun,
-  setPipelineRun,
-  transitionPipelineRun,
   type AnalyzedRun,
   type DuplicateApplication,
   type FillOutcome,
   type PipelineRunState,
-  type PipelineStatus,
-} from '../lib/tabStore';
+  asAnalyzedRun,
+} from '../lib/run';
+import { findDuplicate } from '../lib/duplicateGuard';
+import { withRunClaim, type RunClaim } from './runClaim';
 
 /**
  * Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole.
@@ -59,26 +57,6 @@ export const productionDeps: PipelineDeps = {
   backend: httpBackendClient,
   page: chromePageClient,
 };
-
-/**
- * The cancellable backend work in flight for each tab — one entry, replaced and aborted by whatever
- * supersedes it.
- *
- * It holds the Fill Step as well as the Analysis Step because both spend real model time
- * (`/render-resume-pdf` renders inside the fill) and because there is only ever one live run per
- * tab: a new Analyze supersedes a fill still rendering, and a second Fill supersedes the first. The
- * run-identity re-checks in `fillStep` stop a superseded run from *acting* on the page; they cannot
- * stop the generation it already paid for, which is what this does.
- */
-const runControllers = new Map<number, AbortController>();
-
-/** Claims the tab's one cancellable slot, aborting whatever held it. */
-function claimRunController(tabId: number): AbortController {
-  const controller = new AbortController();
-  runControllers.get(tabId)?.abort();
-  runControllers.set(tabId, controller);
-  return controller;
-}
 
 type AnalysisResult = Pick<
   PipelineRunState,
@@ -159,24 +137,22 @@ async function analysisStep(
   // costs no backend call and adds nothing to the worker's fetch exposure.
   const coverage = keywordCoverage(tailoredResume, jobInfo);
 
-  return { status: 'review', jobInfo, tailoredResume, answers, coverage };
+  return { status: STEP_STATUS.analysis.succeeded, jobInfo, tailoredResume, answers, coverage };
 }
 
 /**
  * The Fill Step for an already-analyzed run.
  *
- * Takes the run whole rather than five of its fields spread across positional parameters: the run
- * is the unit that crosses this seam anyway, its caller reads it from `lib/tabStore.ts` as one
- * object, and several of those fields shared a type — so a transposed pair type-checked cleanly.
- * {@link AnalyzedRun} carries the precondition (Analysis Step finished) in the type, so it can't be
- * skipped here.
+ * Takes the claim rather than the run plus a loose signal: the run is the unit that crosses this
+ * seam anyway, and the two identity gates below are only correct in the positions this step puts
+ * them in, so it is this step — not the claim — that decides where they go. {@link AnalyzedRun}
+ * carries the precondition (Analysis Step finished) in the type, so it can't be skipped here.
  */
 async function fillStep(
-  run: AnalyzedRun,
+  claim: RunClaim<AnalyzedRun>,
   profile: Profile,
   tabId: number,
   deps: PipelineDeps,
-  signal: AbortSignal,
 ): Promise<Pick<
   PipelineRunState,
   | 'status'
@@ -186,6 +162,7 @@ async function fillStep(
   | 'jobPageData'
   | 'failure'
 > | null> {
+  const { run, signal } = claim;
   const { jobPageData, jobInfo, tailoredResume, tabUrl } = run;
 
   // Fill what the page holds *now*, not what it held when the Analysis Step started. The run's own
@@ -249,7 +226,7 @@ async function fillStep(
   const needsResume = fields.some((field) => autofillSource(field.category) === 'resume');
   // Rendering and filling can outlive a navigation or replacement analysis. Re-check after the
   // awaited scan before either operation can produce an upload or click against the wrong page.
-  if ((await getPipelineRun(tabId))?.runId !== run.runId) return null;
+  if (!(await claim.stillOurs())) return null;
   const resume = needsResume
     ? {
         name: resumeFileName(profile.fullName),
@@ -262,7 +239,7 @@ async function fillStep(
 
   // PDF rendering is another await, so the run may have been superseded while it was in flight.
   // Keep this adjacent to the irreversible page command; there is no await between the check and it.
-  if ((await getPipelineRun(tabId))?.runId !== run.runId) return null;
+  if (!(await claim.stillOurs())) return null;
 
   // No frame can own an empty command, so sending it would necessarily return `null` and erase the
   // useful distinction between "no form fields" and "a real fill whose response was lost".
@@ -274,7 +251,12 @@ async function fillStep(
   // What the page confirmed it kept. A run whose content script didn't answer at all (`null`) has
   // no such account, and falling back to the drafted values is the honest reading there: the fill
   // may well have worked, and reporting every field as unresolved would be its own lie.
-  const landed = filled ? new Set(filled.filledFieldIds) : new Set(Object.keys(values));
+  const resumeFieldIds = new Set(
+    fields.filter((field) => autofillSource(field.category) === 'resume').map((field) => field.id),
+  );
+  const landed = filled
+    ? new Set(filled.filledFieldIds.filter((fieldId) => !resumeFieldIds.has(fieldId)))
+    : new Set(Object.keys(values));
   const resumeLanded = filled ? filled.resumeAttached : resume !== undefined;
 
   // A required field is unresolved if this run never drafted a value for it *or* the page didn't
@@ -308,7 +290,7 @@ async function fillStep(
   // The re-scan is checkpointed back onto the run so the panel reports what was actually filled —
   // `unresolvedRequiredFields` above is derived from these fields, and the panel lists them.
   return {
-    status: 'filled',
+    status: STEP_STATUS.fill.succeeded,
     unresolvedRequiredFields,
     filledFieldCount,
     fillOutcome,
@@ -317,123 +299,47 @@ async function fillStep(
   };
 }
 
-/** Saves the current filled snapshot, creating it once and replacing it after later edits or fills. */
+/**
+ * Saves the current filled snapshot, creating it once and replacing it after later edits or fills.
+ *
+ * **`cancellation: 'none'`, and that is a decision rather than an omission.** This is the one step
+ * whose work is a write the server may already have committed. Aborting the request in flight
+ * cannot establish whether the row landed, and a run whose `applicationId` is still null writes a
+ * *second* Application on the next save — the exact duplicate an update-in-place exists to prevent.
+ * Until the write carries an idempotency key, a superseding run leaves this one to finish; its
+ * checkpoint is dropped by run identity if the tab has moved on, which costs nothing.
+ */
 export async function runSaveApplication(
   tabId: number,
   deps: PipelineDeps = productionDeps,
+  expectedRunId?: string,
 ): Promise<void> {
-  const run = asAnalyzedRun(
-    await transitionPipelineRun(tabId, ['filled', 'save-error'], {
-      status: 'saving',
-      failure: null,
-    }),
+  await withRunClaim(
+    tabId,
+    {
+      step: 'save',
+      mode: 'transition',
+      cancellation: 'none',
+      expectedRunId,
+      requires: asAnalyzedRun,
+    },
+    async ({ run }) => {
+      const payload = {
+        company: run.jobInfo.company,
+        roleTitle: run.jobInfo.roleTitle,
+        jobUrl: run.tabUrl ?? '',
+        jobInfo: run.jobInfo,
+        tailoredResume: run.tailoredResume,
+        answers: run.answers,
+      };
+
+      const application = run.applicationId
+        ? await deps.backend.updateApplication(run.applicationId, payload)
+        : await deps.backend.saveApplication(payload);
+
+      return { status: STEP_STATUS.save.succeeded, applicationId: application.id, failure: null };
+    },
   );
-  if (!run) return;
-  const { runId } = run;
-
-  const payload = {
-    company: run.jobInfo.company,
-    roleTitle: run.jobInfo.roleTitle,
-    jobUrl: run.tabUrl ?? '',
-    jobInfo: run.jobInfo,
-    tailoredResume: run.tailoredResume,
-    answers: run.answers,
-  };
-
-  try {
-    const application = run.applicationId
-      ? await deps.backend.updateApplication(run.applicationId, payload)
-      : await deps.backend.saveApplication(payload);
-    await patchPipelineRun(tabId, runId, {
-      status: 'saved',
-      applicationId: application.id,
-      failure: null,
-    });
-  } catch (error) {
-    await checkpointFailure(tabId, runId, 'save-error', 'save', error);
-  }
-}
-
-/**
- * The reason to show the user for a failed step — usually an `HttpError` naming the path and
- * status.
- *
- * The real cause is used verbatim rather than wrapped in a step-specific error type. Which step
- * failed is already recorded beside this message as `failure.step`, and a fixed wrapper string
- * would only mean digging the useful half back out of `.cause` here.
- */
-function failureMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  return String(error ?? 'unknown cause');
-}
-
-/**
- * Records a step's failure on the run, so the panel shows an error the candidate can retry from
- * rather than a status that never resolves.
- *
- * If the checkpoint write *itself* rejects, both causes are thrown together: the operational
- * failure would otherwise be lost to a storage fault that has nothing to do with it. Nothing here
- * catches that — `background/router.ts` returns this task to `background/service-worker.ts`, whose
- * listener is the one place a terminal rejection is logged.
- */
-async function checkpointFailure(
-  tabId: number,
-  runId: string,
-  status: 'analyze-error' | 'fill-error' | 'save-error',
-  step: 'analysis' | 'fill' | 'save',
-  error: unknown,
-): Promise<void> {
-  try {
-    await patchPipelineRun(tabId, runId, {
-      status,
-      failure: { step, message: failureMessage(error) },
-    });
-  } catch (checkpointError) {
-    throw new AggregateError(
-      [error, checkpointError],
-      `${step} failed and its failure could not be stored`,
-    );
-  }
-}
-
-/**
- * Looks for applications the candidate has already saved for the posting `tabUrl` belongs to.
- *
- * The backend matches on the posting identity (`jobKeyForUrl`), not the raw URL, so a posting
- * reached through an ad link or from the `/apply` screen still resolves to the earlier
- * application rather than reading as a new job.
- *
- * Deliberately fails open: the guard exists to save the candidate from re-applying, not to gate
- * their work, and there is no uniqueness constraint on `job_url` making it authoritative anyway. A
- * backend that isn't running must not be the reason Analyze stops working, so a failed lookup is
- * logged and treated as "no duplicates" — which is also why it lives in its own call rather than
- * inside `/extract-job`, where a repository throw would surface as an analysis failure.
- */
-async function findDuplicate(
-  tabUrl: string | null,
-  deps: PipelineDeps,
-  signal: AbortSignal,
-): Promise<DuplicateApplication | null> {
-  if (!tabUrl) return null; // no URL to match on — Chrome hasn't exposed one for this tab
-
-  try {
-    const { latest: newest, count } = await deps.backend.findApplicationDuplicates(tabUrl, signal);
-    if (!newest) return null;
-
-    return {
-      id: newest.id,
-      company: newest.company,
-      roleTitle: newest.roleTitle,
-      stage: newest.stage,
-      createdAt: newest.createdAt,
-      count,
-    };
-  } catch (error) {
-    if (signal.aborted) throw error;
-    console.warn(`[djobi] duplicate check failed, analyzing anyway: ${failureMessage(error)}`);
-    return null;
-  }
 }
 
 /**
@@ -457,117 +363,76 @@ export async function runAnalysis(
 ): Promise<void> {
   if (!jobDescription.trim()) return; // nothing to analyze — mirrors the panel's own guard
 
-  const controller = claimRunController(tabId);
+  await withRunClaim(
+    tabId,
+    {
+      step: 'analysis',
+      mode: 'replace',
+      cancellation: 'supersede',
+      // The only step that mints a run: Analyze is the sole entry point that starts one, and it
+      // takes the tab from whatever was there. Every completion below is scoped to this identity,
+      // so a later Analyze click or a navigation can supersede it safely.
+      seed: (runId) => ({
+        runId,
+        status: STEP_STATUS.analysis.running,
+        tabUrl,
+        jobPageData: { fields: [] },
+        jobDescription,
+        jobInfo: null,
+        tailoredResume: null,
+        answers: [],
+        coverage: [],
+        unresolvedRequiredFields: [],
+        filledFieldCount: 0,
+        fillOutcome: null,
+        applicationId: null,
+        failure: null,
+        duplicateOf: null,
+      }),
+    },
+    async (claim) => {
+      // Waits for an API-oracle enrichment still in flight for this tab. Clicking Analyze the
+      // instant a page loads used to snapshot DOM-only fields, so the questions crossing to the
+      // backend carried the page's wording of a combobox's choices instead of the API's — and the
+      // answers drafted from them then matched no element at fill time. See
+      // `background/detectedFields.ts`.
+      const [jobPageData, duplicateOf]: [JobPageData, DuplicateApplication | null] =
+        await Promise.all([
+          snapshotForRun(tabId),
+          force ? Promise.resolve(null) : findDuplicate(deps.backend, tabUrl, claim.signal),
+        ]);
 
-  // Claim the tab before any detection or backend await. Every completion below is scoped to this
-  // identity, so a later Analyze click or a navigation can supersede it safely.
-  const runId = crypto.randomUUID();
-  try {
-    await setPipelineRun(tabId, {
-      runId,
-      status: 'analyzing',
-      tabUrl,
-      jobPageData: { fields: [] },
-      jobDescription,
-      jobInfo: null,
-      tailoredResume: null,
-      answers: [],
-      coverage: [],
-      unresolvedRequiredFields: [],
-      filledFieldCount: 0,
-      fillOutcome: null,
-      applicationId: null,
-      failure: null,
-      duplicateOf: null,
-    });
+      const stillCurrent = await claim.checkpoint({
+        status: duplicateOf ? 'duplicate' : STEP_STATUS.analysis.running,
+        jobPageData,
+        duplicateOf,
+      });
 
-    // Waits for an API-oracle enrichment still in flight for this tab. Clicking Analyze the instant
-    // a page loads used to snapshot DOM-only fields, so the questions crossing to the backend
-    // carried the page's wording of a combobox's choices instead of the API's — and the answers
-    // drafted from them then matched no element at fill time. See `background/detectedFields.ts`.
-    const [jobPageData, duplicateOf]: [JobPageData, DuplicateApplication | null] =
-      await Promise.all([
-        snapshotForRun(tabId),
-        force ? Promise.resolve(null) : findDuplicate(tabUrl, deps, controller.signal),
-      ]);
+      if (!stillCurrent) return null;
 
-    const stillCurrent = await patchPipelineRun(tabId, runId, {
-      status: duplicateOf ? 'duplicate' : 'analyzing',
-      jobPageData,
-      duplicateOf,
-    });
+      // Stop before any paid model work on a posting the candidate has already applied to.
+      if (duplicateOf) return null;
 
-    if (!stillCurrent) return;
-
-    // Stop before any paid model work on a posting the candidate has already applied to.
-    if (duplicateOf) return;
-
-    const analysis = await analysisStep(
-      jobDescription,
-      jobPageData,
-      profile,
-      deps,
-      controller.signal,
-    );
-    await patchPipelineRun(tabId, runId, analysis);
-  } catch (error) {
-    // A newer run owns the tab now. Its initial checkpoint replaces this run, and cancellation is
-    // expected control flow rather than an analysis failure for either run to display.
-    if (controller.signal.aborted) return;
-    // A failed member of the parallel model group should not leave its siblings generating.
-    controller.abort(error);
-    await checkpointFailure(tabId, runId, 'analyze-error', 'analysis', error);
-  } finally {
-    if (runControllers.get(tabId) === controller) runControllers.delete(tabId);
-  }
+      return analysisStep(jobDescription, jobPageData, profile, deps, claim.signal);
+    },
+  );
 }
-
-/**
- * The statuses a Fill Step may start from — every status the panel's Fill button is reachable and
- * enabled in, which is `reviewOf`'s `canReview` set minus the two it disables the button for.
- *
- * `asAnalyzedRun` alone is not this check: it proves the run *has* an analysis, not that the run is
- * idle. So a `START_FILL` arriving while a fill or a save was already in flight — a duplicate of
- * the step already running, or one dispatched out of sequence — passed straight through and started
- * a second Fill Step against the same tab. `runSaveApplication` has always had the equivalent
- * guard; this is the missing half.
- *
- * Re-filling from `filled` and `saved` is deliberate, not an oversight: a candidate may re-fill
- * after editing an answer, and the Save Step updates the same record rather than creating a second.
- *
- * The transition into `filling` happens atomically in `transitionPipelineRun`, so two commands that
- * arrive together cannot both claim the same run.
- */
-const FILLABLE_FROM: readonly PipelineStatus[] = [
-  'review',
-  'fill-error',
-  'filled',
-  'save-error',
-  'saved',
-];
 
 export async function runFill(
   tabId: number,
   profile: Profile,
   deps: PipelineDeps = productionDeps,
+  expectedRunId?: string,
 ): Promise<void> {
-  const run = asAnalyzedRun(
-    await transitionPipelineRun(tabId, FILLABLE_FROM, { status: 'filling', failure: null }),
+  await withRunClaim(
+    tabId,
+    {
+      step: 'fill',
+      mode: 'transition',
+      cancellation: 'supersede',
+      expectedRunId,
+      requires: asAnalyzedRun,
+    },
+    (claim) => fillStep(claim, profile, tabId, deps),
   );
-  if (!run) return;
-  const { runId } = run;
-
-  const controller = claimRunController(tabId);
-
-  try {
-    const result = await fillStep(run, profile, tabId, deps, controller.signal);
-    if (result) await patchPipelineRun(tabId, runId, result);
-  } catch (error) {
-    // Superseded, not failed — same reading as `runAnalysis`. The run that took the tab owns what
-    // the panel shows, and checkpointing a fill error over it would report a cancellation as one.
-    if (controller.signal.aborted) return;
-    await checkpointFailure(tabId, runId, 'fill-error', 'fill', error);
-  } finally {
-    if (runControllers.get(tabId) === controller) runControllers.delete(tabId);
-  }
 }

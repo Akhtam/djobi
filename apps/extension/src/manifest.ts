@@ -4,6 +4,7 @@
  */
 import { defineManifest } from '@crxjs/vite-plugin';
 import pkg from '../package.json' with { type: 'json' };
+import { EXTENSION_BACKEND_ORIGIN } from './extensionConfig.ts';
 
 export default defineManifest({
   manifest_version: 3,
@@ -46,7 +47,7 @@ export default defineManifest({
     },
   ],
   host_permissions: [
-    'http://127.0.0.1:5391/*',
+    `${EXTENSION_BACKEND_ORIGIN}/*`,
     'https://boards-api.greenhouse.io/*',
     // No `api.ashbyhq.com` — the oracle that used it was removed (it only ever got 401s; see
     // `background/apiDetectors.ts`). The endpoint that does work is on `jobs.ashbyhq.com`, so

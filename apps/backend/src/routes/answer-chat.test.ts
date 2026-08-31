@@ -5,7 +5,10 @@ const { mockAnswerChat } = vi.hoisted(() => ({ mockAnswerChat: vi.fn() }));
 
 vi.mock('../llm/answerChat.js', () => ({ answerChat: mockAnswerChat }));
 
-const { app } = await import('../app.js');
+const { createTestApp } = await import('../testApp.js');
+
+// These routes touch no store; the in-memory ones exist only so the app can be built.
+const { app } = createTestApp();
 const { StructuredCallError } = await import('../llm/structuredCall.js');
 
 const profile = {
@@ -123,6 +126,7 @@ describe('POST /answer-chat', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
     await expect(res.json()).resolves.toEqual({
       error: 'Internal server error',
+      code: 'invalid-model-output',
     });
   });
 });

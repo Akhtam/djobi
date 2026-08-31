@@ -6,8 +6,8 @@
  *
  * `AutofillHarness` supplies the two things the shell supplies in production — a Profile and an
  * `ActiveRun` — and nothing else. It calls the real `useActiveRun`, so each case still covers the
- * whole round trip the tab depends on: message -> `background/applicationPipeline.ts` -> `lib
- * /tabStore.ts` -> `chrome.storage.onChanged` -> hook -> render.
+ * whole round trip the tab depends on: message -> `background/applicationPipeline.ts` ->
+ * `lib/tabStore/pipelineRun.ts` -> `chrome.storage.onChanged` -> hook -> render.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,14 +30,11 @@ import {
 import type { DetectedField } from '@djobi/shared';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import type { PostingReadOutcome } from '../lib/postingReader';
-import {
-  getJobContext,
-  getPipelineRun,
-  patchPipelineRun,
-  reportDetectedPage,
-  setJobContext,
-  storageKey,
-} from '../lib/tabStore';
+import { reportDetectedPage } from '../lib/tabStore/detectedPage';
+import { getJobContext, setJobContext } from '../lib/tabStore/jobContext';
+import { clearTabState } from '../lib/tabStore/lifecycle';
+import { getPipelineRun, patchPipelineRun } from '../lib/tabStore/pipelineRun';
+import { HttpError } from '../lib/callBackend';
 
 /** The tab as the shell mounts it: a Profile, the real run handle, and nothing else. */
 function AutofillHarness({
@@ -276,17 +273,14 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
-    expect(sendMessage).toHaveBeenCalledWith(
-      {
-        type: 'START_ANALYSIS',
-        tabId: 1,
-        tabUrl: 'https://example.com',
-        profile,
-        jobDescription: 'Pasted job description text.',
-        force: false,
-      },
-      expect.any(Function),
-    );
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toEqual({
+      type: 'START_ANALYSIS',
+      tabId: 1,
+      tabUrl: 'https://example.com',
+      profile,
+      jobDescription: 'Pasted job description text.',
+      force: false,
+    });
   });
 
   it('disables "Analyze" when there is nothing to analyze yet (no paste, no detected job page)', async () => {
@@ -311,12 +305,11 @@ describe('AutofillTab', () => {
     await clickAnalyze('Pasted job description text.');
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
-    expect(sendMessage).toHaveBeenCalledWith(
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toEqual(
       expect.objectContaining({
         type: 'START_ANALYSIS',
         jobDescription: 'Pasted job description text.',
       }),
-      expect.any(Function),
     );
   });
 
@@ -414,16 +407,18 @@ describe('AutofillTab', () => {
     await clickAnalyze();
 
     await screen.findByText('Something went wrong analyzing this job posting.');
-    expect(screen.getByText('Could not establish connection.')).toBeInTheDocument();
+    expect(
+      screen.getByText('This service is temporarily unavailable. Try again.'),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await screen.findByText('Senior Engineer at Acme');
   });
 
-  it('names the delivery failure, not the failure the previous run left on the stored run', async () => {
-    // The two causes are separate: a delivery failure belongs to the command this panel just sent
-    // and is never written to the run. Reading the cause off the run instead is how a retry that
-    // never left the panel reported the *previous* attempt's backend error.
+  it('classifies the delivery failure, not the failure the previous run left on the stored run', async () => {
+    // The two classifications are separate: a delivery failure belongs to the command this panel
+    // just sent and is never written to the run. Reading the failure off the run instead is how a
+    // retry that never left the panel reported the previous attempt's classification.
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
@@ -434,12 +429,12 @@ describe('AutofillTab', () => {
 
     render(<AutofillHarness />);
     await clickAnalyze();
-    await screen.findByText('backend unreachable');
+    await screen.findByText('An unexpected error occurred. Try again.');
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    await screen.findByText('Could not establish connection.');
-    expect(screen.queryByText('backend unreachable')).not.toBeInTheDocument();
+    await screen.findByText('This service is temporarily unavailable. Try again.');
+    expect(screen.queryByText('An unexpected error occurred. Try again.')).not.toBeInTheDocument();
   });
 
   it('stops on a job already applied to, naming when it was applied for', async () => {
@@ -501,13 +496,19 @@ describe('AutofillTab', () => {
     );
   });
 
-  it('shows the underlying cause of a failed analysis, not just a generic message', async () => {
+  it('renders a stable model-output failure without exposing raw provider details', async () => {
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       jobPageData,
       analysisFailures: [
-        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+        new HttpError(
+          'http',
+          '/answer-questions',
+          'POST /answer-questions failed (500): report_answers did not produce a tool call.',
+          500,
+          { backendCode: 'invalid-model-output' },
+        ),
       ],
     });
 
@@ -516,13 +517,14 @@ describe('AutofillTab', () => {
 
     await screen.findByText('Something went wrong analyzing this job posting.');
     expect(
-      screen.getByText(
-        'POST /answer-questions failed (500): report_answers did not produce a tool call.',
-      ),
+      screen.getByText('The model returned an unusable result. Try again.'),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/report_answers did not produce a tool call/),
+    ).not.toBeInTheDocument();
   });
 
-  it('shows the underlying cause of a failed fill', async () => {
+  it('does not expose raw infrastructure details from a failed save', async () => {
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
@@ -536,7 +538,27 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
 
-    await screen.findByText('POST /applications failed (500): db unreachable');
+    await screen.findByText('An unexpected error occurred. Try again.');
+    expect(screen.queryByText(/db unreachable/)).not.toBeInTheDocument();
+  });
+
+  it('warns that a temporary save failure may already have completed before offering a retry', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      dispatchFailures: [null, null, 'Could not establish connection.'],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByRole('button', { name: 'Fill form' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
+
+    await screen.findByText(
+      'The save may have completed. Check the Dashboard before trying again.',
+    );
   });
 
   it('fills the form without saving until "Save application" is clicked', async () => {
@@ -553,10 +575,15 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
     await screen.findByText(/Save the application when you're ready/);
-    expect(sendMessage).toHaveBeenCalledWith(
-      { type: 'START_FILL', tabId: 1, profile },
-      expect.any(Function),
-    );
+    // Naming the run is what stops a command delivered after a re-analysis from filling a
+    // different posting's form — see `background/runClaim.ts`.
+    const filledRunId = (await getPipelineRun(1))!.runId;
+    expect(callsOfType(sendMessage, 'START_FILL')[0][0]).toEqual({
+      type: 'START_FILL',
+      tabId: 1,
+      profile,
+      expectedRunId: filledRunId,
+    });
     expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')).toHaveLength(0);
 
     // Save comes first in the footer once filling has happened: it is the step the candidate is on,
@@ -571,10 +598,11 @@ describe('AutofillTab', () => {
     const savedConfirmation = await screen.findByText('Application saved.');
     expect(savedConfirmation.closest('[role="status"]')).toHaveClass('compact');
     expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
-    expect(sendMessage).toHaveBeenCalledWith(
-      { type: 'START_SAVE_APPLICATION', tabId: 1 },
-      expect.any(Function),
-    );
+    expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')[0][0]).toEqual({
+      type: 'START_SAVE_APPLICATION',
+      tabId: 1,
+      expectedRunId: filledRunId,
+    });
   });
 
   it('keeps the drafted answers, resume preview and job-description editor available after a successful fill', async () => {
@@ -624,9 +652,7 @@ describe('AutofillTab', () => {
 
     await screen.findByText(/Save the application when you're ready/);
     expect(screen.getByDisplayValue('Revised answer.')).toBeInTheDocument();
-    expect(
-      sendMessage.mock.calls.filter(([message]) => message.type === 'START_FILL'),
-    ).toHaveLength(2);
+    expect(callsOfType(sendMessage, 'START_FILL')).toHaveLength(2);
   });
 
   it("warns about required fields that couldn't be resolved, instead of reporting a plain success when the fill is actually incomplete", async () => {
@@ -815,7 +841,7 @@ describe('AutofillTab', () => {
 
     const storageClear = deferred<void>();
     sessionStorage.session.remove = vi.fn(() => storageClear.promise);
-    void sessionStorage.session.remove(storageKey(1));
+    void clearTabState(1);
     act(() => navigate(1, 'https://boards.greenhouse.io/acme/jobs/2'));
 
     expect(screen.queryByText('Senior Engineer at Acme')).not.toBeInTheDocument();
@@ -957,6 +983,42 @@ describe('AutofillTab', () => {
 
     expect(screen.queryByTitle('Tailored resume')).not.toBeInTheDocument();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:resume-preview');
+  });
+
+  it('keeps the resume preview when a Re-analyze that cannot run is clicked', async () => {
+    const overviewUrl = 'https://jobs.ashbyhq.com/acme/job-id';
+    const { navigate, sendMessage } = await stubChrome({
+      tabUrl: overviewUrl,
+      tabId: 1,
+      profile,
+      jobPageData: null,
+      renderResumePdf: async () => new Uint8Array([37, 80, 68, 70]).buffer,
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    // The unfilled-questions notice carries the one Re-analyze that is offered whatever the Job
+    // Description says — the editor's is disabled on an empty one. Rendering the PDF is expensive
+    // enough that dropping it for an analysis that never starts is a real cost to the candidate.
+    act(() => navigate(1, `${overviewUrl}/application`));
+    await reportDetectedPage(1, 0, { fields: [{ ...questionField, required: false }] });
+    await screen.findByText(/1 optional question won't be filled/i);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview tailored resume' }));
+    await screen.findByTitle('Tailored resume');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit job description' }));
+    fireEvent.change(screen.getByDisplayValue(JOB_DESCRIPTION), { target: { value: '' } });
+    const [noticeReanalyze, editorReanalyze] = screen.getAllByRole('button', {
+      name: 'Re-analyze',
+    });
+    expect(editorReanalyze).toBeDisabled();
+    fireEvent.click(noticeReanalyze);
+
+    expect(screen.getByTitle('Tailored resume')).toBeInTheDocument();
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1);
   });
 
   it('shows an error message when the resume PDF fails to render', async () => {

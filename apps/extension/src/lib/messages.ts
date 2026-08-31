@@ -1,5 +1,12 @@
-import type { DetectedField, Profile, QuestionAnswer } from '@djobi/shared';
-import type { JobDescriptionSource } from './jobContext';
+import {
+  DetectedFieldSchema,
+  ProfileSchema,
+  QuestionAnswerSchema,
+  z,
+  type DetectedField,
+  type ZodTypeOf,
+} from '@djobi/shared';
+import { JobDescriptionSourceSchema } from './jobContext';
 
 /**
  * What the content script reports once it's detected an ATS job application form: the fields it
@@ -10,69 +17,96 @@ import type { JobDescriptionSource } from './jobContext';
  * explicit `SCRAPE_JOB_DESCRIPTION` request that fails closed and only populates the candidate's
  * editable field. Detection remains independent because the Fill Step needs to know what to fill.
  */
-export interface JobPageData {
-  fields: DetectedField[];
-}
+export const JobPageDataSchema = z.object({ fields: z.array(DetectedFieldSchema) }).strict();
+export type JobPageData = ZodTypeOf<typeof JobPageDataSchema>;
 
 /** Content script -> background: reports a detected job page. No response. */
-export interface ReportJobPageMessage extends JobPageData {
-  type: 'REPORT_JOB_PAGE';
-}
+export const ReportJobPageMessageSchema = JobPageDataSchema.extend({
+  type: z.literal('REPORT_JOB_PAGE'),
+}).strict();
+export type ReportJobPageMessage = ZodTypeOf<typeof ReportJobPageMessageSchema>;
 
 /**
  * Panel -> background: start the Analysis Step for `tabId` (`background/applicationPipeline.ts` runs
  * it), so it keeps running even if the panel that requested it closes before it finishes. No
- * response payload — progress is observed via `lib/tabStore.ts` + `chrome.storage.onChanged`,
- * not the message response, precisely so the caller doesn't need to stay around to receive one.
+ * response payload — progress is observed via `lib/tabStore/pipelineRun.ts` +
+ * `chrome.storage.onChanged`, not the message response, precisely so the caller doesn't need to
+ * stay around to receive one.
  */
-export interface StartAnalysisMessage {
-  type: 'START_ANALYSIS';
-  tabId: number;
-  tabUrl: string | null;
-  profile: Profile;
-  /** The candidate-reviewed posting text from the panel — the Analysis Step's only input. */
-  jobDescription: string;
-  /**
-   * Skip the duplicate check and analyze regardless. Set only when the candidate chose "Analyze and
-   * apply anyway" after being told they already applied to this URL.
-   */
-  force?: boolean;
-}
+export const StartAnalysisMessageSchema = z
+  .object({
+    type: z.literal('START_ANALYSIS'),
+    tabId: z.number().int().nonnegative(),
+    tabUrl: z.string().nullable(),
+    profile: ProfileSchema,
+    /** The candidate-reviewed posting text from the panel — the Analysis Step's only input. */
+    jobDescription: z.string(),
+    /** Skip the duplicate check after the candidate chose "Analyze and apply anyway". */
+    force: z.boolean().optional(),
+  })
+  .strict();
+export type StartAnalysisMessage = ZodTypeOf<typeof StartAnalysisMessageSchema>;
 
-/** Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of `tabStore`. */
-export interface StartFillMessage {
-  type: 'START_FILL';
-  tabId: number;
-  profile: Profile;
-}
+/**
+ * Panel -> background: start the Fill Step for `tabId`, reading Analysis Step results back out of
+ * `tabStore/pipelineRun.ts`.
+ *
+ * `expectedRunId` names the run the panel meant. Delivery is not instantaneous and the panel can
+ * only ever name the run it was rendering, so a command delayed past a re-analysis would otherwise
+ * claim whichever run is current when it lands — filling a different posting's form from a
+ * different posting's answers. {@link UpdateRunMessage} has always carried its `runId`; these two
+ * were the exception. See `background/runClaim.ts`.
+ */
+export const StartFillMessageSchema = z
+  .object({
+    type: z.literal('START_FILL'),
+    tabId: z.number().int().nonnegative(),
+    profile: ProfileSchema,
+    expectedRunId: z.string(),
+  })
+  .strict();
+export type StartFillMessage = ZodTypeOf<typeof StartFillMessageSchema>;
 
 /** Panel -> background: persist the current filled application snapshot. */
-export interface StartSaveApplicationMessage {
-  type: 'START_SAVE_APPLICATION';
-  tabId: number;
-}
+export const StartSaveApplicationMessageSchema = z
+  .object({
+    type: z.literal('START_SAVE_APPLICATION'),
+    tabId: z.number().int().nonnegative(),
+    /** The run the panel meant — see {@link StartFillMessage.expectedRunId}. */
+    expectedRunId: z.string(),
+  })
+  .strict();
+export type StartSaveApplicationMessage = ZodTypeOf<typeof StartSaveApplicationMessageSchema>;
 
 /** Panel -> background: persist optimistic review edits against the run they were made on. */
-export interface UpdateRunMessage {
-  type: 'UPDATE_RUN';
-  tabId: number;
-  runId: string;
-  updates: {
-    answers: QuestionAnswer[];
-    jobDescription: string;
-    /** Editing a saved snapshot makes it pending until it is saved again. */
-    status?: 'filled';
-  };
-}
+export const UpdateRunMessageSchema = z
+  .object({
+    type: z.literal('UPDATE_RUN'),
+    tabId: z.number().int().nonnegative(),
+    runId: z.string(),
+    updates: z
+      .object({
+        answers: z.array(QuestionAnswerSchema),
+        jobDescription: z.string(),
+        /** Editing a saved snapshot makes it pending until it is saved again. */
+        status: z.literal('filled').optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export type UpdateRunMessage = ZodTypeOf<typeof UpdateRunMessageSchema>;
 
 /** Panel -> background: retain the editable pre-analysis description for this job. */
-export interface UpdateJobContextMessage {
-  type: 'UPDATE_JOB_CONTEXT';
-  tabId: number;
-  tabUrl: string;
-  jobDescription: string;
-  source: JobDescriptionSource;
-}
+export const UpdateJobContextMessageSchema = z
+  .object({
+    type: z.literal('UPDATE_JOB_CONTEXT'),
+    tabId: z.number().int().nonnegative(),
+    tabUrl: z.string(),
+    jobDescription: z.string(),
+    source: JobDescriptionSourceSchema,
+  })
+  .strict();
+export type UpdateJobContextMessage = ZodTypeOf<typeof UpdateJobContextMessageSchema>;
 
 export interface FillFormPayload {
   fields: DetectedField[];
@@ -90,11 +124,14 @@ export interface FillFormPayload {
  * the panel showed a green check over a form the ATS then rejected as empty. This is the page's
  * own account of what happened; see `content/fillForm.ts` for how it's established.
  */
-export interface FillFormResult {
-  ok: boolean;
-  filledFieldIds: string[];
-  resumeAttached: boolean;
-}
+export const FillFormResultSchema = z
+  .object({
+    ok: z.literal(true),
+    filledFieldIds: z.array(z.string()),
+    resumeAttached: z.boolean(),
+  })
+  .strict();
+export type FillFormResult = ZodTypeOf<typeof FillFormResultSchema>;
 
 /** Background -> content, sent directly by `applicationPipeline.ts` (not relayed via `TypedMessage`): fill this tab's form. Response: {@link FillFormResult}. */
 export interface FillFormCommandMessage extends FillFormPayload {
@@ -148,7 +185,7 @@ export type ContentCommandMessage =
  * START messages kick off work whose whole point is outliving the sender. The service worker sends
  * only an immediate empty receipt acknowledgement; holding the channel open until an Analysis Step
  * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
- * panel that opened it. Progress is read from `lib/tabStore.ts` instead.
+ * panel that opened it. Progress is read from `lib/tabStore/pipelineRun.ts` instead.
  *
  * The messages that *do* have responses are not in this union: `SCAN_PAGE` and `FILL_FORM` live in
  * `lib/pageClient.ts`, while `SCRAPE_JOB_DESCRIPTION` lives in `lib/postingReader.ts`.
@@ -170,19 +207,42 @@ export type ContentCommandMessage =
  * Harmless when the worker is alive and genuinely working: the sweep has already run for that
  * instance, so this routes to a no-op and the real step keeps going.
  */
-export interface CheckRunMessage {
-  type: 'CHECK_RUN';
-  tabId: number;
-}
+export const CheckRunMessageSchema = z
+  .object({ type: z.literal('CHECK_RUN'), tabId: z.number().int().nonnegative() })
+  .strict();
+export type CheckRunMessage = ZodTypeOf<typeof CheckRunMessageSchema>;
 
-export type TypedMessage =
-  | ReportJobPageMessage
-  | StartAnalysisMessage
-  | StartFillMessage
-  | StartSaveApplicationMessage
-  | UpdateRunMessage
-  | UpdateJobContextMessage
-  | CheckRunMessage;
+export const TypedMessageSchema = z.discriminatedUnion('type', [
+  ReportJobPageMessageSchema,
+  StartAnalysisMessageSchema,
+  StartFillMessageSchema,
+  StartSaveApplicationMessageSchema,
+  UpdateRunMessageSchema,
+  UpdateJobContextMessageSchema,
+  CheckRunMessageSchema,
+]);
+export type TypedMessage = ZodTypeOf<typeof TypedMessageSchema>;
+
+/** Independent of the manifest version: bump only when this coordination protocol is incompatible. */
+export const TYPED_MESSAGE_PROTOCOL = 'djobi/typed-message' as const;
+export const TYPED_MESSAGE_VERSION = 1 as const;
+
+export const TypedMessageEnvelopeSchema = z
+  .object({
+    protocol: z.literal(TYPED_MESSAGE_PROTOCOL),
+    version: z.literal(TYPED_MESSAGE_VERSION),
+    payload: TypedMessageSchema,
+  })
+  .strict();
+export type TypedMessageEnvelope = ZodTypeOf<typeof TypedMessageEnvelopeSchema>;
+
+export function typedMessageEnvelope(message: TypedMessage): TypedMessageEnvelope {
+  return {
+    protocol: TYPED_MESSAGE_PROTOCOL,
+    version: TYPED_MESSAGE_VERSION,
+    payload: message,
+  };
+}
 
 /**
  * Sends a coordination message to the background and returns immediately. There is no operation
@@ -193,7 +253,7 @@ export type TypedMessage =
  * this still adds no response payload and does not wait for the operation.
  */
 export function notify(message: TypedMessage, onDispatchError?: (message: string) => void): void {
-  chrome.runtime.sendMessage(message, () => {
+  chrome.runtime.sendMessage(typedMessageEnvelope(message), () => {
     const error = chrome.runtime.lastError;
     if (error)
       onDispatchError?.(error.message || 'The background worker did not receive the command.');

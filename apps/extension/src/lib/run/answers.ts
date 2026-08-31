@@ -14,8 +14,8 @@
  * So the run is the argument. The map is built once, inside, from the one source that can be right.
  */
 import { matchAnswerToField, normalizeLabel, type DetectedField } from '@djobi/shared';
-import { autofillSource } from './fieldDisposition';
-import type { PipelineRunState } from './tabStore';
+import { autofillSource } from '../fieldDisposition';
+import type { PipelineRunState } from './state';
 
 /** The run's answers, resolved against whatever fields a caller has in hand. */
 export interface RunAnswers {

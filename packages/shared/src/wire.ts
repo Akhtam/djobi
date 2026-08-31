@@ -24,9 +24,14 @@ import {
   TailoredResumeSchema,
 } from './schemas.js';
 
+/** Safe semantic classifications a backend may expose without leaking provider details. */
+export const BackendErrorCodeSchema = z.enum(['invalid-model-output']);
+export type BackendErrorCode = z.infer<typeof BackendErrorCodeSchema>;
+
 /** Body of any non-route-specific error raised by `app.onError`. */
 export const BackendErrorBodySchema = z.object({
   error: z.string(),
+  code: BackendErrorCodeSchema.optional(),
 });
 /** Inferred type of {@link BackendErrorBodySchema}. */
 export type BackendErrorBody = z.infer<typeof BackendErrorBodySchema>;

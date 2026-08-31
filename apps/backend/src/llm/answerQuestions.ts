@@ -1,4 +1,6 @@
 import {
+  AnswerQuestionsProfileSchema,
+  failureMessage,
   matchPreparedAnswerToOption,
   matchOptionLabel,
   matchScreeningTopic,
@@ -11,7 +13,6 @@ import {
   type QuestionForModel,
 } from '@djobi/shared';
 import { z } from 'zod';
-import { MODELS } from './client.js';
 import { groundingContext, jobContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -248,27 +249,18 @@ export async function answerQuestions(
 ): Promise<QuestionAnswer[]> {
   if (questions.length === 0) return [];
 
-  const relevantProfile = {
-    workExperience: profile.workExperience,
-    education: profile.education,
-    skills: profile.skills,
-    stories: profile.stories,
-    customAnswers: profile.customAnswers,
-  };
-
   const toDraft = questions.filter((question) => !question.knownAnswer);
   if (toDraft.length === 0) return reconcileAnswers([], questions, profile);
 
-  const cachedPrefix = sharedPrompt(relevantProfile);
+  // The grounding projection, enforced rather than assumed — see `tailorResume.ts` for why a type
+  // alone cannot do it. Parsed once for the whole batch, not once per question.
+  const cachedPrefix = sharedPrompt(AnswerQuestionsProfileSchema.parse(profile));
   let firstFailure: unknown;
   const settled = await mapWithConcurrency(toDraft, async (question) => {
     try {
       const result = await callStructured({
         signal,
-        model: MODELS.answerQuestions,
-        // One answer, and a capped one. The old 4096 sized a whole form's worth of answers; leaving
-        // it there would let a single runaway answer cost more wall clock than the entire form.
-        maxTokens: 1024,
+        operation: 'answerQuestions',
         toolName: 'report_answers',
         toolDescription: 'Report the drafted answer for the given application question.',
         schema: AnswerQuestionsOutputSchema,
@@ -286,7 +278,7 @@ export async function answerQuestions(
       if (!signal?.aborted) {
         console.warn('[djobi] answer_question_failed', {
           fieldId: question.fieldId,
-          error: error instanceof Error ? error.message : String(error),
+          error: failureMessage(error),
         });
       }
       firstFailure ??= error;

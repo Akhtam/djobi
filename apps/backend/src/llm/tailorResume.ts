@@ -1,6 +1,10 @@
-import { type JobInfo, type TailorResumeProfile, type TailoredResume } from '@djobi/shared';
+import {
+  TailorResumeProfileSchema,
+  type JobInfo,
+  type TailorResumeProfile,
+  type TailoredResume,
+} from '@djobi/shared';
 import { z } from 'zod';
-import { MODELS } from './client.js';
 import { groundingContext } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -88,17 +92,16 @@ export async function tailorResume(
     return { skills: profile.skills, workExperience: [] };
   }
 
-  const relevantProfile = {
-    workExperience: profile.workExperience,
-    skills: profile.skills,
-  };
+  // Applied, not restated. The route parses the same schema on the way in, so this is redundant for
+  // an HTTP caller — and load-bearing for every other one: a full `Profile` is structurally
+  // assignable to `TailorResumeProfile`, so a direct caller passing one put the candidate's phone,
+  // location and screening declarations into the prompt with nothing to notice. The projection is
+  // enforced where the grounding is built, by the schema that states it.
+  const grounding = TailorResumeProfileSchema.parse(profile);
 
   const modelResume = await callStructured({
     signal,
-    model: MODELS.tailorResume,
-    // Adaptive reasoning previously spent 1.3k–2.3k tokens on an object measured at 179–330 tokens,
-    // pushing this call past 20 seconds. Selection and truth-preserving rewrites do not warrant it.
-    effort: 'none',
+    operation: 'tailorResume',
     maxTokens: outputTokenLimit(profile),
     toolName: 'report_tailored_resume',
     toolDescription: 'Report the resume content tailored to this specific job.',
@@ -107,7 +110,7 @@ export async function tailorResume(
 
 The arrays in base_profile are authoritative and zero-indexed. Skills are copied unchanged by the server and must not appear in the output. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex points into base_profile.workExperience and controls role order. Each bullet is {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its concise, truth-preserving rewrite. Bullets may be reordered or omitted. Do not copy company, title, dates, or skill text into the output.
 
-${groundingContext(relevantProfile, jobInfo)}`,
+${groundingContext(grounding, jobInfo)}`,
   });
 
   return reconcileResume(profile, modelResume);

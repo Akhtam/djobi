@@ -6,6 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["chrome", "vite/client"]
   },

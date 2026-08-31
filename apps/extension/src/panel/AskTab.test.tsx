@@ -155,6 +155,130 @@ describe('AskTab — a cold ask', () => {
       { role: 'user', content: 'Make it shorter.' },
     ]);
   });
+
+  it('keeps the job it started with when the browser tab moves under it', async () => {
+    // The panel's `jobInfo` follows the active browser tab. A seeded thread always captured its
+    // job; a cold one read the live prop on every turn, so a conversation that began about one
+    // posting silently grounded its second answer in another.
+    stubChat(
+      { reply: 'Here is a draft.', revisedAnswer: 'An answer.' },
+      { reply: 'Shorter now.', revisedAnswer: 'Short.' },
+    );
+    const otherJob: JobInfo = { ...jobInfo, company: 'Globex', roleTitle: 'Staff Engineer' };
+    const { rerender } = render(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={jobInfo}
+        activeRunId={null}
+        seed={null}
+        onUseAnswer={vi.fn()}
+      />,
+    );
+
+    type('Why us?');
+    await waitFor(() => expect(screen.getByText('Here is a draft.')).toBeTruthy());
+
+    rerender(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={otherJob}
+        activeRunId={null}
+        seed={null}
+        onUseAnswer={vi.fn()}
+      />,
+    );
+    type('Make it shorter.');
+
+    await waitFor(() => expect(screen.getByText('Shorter now.')).toBeTruthy());
+    expect(chatCalls()[1]).toMatchObject({ jobInfo });
+  });
+
+  it('abandons the conversation and returns to the empty state on "New question"', async () => {
+    stubChat({ reply: 'Here is a draft.', revisedAnswer: 'An answer.' });
+    renderTab();
+
+    type('Why us?');
+    await waitFor(() => expect(screen.getByText('Here is a draft.')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'New question' }));
+
+    expect(screen.getByPlaceholderText(/Paste the question/)).toBeTruthy();
+    expect(screen.queryByText('Here is a draft.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New question' })).toBeNull();
+  });
+
+  /**
+   * A hand-off resets the thread while a turn may still be in flight — unlike "New question", which
+   * is disabled then. The answer that arrives afterwards belongs to a conversation the candidate
+   * has left, and appending it would put one question's answer under another's.
+   */
+  it('drops an answer that arrives for a thread a hand-off has already replaced', async () => {
+    let answerTurn!: (reply: { reply: string; revisedAnswer?: string }) => void;
+    answerChat = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          answerTurn = resolve as typeof answerTurn;
+        }),
+    );
+    client = createFakeBackendClient({ answerChat } as Partial<BackendClient>);
+    const { rerender } = render(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={null}
+        activeRunId={seed.runId}
+        seed={null}
+        onUseAnswer={vi.fn()}
+      />,
+    );
+
+    type('Why us?');
+    await waitFor(() => expect(answerChat).toHaveBeenCalled());
+
+    rerender(
+      <AskTab
+        client={client}
+        profile={profile}
+        jobInfo={null}
+        activeRunId={seed.runId}
+        seed={seed}
+        onUseAnswer={vi.fn()}
+      />,
+    );
+    answerTurn({ reply: 'An answer nobody is waiting for.', revisedAnswer: 'Stale.' });
+
+    await waitFor(() =>
+      expect(screen.getByText('Tell us about a challenge you faced.')).toBeTruthy(),
+    );
+    expect(screen.queryByText('An answer nobody is waiting for.')).toBeNull();
+  });
+
+  it('marks the turn that was copied, not every turn that produced the same answer', async () => {
+    // Copy state was keyed by the answer's text. Two turns can land on the same answer — asking for
+    // a change and then asking to put it back is the ordinary way — and both then read "Copied".
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    stubChat(
+      { reply: 'Here is a draft.', revisedAnswer: 'The same answer.' },
+      { reply: 'Back as it was.', revisedAnswer: 'The same answer.' },
+    );
+    renderTab();
+
+    type('Why us?');
+    await waitFor(() => expect(screen.getByText('Here is a draft.')).toBeTruthy());
+    type('Put it back.');
+    await waitFor(() => expect(screen.getByText('Back as it was.')).toBeTruthy());
+
+    const copyButtons = screen.getAllByRole('button', { name: /Copy answer|Copied/ });
+    expect(copyButtons).toHaveLength(2);
+    fireEvent.click(copyButtons[0]);
+
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1));
+    expect(screen.getAllByRole('button', { name: 'Copy answer' })).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('AskTab — a seeded refinement', () => {
@@ -186,7 +310,9 @@ describe('AskTab — a seeded refinement', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Use this answer' }));
 
-    expect(onUseAnswer).toHaveBeenCalledWith('field-7', 'A short answer.');
+    // The run travels with the answer: `useActiveRun.updateAnswer` refuses a write meant for a run
+    // the panel is no longer showing, which a render-time check alone cannot do.
+    expect(onUseAnswer).toHaveBeenCalledWith(seed.runId, 'field-7', 'A short answer.');
   });
 
   it('starts a fresh thread when the same card is handed over again', async () => {

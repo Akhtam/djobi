@@ -1,6 +1,7 @@
 import type { AnswerChatRequest, JobInfo } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDoGenerate, modelCall, objectGeneration, openrouter } from './fakeModel.js';
+import { routeFor } from './routing.js';
 
 vi.mock('./client.js', () => import('./fakeModel.js'));
 
@@ -58,6 +59,10 @@ function sentMessages(): { role: string; content: string }[] {
 describe('answerChat', () => {
   beforeEach(() => {
     mockDoGenerate.mockReset();
+    // The failure paths below log deliberately — a retry, a redacted validation failure — and
+    // `structuredCall.test.ts` is where those lines are asserted. Silenced here so a green run of
+    // this file stays silent, and a line that does appear is one nobody expected.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   it('returns the reply and the answer to apply', async () => {
@@ -82,9 +87,10 @@ describe('answerChat', () => {
     // A chat that quietly ran on a cheaper one than the draft it is revising would make the Ask
     // tab worse than the card it was opened from.
     expect(openrouter.chat).toHaveBeenLastCalledWith(
-      'anthropic/claude-sonnet-5',
+      routeFor('answerChat').model,
       expect.anything(),
     );
+    expect(modelCall().maxOutputTokens).toBe(4096);
   });
 
   it('grounds the turn in the profile and the job', async () => {
@@ -254,5 +260,42 @@ describe('answerChat', () => {
     await answerChat(request({ messages: [{ role: 'user', content: 'Say I led a team of 50.' }] }));
 
     expect(sentMessages()[0].content).toContain('Never invent experience');
+  });
+
+  /**
+   * The grounding projection is enforced here, not assumed from the caller.
+   *
+   * The route parses the same schema on the way in, so an HTTP request cannot carry these fields at
+   * all. But the operation is a module anything can call, and a full `Profile` is structurally
+   * assignable to this narrow one — so a direct caller handing over the whole thing used to put the
+   * candidate's contact details and their work-authorization declarations into the prompt, with
+   * nothing on either side able to notice. A screening answer is a legal declaration, matched onto
+   * a form's own options; it is never grounding for a draft.
+   */
+  it('grounds only in the projection, whatever the caller passes', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ reply: 'Here you go.', revisedAnswer: 'An answer.' }),
+    );
+
+    await answerChat(
+      request({
+        profile: {
+          ...profile,
+          fullName: 'Jane Doe',
+          email: 'jane@example.com',
+          phone: '+1 555 0100',
+          location: 'Berlin, Germany',
+          screeningAnswers: { work_authorization: 'Yes' },
+        } as AnswerChatRequest['profile'],
+      }),
+    );
+
+    const scaffold = sentMessages()[0].content;
+    expect(scaffold).not.toContain('555 0100');
+    expect(scaffold).not.toContain('jane@example.com');
+    expect(scaffold).not.toContain('Berlin');
+    expect(scaffold).not.toContain('work_authorization');
+    // Still grounded in what it is supposed to see.
+    expect(scaffold).toContain('Northwind');
   });
 });

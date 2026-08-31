@@ -1,6 +1,6 @@
 import type { DetectedField, QuestionAnswer } from '@djobi/shared';
 import { describe, expect, it } from 'vitest';
-import { answersFor } from './runAnswers';
+import { answersFor } from '.';
 
 function field(overrides: Partial<DetectedField> = {}): DetectedField {
   return {

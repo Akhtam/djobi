@@ -22,21 +22,6 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { vi } from 'vitest';
 
-/**
- * The routing `client.ts` holds, mirrored rather than re-exported.
- *
- * Importing the real one from here would be a cycle: this module *is* the mock for `client.js`, so
- * `client.js` resolves back to this module and the import never settles. The four slugs are
- * duplicated instead, and the tests that assert which model served an operation are what notice if
- * the two ever disagree.
- */
-export const MODELS = {
-  extractJob: 'google/gemini-3.1-flash-lite',
-  tailorResume: 'anthropic/claude-sonnet-5',
-  answerQuestions: 'anthropic/claude-sonnet-5',
-  answerChat: 'anthropic/claude-sonnet-5',
-};
-
 /** Every generation the code under test asks for. Reset it in `beforeEach`, as with any spy. */
 export const mockDoGenerate = vi.fn();
 

@@ -1,20 +1,19 @@
 /**
  * In-memory stand-in for `chrome.storage.session`, for tests. Not imported by anything that ships.
  *
- * There were four hand-rolled copies of this — one per test file that touches `tabStore.ts` — and
+ * There were four hand-rolled copies of this — one per test file that touches `tabStore/` — and
  * they had drifted: two fired `onChanged`, one didn't fire it at all while claiming in a comment to
  * match one that did, and one stubbed `remove` as a no-op. Since `onChanged` is how the panel learns
  * that the background made progress, a fake that doesn't fire it can only ever test half the store.
  *
- * Mirrors the real API closely enough for `tabStore.ts` and `panel/usePipelineRun.ts`: `get`/`set`/
+ * Mirrors the real API closely enough for `tabStore/` and `panel/usePipelineRun.ts`: `get`/`set`/
  * `remove` are promise-based, and every `set`/`remove` notifies listeners — including the context
  * that made the write, exactly as Chrome does, which is what exercises the hook's own-write echo
  * guard rather than just its hydrate-on-mount path.
  *
- * Changes carry `oldValue` as well as `newValue`, again as Chrome does. `panel/usePipelineRun.ts`
- * reads it to tell *which part* of a tab's entry a write touched — the run, or the detected frames
- * and Job Context sharing its key — so a fake that omitted it would report every write as a change
- * to everything.
+ * Changes carry `oldValue` as well as `newValue`, again as Chrome does. `tabStore/record.ts` reads
+ * both to classify which owner moved — the run, or the detected frames and Job Context sharing its
+ * key — so a fake that omitted one would report every write as a change to everything.
  */
 export interface FakeStorageChange {
   oldValue?: unknown;

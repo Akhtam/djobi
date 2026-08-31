@@ -8,6 +8,7 @@ import {
   openrouter,
   promptText,
 } from './fakeModel.js';
+import { routeFor } from './routing.js';
 
 vi.mock('./client.js', () => import('./fakeModel.js'));
 
@@ -48,6 +49,10 @@ const jobInfo: JobInfo = {
 describe('tailorResume', () => {
   beforeEach(() => {
     mockDoGenerate.mockReset();
+    // The failure paths below log deliberately — a retry, a redacted validation failure — and
+    // `structuredCall.test.ts` is where those lines are asserted. Silenced here so a green run of
+    // this file stays silent, and a line that does appear is one nobody expected.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   it('reconstructs a public resume from compact source indices', async () => {
@@ -75,7 +80,7 @@ describe('tailorResume', () => {
     });
     expect(TailoredResumeSchema.safeParse(result).success).toBe(true);
     expect(openrouter.chat).toHaveBeenLastCalledWith(
-      'anthropic/claude-sonnet-5',
+      routeFor('tailorResume').model,
       expect.anything(),
     );
 

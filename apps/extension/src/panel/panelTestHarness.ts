@@ -10,7 +10,6 @@
  * nothing the extension ships, so it is dropped from the build.
  */
 import type {
-  ApplicationStage,
   DetectedField,
   JobInfo,
   Profile,
@@ -23,38 +22,15 @@ import { type PipelineDeps } from '../background/applicationPipeline';
 import { handleTypedMessage } from '../background/router';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { fakeChrome } from '../lib/fakeChrome';
+import { jobInfo, profile, tailoredResume } from '../lib/testFixtures';
 import { type FakeSessionStorage } from '../lib/fakeSessionStorage';
-import type { TypedMessage } from '../lib/messages';
-import { getPipelineRun, reportDetectedPage, storageKey } from '../lib/tabStore';
+import { TypedMessageEnvelopeSchema } from '../lib/messages';
+import type { DuplicateApplication } from '../lib/run';
+import { reportDetectedPage } from '../lib/tabStore/detectedPage';
+import { getPipelineRun } from '../lib/tabStore/pipelineRun';
 
-export const profile: Profile = {
-  fullName: 'Jane Doe',
-  email: 'jane@example.com',
-  phone: null,
-  location: null,
-  links: { linkedin: null, portfolio: null, github: null },
-  workExperience: [],
-  education: [],
-  skills: [],
-  stories: [],
-  screeningAnswers: {},
-  customAnswers: [],
-};
-
-export const jobInfo: JobInfo = {
-  company: 'Acme',
-  team: null,
-  roleTitle: 'Senior Engineer',
-  seniority: 'Senior',
-  location: null,
-  requirements: [],
-  keywords: [],
-};
-
-export const tailoredResume: TailoredResume = {
-  skills: [],
-  workExperience: [],
-};
+/** Re-exported so a panel test reaches for one module rather than two. */
+export { jobInfo, profile, tailoredResume };
 
 export const questionField: DetectedField = {
   id: 'f-why',
@@ -118,19 +94,13 @@ export interface StubOptions {
    *  underlying session storage in real Chrome. */
   sessionStorage?: FakeSessionStorage;
   /** Message to fail successive Analysis Steps with, `null` for success. The last entry repeats. */
-  analysisFailures?: (string | null)[];
+  analysisFailures?: (string | Error | null)[];
   /** Same idea for the explicit Save Application action. */
-  saveFailures?: (string | null)[];
+  saveFailures?: (string | Error | null)[];
   /** Fail successive START-message deliveries before the service worker receives them. */
   dispatchFailures?: (string | null)[];
   /** Applications already saved for the tab's URL — what the duplicate guard on Analyze finds. */
-  existingApplications?: {
-    id: string;
-    company: string;
-    roleTitle: string;
-    stage: ApplicationStage;
-    createdAt: string;
-  }[];
+  existingApplications?: Omit<DuplicateApplication, 'count'>[];
   /** If true, the Fill Step hangs at the page-filling call until `resolveFill()` is called —
    *  simulates a Fill Step still in flight in the background. */
   holdFill?: boolean;
@@ -146,7 +116,7 @@ export interface StubOptions {
 }
 
 /** The entry for successive calls, repeating the last one once the list is exhausted. */
-export function nth(entries: (string | null)[] | undefined, index: number): string | null {
+export function nth<T>(entries: (T | null)[] | undefined, index: number): T | null {
   if (!entries || entries.length === 0) return null;
   return entries[Math.min(index, entries.length - 1)];
 }
@@ -169,7 +139,7 @@ export function panelClient(): BackendClient {
  * `chrome.storage.session`, and builds the fake `BackendClient` the panel and the pipeline share.
  *
  * Every `TypedMessage` goes to the **real** `background/router.ts`, which runs the real
- * `background/applicationPipeline.ts` against the real `lib/tabStore.ts`, with only its
+ * `background/applicationPipeline.ts` against the real `lib/tabStore/`, with only its
  * `PipelineDeps` stubbed — so these tests cover the whole round trip the panel actually depends on:
  * message -> router -> pipeline -> store -> `chrome.storage.onChanged` -> `usePipelineRun` ->
  * render. This stub used to re-implement the pipeline instead, listing by hand every field the
@@ -202,14 +172,16 @@ export async function stubChrome(options: StubOptions) {
     ...(options.renderResumePdf ? { renderResumePdf: options.renderResumePdf } : {}),
     extractJob: () => {
       const failure = nth(options.analysisFailures, analysisCallIndex++);
-      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(jobInfo);
+      return failure
+        ? Promise.reject(typeof failure === 'string' ? new Error(failure) : failure)
+        : Promise.resolve(jobInfo);
     },
     tailorResume: () => Promise.resolve(tailoredResume),
     answerQuestions: () => Promise.resolve(answers),
     saveApplication: () => {
       const failure = nth(options.saveFailures, fillCallIndex++);
       return failure
-        ? Promise.reject(new Error(failure))
+        ? Promise.reject(typeof failure === 'string' ? new Error(failure) : failure)
         : Promise.resolve({ id: 'application-1' });
     },
     findApplicationDuplicates: () => {
@@ -217,15 +189,7 @@ export async function stubChrome(options: StubOptions) {
       const latest = existing[0];
       return Promise.resolve({
         count: existing.length,
-        latest: latest
-          ? {
-              id: latest.id,
-              company: latest.company,
-              roleTitle: latest.roleTitle,
-              stage: latest.stage,
-              createdAt: latest.createdAt,
-            }
-          : null,
+        latest: latest ?? null,
       });
     },
   });
@@ -260,7 +224,9 @@ export async function stubChrome(options: StubOptions) {
     tab: { id: options.tabId ?? 1, url: options.tabUrl },
     storage: options.sessionStorage,
     sendMessage: (message, callback) => {
-      const typedMessage = message as unknown as TypedMessage;
+      const parsed = TypedMessageEnvelopeSchema.safeParse(message);
+      if (!parsed.success) throw new Error('Panel sent an invalid typed-message envelope');
+      const typedMessage = parsed.data.payload;
       const isStart = typedMessage.type.startsWith('START_');
       const dispatchFailure = isStart ? nth(options.dispatchFailures, dispatchCallIndex++) : null;
       if (dispatchFailure) {
@@ -316,7 +282,12 @@ export async function clickAnalyze(jobDescription = JOB_DESCRIPTION) {
 
 /** Filters `sendMessage` mock calls down to a given `TypedMessage` type, e.g. `'START_ANALYSIS'`. */
 export function callsOfType(sendMessage: ReturnType<typeof vi.fn>, type: string) {
-  return sendMessage.mock.calls.filter(([message]) => message?.type === type);
+  return sendMessage.mock.calls.flatMap(([message, ...rest]) => {
+    const parsed = TypedMessageEnvelopeSchema.safeParse(message);
+    return parsed.success && parsed.data.payload.type === type
+      ? [[parsed.data.payload, ...rest]]
+      : [];
+  });
 }
 
 export function deferred<T>() {

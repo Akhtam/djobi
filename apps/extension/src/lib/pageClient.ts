@@ -11,13 +11,15 @@
  * Deliberately separate from the notification-only protocol in `lib/messages.ts`: these two are the
  * only messages in the extension where a response exists at all.
  */
-import type { DetectedField } from '@djobi/shared';
-import type {
-  FillFormCommandMessage,
-  FillFormResult,
-  JobPageData,
-  ScanPageCommandMessage,
+import type { DetectedField, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
+import {
+  FillFormResultSchema,
+  JobPageDataSchema,
+  type FillFormResult,
+  type JobPageData,
 } from './messages';
+import { autofillSource } from './fieldDisposition';
+import type { FillFormCommandMessage, ScanPageCommandMessage } from './messages';
 
 /**
  * What the Fill Step asks the page to do, in the pipeline's own terms: the fields, the values to
@@ -49,6 +51,17 @@ export interface PageClient {
   scan(tabId: number, frameId?: number): Promise<JobPageData | null>;
 }
 
+/** A content-script reply arrived but did not match the command's response contract. */
+export class PageResponseError extends Error {
+  constructor(
+    readonly command: FillFormCommandMessage['type'] | ScanPageCommandMessage['type'],
+    detail?: string,
+  ) {
+    super(`${command} returned an invalid response${detail ? `: ${detail}` : ''}`);
+    this.name = 'PageResponseError';
+  }
+}
+
 /**
  * Sends one command to a tab and resolves with its reply, or `null` if no frame answered.
  *
@@ -64,15 +77,29 @@ export interface PageClient {
  * wrong answer wins deterministically. The two-argument form remains for the case where no frame
  * has reported yet and there is genuinely nobody to address.
  */
-function ask<TResponse>(
+function ask<Schema extends ZodTypeAny>(
   tabId: number,
   message: FillFormCommandMessage | ScanPageCommandMessage,
+  schema: Schema,
   frameId?: number,
-): Promise<TResponse | null> {
-  return new Promise((resolve) => {
-    const handle = (response?: TResponse): void => {
+): Promise<ZodTypeOf<Schema> | null> {
+  return new Promise((resolve, reject) => {
+    const handle = (response?: unknown): void => {
       void chrome.runtime.lastError;
-      resolve(response ?? null);
+      if (response == null) {
+        resolve(null);
+        return;
+      }
+      const parsed = schema.safeParse(response);
+      if (!parsed.success) {
+        const detail = parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.') || 'response'} - ${issue.message}`)
+          .join('; ');
+        reject(new PageResponseError(message.type, detail));
+        return;
+      }
+      resolve(parsed.data as ZodTypeOf<Schema>);
     };
 
     if (frameId === undefined) chrome.tabs.sendMessage(tabId, message, handle);
@@ -82,7 +109,7 @@ function ask<TResponse>(
 
 /** The production adapter: the tab's own content script. */
 export const chromePageClient: PageClient = {
-  fill(tabId, command, frameId) {
+  async fill(tabId, command, frameId) {
     const message: FillFormCommandMessage = {
       type: 'FILL_FORM',
       fields: command.fields,
@@ -95,11 +122,28 @@ export const chromePageClient: PageClient = {
         bytes: Array.from(new Uint8Array(command.resume.bytes)),
       },
     };
-    return ask<FillFormResult>(tabId, message, frameId);
+    const result = await ask(tabId, message, FillFormResultSchema, frameId);
+    if (!result) return null;
+
+    const requestedFieldIds = new Set(Object.keys(command.values));
+    if (command.resume) {
+      for (const field of command.fields) {
+        if (autofillSource(field.category) === 'resume') requestedFieldIds.add(field.id);
+      }
+    }
+    const unexpectedFieldId = result.filledFieldIds.find((id) => !requestedFieldIds.has(id));
+    if (unexpectedFieldId) {
+      throw new PageResponseError('FILL_FORM', `reported unrequested field ${unexpectedFieldId}`);
+    }
+    if (result.resumeAttached && !command.resume) {
+      throw new PageResponseError('FILL_FORM', 'reported an attachment when no resume was sent');
+    }
+
+    return result;
   },
 
   scan(tabId, frameId) {
     const message: ScanPageCommandMessage = { type: 'SCAN_PAGE' };
-    return ask<JobPageData>(tabId, message, frameId);
+    return ask(tabId, message, JobPageDataSchema, frameId);
   },
 };

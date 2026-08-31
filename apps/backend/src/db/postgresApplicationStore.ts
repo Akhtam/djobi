@@ -1,3 +1,11 @@
+/**
+ * The production `ApplicationStore`: Neon Postgres through Drizzle.
+ *
+ * The interface it satisfies, and the in-memory adapter it is held against, are in
+ * `db/applicationStore.ts`. Everything below is the half that is genuinely about Postgres —
+ * jsonb parsing, the `count(*) over ()` duplicate summary, and the atomic note append — which is
+ * exactly what the seam exists to keep out of the routes.
+ */
 import {
   ApplicationSchema,
   ApplicationStageSchema,
@@ -14,6 +22,7 @@ import {
   jobKeyForUrl,
 } from '@djobi/shared';
 import { desc, eq, or, sql } from 'drizzle-orm';
+import type { ApplicationStore } from './applicationStore.js';
 import { db } from './client.js';
 import { applications } from './schema.js';
 
@@ -27,7 +36,7 @@ function rowShape(row: ApplicationRow) {
 /**
  * Parses one row, throwing if it doesn't fit.
  *
- * Parsed rather than cast, for the same reason `profileRepository.getProfile` parses: `jobInfo`,
+ * Parsed rather than cast, for the same reason `postgresProfileStore`'s read parses: `jobInfo`,
  * `tailoredResume` and `answers` are jsonb, so a row written before a field was added comes back
  * without it, and `row.jobInfo as JobInfo` asserted a shape the row didn't have — the compiler then
  * vouched for fields that were `undefined` at runtime. This module used to be the one place that
@@ -56,20 +65,20 @@ function toApplications(rows: ApplicationRow[]): Application[] {
 }
 
 /** Lists all stored applications, most recently created first. */
-export async function listApplications(): Promise<Application[]> {
+async function listApplications(): Promise<Application[]> {
   const rows = await db.select().from(applications).orderBy(desc(applications.createdAt));
   return toApplications(rows);
 }
 
 /** Reads a single application by id, or `null` if none exists with that id. */
-export async function getApplicationById(id: string): Promise<Application | null> {
+async function getApplicationById(id: string): Promise<Application | null> {
   const [row] = await db.select().from(applications).where(eq(applications.id, id)).limit(1);
   if (!row) return null;
   return toApplication(row);
 }
 
 /** Lists full applications for an exact job URL for legacy API consumers. */
-export async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> {
+async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> {
   const rows = await db
     .select()
     .from(applications)
@@ -82,9 +91,7 @@ export async function listApplicationsByJobUrl(jobUrl: string): Promise<Applicat
  * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
  * they log an application they made by hand (`source: 'manual'`).
  */
-export async function saveApplication(
-  newApplication: NewApplication,
-): Promise<ApplicationWriteResult> {
+async function saveApplication(newApplication: NewApplication): Promise<ApplicationWriteResult> {
   const [row] = await db
     .insert(applications)
     .values({ ...newApplication, jobKey: jobKeyForUrl(newApplication.jobUrl) })
@@ -93,7 +100,7 @@ export async function saveApplication(
 }
 
 /** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
-export async function updateApplication(
+async function updateApplication(
   id: string,
   snapshot: ApplicationSnapshot,
 ): Promise<ApplicationWriteResult | null> {
@@ -125,7 +132,7 @@ export async function updateApplication(
  * too malformed to derive a key from. Those match exactly as well as they did before and no better
  * — which is the point of keeping the clause rather than backfilling behind the caller's back.
  */
-export async function getApplicationDuplicateSummary(
+async function getApplicationDuplicateSummary(
   jobUrl: string,
 ): Promise<DuplicateApplicationSummary> {
   const jobKey = jobKeyForUrl(jobUrl);
@@ -162,7 +169,7 @@ export async function getApplicationDuplicateSummary(
 }
 
 /** Moves an application to a new interview stage, or `null` if no application has that id. */
-export async function updateApplicationStage(
+async function updateApplicationStage(
   id: string,
   stage: ApplicationStage,
 ): Promise<UpdateApplicationStageResult | null> {
@@ -188,7 +195,7 @@ export async function updateApplicationStage(
  * exactly the loss an append-only log exists to prevent, so the concatenation happens in Postgres
  * where it is atomic.
  */
-export async function addApplicationNote(
+async function addApplicationNote(
   id: string,
   note: NewNote,
 ): Promise<AddApplicationNoteResult | null> {
@@ -206,3 +213,21 @@ export async function addApplicationNote(
 
   return row ? { id: row.id, note: appended } : null;
 }
+
+/**
+ * The routes' view of the eight operations above, under the names `ApplicationStore` states.
+ *
+ * Written as one object rather than eight exports because the seam is the point: a route holding
+ * eight loose imports can only be run without Postgres by replacing this module, which is what four
+ * test files used to do by hand.
+ */
+export const postgresApplicationStore: ApplicationStore = {
+  list: listApplications,
+  byId: getApplicationById,
+  byJobUrl: listApplicationsByJobUrl,
+  duplicateSummary: getApplicationDuplicateSummary,
+  create: saveApplication,
+  replaceSnapshot: updateApplication,
+  setStage: updateApplicationStage,
+  appendNote: addApplicationNote,
+};

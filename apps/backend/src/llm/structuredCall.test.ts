@@ -7,6 +7,7 @@ import {
   objectGeneration,
   promptText,
 } from './fakeModel.js';
+import { routeFor } from './routing.js';
 
 // The seam stays exactly where it was — the module that names a provider — and only what the fake
 // *is* changes: an SDK client object becomes a language model implementing the provider spec.
@@ -26,8 +27,7 @@ const SampleSchema = z.object({
 const SAMPLE = { title: 'Hello', count: null, tags: ['a'], detail: { note: 'n' } };
 
 const options = (overrides: Record<string, unknown> = {}) => ({
-  model: 'anthropic/claude-sonnet-5',
-  maxTokens: 1024,
+  operation: 'answerQuestions' as const,
   toolName: 'report_sample',
   toolDescription: 'Report the sample.',
   schema: SampleSchema,
@@ -82,7 +82,7 @@ describe('callStructured', () => {
   it('uses the same schema and privacy constraints for Gemini calls', async () => {
     mockDoGenerate.mockResolvedValue(objectGeneration(SAMPLE));
 
-    await callStructured(options({ model: 'google/gemini-3.1-flash-lite' }));
+    await callStructured(options({ operation: 'extractJob' }));
 
     expect(modelCall().providerOptions?.openrouter?.provider).toEqual({
       require_parameters: true,
@@ -93,15 +93,14 @@ describe('callStructured', () => {
   it('sends model reasoning effort only when the operation selects one', async () => {
     mockDoGenerate.mockResolvedValue(objectGeneration(SAMPLE));
 
-    await callStructured(options({ effort: 'medium' }));
-    // `effort` was Anthropic's `output_config`; across providers the same intent is a reasoning
-    // setting, and OpenRouter normalizes it to a thinking budget or a reasoning toggle upstream.
+    await callStructured(options({ operation: 'tailorResume' }));
+    // The route owns this setting so a call site cannot silently opt into adaptive reasoning.
     expect(modelCall().providerOptions?.openrouter).toMatchObject({
-      reasoning: { effort: 'medium' },
+      reasoning: { effort: 'none' },
     });
 
     mockDoGenerate.mockClear();
-    await callStructured(options({ model: 'google/gemini-3.1-flash-lite' }));
+    await callStructured(options({ operation: 'extractJob' }));
     expect(modelCall().providerOptions?.openrouter).not.toHaveProperty('reasoning');
   });
 
@@ -125,21 +124,24 @@ describe('callStructured', () => {
           outputTokens: { total: 40, text: 28, reasoning: 12 },
           totalTokens: 140,
         },
-        response: { id: 'gen-1', modelId: 'anthropic/claude-sonnet-5' },
+        response: { id: 'gen-1', modelId: routeFor('tailorResume').model },
         providerMetadata: {
           openrouter: { provider: 'Fireworks', usage: { cost: 0.00042 } },
         },
       }),
     );
 
-    await callStructured(options({ effort: 'medium', userContent: 'private prompt content' }));
+    await callStructured(
+      options({ operation: 'tailorResume', userContent: 'private prompt content' }),
+    );
 
     expect(console.log).toHaveBeenCalledWith(
       '[djobi] structured_call',
       expect.objectContaining({
         toolName: 'report_sample',
-        model: 'anthropic/claude-sonnet-5',
-        effort: 'medium',
+        operation: 'tailorResume',
+        model: routeFor('tailorResume').model,
+        effort: 'none',
         // Which upstream actually served it: one slug can still be answered by several providers.
         provider: 'Fireworks',
         cost: 0.00042,
@@ -168,7 +170,8 @@ describe('callStructured', () => {
     expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_retry', {
       kind: 'no-tool-call',
       toolName: 'report_sample',
-      model: 'anthropic/claude-sonnet-5',
+      operation: 'answerQuestions',
+      model: routeFor('answerQuestions').model,
       attempt: 2,
       maxAttempts: 2,
       // The retry doubles the operation's latency, so what the first attempt already cost is the
@@ -256,6 +259,30 @@ describe('callStructured', () => {
     });
     // The output carries the candidate's profile and the posting; only its structure may be logged.
     expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('not-an-array');
+  });
+
+  it('names a nested container by its shape, which is the diagnosis the flat types cannot give', async () => {
+    // The case the comment on `shapeOf` is written for: a field arriving as an object where an
+    // array belongs. `object{…}` versus `array(n)` *is* the whole finding, and the keys are the
+    // model's own field names rather than the candidate's data.
+    vi.mocked(console.warn).mockClear();
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        title: { first: 'Jane', last: 'Doe' },
+        tags: [{ label: 'sensitive' }, { label: 'also sensitive' }],
+        note: null,
+      }),
+    );
+
+    await callStructured(options()).catch(() => undefined);
+
+    expect(console.warn).toHaveBeenCalledWith('[djobi] structured_call_invalid_input', {
+      toolName: 'report_sample',
+      requestId: expect.any(String),
+      received: { title: 'object{first,last}', tags: 'array(2)', note: 'null' },
+    });
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('Jane');
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('sensitive');
   });
 
   it('does not semantically retry a provider or network failure', async () => {

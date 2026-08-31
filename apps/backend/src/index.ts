@@ -7,7 +7,9 @@ import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
-import { app } from './app.js';
+import { createApp } from './app.js';
+import { postgresApplicationStore } from './db/postgresApplicationStore.js';
+import { postgresProfileStore } from './db/postgresProfileStore.js';
 
 /**
  * The served app: one request-log line (method, path, status, duration) wrapped around the real one.
@@ -23,6 +25,17 @@ import { app } from './app.js';
  * And the test suite imports `app.ts` directly to drive it with `app.request()`, so keeping the
  * logger out of that module is what stops a few hundred lines of traffic from burying the results.
  */
+/**
+ * The one place the Postgres adapters are named. Everything else — every route, every test — works
+ * against `ApplicationStore` and `ProfileStore`, so this line is the whole of the app's coupling to
+ * Neon. See `db/applicationStore.ts` for why the in-memory adapters are deliberately not reachable
+ * from here by a flag.
+ */
+const app = createApp({
+  applicationStore: postgresApplicationStore,
+  profileStore: postgresProfileStore,
+});
+
 const server = new Hono();
 server.use(logger());
 server.route('/', app);

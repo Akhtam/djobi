@@ -37,6 +37,28 @@ describe('jobKeyForUrl', () => {
     ).toBe(true);
   });
 
+  it('preserves a hash-bang SPA route, the other shape a hash-routed board uses', () => {
+    expect(jobKeyForUrl('https://careers.acme.com/#!/jobs/1')).not.toBe(
+      jobKeyForUrl('https://careers.acme.com/#!/jobs/2'),
+    );
+    expect(jobKeyForUrl('https://careers.acme.com/#!/jobs/1?utm_source=x')).toBe(
+      jobKeyForUrl('https://careers.acme.com/#!/jobs/1'),
+    );
+  });
+
+  /**
+   * `null` is what the Duplicate Guard falls back on: a row whose `jobUrl` has no derivable
+   * identity is matched by its exact URL instead, exactly as well as it was before keys existed.
+   */
+  it.each([
+    ['a string that is not a URL', 'not a url'],
+    ['a scheme a posting is never served over', 'chrome-extension://abc/panel.html'],
+    ['a file URL', 'file:///Users/jane/posting.html'],
+    ['nothing at all', null],
+  ])('has no key for %s', (_label, url) => {
+    expect(jobKeyForUrl(url)).toBeNull();
+  });
+
   it('still ignores ordinary document anchors', () => {
     expect(
       isSameJobUrl(

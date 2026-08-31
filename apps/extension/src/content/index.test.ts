@@ -13,6 +13,24 @@ describe('content script', () => {
     return loaded;
   }
 
+  /**
+   * Lets the re-report debounce in `content/detect.ts` elapse, without spending it.
+   *
+   * The two cases below assert that *nothing* was reported, which can only be established by
+   * letting the settle window pass — and a real 800ms sleep per case is both 1.6s of the suite and
+   * a flake waiting for a loaded CI machine, since a slow tick makes "nothing happened yet" and
+   * "nothing will happen" indistinguishable. Advancing the clock makes the window pass exactly, and
+   * `…Async` flushes the microtasks the MutationObserver delivers on in between.
+   */
+  async function letTheDebounceSettle() {
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(800);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   beforeEach(() => {
     vi.resetModules();
   });
@@ -22,6 +40,7 @@ describe('content script', () => {
     loaded = null;
     document.body.innerHTML = '';
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('reports the detected fields via REPORT_JOB_PAGE when the page is a job application page', async () => {
@@ -42,9 +61,12 @@ describe('content script', () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'REPORT_JOB_PAGE',
-        fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+        payload: expect.objectContaining({
+          type: 'REPORT_JOB_PAGE',
+          fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+        }),
       }),
+      expect.any(Function),
     );
   });
 
@@ -109,7 +131,10 @@ describe('content script', () => {
 
     await vi.waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'REPORT_JOB_PAGE' }),
+        expect.objectContaining({
+          payload: expect.objectContaining({ type: 'REPORT_JOB_PAGE' }),
+        }),
+        expect.any(Function),
       ),
     );
   });
@@ -127,14 +152,15 @@ describe('content script', () => {
       <input id="email-field" type="text" />
     `;
 
-    await vi.waitFor(
-      () =>
-        expect(sendMessage).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
-          }),
-        ),
-      { timeout: 2000 },
+    await letTheDebounceSettle();
+
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          fields: expect.arrayContaining([expect.objectContaining({ category: 'email' })]),
+        }),
+      }),
+      expect.any(Function),
     );
   });
 
@@ -149,7 +175,7 @@ describe('content script', () => {
     // A re-render that changes no field and no text — the shape of the DOM churn a React ATS form
     // produces constantly while the candidate is looking at it.
     document.querySelector('form')!.appendChild(document.createElement('span'));
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await letTheDebounceSettle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -167,7 +193,7 @@ describe('content script', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('orphaned'), expect.any(Error));
 
     document.querySelector('form')!.innerHTML += `<input id="email-field" type="text" />`;
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await letTheDebounceSettle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     warn.mockRestore();

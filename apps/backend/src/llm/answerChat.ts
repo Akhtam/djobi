@@ -10,9 +10,12 @@
  * exactly where that pressure shows up ("just say I led the migration"). The Profile, the job and
  * the question live in the scaffold turn, never in a message the candidate can rewrite.
  */
-import type { AnswerChatRequest, AnswerChatResponse } from '@djobi/shared';
+import {
+  AnswerChatProfileSchema,
+  type AnswerChatRequest,
+  type AnswerChatResponse,
+} from '@djobi/shared';
 import { z } from 'zod';
-import { MODELS } from './client.js';
 import { groundingContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
@@ -67,14 +70,6 @@ export async function answerChat(
 ): Promise<AnswerChatResponse> {
   const { profile, question, jobInfo, currentAnswer, messages } = request;
 
-  const relevantProfile = {
-    workExperience: profile.workExperience,
-    education: profile.education,
-    skills: profile.skills,
-    stories: profile.stories,
-    customAnswers: profile.customAnswers,
-  };
-
   // A cold turn is one with nothing to build on: no draft under discussion and no thread behind it.
   const coldTurn = messages.length === 0 && !currentAnswer?.trim();
 
@@ -96,15 +91,14 @@ export async function answerChat(
 
   const result = await callStructured({
     signal,
-    model: MODELS.answerChat,
-    maxTokens: 4096,
+    operation: 'answerChat',
     toolName: 'report_chat_turn',
     toolDescription: 'Report your reply to the candidate, and the answer text when you wrote one.',
     schema: AnswerChatOutputSchema,
     ...(coldTurn ? { requires: coldTurnRequires } : {}),
     userContent: `${INSTRUCTIONS}
 
-${groundingContext(relevantProfile, jobInfo)}
+${groundingContext(AnswerChatProfileSchema.parse(profile), jobInfo)}
 
 <question>
 ${sanitizeXmlContent(question)}

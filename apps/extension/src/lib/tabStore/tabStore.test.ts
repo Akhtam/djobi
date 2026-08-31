@@ -1,53 +1,23 @@
 import type { JobInfo, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeChrome } from './fakeChrome';
+import { fakeChrome } from '../fakeChrome';
+import { enrichDetectedFields, getDetectedPage, reportDetectedPage } from './detectedPage';
+import { getJobContext, setJobContext } from './jobContext';
+import { clearTabState, registerTabStateCleanup } from './lifecycle';
+import { asAnalyzedRun } from '../run';
 import {
-  asAnalyzedRun,
-  clearTabState,
-  enrichDetectedFields,
-  getDetectedPage,
-  getJobContext,
   getPipelineRun,
   patchPipelineRun,
   recoverInterruptedPipelineRuns,
-  registerTabStateCleanup,
-  reportDetectedPage,
-  setJobContext,
   setPipelineRun,
-  storageKey,
+  subscribePipelineRun,
   transitionPipelineRun,
-  type PipelineRunState,
-} from './tabStore';
+  type PipelineRunChange,
+} from './pipelineRun';
+import { seedLegacyTabState } from './testing';
+import { pipelineRunFixture } from '../testFixtures';
 
-const jobInfo: JobInfo = {
-  company: 'Acme',
-  team: null,
-  roleTitle: 'Senior Engineer',
-  seniority: 'Senior',
-  location: null,
-  requirements: [],
-  keywords: [],
-};
-
-const tailoredResume: TailoredResume = { skills: [], workExperience: [] };
-
-const run: PipelineRunState = {
-  runId: 'run-1',
-  status: 'review',
-  tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-  jobPageData: { fields: [] },
-  jobDescription: 'Senior Engineer at Acme...',
-  jobInfo,
-  tailoredResume,
-  answers: [],
-  coverage: [],
-  failure: null,
-  unresolvedRequiredFields: [],
-  filledFieldCount: 0,
-  fillOutcome: null,
-  applicationId: null,
-  duplicateOf: null,
-};
+const run = pipelineRunFixture();
 
 function textField(id: string) {
   return {
@@ -228,6 +198,29 @@ describe('tabStore', () => {
       expect(await getPipelineRun(1)).toEqual(run);
     });
 
+    it('classifies shared-record writes at the run subscription seam', async () => {
+      stubChrome();
+      await setPipelineRun(1, run);
+      const changes: PipelineRunChange[] = [];
+      const unsubscribe = subscribePipelineRun(1, (change) => changes.push(change));
+
+      await reportDetectedPage(1, 0, { fields: [] });
+      await patchPipelineRun(1, run.runId, { jobDescription: 'Edited by the panel' });
+      await patchPipelineRun(1, run.runId, { status: 'filling' });
+
+      expect(changes).toEqual([
+        expect.objectContaining({
+          previous: run,
+          current: run,
+          progressMoved: false,
+          pageStateMoved: true,
+        }),
+        expect.objectContaining({ progressMoved: false, pageStateMoved: false }),
+        expect.objectContaining({ progressMoved: true, pageStateMoved: false }),
+      ]);
+      unsubscribe();
+    });
+
     it('recovers operations abandoned by an earlier service-worker instance without touching idle runs', async () => {
       stubChrome();
       await setPipelineRun(1, { ...run, status: 'analyzing', jobInfo: null, tailoredResume: null });
@@ -241,23 +234,21 @@ describe('tabStore', () => {
         status: 'analyze-error',
         failure: {
           step: 'analysis',
-          message: expect.stringMatching(/background worker stopped.*try again/i),
+          kind: 'temporary',
         },
       });
       expect(await getPipelineRun(2)).toMatchObject({
         status: 'fill-error',
         failure: {
           step: 'fill',
-          message: expect.stringMatching(
-            /may have partially completed.*check the application page/i,
-          ),
+          kind: 'temporary',
         },
       });
       expect(await getPipelineRun(3)).toMatchObject({
         status: 'save-error',
         failure: {
           step: 'save',
-          message: expect.stringMatching(/may have completed.*check the dashboard/i),
+          kind: 'temporary',
         },
       });
       expect(await getPipelineRun(4)).toEqual({ ...run, runId: 'run-4', status: 'review' });
@@ -269,9 +260,9 @@ describe('tabStore', () => {
    * different build than the one reading it. These pin the parse that makes that survivable.
    */
   describe('surviving a version skew across an extension reload', () => {
-    /** Writes `entry` straight into storage, bypassing the store's own writers. */
+    /** Seeds the persisted shape from an older build, bypassing this build's writers. */
     async function seedRaw(tabId: number, entry: unknown) {
-      await chrome.storage.session.set({ [storageKey(tabId)]: entry });
+      await seedLegacyTabState(tabId, entry);
     }
 
     it('applies schema defaults to a field written before `required` and `elementRole` existed', async () => {
@@ -346,6 +337,39 @@ describe('tabStore', () => {
         fillOutcome: 'unverified',
       });
     });
+
+    /**
+     * The other half of that rule. `unverified` is a statement about a fill that happened, so a
+     * legacy run that never reached one must not carry it — the panel would report an unverified
+     * fill on a run still waiting to be filled.
+     */
+    it('leaves a legacy run that never filled without an outcome at all', async () => {
+      stubChrome();
+      const { fillOutcome: _fillOutcome, ...legacyRun } = run;
+      await seedRaw(7, { frames: {}, run: { ...legacyRun, status: 'review' } });
+
+      expect(await getPipelineRun(7)).toMatchObject({ status: 'review', fillOutcome: null });
+    });
+
+    it('normalizes a legacy message-only failure without retaining its raw detail', async () => {
+      stubChrome();
+      await seedRaw(7, {
+        frames: {},
+        run: {
+          ...run,
+          status: 'analyze-error',
+          failure: {
+            step: 'analysis',
+            message: 'provider internals that must not reach the panel',
+          },
+        },
+      });
+
+      expect(await getPipelineRun(7)).toMatchObject({
+        failure: { step: 'analysis', kind: 'unknown' },
+      });
+      expect((await getPipelineRun(7))?.failure).not.toHaveProperty('message');
+    });
   });
 
   describe('asAnalyzedRun', () => {
@@ -412,6 +436,33 @@ describe('tabStore', () => {
       jobDescription: 'Retained Ashby description',
     });
     expect(await getPipelineRun(1)).toMatchObject({ tabUrl: overviewUrl });
+  });
+
+  /**
+   * Clearing the editor removes the context rather than storing an empty draft. An empty one would
+   * be restored over whatever the candidate does next — the panel reads a stored draft back on
+   * mount — so "I deleted this" would come back as "I have a blank draft for this job".
+   */
+  it('removes a retained draft when the candidate empties the editor', async () => {
+    stubChrome();
+    const url = 'https://jobs.ashbyhq.com/acme/job-1';
+    await setJobContext(1, url, 'A description worth keeping', 'scraped');
+
+    await setJobContext(1, url, '   ', 'manual');
+
+    expect(await getJobContext(1)).toBeNull();
+  });
+
+  /**
+   * A URL with no posting identity cannot scope a draft to a job, and storing one under a key that
+   * doesn't identify anything would restore it onto an unrelated page.
+   */
+  it('stores nothing for a URL no Job Key can be derived from', async () => {
+    stubChrome();
+
+    await setJobContext(1, 'not-a-url', 'A description', 'manual');
+
+    expect(await getJobContext(1)).toBeNull();
   });
 
   it('clears a retained draft when navigation identifies a different job', async () => {

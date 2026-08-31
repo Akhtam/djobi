@@ -1,4 +1,4 @@
-import { jobKeyForUrl } from '@djobi/shared';
+import { jobKeyForUrl, z, type ZodTypeOf } from '@djobi/shared';
 
 /**
  * The job-posting URL identity now lives in `@djobi/shared`, because the backend's Duplicate Guard
@@ -8,7 +8,8 @@ import { jobKeyForUrl } from '@djobi/shared';
 export { jobKeyForUrl, isSameJobUrl } from '@djobi/shared';
 
 /** Where the editable Job Description draft originally came from. */
-export type JobDescriptionSource = 'manual' | 'scraped';
+export const JobDescriptionSourceSchema = z.enum(['manual', 'scraped']);
+export type JobDescriptionSource = ZodTypeOf<typeof JobDescriptionSourceSchema>;
 
 /**
  * The Job Description that belongs to the job currently open in a tab.

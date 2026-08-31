@@ -8,6 +8,7 @@ import {
   openrouter,
   promptText as turnText,
 } from './fakeModel.js';
+import { routeFor } from './routing.js';
 
 vi.mock('./client.js', () => import('./fakeModel.js'));
 
@@ -78,6 +79,10 @@ function respondPerQuestion(answers: { fieldId: string }[]) {
 describe('answerQuestions', () => {
   beforeEach(() => {
     mockDoGenerate.mockReset();
+    // The failure paths below log deliberately — a retry, a redacted validation failure — and
+    // `structuredCall.test.ts` is where those lines are asserted. Silenced here so a green run of
+    // this file stays silent, and a line that does appear is one nobody expected.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   it('returns an empty array without calling the model when there are no questions', async () => {
@@ -108,11 +113,12 @@ describe('answerQuestions', () => {
     }
     expect(mockDoGenerate).toHaveBeenCalledTimes(1);
     expect(openrouter.chat).toHaveBeenLastCalledWith(
-      'anthropic/claude-sonnet-5',
+      routeFor('answerQuestions').model,
       expect.anything(),
     );
 
     expect(modelCall().responseFormat).toMatchObject({ type: 'json', name: 'report_answers' });
+    expect(modelCall().maxOutputTokens).toBe(1024);
     expect(promptText()).toContain('story-migration-deadline');
     expect(promptText()).toContain('led under pressure');
   });

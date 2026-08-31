@@ -25,6 +25,10 @@ const sampleJobInfo = {
 describe('extractJob', () => {
   beforeEach(() => {
     mockDoGenerate.mockReset();
+    // The failure paths below log deliberately — a retry, a redacted validation failure — and
+    // `structuredCall.test.ts` is where those lines are asserted. Silenced here so a green run of
+    // this file stays silent, and a line that does appear is one nobody expected.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   it('calls the extraction model for the job-info object and returns it validated', async () => {
@@ -39,6 +43,7 @@ describe('extractJob', () => {
     // The highest-volume call in the app, and the serial gate the rest of the Analysis Step waits
     // behind — which is why it is routed to the cheapest model that can follow a schema.
     expect(modelCall().responseFormat).toMatchObject({ type: 'json', name: 'report_job_info' });
+    expect(modelCall().maxOutputTokens).toBe(2048);
     expect(modelCall().prompt).toHaveLength(1);
     expect(modelCall().prompt[0].role).toBe('user');
     expect(promptText()).toContain('Senior Software Engineer at Acme');
