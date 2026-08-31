@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { CustomAnswerSchema, ScreeningAnswersSchema } from './screeningAnswers.js';
 
-/** One job in a profile's work history. */
-export const WorkExperienceSchema = z.object({
+/** Resume content shared by a Profile work entry and its projected Tailored Resume entry. */
+export const ResumeWorkExperienceSchema = z.object({
   company: z.string(),
   title: z.string(),
   startDate: z.string().describe('e.g. 2022-01'),
@@ -10,6 +10,34 @@ export const WorkExperienceSchema = z.object({
   bullets: z
     .array(z.string())
     .describe("Achievement/responsibility bullet points, in the base profile's own words"),
+});
+
+/** One job in a profile's work history, including its tailoring selection controls. */
+export const WorkExperienceSchema = ResumeWorkExperienceSchema.extend({
+  maxBullets: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .default(null)
+    .describe("Maximum tailored bullets for this role; null inherits the Profile's default"),
+  starredIndices: z
+    .array(z.number())
+    .default([])
+    .describe('Indices of source bullets that every tailored resume must include verbatim'),
+}).superRefine(({ bullets, starredIndices }, context) => {
+  const unique = new Set(starredIndices);
+  const allResolve = starredIndices.every(
+    (index) => Number.isInteger(index) && index >= 0 && index < bullets.length,
+  );
+
+  if (!allResolve || unique.size !== starredIndices.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['starredIndices'],
+      message: 'Starred bullet indices must be unique and resolve against bullets',
+    });
+  }
 });
 /** Inferred type of {@link WorkExperienceSchema}. */
 export type WorkExperience = z.infer<typeof WorkExperienceSchema>;
@@ -65,6 +93,12 @@ export const ProfileSchema = z.object({
     github: z.string().nullable(),
   }),
   workExperience: z.array(WorkExperienceSchema),
+  maxBulletsPerRole: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(6)
+    .describe('Default maximum number of bullets selected for each tailored resume role'),
   education: z.array(EducationSchema),
   skills: z.array(z.string()),
   stories: z
@@ -108,6 +142,7 @@ export const EMPTY_PROFILE: Profile = {
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: [],
   stories: [],
@@ -171,11 +206,7 @@ export const TailoredResumeSchema = z.object({
     .array(z.string())
     .describe("The base profile's complete skills list, unchanged and in profile order"),
   workExperience: z.array(
-    z.object({
-      company: z.string(),
-      title: z.string(),
-      startDate: z.string(),
-      endDate: z.string().nullable(),
+    ResumeWorkExperienceSchema.extend({
       bullets: z
         .array(z.string())
         .describe(
@@ -190,9 +221,8 @@ export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
 /**
  * The base profile as a {@link TailoredResumeSchema} — the resume with no tailoring applied.
  *
- * This is a projection, not a conversion: `TailoredResume` is defined as a subset of `Profile`, and
- * `WorkExperienceSchema` is the same shape as the entries in `TailoredResume.workExperience`, so
- * every field already lines up. Nothing is reworded, reordered or dropped.
+ * This is a projection, not a conversion: selection controls belong to the Profile rather than the
+ * resume, while the authored resume content is copied without being reworded, reordered or dropped.
  *
  * Exists for manually logged applications (`source: 'manual'`), where the candidate applied with
  * their own resume and there is no tailored one to store — but the dashboard's detail view renders
@@ -200,7 +230,18 @@ export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
  * nullable field, and `source` is what tells it which of the two it's looking at.
  */
 export function baseResumeOf(profile: Profile): TailoredResume {
-  return { skills: profile.skills, workExperience: profile.workExperience };
+  return {
+    skills: profile.skills,
+    workExperience: profile.workExperience.map(
+      ({ company, title, startDate, endDate, bullets }) => ({
+        company,
+        title,
+        startDate,
+        endDate,
+        bullets,
+      }),
+    ),
+  };
 }
 
 /**

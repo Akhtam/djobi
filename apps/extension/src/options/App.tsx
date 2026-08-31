@@ -14,6 +14,7 @@ import { ThemeToggle, useThemePreference } from '../lib/theme';
 import {
   normalizeProfileDraft,
   optionalText,
+  spliceWorkBullets,
   storyTags,
   withScreeningAnswer,
 } from './profileDraft';
@@ -71,6 +72,8 @@ function ListSection<T>({
   hint,
   items,
   editor,
+  controls,
+  summary,
   children,
 }: {
   legend: string;
@@ -79,6 +82,8 @@ function ListSection<T>({
   hint?: string;
   items: T[];
   editor: ListEditor<T>;
+  controls?: React.ReactNode;
+  summary?: (entry: T, index: number) => React.ReactNode;
   children: (entry: T, index: number) => React.ReactNode;
 }) {
   return (
@@ -88,24 +93,39 @@ function ListSection<T>({
         {hint ? <p className="hint">{hint}</p> : <span />}
         <span className="entry-count">{items.length}</span>
       </div>
+      {controls}
       {items.length === 0 && <p className="empty-list">No {noun} added yet.</p>}
-      {items.map((entry, index) => (
-        <fieldset key={index} className="entry-card">
-          <legend>{`${noun} ${index + 1}`}</legend>
-          <div className="entry-card-header">
-            <span>{`Entry ${index + 1}`}</span>
-            <button
-              type="button"
-              className="btn-danger-ghost"
-              aria-label={`Remove ${noun} ${index + 1}`}
-              onClick={() => editor.remove(index)}
-            >
-              Remove
-            </button>
-          </div>
-          {children(entry, index)}
-        </fieldset>
-      ))}
+      {items.map((entry, index) => {
+        const content = (
+          <>
+            <div className="entry-card-header">
+              <span>{`Entry ${index + 1}`}</span>
+              <button
+                type="button"
+                className="btn-danger-ghost"
+                aria-label={`Remove ${noun} ${index + 1}`}
+                onClick={() => editor.remove(index)}
+              >
+                Remove
+              </button>
+            </div>
+            {children(entry, index)}
+          </>
+        );
+        return (
+          <fieldset key={index} className="entry-card">
+            <legend>{`${noun} ${index + 1}`}</legend>
+            {summary ? (
+              <details className="entry-details" open>
+                <summary>{summary(entry, index)}</summary>
+                <div className="entry-details-body">{content}</div>
+              </details>
+            ) : (
+              content
+            )}
+          </fieldset>
+        );
+      })}
       <button type="button" className="btn-add" onClick={editor.add}>
         {addLabel}
       </button>
@@ -155,6 +175,8 @@ export function App({ client }: { client: BackendClient }) {
     startDate: '',
     endDate: null,
     bullets: [],
+    maxBullets: null,
+    starredIndices: [],
   }));
   const education = listEditor(profile, setProfile, 'education', () => ({
     school: '',
@@ -373,8 +395,47 @@ export function App({ client }: { client: BackendClient }) {
           legend="Work experience"
           noun="work experience"
           addLabel="Add work experience"
+          hint="Keep the full bullet bank for each role. Star must-keep evidence; tailoring selects the rest up to the cap."
           items={profile.workExperience}
           editor={work}
+          controls={
+            <div className="selection-controls">
+              <div className="field cap-field">
+                <label htmlFor="maxBulletsPerRole">Default bullets per role</label>
+                <input
+                  id="maxBulletsPerRole"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={profile.maxBulletsPerRole}
+                  onChange={(event) => {
+                    const value = event.currentTarget.valueAsNumber;
+                    if (Number.isInteger(value) && value >= 0) {
+                      setProfile({ ...profile, maxBulletsPerRole: value });
+                    }
+                  }}
+                />
+              </div>
+              <p className="hint">
+                A maximum, not a target. Roles with fewer bullets stay shorter.
+              </p>
+            </div>
+          }
+          summary={(entry, index) => {
+            const identity =
+              entry.title || entry.company
+                ? `${entry.title || 'Role'}${entry.company ? ` at ${entry.company}` : ''}`
+                : `Work experience ${index + 1}`;
+            const starred = entry.starredIndices.length;
+            return (
+              <>
+                <span className="entry-summary-title">{identity}</span>
+                <span className="entry-summary-count">
+                  {`${entry.bullets.length} ${entry.bullets.length === 1 ? 'bullet' : 'bullets'} · ${starred} starred`}
+                </span>
+              </>
+            );
+          }}
         >
           {(entry, index) => {
             const n = index + 1;
@@ -416,11 +477,49 @@ export function App({ client }: { client: BackendClient }) {
                   />
                 </div>
 
+                <div className="field">
+                  <label htmlFor={`weMaxBullets${n}`}>{`Bullet cap ${n}`}</label>
+                  <input
+                    id={`weMaxBullets${n}`}
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder={`Inherit ${profile.maxBulletsPerRole}`}
+                    value={entry.maxBullets ?? ''}
+                    onChange={(event) => {
+                      const raw = event.currentTarget.value;
+                      const value = event.currentTarget.valueAsNumber;
+                      if (!raw) work.update(index, { maxBullets: null });
+                      else if (Number.isInteger(value) && value >= 0) {
+                        work.update(index, { maxBullets: value });
+                      }
+                    }}
+                  />
+                </div>
+
                 <div className="field span-2">
                   <label>{`Bullets ${n}`}</label>
                   <div className="bullet-list">
                     {entry.bullets.map((bullet, bulletIndex) => (
                       <div key={bulletIndex} className="bullet-row">
+                        <button
+                          type="button"
+                          className="btn-star"
+                          aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
+                          aria-pressed={entry.starredIndices.includes(bulletIndex)}
+                          onClick={() => {
+                            const isStarred = entry.starredIndices.includes(bulletIndex);
+                            work.update(index, {
+                              starredIndices: isStarred
+                                ? entry.starredIndices.filter((star) => star !== bulletIndex)
+                                : [...entry.starredIndices, bulletIndex].sort((a, b) => a - b),
+                            });
+                          }}
+                        >
+                          <span aria-hidden="true">
+                            {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}
+                          </span>
+                        </button>
                         <input
                           aria-label={`Bullet ${n}.${bulletIndex + 1}`}
                           value={bullet}
@@ -434,11 +533,10 @@ export function App({ client }: { client: BackendClient }) {
                         />
                         <button
                           type="button"
+                          className="btn-remove-bullet"
                           aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
                           onClick={() =>
-                            work.update(index, {
-                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
-                            })
+                            work.update(index, spliceWorkBullets(entry, bulletIndex, 1))
                           }
                         >
                           ×
@@ -449,7 +547,9 @@ export function App({ client }: { client: BackendClient }) {
                   <button
                     type="button"
                     className="btn-add-inline"
-                    onClick={() => work.update(index, { bullets: [...entry.bullets, ''] })}
+                    onClick={() =>
+                      work.update(index, spliceWorkBullets(entry, entry.bullets.length, 0, ''))
+                    }
                   >
                     + Add bullet
                   </button>

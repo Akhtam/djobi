@@ -40,6 +40,7 @@ import {
   AnswerChatResponseSchema,
   AnswerQuestionsRequestSchema,
   ApplicationWriteResultSchema,
+  baseResumeOf,
   DuplicateApplicationSummarySchema,
   ExtractJobRequestSchema,
   JobInfoSchema,
@@ -217,8 +218,7 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
         requirements: [],
         keywords: [],
       }),
-    tailorResume: (profile) =>
-      Promise.resolve({ skills: profile.skills, workExperience: profile.workExperience }),
+    tailorResume: (profile) => Promise.resolve(baseResumeOf(profile)),
     answerQuestions: (_profile, _jobInfo, questions) =>
       Promise.resolve(
         questions.map((question) => ({

@@ -135,7 +135,7 @@ async function analysisStep(
   // produced, and is checkpointed with it — a panel that recomputed on render would re-measure a
   // restored run against whatever the module happened to say by then. Pure and synchronous: it
   // costs no backend call and adds nothing to the worker's fetch exposure.
-  const coverage = keywordCoverage(tailoredResume, jobInfo);
+  const coverage = keywordCoverage(tailoredResume, jobInfo, profile);
 
   return { status: STEP_STATUS.analysis.succeeded, jobInfo, tailoredResume, answers, coverage };
 }

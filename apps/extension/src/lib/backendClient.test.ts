@@ -26,6 +26,7 @@ const profile: Profile = {
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: [],
   stories: [],
@@ -115,7 +116,11 @@ describe('httpBackendClient', () => {
       '/tailor-resume',
       expect.anything(),
       {
-        profile: { workExperience: profile.workExperience, skills: profile.skills },
+        profile: {
+          workExperience: profile.workExperience,
+          maxBulletsPerRole: profile.maxBulletsPerRole,
+          skills: profile.skills,
+        },
         jobInfo,
       },
       'POST',

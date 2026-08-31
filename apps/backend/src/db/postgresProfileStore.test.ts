@@ -48,15 +48,19 @@ describe('saveProfile', () => {
 
 describe('getProfile', () => {
   function stubSelect(rows: { data: unknown }[]) {
-    const where = vi.fn().mockResolvedValue(rows);
+    // `.limit(1)` is part of the statement under test, not incidental chaining: the row is a
+    // primary-key lookup, and the read says so rather than asking for every match and taking one.
+    const limit = vi.fn().mockResolvedValue(rows);
+    const where = vi.fn().mockReturnValue({ limit });
     mockSelect.mockReturnValue({ from: vi.fn().mockReturnValue({ where }) });
-    return { where };
+    return { where, limit };
   }
 
   it('selects only the fixed profile ID and resolves null when it is absent', async () => {
-    const { where } = stubSelect([]);
+    const { where, limit } = stubSelect([]);
     await expect(getProfile()).resolves.toBeNull();
     expect(where).toHaveBeenCalledTimes(1);
+    expect(limit).toHaveBeenCalledWith(1);
     expect(
       where.mock.calls[0][0].queryChunks.some(
         (chunk: { value?: unknown }) => chunk.value === PROFILE_ID,

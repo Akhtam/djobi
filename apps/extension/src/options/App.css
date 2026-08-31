@@ -318,6 +318,25 @@ form {
   margin-top: 8px;
 }
 
+.selection-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.selection-controls .cap-field {
+  flex: 0 0 180px;
+}
+
+.selection-controls .hint {
+  margin: 0 0 10px;
+}
+
 .entry-count {
   display: grid;
   place-items: center;
@@ -575,9 +594,20 @@ button:disabled {
   line-height: 1;
 }
 
-.bullet-row button:hover {
+.bullet-row .btn-remove-bullet:hover {
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+.bullet-row .btn-star {
+  color: var(--text-muted);
+  font-size: 17px;
+}
+
+.bullet-row .btn-star:hover,
+.bullet-row .btn-star[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
 }
 
 .btn-add-inline {
@@ -633,6 +663,47 @@ button:disabled {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.entry-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.entry-details > summary::before {
+  content: '›';
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.entry-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.entry-summary-title {
+  flex: 1;
+}
+
+.entry-details:not([open]) > .entry-details-body {
+  display: none;
+}
+
+.entry-details-body {
+  margin-top: 16px;
+}
+
+.entry-summary-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .footer-save {
@@ -706,6 +777,15 @@ button:disabled {
   .skill-add-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .selection-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selection-controls .cap-field {
+    flex-basis: auto;
   }
 
   .footer-save {

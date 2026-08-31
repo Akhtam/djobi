@@ -1,4 +1,4 @@
-import type { Profile, ScreeningAnswers, ScreeningTopic } from '@djobi/shared';
+import type { Profile, ScreeningAnswers, ScreeningTopic, WorkExperience } from '@djobi/shared';
 
 /** Omits a cleared answer instead of storing an answered-but-empty topic. */
 export function withScreeningAnswer(
@@ -25,6 +25,28 @@ export function storyTags(value: string): string[] {
     .filter(Boolean);
 }
 
+/** Applies one bullet-list splice and keeps source-index stars attached to the same bullets. */
+export function spliceWorkBullets(
+  entry: WorkExperience,
+  index: number,
+  deleteCount: number,
+  ...inserted: string[]
+): WorkExperience {
+  const deletedEnd = index + deleteCount;
+  const shift = inserted.length - deleteCount;
+  const starredIndices = entry.starredIndices.flatMap((starredIndex) => {
+    if (starredIndex < index) return [starredIndex];
+    if (starredIndex < deletedEnd) return [];
+    return [starredIndex + shift];
+  });
+
+  return {
+    ...entry,
+    bullets: [...entry.bullets.slice(0, index), ...inserted, ...entry.bullets.slice(deletedEnd)],
+    starredIndices,
+  };
+}
+
 /** Normalizes transient form values into the Profile shape persisted by the backend. */
 export function normalizeProfileDraft(profile: Profile, createStoryId: () => string): Profile {
   const idCounts = new Map<string, number>();
@@ -47,10 +69,13 @@ export function normalizeProfileDraft(profile: Profile, createStoryId: () => str
 
   return {
     ...profile,
-    workExperience: profile.workExperience.map((entry) => ({
-      ...entry,
-      bullets: entry.bullets.filter((bullet) => bullet.trim() !== ''),
-    })),
+    workExperience: profile.workExperience.map((entry) => {
+      let normalized = entry;
+      for (let index = entry.bullets.length - 1; index >= 0; --index) {
+        if (!entry.bullets[index].trim()) normalized = spliceWorkBullets(normalized, index, 1);
+      }
+      return normalized;
+    }),
     stories,
   };
 }

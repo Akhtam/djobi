@@ -3,9 +3,11 @@ import { ProfileSchema } from './schemas.js';
 import {
   AnswerChatRequestSchema,
   AnswerChatResponseSchema,
+  AnswerQuestionsRequestSchema,
   BackendErrorBodySchema,
   DuplicateApplicationSummarySchema,
   SaveProfileRequestSchema,
+  TailorResumeRequestSchema,
 } from './wire.js';
 
 const latestApplication = {
@@ -59,6 +61,101 @@ describe('SaveProfileRequestSchema', () => {
 
   it('rejects a body that is not a Profile', () => {
     expect(SaveProfileRequestSchema.safeParse({ fullName: 42 }).success).toBe(false);
+  });
+});
+
+describe('TailorResumeRequestSchema', () => {
+  it('carries the profile cap and role selection controls across the wire', () => {
+    const profile = ProfileSchema.parse({
+      fullName: 'Ada Lovelace',
+      email: 'ada@example.com',
+      phone: null,
+      location: null,
+      links: { linkedin: null, portfolio: null, github: null },
+      workExperience: [
+        {
+          company: 'Analytical Engines Ltd',
+          title: 'Programmer',
+          startDate: '1842-01',
+          endDate: null,
+          bullets: ['Published the first algorithm', 'Explained general-purpose computation'],
+          maxBullets: 1,
+          starredIndices: [0],
+        },
+      ],
+      education: [],
+      skills: ['Mathematics'],
+      stories: [],
+    });
+
+    const parsed = TailorResumeRequestSchema.parse({
+      profile,
+      jobInfo: {
+        company: 'Babbage',
+        team: null,
+        roleTitle: 'Programmer',
+        seniority: null,
+        location: null,
+        requirements: [],
+        keywords: [],
+      },
+    });
+
+    expect(parsed.profile).toEqual({
+      maxBulletsPerRole: 6,
+      skills: ['Mathematics'],
+      workExperience: [expect.objectContaining({ maxBullets: 1, starredIndices: [0] })],
+    });
+  });
+});
+
+describe('AnswerQuestionsRequestSchema', () => {
+  it('keeps bullet-selection controls out of answer-drafting grounding', () => {
+    const profile = ProfileSchema.parse({
+      fullName: 'Ada Lovelace',
+      email: 'ada@example.com',
+      phone: null,
+      location: null,
+      links: { linkedin: null, portfolio: null, github: null },
+      workExperience: [
+        {
+          company: 'Analytical Engines Ltd',
+          title: 'Programmer',
+          startDate: '1842-01',
+          endDate: null,
+          bullets: ['Published the first algorithm'],
+          maxBullets: 1,
+          starredIndices: [0],
+        },
+      ],
+      education: [],
+      skills: ['Mathematics'],
+      stories: [],
+    });
+
+    const parsed = AnswerQuestionsRequestSchema.parse({
+      profile,
+      jobInfo: {
+        company: 'Babbage',
+        team: null,
+        roleTitle: 'Programmer',
+        seniority: null,
+        location: null,
+        requirements: [],
+        keywords: [],
+      },
+      questions: [],
+    });
+
+    expect(parsed.profile.workExperience).toEqual([
+      {
+        company: 'Analytical Engines Ltd',
+        title: 'Programmer',
+        startDate: '1842-01',
+        endDate: null,
+        bullets: ['Published the first algorithm'],
+      },
+    ]);
   });
 });
 

@@ -5,7 +5,7 @@ import {
   UpdateApplicationStageRequestSchema,
 } from '@djobi/shared';
 import { Hono, type Context } from 'hono';
-import type { ApplicationStore } from '../db/applicationStore.js';
+import type { ApplicationStore, Written } from '../db/applicationStore.js';
 import { parseBody } from '../requestBody.js';
 
 /**
@@ -25,8 +25,8 @@ export function applicationsRoute(store: ApplicationStore): Hono {
   const route = new Hono();
 
   /**
-   * Answers a write: the compact acknowledgement the route already produced, or the full row read
-   * back, or a 404 when there was nothing to write to.
+   * Answers a write: the compact acknowledgement the store produced, or the full row the write left
+   * behind, or a 404 when there was nothing to write to.
    *
    * The four writes below each spelled this out — the `if (!result) 404`, the `response=compact`
    * check, and the read-back — which is one protocol restated four times and got the last part wrong
@@ -35,18 +35,35 @@ export function applicationsRoute(store: ApplicationStore): Hono {
    * is broken", down the same channel as the model failing and Postgres being unreachable. It is the
    * same condition the line above it already answers with a 404, arriving a few milliseconds later.
    *
+   * The read-back is now the exception rather than the rule. The row comes back from the write's own
+   * `RETURNING` (see `Written`), so the default full-row response costs one Neon round trip instead
+   * of two — and the deleted-between-write-and-read race that the paragraph above is about cannot
+   * arise at all, because there is no window between the two.
+   *
+   * `store.byId` stays as the fallback for the one case the write cannot answer: a stored row that
+   * no longer parses as an `Application`. Reaching for it there is deliberate — it throws a Zod
+   * error naming the offending field, which is the report that condition deserves and exactly what
+   * this route did before. A compact caller never reaches it, because it never wanted the row.
+   *
    * `result` is what the store returned — `null` when no row has that id.
    */
   async function writeResponse<Result extends { id: string }>(
     c: Context,
-    result: Result | null,
+    result: Written<Result> | null,
   ): Promise<Response> {
     if (!result) return c.json({ error: 'Application not found' }, 404);
-    if (c.req.query('response') === 'compact') return c.json(result);
 
-    const application = await store.byId(result.id);
-    if (!application) return c.json({ error: 'Application not found' }, 404);
-    return c.json(application);
+    const { application, ...compact } = result;
+    // Stripped rather than passed through: `application` is this seam's business, not the wire's,
+    // and a compact response is compact because a caller said it wanted nothing more than the
+    // acknowledgement.
+    if (c.req.query('response') === 'compact') return c.json(compact);
+
+    if (application) return c.json(application);
+
+    const readBack = await store.byId(result.id);
+    if (!readBack) return c.json({ error: 'Application not found' }, 404);
+    return c.json(readBack);
   }
 
   /**

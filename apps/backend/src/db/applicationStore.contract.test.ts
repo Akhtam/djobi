@@ -266,7 +266,14 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     it('answers with the authoritative stage and stores it', async () => {
       const { id } = await store.create(newApplication());
 
-      expect(await store.setStage(id, 'phone_screen')).toEqual({ id, stage: 'phone_screen' });
+      // Including the row the write returned: both adapters carry it back so the route can answer a
+      // full-row write without a second query, and an adapter that quietly stopped would send that
+      // query back only in production.
+      expect(await store.setStage(id, 'phone_screen')).toEqual({
+        id,
+        stage: 'phone_screen',
+        application: expect.objectContaining({ id, stage: 'phone_screen' }),
+      });
       expect(await store.byId(id)).toMatchObject({ stage: 'phone_screen' });
     });
 

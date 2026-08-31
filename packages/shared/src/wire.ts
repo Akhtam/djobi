@@ -21,6 +21,7 @@ import {
   NewNoteSchema,
   NoteSchema,
   ProfileSchema,
+  ResumeWorkExperienceSchema,
   TailoredResumeSchema,
 } from './schemas.js';
 
@@ -77,6 +78,7 @@ export type ExtractJobRequest = z.infer<typeof ExtractJobRequestSchema>;
 /** Profile fields that can affect tailored resume content. */
 export const TailorResumeProfileSchema = ProfileSchema.pick({
   workExperience: true,
+  maxBulletsPerRole: true,
   skills: true,
 });
 export type TailorResumeProfile = z.infer<typeof TailorResumeProfileSchema>;
@@ -101,7 +103,7 @@ export const AnswerQuestionsProfileSchema = ProfileSchema.pick({
   // one. `screeningAnswers` stays out — those are legal declarations, decided by the matching rules
   // and never grounding for a draft.
   customAnswers: true,
-});
+}).extend({ workExperience: z.array(ResumeWorkExperienceSchema) });
 export type AnswerQuestionsProfile = z.infer<typeof AnswerQuestionsProfileSchema>;
 
 /** Body of `POST /answer-questions`. */

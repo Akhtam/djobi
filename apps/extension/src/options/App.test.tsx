@@ -38,6 +38,7 @@ const emptyProfile: Profile = {
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: [],
   stories: [],
@@ -238,6 +239,8 @@ describe('options App', () => {
           startDate: '2022-01',
           endDate: '2023-06',
           bullets: ['Shipped X', 'Led Y'],
+          maxBullets: null,
+          starredIndices: [],
         },
       ],
     });
@@ -274,6 +277,8 @@ describe('options App', () => {
           startDate: '',
           endDate: null,
           bullets: ['Shipped X'],
+          maxBullets: null,
+          starredIndices: [],
         },
       ],
     });
@@ -283,7 +288,15 @@ describe('options App', () => {
     const loaded: Profile = {
       ...emptyProfile,
       workExperience: [
-        { company: 'Acme', title: 'Engineer', startDate: '2022-01', endDate: null, bullets: [] },
+        {
+          company: 'Acme',
+          title: 'Engineer',
+          startDate: '2022-01',
+          endDate: null,
+          bullets: [],
+          maxBullets: null,
+          starredIndices: [],
+        },
       ],
     };
     stubBackend({ get: () => loaded });
@@ -296,6 +309,84 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove work experience 1' }));
 
     expect(screen.queryByLabelText('Company 1')).not.toBeInTheDocument();
+  });
+
+  it('edits bullet caps and stars while keeping star indices valid after deletion', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      workExperience: [
+        {
+          company: 'Acme',
+          title: 'Senior Engineer',
+          startDate: '2022-01',
+          endDate: null,
+          bullets: ['First authored bullet', 'Second authored bullet', 'Third authored bullet'],
+          maxBullets: null,
+          starredIndices: [1],
+        },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    expect(screen.getByLabelText('Default bullets per role')).toHaveValue(6);
+    expect(screen.getByLabelText('Bullet cap 1')).toHaveValue(null);
+    expect(screen.getByText(/3 bullets.*1 starred/i)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Unstar bullet 1.2' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    fireEvent.change(screen.getByLabelText('Default bullets per role'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Bullet cap 1'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Star bullet 1.3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove bullet 1.1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith({
+      ...loaded,
+      maxBulletsPerRole: 5,
+      workExperience: [
+        {
+          ...loaded.workExperience[0],
+          bullets: ['Second authored bullet', 'Third authored bullet'],
+          maxBullets: 2,
+          starredIndices: [0, 1],
+        },
+      ],
+    });
+  });
+
+  it('lets each work role collapse without hiding its authored summary', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      workExperience: [
+        {
+          company: 'Acme',
+          title: 'Engineer',
+          startDate: '2022-01',
+          endDate: null,
+          bullets: ['Built systems'],
+          maxBullets: null,
+          starredIndices: [],
+        },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    const summary = await screen.findByText(/Engineer at Acme/);
+    expect(screen.getByLabelText('Company 1')).toBeVisible();
+
+    fireEvent.click(summary);
+
+    expect(summary).toBeVisible();
+    expect(screen.getByLabelText('Company 1')).not.toBeVisible();
   });
 
   it('adds an education entry, edits its fields, and saves it', async () => {
@@ -474,7 +565,17 @@ describe('options App', () => {
   it('gives each repeated entry fieldset a direct accessible legend', async () => {
     const loaded: Profile = {
       ...emptyProfile,
-      workExperience: [{ company: '', title: '', startDate: '', endDate: null, bullets: [] }],
+      workExperience: [
+        {
+          company: '',
+          title: '',
+          startDate: '',
+          endDate: null,
+          bullets: [],
+          maxBullets: null,
+          starredIndices: [],
+        },
+      ],
       education: [{ school: '', degree: '', field: null, graduationYear: null }],
       customAnswers: [{ question: '', answer: '' }],
       stories: [

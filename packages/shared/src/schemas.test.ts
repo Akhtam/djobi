@@ -99,13 +99,50 @@ const validNote = {
 };
 
 describe('WorkExperienceSchema', () => {
-  it('accepts a valid entry', () => {
-    expect(WorkExperienceSchema.safeParse(validWorkExperience).success).toBe(true);
+  it('accepts a legacy entry and fills the bullet-selection defaults', () => {
+    expect(WorkExperienceSchema.parse(validWorkExperience)).toEqual({
+      ...validWorkExperience,
+      maxBullets: null,
+      starredIndices: [],
+    });
   });
 
   it('rejects a missing bullets field', () => {
     const { bullets: _bullets, ...withoutBullets } = validWorkExperience;
     expect(WorkExperienceSchema.safeParse(withoutBullets).success).toBe(false);
+  });
+
+  it('accepts an uncapped bullet bank and valid starred indices', () => {
+    const bullets = Array.from({ length: 20 }, (_, index) => `Bullet ${index + 1}`);
+
+    expect(
+      WorkExperienceSchema.parse({
+        ...validWorkExperience,
+        bullets,
+        maxBullets: 4,
+        starredIndices: [0, 19],
+      }),
+    ).toMatchObject({ bullets, maxBullets: 4, starredIndices: [0, 19] });
+  });
+
+  it.each([
+    ['negative', [-1]],
+    ['fractional', [0.5]],
+    ['out of range', [2]],
+    ['duplicated', [0, 0]],
+  ])('rejects %s starred indices', (_label, starredIndices) => {
+    const result = WorkExperienceSchema.safeParse({ ...validWorkExperience, starredIndices });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual([expect.objectContaining({ path: ['starredIndices'] })]);
+    }
+  });
+
+  it('accepts zero as a cap so a role may include only its starred bullets', () => {
+    expect(WorkExperienceSchema.parse({ ...validWorkExperience, maxBullets: 0 }).maxBullets).toBe(
+      0,
+    );
   });
 });
 
@@ -154,6 +191,11 @@ describe('ProfileSchema', () => {
 
     expect(result.success && result.data.screeningAnswers).toEqual({});
     expect(result.success && result.data.customAnswers).toEqual([]);
+    expect(result.success && result.data.maxBulletsPerRole).toBe(6);
+    expect(result.success && result.data.workExperience[0]).toMatchObject({
+      maxBullets: null,
+      starredIndices: [],
+    });
   });
 
   it('rejects a profile missing fullName', () => {
@@ -175,7 +217,12 @@ describe('ProfileSchema', () => {
  */
 describe('parseProfile', () => {
   it('completes a Profile saved before a field existed, rather than rejecting it', () => {
-    const { screeningAnswers: _screening, customAnswers: _custom, ...stored } = EMPTY_PROFILE;
+    const {
+      screeningAnswers: _screening,
+      customAnswers: _custom,
+      maxBulletsPerRole: _maxBullets,
+      ...stored
+    } = EMPTY_PROFILE;
 
     const parsed = parseProfile({ ...stored, fullName: 'Jane Doe' });
 
@@ -183,6 +230,7 @@ describe('parseProfile', () => {
       fullName: 'Jane Doe',
       screeningAnswers: {},
       customAnswers: [],
+      maxBulletsPerRole: 6,
     });
   });
 
@@ -383,14 +431,24 @@ describe('baseResumeOf', () => {
    * What manual logging stores in place of a tailored resume, so this has to stay a straight
    * projection — anything reworded here would be a claim the candidate never made.
    */
-  it("carries the profile's skills and work history through unchanged", () => {
-    const resume = baseResumeOf(validProfile);
-    expect(resume.skills).toEqual(validProfile.skills);
-    expect(resume.workExperience).toEqual(validProfile.workExperience);
+  it("carries the profile's resume content through without selection metadata", () => {
+    const profile = ProfileSchema.parse({
+      ...validProfile,
+      maxBulletsPerRole: 4,
+      workExperience: [{ ...validWorkExperience, maxBullets: 1, starredIndices: [1] }],
+    });
+
+    const resume = baseResumeOf(profile);
+    expect(resume.skills).toEqual(profile.skills);
+    expect(resume.workExperience).toEqual([validWorkExperience]);
+    expect(resume.workExperience[0]).not.toHaveProperty('maxBullets');
+    expect(resume.workExperience[0]).not.toHaveProperty('starredIndices');
   });
 
   it('produces a valid TailoredResume', () => {
-    expect(TailoredResumeSchema.safeParse(baseResumeOf(validProfile)).success).toBe(true);
+    expect(
+      TailoredResumeSchema.safeParse(baseResumeOf(ProfileSchema.parse(validProfile))).success,
+    ).toBe(true);
   });
 });
 

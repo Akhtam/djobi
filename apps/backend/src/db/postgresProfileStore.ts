@@ -21,7 +21,7 @@ export const PROFILE_ID = '00000000-0000-4000-8000-000000000001';
  * naming the field instead of surfacing somewhere further downstream.
  */
 async function getProfile(): Promise<Profile | null> {
-  const [row] = await db.select().from(profiles).where(eq(profiles.id, PROFILE_ID));
+  const [row] = await db.select().from(profiles).where(eq(profiles.id, PROFILE_ID)).limit(1);
   if (!row) return null;
   return ProfileSchema.parse(row.data);
 }

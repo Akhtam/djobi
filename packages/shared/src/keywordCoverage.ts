@@ -6,11 +6,10 @@
  * is deliberately the *only* kind of check it can honestly be — a report, not a correction.
  *
  * **Why it never feeds back into the model.** `reconcileResume` forces every tailored skill through
- * `matchOptionLabel(profile.skills, …)`, so a skill the Profile does not list cannot reach the
- * resume at all. That is correct, and it means the remedy for an uncovered keyword is always the
- * Profile — "add it if you have it" — and never the resume. A coverage number the tailoring prompt
- * were asked to raise would be a number raised by writing words the candidate cannot support, which
- * is the fabrication every other reconciliation in this codebase exists to prevent.
+ * the authoritative Profile, so a skill the Profile does not list cannot reach the resume at all.
+ * An uncovered keyword therefore has one of two Profile-side remedies: star a source bullet that
+ * already evidences it, or add the fact only if the candidate really has it. Coverage never edits
+ * the resume or feeds back into tailoring, where raising a number would reward fabrication.
  *
  * **Why the resume and not the answers.** An ATS parses the attached resume into the candidate
  * record a recruiter later searches; a drafted answer to a screening question is not part of that
@@ -25,10 +24,10 @@
  * find. Erring toward missing is the whole reason this is worth shipping without aliases.
  */
 import { containsAsWords, normalizeLabel } from './labelMatching.js';
-import type { JobInfo, TailoredResume } from './schemas.js';
+import type { JobInfo, Profile, TailoredResume } from './schemas.js';
 
 /** Where a keyword was found — or that it was not. */
-export type CoverageVerdict = 'skills' | 'experience' | 'missing';
+export type CoverageVerdict = 'skills' | 'experience' | 'profile-experience' | 'missing';
 
 /** One posting keyword, and what the Tailored Resume has to show for it. */
 export interface KeywordCoverage {
@@ -48,8 +47,13 @@ export interface KeywordCoverage {
  * contained in every bullet, so scoring it would report a resume as covering something the posting
  * never asked for.
  */
-export function keywordCoverage(resume: TailoredResume, jobInfo: JobInfo): KeywordCoverage[] {
+export function keywordCoverage(
+  resume: TailoredResume,
+  jobInfo: JobInfo,
+  profile: Pick<Profile, 'workExperience'>,
+): KeywordCoverage[] {
   const bullets = resume.workExperience.flatMap((entry) => entry.bullets);
+  const sourceBullets = profile.workExperience.flatMap((entry) => entry.bullets);
 
   return jobInfo.keywords.flatMap((keyword): KeywordCoverage[] => {
     const needle = normalizeLabel(keyword);
@@ -63,6 +67,9 @@ export function keywordCoverage(resume: TailoredResume, jobInfo: JobInfo): Keywo
 
     const bullet = bullets.find(carries);
     if (bullet) return [{ keyword, verdict: 'experience', evidence: bullet }];
+
+    const sourceBullet = sourceBullets.find(carries);
+    if (sourceBullet) return [{ keyword, verdict: 'profile-experience', evidence: sourceBullet }];
 
     return [{ keyword, verdict: 'missing', evidence: null }];
   });

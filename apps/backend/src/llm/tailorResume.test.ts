@@ -1,4 +1,4 @@
-import { TailoredResumeSchema, type JobInfo, type Profile } from '@djobi/shared';
+import { baseResumeOf, TailoredResumeSchema, type JobInfo, type Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   generation,
@@ -9,6 +9,7 @@ import {
   promptText,
 } from './fakeModel.js';
 import { routeFor } from './routing.js';
+import { pageCount, renderResumePdf } from '../pdf/renderResume.js';
 
 vi.mock('./client.js', () => import('./fakeModel.js'));
 
@@ -27,8 +28,11 @@ const profile: Profile = {
       startDate: '2022-01',
       endDate: null,
       bullets: ['Led the billing service migration', 'Owned the on-call rotation'],
+      maxBullets: null,
+      starredIndices: [],
     },
   ],
+  maxBulletsPerRole: 6,
   education: [],
   skills: ['TypeScript', 'PostgreSQL'],
   stories: [],
@@ -73,7 +77,10 @@ describe('tailorResume', () => {
       skills: profile.skills,
       workExperience: [
         {
-          ...profile.workExperience[0],
+          company: 'Acme Corp',
+          title: 'Senior Software Engineer',
+          startDate: '2022-01',
+          endDate: null,
           bullets: ['Led a job-relevant billing service migration'],
         },
       ],
@@ -102,9 +109,15 @@ describe('tailorResume', () => {
     expect(roleProperties).toHaveProperty('sourceIndex');
     expect(roleProperties).not.toHaveProperty('company');
     expect(promptText()).toContain(
-      JSON.stringify({ workExperience: profile.workExperience, skills: profile.skills }),
+      JSON.stringify({
+        workExperience: profile.workExperience,
+        maxBulletsPerRole: 6,
+        skills: profile.skills,
+      }),
     );
     expect(promptText()).not.toContain(profile.fullName);
+    expect(promptText()).toContain('natural language that does not sound robotic');
+    expect(promptText().indexOf('<base_profile>')).toBeLessThan(promptText().indexOf('<job_info>'));
   });
 
   it('throws when the compact output fails schema validation', async () => {
@@ -137,6 +150,8 @@ describe('tailorResume', () => {
       startDate: '2020-01',
       endDate: '2021-12',
       bullets: ['Built internal developer tooling'],
+      maxBullets: null,
+      starredIndices: [],
     };
     const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
     mockDoGenerate.mockResolvedValue(
@@ -161,6 +176,8 @@ describe('tailorResume', () => {
       startDate: '2020-01',
       endDate: '2021-12',
       bullets: ['Built internal developer tooling'],
+      maxBullets: null,
+      starredIndices: [],
     };
     const twoRoleProfile = { ...profile, workExperience: [...profile.workExperience, secondRole] };
     mockDoGenerate.mockResolvedValue(
@@ -175,7 +192,22 @@ describe('tailorResume', () => {
 
     const result = await tailorResume(twoRoleProfile, jobInfo);
 
-    expect(result.workExperience).toEqual(twoRoleProfile.workExperience);
+    expect(result.workExperience).toEqual([
+      {
+        company: 'Acme Corp',
+        title: 'Senior Software Engineer',
+        startDate: '2022-01',
+        endDate: null,
+        bullets: profile.workExperience[0].bullets,
+      },
+      {
+        company: 'Beta Corp',
+        title: 'Software Engineer',
+        startDate: '2020-01',
+        endDate: '2021-12',
+        bullets: ['Built internal developer tooling'],
+      },
+    ]);
   });
 
   it('drops invalid bullet pointers and falls back when none of a supplied role resolves', async () => {
@@ -197,6 +229,157 @@ describe('tailorResume', () => {
     const result = await tailorResume(profile, jobInfo);
 
     expect(result.workExperience[0].bullets).toEqual(profile.workExperience[0].bullets);
+  });
+
+  it('enforces a role cap as a maximum without padding to it', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          {
+            sourceIndex: 0,
+            bullets: [
+              { sourceIndex: 1, text: 'Reworded on-call ownership' },
+              { sourceIndex: 0, text: 'Reworded billing migration' },
+            ],
+          },
+        ],
+      }),
+    );
+    const cappedProfile = {
+      ...profile,
+      workExperience: [{ ...profile.workExperience[0], maxBullets: 1 }],
+    };
+
+    const capped = await tailorResume(cappedProfile, jobInfo);
+    expect(capped.workExperience[0].bullets).toEqual(['Reworded on-call ownership']);
+
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [] }] }),
+    );
+    const omitted = await tailorResume(cappedProfile, jobInfo);
+    expect(omitted.workExperience[0].bullets).toEqual([]);
+  });
+
+  it('keeps every starred bullet verbatim and lets stars exceed the configured cap', async () => {
+    const starredProfile = {
+      ...profile,
+      workExperience: [
+        {
+          ...profile.workExperience[0],
+          bullets: ['Authored first', 'Selectable middle', 'Authored last'],
+          maxBullets: 1,
+          starredIndices: [0, 2],
+        },
+      ],
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          {
+            sourceIndex: 0,
+            bullets: [
+              { sourceIndex: 2 },
+              { sourceIndex: 1, text: 'Reworded middle' },
+              { sourceIndex: 0, text: 'The model must not rewrite this' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(starredProfile, jobInfo);
+
+    expect(result.workExperience[0].bullets).toEqual(['Authored last', 'Authored first']);
+    const bulletSchema =
+      modelCall().responseFormat.schema.properties.workExperience.items.properties.bullets.items;
+    expect(bulletSchema.required).not.toContain('text');
+  });
+
+  it('uses a capped authored-order fallback when a required star is absent', async () => {
+    const starredProfile = {
+      ...profile,
+      workExperience: [
+        {
+          ...profile.workExperience[0],
+          bullets: ['First', 'Second', 'Third', 'Required fourth'],
+          maxBullets: 2,
+          starredIndices: [3],
+        },
+      ],
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Only non-star returned' }] },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(starredProfile, jobInfo);
+
+    expect(result.workExperience[0].bullets).toEqual(['First', 'Required fourth']);
+  });
+
+  it('sizes output from the effective cap rather than the source bank', async () => {
+    const modelResult = objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [] }] });
+    mockDoGenerate.mockResolvedValue(modelResult);
+    const shortBank = {
+      ...profile,
+      workExperience: [{ ...profile.workExperience[0], maxBullets: 2 }],
+    };
+    const deepBank = {
+      ...profile,
+      workExperience: [
+        {
+          ...profile.workExperience[0],
+          bullets: Array.from({ length: 15 }, (_, index) => `Bullet ${index + 1}`),
+          maxBullets: 2,
+        },
+      ],
+    };
+
+    await tailorResume(shortBank, jobInfo);
+    await tailorResume(deepBank, jobInfo);
+
+    expect(modelCall(1).maxOutputTokens).toBe(modelCall(0).maxOutputTokens);
+  });
+
+  it('turns a deep bank that spills into a capped resume that fits one page', async () => {
+    const deepProfile: Profile = {
+      ...profile,
+      workExperience: Array.from({ length: 5 }, (_, roleIndex) => ({
+        company: `Company ${roleIndex}`,
+        title: 'Senior Software Engineer',
+        startDate: '2015-01',
+        endDate: '2020-01',
+        bullets: Array.from(
+          { length: 15 },
+          (_, bulletIndex) =>
+            `Delivered initiative ${bulletIndex} end to end, working across teams to ship it and measuring the result afterwards.`,
+        ),
+        maxBullets: null,
+        starredIndices: [],
+      })),
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: deepProfile.workExperience.map((role, sourceIndex) => ({
+          sourceIndex,
+          bullets: role.bullets.slice(0, 6).map((text, bulletIndex) => ({
+            sourceIndex: bulletIndex,
+            text,
+          })),
+        })),
+      }),
+    );
+
+    const uncapped = await renderResumePdf(deepProfile, baseResumeOf(deepProfile));
+    const tailored = await tailorResume(deepProfile, jobInfo);
+    const capped = await renderResumePdf(deepProfile, tailored);
+
+    expect(pageCount(uncapped)).toBeGreaterThan(1);
+    expect(tailored.workExperience.every((role) => role.bullets.length === 6)).toBe(true);
+    expect(pageCount(capped)).toBe(1);
   });
 
   it('returns an empty resume without a model call when the profile has no resume content', async () => {

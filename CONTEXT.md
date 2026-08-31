@@ -67,7 +67,10 @@ identical name), banner, alert (both name the pixels rather than the meaning)
 ### Application data
 
 **Profile**:
-The user's base, job-independent information — contact details, links, work experience, education, skills, and stories — that seeds every Application.
+The user's base, job-independent information — contact details, links, work experience, education,
+skills, and stories — that seeds every Application. A work role keeps an uncapped Bullet Bank;
+starred bullets must appear verbatim on every Tailored Resume, while the Profile's default bullet cap
+and an optional role override bound the model's remaining selection.
 _Avoid_: resume, CV
 
 **Job Info**:
@@ -75,7 +78,13 @@ The structured facts extracted from a job posting — company, team, role title,
 _Avoid_: job posting (the raw page/text), listing
 
 **Tailored Resume**:
-The resume shape an Application stores — the Profile's complete skills list unchanged, plus work experience. On an `autofill` Application its work-experience bullets may be reworded and reordered from the Profile to emphasize what's relevant to a specific Job Info, never fabricating experience the Profile doesn't have. On a `manual` one it holds the Base Resume instead, untailored — which is why the Dashboard relabels it there rather than making a claim that isn't true of the row.
+The resume shape an Application stores — the Profile's complete skills list unchanged, plus work
+experience. On an `autofill` Application its work-experience bullets are a capped selection from each
+role's Bullet Bank, reordered and possibly reworded to emphasize what's relevant to a specific Job
+Info; starred bullets are always present verbatim, and the model can never fabricate experience the
+Profile doesn't have. On a `manual` one it holds the complete Base Resume instead, uncapped and
+untailored — which is why the Dashboard relabels it there rather than making a claim that isn't true
+of the row.
 _Avoid_: resume (ambiguous with the Profile's own experience data)
 
 **Base Resume**:
@@ -89,10 +98,10 @@ _Avoid_: response
 **Keyword Coverage**:
 What the Tailored Resume evidences of a Job Info's `keywords`, computed without a model: each
 keyword is reported as evidenced in skills, evidenced in experience (with the bullet that carries
-it), or not evidenced. A **report the candidate acts on, never an instruction fed back to the
-model** — a keyword the Profile does not support cannot honestly reach the resume, so the remedy for
-a gap is always the Profile. Matching is whole-word, by the same rule that keeps a stored "No" out
-of "Norway".
+it), evidenced only by a Profile bullet absent from this resume (with that source bullet), or not
+evidenced anywhere. A **report the candidate acts on, never an instruction fed back to the model**:
+Profile-only evidence is worth starring, while a true gap is added only if the candidate has it.
+Matching is whole-word, by the same rule that keeps a stored "No" out of "Norway".
 _Avoid_: match score, ATS score (both name it as a number to maximize, which is what invites
 keyword stuffing), keyword match rate
 

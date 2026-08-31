@@ -25,6 +25,7 @@ const profile: Profile = {
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: ['TypeScript'],
   stories: [],

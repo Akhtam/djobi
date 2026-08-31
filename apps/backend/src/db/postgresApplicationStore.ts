@@ -21,8 +21,8 @@ import {
   type UpdateApplicationStageResult,
   jobKeyForUrl,
 } from '@djobi/shared';
-import { desc, eq, or, sql } from 'drizzle-orm';
-import type { ApplicationStore } from './applicationStore.js';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import type { ApplicationStore, Written } from './applicationStore.js';
 import { db } from './client.js';
 import { applications } from './schema.js';
 
@@ -64,6 +64,24 @@ function toApplications(rows: ApplicationRow[]): Application[] {
   });
 }
 
+/**
+ * The row a write returned, parsed if it can be — see {@link Written} for why an unreadable one is
+ * `null` here rather than a throw.
+ *
+ * Distinct from {@link toApplication}, which throws, and from {@link toApplications}, which drops:
+ * a write's caller may not have asked for the row at all, so failing to read it back must not fail
+ * the write that already landed.
+ */
+function toWrittenApplication(row: ApplicationRow): Application | null {
+  const parsed = ApplicationSchema.safeParse(rowShape(row));
+  if (parsed.success) return parsed.data;
+
+  console.warn(
+    `[djobi] wrote application ${row.id} but could not read it back: ${parsed.error.message}`,
+  );
+  return null;
+}
+
 /** Lists all stored applications, most recently created first. */
 async function listApplications(): Promise<Application[]> {
   const rows = await db.select().from(applications).orderBy(desc(applications.createdAt));
@@ -91,27 +109,32 @@ async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> 
  * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
  * they log an application they made by hand (`source: 'manual'`).
  */
-async function saveApplication(newApplication: NewApplication): Promise<ApplicationWriteResult> {
+async function saveApplication(
+  newApplication: NewApplication,
+): Promise<Written<ApplicationWriteResult>> {
+  // Every column, not just `id`: `RETURNING *` costs the same round trip as `RETURNING id`, and it
+  // is what spares the route a second query when the caller wants the row back. Same below.
   const [row] = await db
     .insert(applications)
     .values({ ...newApplication, jobKey: jobKeyForUrl(newApplication.jobUrl) })
-    .returning({ id: applications.id });
-  return row;
+    .returning();
+  return { id: row.id, application: toWrittenApplication(row) };
 }
 
 /** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
 async function updateApplication(
   id: string,
   snapshot: ApplicationSnapshot,
-): Promise<ApplicationWriteResult | null> {
+): Promise<Written<ApplicationWriteResult> | null> {
   const [row] = await db
     .update(applications)
     // Re-derived rather than left alone: the snapshot can carry a corrected `jobUrl`, and a key
     // still pointing at the old one would make the guard match a posting this row is no longer for.
     .set({ ...snapshot, jobKey: jobKeyForUrl(snapshot.jobUrl) })
     .where(eq(applications.id, id))
-    .returning({ id: applications.id });
-  return row ?? null;
+    .returning();
+  if (!row) return null;
+  return { id: row.id, application: toWrittenApplication(row) };
 }
 
 /**
@@ -131,6 +154,12 @@ async function updateApplication(
  * The raw `jobUrl` stays in the `or` for rows written before `job_key` existed, and for a `jobUrl`
  * too malformed to derive a key from. Those match exactly as well as they did before and no better
  * — which is the point of keeping the clause rather than backfilling behind the caller's back.
+ *
+ * That fallback is narrowed to `job_key IS NULL` rather than left as a bare `job_url = …`. A row
+ * that *has* a key is already matched by the first clause whenever its URL matches, since the key is
+ * derived from the URL — so the unqualified version only made Postgres scan the `job_url` index for
+ * rows the `job_key` index had found already. Keying the fallback to the rows that are actually
+ * missing a key says the same thing about which rows match, and asks for less to say it.
  */
 async function getApplicationDuplicateSummary(
   jobUrl: string,
@@ -150,7 +179,10 @@ async function getApplicationDuplicateSummary(
     .where(
       jobKey === null
         ? eq(applications.jobUrl, jobUrl)
-        : or(eq(applications.jobKey, jobKey), eq(applications.jobUrl, jobUrl)),
+        : or(
+            eq(applications.jobKey, jobKey),
+            and(isNull(applications.jobKey), eq(applications.jobUrl, jobUrl)),
+          ),
     )
     .orderBy(desc(applications.createdAt))
     .limit(1);
@@ -172,14 +204,21 @@ async function getApplicationDuplicateSummary(
 async function updateApplicationStage(
   id: string,
   stage: ApplicationStage,
-): Promise<UpdateApplicationStageResult | null> {
+): Promise<Written<UpdateApplicationStageResult> | null> {
   const [row] = await db
     .update(applications)
     .set({ stage })
     .where(eq(applications.id, id))
-    .returning({ id: applications.id, stage: applications.stage });
+    .returning();
 
-  return row ? { id: row.id, stage: ApplicationStageSchema.parse(row.stage) } : null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    // Still parsed off the column rather than taken from the argument: the authoritative Stage is
+    // the one Postgres now holds, which is the whole point of answering with it.
+    stage: ApplicationStageSchema.parse(row.stage),
+    application: toWrittenApplication(row),
+  };
 }
 
 /**
@@ -198,7 +237,7 @@ async function updateApplicationStage(
 async function addApplicationNote(
   id: string,
   note: NewNote,
-): Promise<AddApplicationNoteResult | null> {
+): Promise<Written<AddApplicationNoteResult> | null> {
   const appended: Note = {
     ...note,
     id: crypto.randomUUID(),
@@ -209,9 +248,10 @@ async function addApplicationNote(
     .update(applications)
     .set({ notes: sql`${applications.notes} || ${JSON.stringify([appended])}::jsonb` })
     .where(eq(applications.id, id))
-    .returning({ id: applications.id });
+    .returning();
 
-  return row ? { id: row.id, note: appended } : null;
+  if (!row) return null;
+  return { id: row.id, note: appended, application: toWrittenApplication(row) };
 }
 
 /**

@@ -11,6 +11,11 @@ const inExperience: KeywordCoverage = {
   verdict: 'experience',
   evidence: 'Managed the Terraform modules for three environments',
 };
+const profileExperience: KeywordCoverage = {
+  keyword: 'Kubernetes',
+  verdict: 'profile-experience',
+  evidence: 'Provisioned Kubernetes clusters with Terraform',
+};
 
 describe('CoverageReport', () => {
   beforeEach(() => vi.unstubAllGlobals());
@@ -28,6 +33,10 @@ describe('CoverageReport', () => {
     fireEvent.click(screen.getByText(/keyword.*isn't evidenced|keywords aren't evidenced/i));
   }
 
+  function openProfileExperience() {
+    fireEvent.click(screen.getByText(/keyword.*profile evidence absent from this resume/i));
+  }
+
   it('renders nothing when the posting yielded no keywords, rather than an empty report that reads as a clean bill', () => {
     const { container } = render(<CoverageReport coverage={[]} />);
 
@@ -40,6 +49,25 @@ describe('CoverageReport', () => {
     render(<CoverageReport coverage={[missing, inSkills]} />);
 
     expect(screen.getByText('1 not evidenced')).toBeVisible();
+  });
+
+  it('counts Profile evidence absent from this resume as not evidenced by this resume', () => {
+    render(<CoverageReport coverage={[profileExperience, inSkills]} />);
+
+    expect(screen.getByText('1 not evidenced')).toBeVisible();
+  });
+
+  it('counts Profile-only keywords rather than claiming each keyword came from a different bullet', () => {
+    render(
+      <CoverageReport
+        coverage={[profileExperience, { ...profileExperience, keyword: 'Terraform' }]}
+      />,
+    );
+    openReport();
+
+    expect(
+      screen.getByText('2 keywords have Profile evidence absent from this resume'),
+    ).toBeVisible();
   });
 
   it('says nothing about coverage when there is no gap, rather than a count that reads as a score', () => {
@@ -89,6 +117,16 @@ describe('CoverageReport', () => {
 
     expect(screen.getByText(/add it to your profile/i)).toBeVisible();
     expect(screen.queryByText(/add .* to your resume/i)).toBeNull();
+  });
+
+  it('shows Profile-only evidence and tells the candidate to star it instead of adding a fact', () => {
+    render(<CoverageReport coverage={[profileExperience]} />);
+    openReport();
+    openProfileExperience();
+
+    expect(screen.getByText(profileExperience.evidence!)).toBeVisible();
+    expect(screen.getByText(/star a listed source bullet/i)).toBeVisible();
+    expect(screen.queryByText(/add it to your profile/i)).toBeNull();
   });
 
   it('opens the options page from the gap list, which is where the gap is actually fixed', () => {

@@ -10,6 +10,7 @@ const sampleProfile: Profile = {
   location: 'Remote',
   links: { linkedin: 'linkedin.com/in/janedoe', portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [
     {
       school: 'State University',
@@ -112,5 +113,26 @@ describe('renderResumePdf', () => {
     expect(pageCount(buffer)).toBeGreaterThan(1);
     expect(text).toContain('Company 0');
     expect(text).toContain('Company 11');
+  });
+
+  it('allows candidate-forced bullet volume to spill instead of censoring it', async () => {
+    // Reconciliation normally caps these roles before rendering. A candidate can deliberately star
+    // past that cap, and the renderer must preserve the resulting content even when it needs pages.
+    const starredPastCap: TailoredResume = {
+      skills: sampleTailoredResume.skills,
+      workExperience: Array.from({ length: 5 }, (_, role) => ({
+        company: `Company ${role}`,
+        title: 'Senior Software Engineer',
+        startDate: '2015-01',
+        endDate: '2020-01',
+        bullets: Array.from(
+          { length: 15 },
+          (_, bullet) =>
+            `Candidate-pinned initiative ${bullet} delivered end to end with cross-team ownership and a measured result.`,
+        ),
+      })),
+    };
+
+    expect(pageCount(await renderResumePdf(sampleProfile, starredPastCap))).toBeGreaterThan(1);
   });
 });

@@ -13,6 +13,7 @@ const profile: Profile = {
     github: 'https://github.com/ada',
   },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: [],
   stories: [],

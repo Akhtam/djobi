@@ -40,12 +40,29 @@ import {
 } from '@djobi/shared';
 
 /**
- * Everything the backend needs from Application persistence.
+ * A write's answer: the compact acknowledgement, plus the row it left behind.
  *
- * The write methods answer with a compact acknowledgement (`{ id }`, or the field they changed)
- * rather than the full row, and `null` rather than throwing when no row has that id — "no such
- * application" is a 404 the route already knows how to answer, not a fault. `routes/applications.ts`
- * reads the row back itself when a caller wants one.
+ * The compact half (`{ id }`, or the field the write changed) is what goes on the wire to a caller
+ * that asked for `response=compact`, and is `null` rather than a throw when no row has that id —
+ * "no such application" is a 404 the route already knows how to answer, not a fault.
+ *
+ * `application` is the same row a follow-up `byId` would have returned, carried back from the write
+ * itself. It exists so `routes/applications.ts` can answer a full-row write without a second query:
+ * this backend talks to Neon over HTTP (see `db/client.ts`), so every store call is its own network
+ * round trip, and reading back what the write just returned paid for two of them. Postgres answers
+ * writes with `RETURNING` at no extra cost, so the row is already in hand.
+ *
+ * It is `null` only when the stored row cannot be parsed into an `Application` — a row written by an
+ * older build whose jsonb predates a required field. Compact callers are unaffected by that (they
+ * never wanted the row), which is why this is nullable rather than a throw: making every
+ * `PATCH …/stage` parse a snapshot it isn't returning would turn a legacy row into a failed write.
+ * The route falls back to `byId` for the full-row case, so an unreadable row still reports itself
+ * exactly as it did before.
+ */
+export type Written<Result> = Result & { application: Application | null };
+
+/**
+ * Everything the backend needs from Application persistence.
  */
 export interface ApplicationStore {
   /** Every stored Application, most recently created first. */
@@ -61,7 +78,7 @@ export interface ApplicationStore {
    */
   duplicateSummary(jobUrl: string): Promise<DuplicateApplicationSummary>;
   /** Inserts a new Application, assigning its id and `createdAt`. */
-  create(application: NewApplication): Promise<ApplicationWriteResult>;
+  create(application: NewApplication): Promise<Written<ApplicationWriteResult>>;
   /**
    * Replaces an Application's editable snapshot, leaving Stage, Notes and Application Source
    * untouched. `null` when no row has that id.
@@ -69,14 +86,17 @@ export interface ApplicationStore {
   replaceSnapshot(
     id: string,
     snapshot: ApplicationSnapshot,
-  ): Promise<ApplicationWriteResult | null>;
+  ): Promise<Written<ApplicationWriteResult> | null>;
   /** Moves an Application to a Stage, answering with the authoritative value. `null` when missing. */
-  setStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult | null>;
+  setStage(
+    id: string,
+    stage: ApplicationStage,
+  ): Promise<Written<UpdateApplicationStageResult> | null>;
   /**
    * Appends one Note, assigning its id and `createdAt` here rather than taking them from the
    * caller. `null` when no row has that id.
    */
-  appendNote(id: string, note: NewNote): Promise<AddApplicationNoteResult | null>;
+  appendNote(id: string, note: NewNote): Promise<Written<AddApplicationNoteResult> | null>;
 }
 
 /**
@@ -94,6 +114,10 @@ function samePosting(candidate: Application, jobUrl: string, jobKey: string | nu
 
 /**
  * An `ApplicationStore` held in a `Map`, for tests.
+ *
+ * Its writes always carry back a parsed `application` (see {@link Written}) — it holds parsed
+ * Applications, so it has no unreadable-row case to report. Postgres does, which is why the field is
+ * nullable in the interface and why the route keeps a fallback this adapter never exercises.
  *
  * Newest-first ordering is by `createdAt` descending, tie-broken by insertion order so two rows
  * written inside the same millisecond still come back in a defined order. Postgres breaks that tie
@@ -156,8 +180,9 @@ export function inMemoryApplicationStore(seed: Application[] = []): ApplicationS
 
     async create(application) {
       const id = crypto.randomUUID();
-      put({ ...application, id, createdAt: new Date().toISOString() });
-      return { id };
+      const created: Application = { ...application, id, createdAt: new Date().toISOString() };
+      put(created);
+      return { id, application: created };
     },
 
     async replaceSnapshot(id, snapshot) {
@@ -167,16 +192,18 @@ export function inMemoryApplicationStore(seed: Application[] = []): ApplicationS
       // Spread the snapshot over the row rather than replacing it: `source`, `stage`, `notes`,
       // `id` and `createdAt` are not the snapshot's to write, which is what `ApplicationSnapshot`
       // omitting them says and what the Postgres adapter's partial `set` does.
-      rows.set(id, { ...existing, ...snapshot });
-      return { id };
+      const replaced: Application = { ...existing, ...snapshot };
+      rows.set(id, replaced);
+      return { id, application: replaced };
     },
 
     async setStage(id, stage) {
       const existing = rows.get(id);
       if (!existing) return null;
 
-      rows.set(id, { ...existing, stage });
-      return { id, stage };
+      const staged: Application = { ...existing, stage };
+      rows.set(id, staged);
+      return { id, stage, application: staged };
     },
 
     async appendNote(id, note) {
@@ -188,8 +215,9 @@ export function inMemoryApplicationStore(seed: Application[] = []): ApplicationS
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
       };
-      rows.set(id, { ...existing, notes: [...existing.notes, appended] });
-      return { id, note: appended };
+      const annotated: Application = { ...existing, notes: [...existing.notes, appended] };
+      rows.set(id, annotated);
+      return { id, note: appended, application: annotated };
     },
   };
 }

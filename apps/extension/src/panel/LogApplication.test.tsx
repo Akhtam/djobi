@@ -5,7 +5,7 @@
  * neither is the whole reason it's a separate tab, so a test that had to stub them would be
  * evidence the split had leaked.
  */
-import type { Application, JobInfo, Profile } from '@djobi/shared';
+import { baseResumeOf, type Application, type JobInfo, type Profile } from '@djobi/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
@@ -27,8 +27,11 @@ const profile: Profile = {
       startDate: '2021-06',
       endDate: null,
       bullets: ['Built the billing portal.'],
+      maxBullets: null,
+      starredIndices: [],
     },
   ],
+  maxBulletsPerRole: 6,
   education: [],
   skills: ['TypeScript', 'Postgres'],
   stories: [],
@@ -138,8 +141,8 @@ describe('the Log tab', () => {
         roleTitle: 'Senior Engineer',
         jobUrl: JOB_URL,
         jobInfo,
-        // The profile straight through — nothing tailored, which is the point of logging.
-        tailoredResume: { skills: profile.skills, workExperience: profile.workExperience },
+        // The authored resume content straight through, without Profile-only selection controls.
+        tailoredResume: baseResumeOf(profile),
         answers: [],
         source: 'manual',
       },

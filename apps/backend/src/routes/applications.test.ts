@@ -154,20 +154,52 @@ describe('POST /applications', () => {
   });
 
   /**
-   * The read-back is a second round trip, and the row can be gone by the time it runs. That is the
-   * same condition every write here already answers with a 404 — arriving a few milliseconds later
-   * — so it gets the same answer. It used to `throw`, and `app.onError` turns a throw into a 500:
-   * a concurrently deleted row was reported down the channel that means "the backend is broken",
-   * beside the model failing and Postgres being unreachable.
+   * The optimization the `Written` row exists for, stated as behaviour rather than as a comment: a
+   * full-row write answers from what the write returned, so it costs one store call and not two.
+   * Against Neon that second call was a second HTTP round trip; a `byId` here would put it back
+   * without anything visible changing in the response, which is exactly why it is asserted.
+   */
+  it('answers a full-row write without reading the row back', async () => {
+    const store = inMemoryApplicationStore();
+    const byId = vi.fn(store.byId);
+    const app = createApp({
+      applicationStore: { ...store, byId },
+      profileStore: inMemoryProfileStore(),
+    });
+
+    const res = await app.request('/applications', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(newApplication),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ company: 'Acme' });
+    expect(byId).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The one case the write cannot answer from its own `RETURNING`: the row landed, but it does not
+   * parse as an `Application` — so the store hands back `application: null` and the route falls back
+   * to reading it. If that read finds nothing either, the answer is a 404. It used to `throw`, and
+   * `app.onError` turns a throw into a 500: a row that isn't there was reported down the channel
+   * that means "the backend is broken", beside the model failing and Postgres being unreachable.
    *
-   * A store that forgets a row the instant it is written is the cheapest way to hold that window
-   * open — and it is a stand-in *at the seam* rather than a replaced module, so the route under test
+   * A store that writes an unreadable row and then forgets it is the cheapest way to reach that
+   * path — and it is a stand-in *at the seam* rather than a replaced module, so the route under test
    * is the one that ships.
    */
-  it('answers 404, not 500, when the row is gone by the time it is read back', async () => {
+  it('answers 404, not 500, when the fallback read-back finds nothing', async () => {
     const vanishing = inMemoryApplicationStore();
     const app = createApp({
-      applicationStore: { ...vanishing, byId: async () => null },
+      applicationStore: {
+        ...vanishing,
+        create: async (application) => ({
+          ...(await vanishing.create(application)),
+          application: null,
+        }),
+        byId: async () => null,
+      },
       profileStore: inMemoryProfileStore(),
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);

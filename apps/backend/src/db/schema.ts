@@ -46,5 +46,12 @@ export const applications = pgTable(
   (table) => [
     index('applications_job_url_created_at_idx').on(table.jobUrl, table.createdAt.desc()),
     index('applications_job_key_created_at_idx').on(table.jobKey, table.createdAt.desc()),
+    /**
+     * For the unfiltered history — `ApplicationStore.list`, which the dashboard loads on every
+     * visit. The two indexes above lead with a job column, so neither can serve an `ORDER BY
+     * created_at DESC` that has no `WHERE`; without this one that read is a sequential scan and a
+     * sort of the whole table.
+     */
+    index('applications_created_at_idx').on(table.createdAt.desc()),
   ],
 );

@@ -286,6 +286,7 @@ describe('postgresApplicationStore integration', () => {
     await expect(updateApplicationStage(id, 'phone_screen')).resolves.toEqual({
       id,
       stage: 'phone_screen',
+      application: expect.objectContaining({ id, stage: 'phone_screen' }),
     });
     await expect(getApplicationById(id)).resolves.toMatchObject({ stage: 'phone_screen' });
   });

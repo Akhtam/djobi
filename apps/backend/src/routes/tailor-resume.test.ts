@@ -19,6 +19,7 @@ const sampleProfile: Profile = {
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
   education: [],
   skills: ['TypeScript'],
   stories: [],
@@ -58,7 +59,11 @@ describe('POST /tailor-resume', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleTailoredResume);
     expect(mockTailorResume).toHaveBeenCalledWith(
-      { workExperience: sampleProfile.workExperience, skills: sampleProfile.skills },
+      {
+        workExperience: sampleProfile.workExperience,
+        maxBulletsPerRole: sampleProfile.maxBulletsPerRole,
+        skills: sampleProfile.skills,
+      },
       sampleJobInfo,
       expect.any(AbortSignal),
     );
