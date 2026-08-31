@@ -388,6 +388,104 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
 
 ## Planned
 
+### Phase 12 — The Dashboard's Analytics view (planned, not started)
+
+A third dashboard route, `#/analytics`, that reads the postings the candidate has already applied to
+and answers one question: **which keywords do these roles ask for, and which of them does the Profile
+fail to evidence?** Gap analysis, not market intel — the only postings djobi holds are ones already
+saved as an Application, so this is a retrospective on the candidate's own history and must not be
+dressed as a survey of the market.
+
+The data is already there and already loaded. Every `applications` row carries a `jobInfo` snapshot
+with `keywords` and `requirements`, `useApplicationStore` pulls the whole history into one array on
+every visit, and `packages/shared/src/keywordCoverage.ts` already knows how to ask whether a resume
+evidences a term. This phase is an aggregation and a view over facts the app holds, not a new
+capability.
+
+Decisions:
+
+- **Client-side aggregation over the loaded array — no endpoint, no migration, no store method.**
+  `ApplicationsList` already filters in the browser on the stated grounds that this is a personal-scale
+  dataset and query parameters would be inventing backend work; the same reasoning covers a `useMemo`
+  over the same array. The whole view is therefore exercisable through `createFixtureDashboardClient`
+  with no network. Revisit only if a history reaches thousands of rows.
+- **The range filters `Application.createdAt` — when the candidate _saved_ it, not when the posting
+  was published.** djobi never captures a posting date and there is nowhere to get one, so the UI says
+  "applications saved in the last N days" rather than implying a market window. A range labelled with
+  the posting's age would be a claim the data cannot support.
+- **The cutoff is local midnight, pinned once per mount.** `rangeStart(range, today)` returns local
+  midnight of `today − (n − 1)`, so "past 7 days" is seven calendar days with today as the last — not
+  eight. `today` is captured once in a lazy `useState`, never a `useMemo`, so nothing re-aggregates as
+  the clock moves and a range does not silently shift under the reader mid-session. The cost is that a
+  dashboard left open past midnight keeps yesterday's boundary until reload; that is the stability the
+  fixed boundary is for. Local rather than UTC because a cutoff that jumps by hours with the reader's
+  timezone is a cutoff nobody can predict.
+- **Ranges are `7d | 14d | 30d | 60d`, default `30d`, and live in the URL** alongside `?stage=`, parsed
+  strictly with a fallback exactly as `?stage=banana` is handled in `useHashRoute`. Both are intents
+  the candidate expressed, so both survive a copied link — the same line `?show=` sits on the other
+  side of.
+- **The stage filter is the list's own `<FilterPills>` over `STAGE_FILTERS`.** Same component, same
+  labels, same `stageFilterOf` normalisation, so "what did the postings that rejected me ask for,
+  versus the ones that got me a phone screen" costs one click and no new design. Every row in range
+  counts by default, `source: 'manual'` included: a manual row carries a real extracted `jobInfo` and
+  is "a real application, not a lesser one" (see `ApplicationSourceSchema`), so excluding it would drop
+  genuine postings.
+- **Keywords group by `normalizeLabel` and display their most frequent original spelling.**
+  Normalisation is a matching concern and belongs to matching; a table of lowercased proper nouns reads
+  as a bug to the exact person reading it. There is no alias table and no stemming, for the reason
+  `keywordCoverage.ts` already argues at length: `React` and `React.js` landing on separate rows is a
+  visible fact about the postings, and inventing aliases here would need the same widening of
+  `JobInfoSchema.keywords` that module declined.
+- **Coverage is asked once per distinct keyword, against the Profile — not rolled up from the stored
+  resumes.** `keywordCoverage(baseResumeOf(profile), { …, keywords: distinct }, profile)` collapses the
+  verdicts to `skills | profile-experience | missing`, since a base resume's bullets _are_ the
+  Profile's. Rolling up per-application verdicts instead would report variance in the tailorer rather
+  than gaps in the candidate — the same keyword can come back `skills` for one posting and `missing`
+  for another purely because tailoring differs — and the remedy the report points at is Profile-side
+  either way.
+- **The report is a ranked bar list, not a chart and not a score.** Count descending, alphabetical
+  tie-break so ordering is stable across renders, proportional bars in CSS, top 25 with a Load more.
+  No chart dependency: two routes did not pay for `react-router` and one table does not pay for a
+  charting library. A **Gaps only** toggle narrows the same table to `missing`, which is the one thing
+  frequency ordering cannot surface on its own — a keyword the Profile lacks can otherwise sit at row
+  nineteen. It stays a list of gaps rather than a coverage percentage, for the reason the panel's
+  Coverage Report already states: a number on screen is a number someone will raise, and the only
+  dishonest way to raise this one is keyword stuffing.
+- **Requirements get a readable list, deliberately not a frequency ranking.** They are whole sentences
+  ("5+ years building distributed systems"), so counting identical strings across postings yields a
+  column of ones that looks like analysis and is not. They render grouped by posting, newest first,
+  each linking to `#/applications/:id`; selecting a keyword row narrows the panel to postings carrying
+  that keyword and highlights the term. That selection is component state rather than URL state — it is
+  a transient reading position, not a stated intent, the same split `?show=` is on.
+- **`getProfile()` is a fourth `DashboardClient` method, fetched only by this view.** It is the first
+  thing the dashboard needs beyond Applications, and the list and detail views must not start paying
+  for it. A failed Profile fetch suppresses the coverage badge behind an inline notice and leaves the
+  frequency table rendering: analytics without coverage is still worth reading, and a page that fails
+  whole because half of it is unavailable is the worse answer.
+- **Four empty states, kept distinct.** No applications at all; none in the selected range or stage
+  (with the range control still visible and enabled — never hide the control that would fix the
+  emptiness); applications in range whose `jobInfo.keywords` are all empty, where the requirements
+  panel still renders; and the Profile-unreachable case above, which is a notice rather than an empty
+  state.
+- **`fixtures.ts` is left alone and the one component test fakes the clock.** Its `createdAt` values are
+  absolute and already months stale, so every range over them matches nothing — but making them
+  relative to `now` would make the list and detail assertions non-deterministic across a midnight
+  boundary. `rangeStart` taking `today` as a parameter is what keeps the aggregation tests clock-free;
+  only the test that mounts the view sets the system time.
+
+- [ ] `apps/dashboard/src/lib/analytics.ts`: `RANGES`, `rangeStart(range, today)`, and the aggregation
+      over `Application[]` → ranked keyword rows. Pure, tested directly, no clock and no React
+- [ ] `lib/useHashRoute.ts`: a third `Route` variant, `?range=` parsing with a strict fallback,
+      `analyticsPath(range, stage)` as its inverse, and `?stage=` reused rather than re-invented
+- [ ] `lib/dashboardClient.ts`: `getProfile()` on the interface, the HTTP impl against the existing
+      `GET /profile`, and the fixture impl beside it
+- [ ] `views/Analytics.tsx`: range control, stage pills, ranked bar list with coverage badges, Gaps
+      only toggle, requirements panel with keyword-scoped narrowing, and the four empty states
+- [ ] `App.tsx`: nav row in `page-header__inner` — Applications / Analytics — left of the theme toggle.
+      A peer route, so the nav belongs to the chrome and not inside `.page`
+- [ ] `App.css`: nav row, bar rows, coverage badges
+- [ ] Built test-first, same as the rest
+
 ### Phase 11 — Multi-provider models: Vercel AI SDK + OpenRouter (done)
 
 Suite green, and all four schemas verified against real providers. The writing routes have since
