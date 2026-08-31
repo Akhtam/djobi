@@ -388,7 +388,7 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
 
 ## Planned
 
-### Phase 12 — The Dashboard's Analytics view (planned, not started)
+### Phase 12 — The Analytics view, and the extraction that feeds it (planned, not started)
 
 A third dashboard route, `#/analytics`, that reads the postings the candidate has already applied to
 and answers one question: **which keywords do these roles ask for, and which of them does the Profile
@@ -399,10 +399,19 @@ dressed as a survey of the market.
 The data is already there and already loaded. Every `applications` row carries a `jobInfo` snapshot
 with `keywords` and `requirements`, `useApplicationStore` pulls the whole history into one array on
 every visit, and `packages/shared/src/keywordCoverage.ts` already knows how to ask whether a resume
-evidences a term. This phase is an aggregation and a view over facts the app holds, not a new
-capability.
+evidences a term. The view itself is an aggregation over facts the app holds, with **no LLM call and
+no new endpoint** — the model already ran, at extraction time, and the snapshot is what it left
+behind.
 
-Decisions:
+The second half of the phase is upstream, in `extractJob`, and it is here rather than in a later
+phase for one reason: **`applications` never stores the job description.** The row keeps `jobInfo`,
+`tailoredResume` and `answers` — the outputs — and the posting text is discarded when the run ends.
+So no extraction improvement can ever be backfilled: each one starts helping only the rows saved
+after it ships, and every month of delay is a month of postings permanently frozen at today's
+fidelity. Whether to start storing the description — which would turn all of this into re-runnable
+work — is a real question this phase deliberately does not answer; see _Known loose ends_.
+
+Decisions — the view:
 
 - **Client-side aggregation over the loaded array — no endpoint, no migration, no store method.**
   `ApplicationsList` already filters in the browser on the stated grounds that this is a personal-scale
@@ -410,9 +419,11 @@ Decisions:
   over the same array. The whole view is therefore exercisable through `createFixtureDashboardClient`
   with no network. Revisit only if a history reaches thousands of rows.
 - **The range filters `Application.createdAt` — when the candidate _saved_ it, not when the posting
-  was published.** djobi never captures a posting date and there is nowhere to get one, so the UI says
-  "applications saved in the last N days" rather than implying a market window. A range labelled with
-  the posting's age would be a claim the data cannot support.
+  was published.** djobi never captures a posting date; the schema.org `datePosted` sitting beside the
+  description in `findJobPostings` was considered and **deliberately not captured**, because the
+  question this page answers is "what have I been applying to lately", which is a fact about the
+  candidate's own activity. The UI says "applications saved in the last N days" and claims nothing
+  about the market.
 - **The cutoff is local midnight, pinned once per mount.** `rangeStart(range, today)` returns local
   midnight of `today − (n − 1)`, so "past 7 days" is seven calendar days with today as the last — not
   eight. `today` is captured once in a lazy `useState`, never a `useMemo`, so nothing re-aggregates as
@@ -432,17 +443,22 @@ Decisions:
   genuine postings.
 - **Keywords group by `normalizeLabel` and display their most frequent original spelling.**
   Normalisation is a matching concern and belongs to matching; a table of lowercased proper nouns reads
-  as a bug to the exact person reading it. There is no alias table and no stemming, for the reason
-  `keywordCoverage.ts` already argues at length: `React` and `React.js` landing on separate rows is a
-  visible fact about the postings, and inventing aliases here would need the same widening of
-  `JobInfoSchema.keywords` that module declined.
+  as a bug to the exact person reading it. Aliasing is not solved here at all — it is solved upstream,
+  in the extraction prompt (below), which is the only place a synonym can be collapsed before it
+  becomes two rows nothing can merge.
 - **Coverage is asked once per distinct keyword, against the Profile — not rolled up from the stored
-  resumes.** `keywordCoverage(baseResumeOf(profile), { …, keywords: distinct }, profile)` collapses the
-  verdicts to `skills | profile-experience | missing`, since a base resume's bullets _are_ the
-  Profile's. Rolling up per-application verdicts instead would report variance in the tailorer rather
-  than gaps in the candidate — the same keyword can come back `skills` for one posting and `missing`
-  for another purely because tailoring differs — and the remedy the report points at is Profile-side
-  either way.
+  resumes.** `keywordCoverage(baseResumeOf(profile), { …, keywords: distinct }, profile)`. Rolling up
+  per-application verdicts instead would report variance in the tailorer rather than gaps in the
+  candidate — the same keyword can come back `skills` for one posting and `missing` for another purely
+  because tailoring differs — and the remedy the report points at is Profile-side either way.
+- **The reachable verdicts on this path are `skills | experience | missing`, and `profile-experience`
+  is unreachable by construction.** `keywordCoverage` searches skills, then the _resume's_ bullets,
+  then the Profile's, first hit winning — and `baseResumeOf` copies the Profile's bullets verbatim, so
+  the second search always hits before the third can. `profile-experience` exists to name a keyword the
+  Profile has and _this resume dropped_, which cannot happen when the resume is the Profile. The badge
+  therefore reads `skills` and `experience` as two flavours of covered and `missing` as the gap; the
+  **Gaps only** toggle is `verdict === 'missing'`. Writing the analytics code against
+  `profile-experience` would produce a filter that silently matches nothing.
 - **The report is a ranked bar list, not a chart and not a score.** Count descending, alphabetical
   tie-break so ordering is stable across renders, proportional bars in CSS, top 25 with a Load more.
   No chart dependency: two routes did not pay for `react-router` and one table does not pay for a
@@ -451,39 +467,122 @@ Decisions:
   nineteen. It stays a list of gaps rather than a coverage percentage, for the reason the panel's
   Coverage Report already states: a number on screen is a number someone will raise, and the only
   dishonest way to raise this one is keyword stuffing.
-- **Requirements get a readable list, deliberately not a frequency ranking.** They are whole sentences
-  ("5+ years building distributed systems"), so counting identical strings across postings yields a
-  column of ones that looks like analysis and is not. They render grouped by posting, newest first,
-  each linking to `#/applications/:id`; selecting a keyword row narrows the panel to postings carrying
-  that keyword and highlights the term. That selection is component state rather than URL state — it is
-  a transient reading position, not a stated intent, the same split `?show=` is on.
-- **`getProfile()` is a fourth `DashboardClient` method, fetched only by this view.** It is the first
-  thing the dashboard needs beyond Applications, and the list and detail views must not start paying
-  for it. A failed Profile fetch suppresses the coverage badge behind an inline notice and leaves the
-  frequency table rendering: analytics without coverage is still worth reading, and a page that fails
-  whole because half of it is unavailable is the worse answer.
-- **Four empty states, kept distinct.** No applications at all; none in the selected range or stage
-  (with the range control still visible and enabled — never hide the control that would fix the
-  emptiness); applications in range whose `jobInfo.keywords` are all empty, where the requirements
-  panel still renders; and the Profile-unreachable case above, which is a notice rather than an empty
-  state.
+- **A keyword's count is postings that asked, not mentions.** One `Set` per application before
+  counting, so a posting listing a term twice still counts once — otherwise the bar measures how
+  repetitive a posting was.
+- **Requirement _text_ still gets a readable list; only its structured fields aggregate.** Whole
+  sentences ("5+ years building distributed systems") do not repeat across postings, so counting
+  identical strings yields a column of ones that looks like analysis and is not. They render grouped by
+  posting, newest first, each linking to `#/applications/:id`; selecting a keyword row narrows the
+  panel to postings carrying that keyword and highlights the term. What _is_ aggregable is the
+  structure the extraction change below adds — how many postings marked something required rather than
+  preferred, and the distribution of stated years — and only for rows extracted after it ships.
+  That selection is component state rather than URL state: a transient reading position, not a stated
+  intent, the same split `?show=` is on.
+- **`getProfile(): Promise<Profile | null>` is a fourth `DashboardClient` method, fetched only by this
+  view.** It is the first thing the dashboard needs beyond Applications, and the list and detail views
+  must not start paying for it.
+- **`null` is a valid answer from `GET /profile`, not a failure, and the two must not be merged.** The
+  route answers `200 null` for a candidate who has not set a Profile up (`routes/profile.ts`, asserted
+  in `routes/profile.test.ts`), so the response parses through `MaybeProfileSchema` — the nullable
+  schema `apps/extension/src/lib/backendClient.ts` already uses for the same call — rather than
+  `ProfileSchema`, which would turn the empty case into a parse error. Three states, three renderings:
+  **ready** shows coverage badges; **null** shows a "set up your Profile" notice explaining that
+  coverage needs one; **unreachable** shows a failure notice. All three keep the frequency table and
+  the requirements panel rendering, because analytics without coverage is still worth reading and a
+  page that fails whole because half of it is unavailable is the worse answer.
+- **Five states, kept distinct.** No applications at all; none in the selected range or stage (with the
+  range control still visible and enabled — never hide the control that would fix the emptiness);
+  applications in range whose `jobInfo.keywords` are all empty, where the requirements panel still
+  renders; no Profile saved; and the Profile unreachable. The last two are notices beside a working
+  table rather than empty states, and they say different things — one is "do this", the other is "try
+  again".
+- **The detail page's back link follows the index the reader came from.** `App` remembers only the last
+  _list_ URL today and `ApplicationDetail` hard-codes "← Applications", so a posting opened from the
+  requirements panel sends the reader to the applications list and throws away the range, the stage and
+  the keyword they were reading. The remembered value becomes `{ href, label }`, written by whichever
+  index route rendered last, and the detail page renders the label it is given. This is the same
+  reasoning that put `listHref` in a ref to begin with — the in-page link has no history to read — and
+  it stays a ref for the same reason: it only ever feeds the next render's href.
 - **`fixtures.ts` is left alone and the one component test fakes the clock.** Its `createdAt` values are
   absolute and already months stale, so every range over them matches nothing — but making them
   relative to `now` would make the list and detail assertions non-deterministic across a midnight
   boundary. `rangeStart` taking `today` as a parameter is what keeps the aggregation tests clock-free;
   only the test that mounts the view sets the system time.
 
-- [ ] `apps/dashboard/src/lib/analytics.ts`: `RANGES`, `rangeStart(range, today)`, and the aggregation
-      over `Application[]` → ranked keyword rows. Pure, tested directly, no clock and no React
+Decisions — the extraction that feeds it:
+
+- **Keyword hygiene is a prompt change, and it is the highest-value line in this phase.** The current
+  instruction says nothing about the _form_ of a keyword, so the extractor emits whatever the posting
+  said: `K8s` from one and `Kubernetes` from another, `React.js` and `React`. Analytics fragments on
+  exactly that, and no downstream normalisation can merge them — `normalizeLabel` only folds case and
+  whitespace. The prompt now asks for the **canonical, expanded, industry-standard name** (`Kubernetes`
+  not `K8s`, `JavaScript` not `JS`), one or two words per term, and roughly fifteen terms at most.
+  Collapsing a synonym at the moment of extraction is the only place it can be done without an alias
+  table, which `keywordCoverage.ts` argues against at length and this phase does not reopen.
+- **`requirements` becomes `{ text, kind, yearsOfExperience }`.** `kind` is `'required' | 'preferred'`
+  — information the posting states plainly under its own headings ("Requirements" versus "Nice to
+  have") and which the current flat `string[]` throws away. `yearsOfExperience` is a nullable number,
+  and null is the common case. Together they are what let analytics say "9 of 14 postings required
+  this" instead of listing sentences.
+- **`keywords` becomes `{ term, category }`**, where category is one of a small closed set
+  (`language | framework | tool | platform | domain | soft-skill`). A flat ranked list mixes
+  `TypeScript` with `stakeholder management`; grouped, "my gaps are all in platform" becomes a thing
+  the page can show rather than something the reader has to notice.
+- **Both widenings need a tolerant read, not a migration.** `jobInfo` is jsonb read back exactly as
+  written, so every existing row returns bare strings. `JobInfoSchema` accepts a union — a string lifts
+  to `{ text, kind: 'required', yearsOfExperience: null }` and `{ term, category: null }` — which is the
+  same shape of answer `parseProfile` gives for profiles saved before a field existed. A mixed history
+  is the normal case for months and must render as ordinary data, never as "unknown" noise.
+- **The widened `JobInfo` reaches three prompts for free, and that is mostly a gift.**
+  `promptContext.jobContext` is `JSON.stringify(jobInfo)`, so `tailorResume`, `answerQuestions` and
+  `answerChat` all start seeing `kind` and `category` with no call-site change — and tailoring, told to
+  emphasize requirements, can now tell a hard requirement from a nice-to-have. The cost: `<job_info>`
+  sits in the **varying tail** for `tailorResume`, not the cached prefix, so a richer object is more
+  uncached input tokens on every run. Small against a Profile, but it is the half that is paid for
+  every time.
+- **`extractJob` runs on `gemini-3.1-flash-lite`, so richer output is nearly free in money and the
+  real cost is latency** — it is the serial gate for the whole Analysis Step. Structured requirements
+  are more output tokens per call; measure before assuming they are lost in the noise.
+- **Non-fabrication is the risk this change adds, and the existing prompt rule is what covers it.**
+  "Only use information present in the text — leave a field null rather than guessing" now governs a
+  number, and a hallucinated `yearsOfExperience: 5` would look more authoritative on an analytics page
+  than a wrong keyword ever could. `kind` defaults to `'required'` only when the posting draws no
+  distinction — never as a way to avoid saying null.
+
+- [ ] `packages/shared/src/schemas.ts`: widen `JobInfoSchema.requirements` and `.keywords`, each behind
+      a union that lifts a bare string to the new shape, so stored jsonb keeps parsing. Tests for both
+      old and new rows
+- [ ] `apps/backend/src/llm/extractJob.ts`: canonical-name/length/count guidance for keywords, and the
+      required-versus-preferred and stated-years instructions for requirements, with null over a guess
+      restated for the number
+- [ ] Live: one extraction against a real posting per shape change — a unit test cannot show whether
+      the model actually collapses `K8s` or invents a years figure
+- [ ] Measure the Analysis Step's serial gate before and after; `extractJob` is what every other step
+      waits on
+- [ ] `panel/LogApplication.tsx` (extracted-counts line) and `dashboard/views/ApplicationDetail.tsx`
+      (requirements list) render the new shape, including rows still holding the old one
+- [ ] `apps/dashboard/src/lib/analytics.ts`: `RANGES`, `rangeStart(range, today)`, the keyword
+      aggregation (count = postings that asked, not mentions), and the required/preferred and
+      years roll-up over the rows that carry it. Pure, tested directly, no clock and no React
 - [ ] `lib/useHashRoute.ts`: a third `Route` variant, `?range=` parsing with a strict fallback,
       `analyticsPath(range, stage)` as its inverse, and `?stage=` reused rather than re-invented
-- [ ] `lib/dashboardClient.ts`: `getProfile()` on the interface, the HTTP impl against the existing
-      `GET /profile`, and the fixture impl beside it
-- [ ] `views/Analytics.tsx`: range control, stage pills, ranked bar list with coverage badges, Gaps
-      only toggle, requirements panel with keyword-scoped narrowing, and the four empty states
+- [ ] `lib/dashboardClient.ts`: `getProfile(): Promise<Profile | null>` on the interface, the HTTP impl
+      against the existing `GET /profile` parsing through `MaybeProfileSchema`, and a fixture impl that
+      can answer `null` so the no-Profile rendering is exercised
+- [ ] `views/Analytics.tsx`: range control, stage pills, ranked bar list with coverage badges and
+      category grouping, Gaps only toggle, requirements panel with keyword-scoped narrowing, and the
+      five states
 - [ ] `App.tsx`: nav row in `page-header__inner` — Applications / Analytics — left of the theme toggle.
       A peer route, so the nav belongs to the chrome and not inside `.page`
+- [ ] `App.tsx` / `views/ApplicationDetail.tsx`: the remembered back target becomes `{ href, label }`,
+      set by both index routes, so a posting opened from Analytics returns to Analytics with its range
+      and stage intact. `backHref` becomes two props or one object; the hard-coded "← Applications"
+      goes
 - [ ] `App.css`: nav row, bar rows, coverage badges
+- [ ] `dashboard/lib/fixtures.ts` and `extension/lib/testFixtures.ts`: enough rows in the **new** shape
+      to exercise category grouping and the required/preferred roll-up, while keeping at least one in
+      the old shape so the tolerant read stays covered
 - [ ] Built test-first, same as the rest
 
 ### Phase 11 — Multi-provider models: Vercel AI SDK + OpenRouter (done)
@@ -766,6 +865,15 @@ Decisions:
 - [x] Built test-first, same as the rest
 
 ## Known loose ends
+
+- **The job description is never stored, so no extraction change can be backfilled.** An
+  `applications` row keeps `jobInfo`, `tailoredResume` and `answers` — the outputs of the run — and the
+  posting text `extractJob` read is discarded when the run ends. Every improvement to extraction
+  therefore applies only to rows saved after it ships, and the history keeps whatever fidelity it was
+  written with. Storing the text (a `text` column plus a migration; the extension already holds the
+  string at save time) would turn re-extraction into a batch job and make Phase 12's keyword and
+  requirement changes retroactive. Not decided: it is the candidate's own data in their own database,
+  but it is also several KB a row that nothing currently reads.
 
 - **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
   with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,
