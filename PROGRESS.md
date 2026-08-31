@@ -479,6 +479,36 @@ Decisions — the view:
   preferred, and the distribution of stated years — and only for rows extracted after it ships.
   That selection is component state rather than URL state: a transient reading position, not a stated
   intent, the same split `?show=` is on.
+- **The requirements panel is its own scroll region, not part of the page's.** A busy 60-day range can
+  hold 100–200 postings, each rendering several requirement lines — full-height on the page would make
+  the panel scroll past the keyword list beside it and swallow the page's own scroll entirely. The panel
+  body gets a bounded `max-height` and `overflow-y: auto`, so it scrolls independently and the page
+  around it stays put — the two-column grid keeps both panels roughly level regardless of how long the
+  right one's content runs.
+- **Revealing more postings is scroll-triggered, not a click, and deliberately not the `?show=` /
+  Load-more pattern the list and the keyword table use.** Those two are short, flat lists a click is
+  proportionate to; a requirements read is scanning a scrollable feed, and stopping to click every 20
+  rows breaks that. An `IntersectionObserver` watches a sentinel at the end of the rendered postings,
+  with **`root` set to the panel's own scrolling element** — the default `root: null` observes the
+  _page's_ viewport, which would fire while the panel is scrolled internally but the page hasn't moved,
+  or never fire if the page never scrolls that far. Getting `root` wrong is the whole bug this decision
+  exists to avoid.
+- **There is no real loading state to show, and the panel must not fake one.** Every posting is already
+  in the array `useApplicationStore` loaded — revealing more is a synchronous slice, not a fetch, so a
+  spinner here would be theatre over work that isn't happening. What genuinely costs something is
+  mounting 100+ requirement cards' worth of DOM at once, which the batching avoids by construction:
+  render the first ~20 postings, and let the sentinel grow that count as the reader approaches it.
+  A `Loading more…` line may appear for a single frame purely to smooth the render, never as a stand-in
+  for network time that doesn't exist.
+- **The revealed count resets when the filter set changes and lives in component state, never the
+  URL.** A stage, range or keyword-selection change collapses back to the first batch — the same rule
+  `listPath` enforces for `?show=` on the applications list, for the same reason: a revealed count
+  belongs to a filtered result set and cannot be allowed to outlive it. It stays out of the URL because
+  it is scroll position, not an expressed intent — the same distinction that already keeps the keyword
+  selection out of the URL.
+- **The scroll container needs its own keyboard path.** A `<div>` with `overflow-y: auto` is not
+  reachable by Tab unless it is given `tabindex="0"`; without that, a keyboard user with no scroll wheel
+  has no way to move it and no way to trigger the sentinel at all.
 - **`getProfile(): Promise<Profile | null>` is a fourth `DashboardClient` method, fetched only by this
   view.** It is the first thing the dashboard needs beyond Applications, and the list and detail views
   must not start paying for it.
@@ -520,20 +550,29 @@ Decisions — the extraction that feeds it:
   not `K8s`, `JavaScript` not `JS`), one or two words per term, and roughly fifteen terms at most.
   Collapsing a synonym at the moment of extraction is the only place it can be done without an alias
   table, which `keywordCoverage.ts` argues against at length and this phase does not reopen.
-- **`requirements` becomes `{ text, kind, yearsOfExperience }`.** `kind` is `'required' | 'preferred'`
-  — information the posting states plainly under its own headings ("Requirements" versus "Nice to
-  have") and which the current flat `string[]` throws away. `yearsOfExperience` is a nullable number,
-  and null is the common case. Together they are what let analytics say "9 of 14 postings required
-  this" instead of listing sentences.
+- **`requirements` becomes `{ text, kind, yearsOfExperience }`.** `kind` is
+  `'required' | 'preferred' | 'unspecified'` — the third value matters as much as the first two, since
+  a posting frequently states neither heading and the extractor must say so rather than guess.
+  `'required'`/`'preferred'` come from what the posting states plainly under its own headings
+  ("Requirements" versus "Nice to have"), which the current flat `string[]` throws away.
+  `yearsOfExperience` is a nullable number, and null is the common case. Together they are what let
+  analytics say "9 of 14 postings required this" instead of listing sentences — and denominators must
+  count only rows that actually carry the field, never treat `unspecified` as a fourth kind of `false`.
 - **`keywords` becomes `{ term, category }`**, where category is one of a small closed set
   (`language | framework | tool | platform | domain | soft-skill`). A flat ranked list mixes
   `TypeScript` with `stakeholder management`; grouped, "my gaps are all in platform" becomes a thing
-  the page can show rather than something the reader has to notice.
+  the page can show rather than something the reader has to notice. `soft-skill` gets no coverage
+  badge: `keywordCoverage`'s literal `containsAsWords` match cannot conclude a Profile lacks
+  "leadership" because it says "mentored" instead, and a wrong `missing` verdict is worse than an
+  unscored row.
 - **Both widenings need a tolerant read, not a migration.** `jobInfo` is jsonb read back exactly as
   written, so every existing row returns bare strings. `JobInfoSchema` accepts a union — a string lifts
-  to `{ text, kind: 'required', yearsOfExperience: null }` and `{ term, category: null }` — which is the
-  same shape of answer `parseProfile` gives for profiles saved before a field existed. A mixed history
-  is the normal case for months and must render as ordinary data, never as "unknown" noise.
+  to `{ text, kind: 'unspecified', yearsOfExperience: null }` and `{ term, category: null }` — which is
+  the same shape of answer `parseProfile` gives for profiles saved before a field existed. `kind`
+  defaults to `'unspecified'`, never `'required'`: a requirement stored before this change may well have
+  been a nice-to-have, and stamping every old row `'required'` fabricates a fact the posting never
+  stated, the same guess the extraction prompt already forbids on the way in. A mixed history is the
+  normal case for months and must render as ordinary data, never as "unknown" noise.
 - **The widened `JobInfo` reaches three prompts for free, and that is mostly a gift.**
   `promptContext.jobContext` is `JSON.stringify(jobInfo)`, so `tailorResume`, `answerQuestions` and
   `answerChat` all start seeing `kind` and `category` with no call-site change — and tailoring, told to
@@ -573,6 +612,12 @@ Decisions — the extraction that feeds it:
 - [ ] `views/Analytics.tsx`: range control, stage pills, ranked bar list with coverage badges and
       category grouping, Gaps only toggle, requirements panel with keyword-scoped narrowing, and the
       five states
+- [ ] Requirements panel: bounded `max-height` + internal `overflow-y: auto`, a `useIntersectionObserver`
+      hook whose `root` is that scroll element (not the viewport), batched reveal (~20 postings), and a
+      reset of the revealed count on every stage/range/keyword-selection change. `tabindex="0"` on the
+      scroll container for keyboard reachability. Its own test: mock `IntersectionObserver` (jsdom has
+      none), assert the second batch renders only once the sentinel intersects, and assert a filter
+      change collapses back to the first batch
 - [ ] `App.tsx`: nav row in `page-header__inner` — Applications / Analytics — left of the theme toggle.
       A peer route, so the nav belongs to the chrome and not inside `.page`
 - [ ] `App.tsx` / `views/ApplicationDetail.tsx`: the remembered back target becomes `{ href, label }`,
@@ -584,6 +629,29 @@ Decisions — the extraction that feeds it:
       to exercise category grouping and the required/preferred roll-up, while keeping at least one in
       the old shape so the tolerant read stays covered
 - [ ] Built test-first, same as the rest
+
+#### Phase 12.2 — Background enrichment (exploratory, not started)
+
+Not part of the phase above. `extractJob` is a single synchronous call on a fast/cheap model, and
+Phase 12's prompt changes (keyword hygiene, required/preferred, categories) are cheap enough to live
+in that same call — there is nothing today worth deferring to a background job, and no background-job
+infrastructure exists anywhere in `apps/backend` to defer it to.
+
+This becomes worth exploring only if a **second, heavier extraction pass** is ever wanted — a
+stronger model doing something `extractJob`'s fast model shouldn't be asked to do inline (semantic
+keyword canonicalization, the taxonomy/versioning enrichment considered and declined above) — where
+the cost is real enough that it shouldn't sit in the interactive Save path. Two things are
+prerequisites, not part of the job itself:
+
+- **The raw job description has to start being stored**, which it is not today — `jobDescription`
+  reaches `POST /extract-job` and nothing downstream of it. A background job with nothing to run
+  against re-processes nothing.
+- **The job should be a fire-and-forget call plus a nullable `enrichedAt` timestamp, not a queue.**
+  At this app's save volume a lost enrichment on a backend restart is an acceptable, low-stakes
+  miss — reprocessed later by a manual sweep over `rawDescription IS NOT NULL AND enrichedAt IS
+NULL`, which doubles as the mechanism for re-running an improved prompt over old rows. A real job
+  queue (retries, a persisted job table, a poll loop) is infrastructure this personal-scale tool has
+  never needed elsewhere and shouldn't acquire for one optional enrichment call.
 
 ### Phase 11 — Multi-provider models: Vercel AI SDK + OpenRouter (done)
 
