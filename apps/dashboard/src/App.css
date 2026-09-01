@@ -1258,11 +1258,26 @@ h3 {
   font-variant-numeric: tabular-nums;
 }
 
-.detail__header {
-  margin-bottom: 24px;
+/*
+ * The header card and the tab bar below it replace what used to be a plain header plus three
+ * stacked `<details>` — see the file-level comment on `ApplicationDetail` for why.
+ */
+.detail__header-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 
-.detail__header h1 {
+.detail__header-card h1 {
+  margin: 0 0 6px;
   font-size: 24px;
   letter-spacing: -0.02em;
 }
@@ -1281,39 +1296,136 @@ h3 {
   font-size: 13px;
 }
 
-.detail__header .posting-link {
-  margin-top: 10px;
+/* `flex: none` so the actions column keeps its intrinsic width when the header card wraps on a
+   narrow viewport, instead of stretching to match the title column. */
+.detail__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
 }
 
-.detail__section {
-  margin-bottom: 28px;
-}
-
-.detail__section h2 {
-  margin-bottom: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.detail__collapsible {
-  margin-bottom: 10px;
-  padding: 12px 18px;
+/*
+ * Single-select tab bar — same pill-group shell as `.filter-pills`, but its own class: filter
+ * pills carry a per-option count and a null "All" state that tabs have no use for, and the
+ * selected tab is solid-filled rather than tinted since it is the page's primary navigation, not
+ * a narrowing filter.
+ */
+.detail__tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 20px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
+  width: fit-content;
 }
 
-.detail__collapsible summary {
+.detail__tab {
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13.5px;
   font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+
+.detail__tab:hover {
+  color: var(--text);
+}
+
+.detail__tab.is-selected {
+  background: var(--primary);
+  color: var(--primary-contrast);
+}
+
+.detail__panel {
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.detail__panel-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail__panel-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.detail__panel-body {
+  padding: 18px 20px;
+}
+
+.detail__panel-body h3 {
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.detail__panel-body h3:first-child {
+  margin-top: 0;
+}
+
+/* ── Drafted answers accordion ─────────────────────────────────────────── */
+
+.answer-accordion__item {
+  border-top: 1px solid var(--border);
+}
+
+.answer-accordion__item:first-child {
+  border-top: none;
+}
+
+.answer-accordion__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
   cursor: pointer;
 }
 
-.detail__collapsible h3 {
-  margin-top: 14px;
-  font-size: 13px;
+.answer-accordion__caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  stroke: var(--text-muted);
+  stroke-width: 2.5px;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 150ms ease;
+}
+
+.answer-accordion__caret.is-open {
+  transform: rotate(180deg);
+}
+
+.answer-accordion__body {
+  margin: 0;
+  padding: 0 20px 16px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
 .facts {

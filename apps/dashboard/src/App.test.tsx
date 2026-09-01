@@ -380,7 +380,7 @@ describe('applications list', () => {
     await user.click(within(rowFor('Senior Frontend Engineer')).getByText('Brex'));
 
     expect(
-      await screen.findByRole('heading', { name: 'Senior Frontend Engineer' }),
+      await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' }),
     ).toBeInTheDocument();
     expect(window.location.hash).toBe('#/applications/app-brex');
   });
@@ -512,24 +512,24 @@ describe('routing', () => {
     await user.click(await screen.findByRole('link', { name: 'Senior Frontend Engineer' }));
 
     expect(
-      await screen.findByRole('heading', { name: 'Senior Frontend Engineer' }),
+      await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Brex · Infrastructure · Remote (US)')).toBeInTheDocument();
+    expect(screen.getByText('Senior Frontend Engineer')).toBeInTheDocument();
   });
 
   it('loads a detail page cold from a deep link', async () => {
     window.location.hash = '#/applications/app-ramp';
     renderApp();
 
-    expect(await screen.findByRole('heading', { name: 'Product Engineer' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' })).toBeInTheDocument();
   });
 
   it('groups requirement kinds once while preserving years and keyword categories', async () => {
     window.location.hash = '#/applications/app-brex';
     renderApp();
 
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
-    const jobInfo = screen.getByText('Job info').closest('details') as HTMLElement;
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    const jobInfo = screen.getByRole('tab', { name: 'Job info' }).closest('article') as HTMLElement;
     const required = within(jobInfo).getByRole('heading', { name: 'required', level: 4 });
     const preferred = within(jobInfo).getByRole('heading', { name: 'preferred', level: 4 });
 
@@ -554,7 +554,7 @@ describe('routing', () => {
     ).toBeInTheDocument();
 
     window.location.hash = '#/applications/app-ramp';
-    await screen.findByRole('heading', { name: 'Product Engineer' });
+    await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' });
 
     expect(screen.getByRole('link', { name: 'djobi — all applications' })).toBeInTheDocument();
   });
@@ -563,7 +563,7 @@ describe('routing', () => {
     window.location.hash = '#/applications/app-ramp';
     renderApp();
 
-    const heading = await screen.findByRole('heading', { name: 'Product Engineer' });
+    const heading = await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' });
     const back = screen.getByRole('link', { name: '← Applications' });
 
     // Not in the page header: it belongs to the record, not the chrome.
@@ -576,7 +576,7 @@ describe('routing', () => {
   it('goes back to the list', async () => {
     window.location.hash = '#/applications/app-ramp';
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'Product Engineer' });
+    await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' });
 
     await user.click(screen.getByRole('link', { name: '← Applications' }));
 
@@ -639,8 +639,9 @@ describe('application detail', () => {
   });
 
   it('lists notes newest first', async () => {
-    renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    const { user } = renderApp();
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     const notes = screen.getAllByRole('listitem').filter((li) => li.className === 'note');
     expect(notes[0]).toHaveTextContent(/disagreed with a technical decision/);
@@ -648,7 +649,8 @@ describe('application detail', () => {
 
   it('filters notes by category', async () => {
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     await user.click(screen.getByRole('button', { name: /^Technical/ }));
 
@@ -658,7 +660,8 @@ describe('application detail', () => {
 
   it('appends a note and clears only the text', async () => {
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     await user.click(screen.getByRole('radio', { name: 'Technical' }));
     const textarea = screen.getByRole('textbox', { name: 'Note' });
@@ -671,15 +674,17 @@ describe('application detail', () => {
   });
 
   it('will not submit an empty note', async () => {
-    renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    const { user } = renderApp();
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     expect(screen.getByRole('button', { name: 'Add note' })).toBeDisabled();
   });
 
   it('offers no way to edit or delete a note', async () => {
-    renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    const { user } = renderApp();
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     expect(screen.queryByRole('button', { name: /delete|remove|edit/i })).not.toBeInTheDocument();
   });
@@ -687,9 +692,10 @@ describe('application detail', () => {
   it('says so when an application had no freeform questions', async () => {
     window.location.hash = '#/applications/app-sonar';
     const { user } = renderApp();
-    await screen.findByRole('heading', { name: 'Staff Engineer, Platform' });
+    await screen.findByRole('heading', { name: 'Sonar · Geneva, Switzerland' });
 
-    await user.click(screen.getByText('Drafted answers (0)'));
+    await user.click(screen.getByRole('tab', { name: 'Materials' }));
+    expect(screen.getByText('Drafted answers (0)')).toBeInTheDocument();
     expect(screen.getByText('This form had no freeform questions.')).toBeInTheDocument();
   });
 
@@ -711,7 +717,7 @@ describe('application detail', () => {
   it('does not print the raw job URL', async () => {
     window.location.hash = '#/applications/app-brex';
     renderApp();
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
 
     expect(
       screen.queryByText('https://boards.greenhouse.io/brex/jobs/4012'),
@@ -822,7 +828,8 @@ describe('failures', () => {
     window.location.hash = '#/applications/app-brex';
 
     const { user } = renderApp(failing);
-    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
     const textarea = screen.getByRole('textbox', { name: 'Note' });
     await user.type(textarea, 'Worth not losing.');
