@@ -8,6 +8,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { createApp } from './app.js';
+import { requireAuth } from './authMiddleware.js';
 import { postgresApplicationStore } from './db/postgresApplicationStore.js';
 import { postgresProfileStore } from './db/postgresProfileStore.js';
 
@@ -34,6 +35,7 @@ import { postgresProfileStore } from './db/postgresProfileStore.js';
 const app = createApp({
   applicationStore: postgresApplicationStore,
   profileStore: postgresProfileStore,
+  requireAuth: requireAuth(),
 });
 
 const server = new Hono();

@@ -120,8 +120,7 @@ export function Analytics({
   }, [range, stage]);
 
   // Split so the stage pills can count against `inRange` rather than `filtered`: a pill's count is
-  // "how many would this select", which means every filter *except* the one the pill itself
-  // controls — the same reasoning `ApplicationsList`'s stage counts ignore its own search box for.
+  // "how many would this select", which means every filter except the one the pill itself controls.
   const rangeStartDate = useMemo(() => rangeStart(range, today), [range, today]);
   const inRange = useMemo(
     () => applications.filter((application) => new Date(application.createdAt) >= rangeStartDate),

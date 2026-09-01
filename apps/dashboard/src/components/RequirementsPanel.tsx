@@ -14,7 +14,7 @@
  * full-height panel would swallow the page's own scroll. Revealing more as the reader approaches
  * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
  */
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { normalizeLabel, type Application } from '@djobi/shared';
 import { requirementKindCounts, yearsOfExperienceDistribution } from '../lib/analytics';
 import { applicationPath, PAGE_SIZE } from '../lib/useHashRoute';
@@ -62,6 +62,7 @@ export function RequirementsPanel({
    */
   resetKey: string;
 }) {
+  const [showExperience, setShowExperience] = useState(false);
   const needle = selectedKeyword ? normalizeLabel(selectedKeyword) : null;
   const matching = needle
     ? applications.filter((application) =>
@@ -77,8 +78,8 @@ export function RequirementsPanel({
   );
   const visible = sorted.slice(0, visibleCount);
 
-  const requirementCounts = requirementKindCounts(applications);
-  const yearsDistribution = yearsOfExperienceDistribution(applications);
+  const requirementCounts = requirementKindCounts(matching);
+  const yearsDistribution = yearsOfExperienceDistribution(matching);
 
   const subtitle =
     sorted.length === 0
@@ -100,10 +101,37 @@ export function RequirementsPanel({
           <span>{requirementCounts.preferred} preferred</span>
           <span>{requirementCounts.unspecified} unspecified</span>
           {yearsDistribution.length > 0 ? (
-            <span className="analytics-summary-strip__years">
-              Years stated:{' '}
-              {yearsDistribution.map((point) => `${point.years}+ (×${point.count})`).join(', ')}
-            </span>
+            <div className="analytics-summary-strip__years">
+              <button
+                type="button"
+                className="analytics-summary-strip__years-toggle"
+                aria-expanded={showExperience}
+                aria-controls="experience-requested-breakdown"
+                onClick={() => setShowExperience((shown) => !shown)}
+              >
+                <span>Experience requested</span>
+                <span className="analytics-summary-strip__years-total">
+                  {yearsDistribution.length}{' '}
+                  {yearsDistribution.length === 1 ? 'threshold' : 'thresholds'}
+                </span>
+              </button>
+              {showExperience ? (
+                <div
+                  className="analytics-summary-strip__years-dropdown"
+                  id="experience-requested-breakdown"
+                >
+                  {yearsDistribution.map((point) => (
+                    <span className="analytics-summary-strip__year" key={point.years}>
+                      {point.years}+ {point.years === 1 ? 'year' : 'years'}
+                      <span className="analytics-summary-strip__year-count">
+                        {' '}
+                        · {point.count} {point.count === 1 ? 'request' : 'requests'}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

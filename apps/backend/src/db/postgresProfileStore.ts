@@ -2,9 +2,8 @@
  * The production `ProfileStore`: Neon Postgres through Drizzle. The interface, and the in-memory
  * adapter this is held against, are in `db/profileStore.ts`.
  *
- * Scoped by `userId` (`docs/multi-tenant-auth.md`, Phase A): every caller supplies one, which today
- * means `routes/profile.ts` passing `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID` — the constant Phase
- * B deletes once a real auth provider supplies the id instead.
+ * Scoped by `userId` (`docs/multi-tenant-auth.md`, Phase A): every caller supplies one, which since
+ * Phase B means `routes/profile.ts` reading it off the authenticated request's own context.
  */
 import { ProfileSchema, type Profile } from '@djobi/shared';
 import { eq } from 'drizzle-orm';

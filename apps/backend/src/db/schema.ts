@@ -140,8 +140,7 @@ export const applications = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     /**
      * Whose application this is. `NOT NULL` with no default: every insert must go through code that
-     * knows who's asking, which today means `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID` and after
-     * Phase B means the authenticated request's own id.
+     * knows who's asking — since Phase B, the authenticated request's own id.
      */
     userId: uuid('user_id')
       .notNull()

@@ -14,6 +14,7 @@
 import { EXTRACTION_VERSION, type Application, type ApplicationSnapshot } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app.js';
+import { fakeAuth } from '../authMiddleware.js';
 import { inMemoryApplicationStore } from '../db/applicationStore.js';
 import { BOOTSTRAP_USER_ID } from '../db/bootstrapUser.js';
 import { inMemoryProfileStore } from '../db/profileStore.js';
@@ -145,6 +146,34 @@ describe('GET /applications/:id', () => {
 
     expect(res.status).toBe(404);
   });
+
+  /**
+   * The route-level half of `docs/multi-tenant-auth.md`'s "another user's row is a 404, never a
+   * 403" rule — `applicationStore.contract.test.ts`'s `user scoping` block already covers the store
+   * itself; this is what proves the route actually threads the authenticated caller's id through
+   * rather than some other value that would defeat that guarantee.
+   */
+  it('answers 404, not the row, for an id that belongs to a different user', async () => {
+    const { app } = createTestApp({
+      applications: [sampleApplication],
+      authenticatedAs: '00000000-0000-4000-8000-000000000099',
+    });
+
+    const res = await app.request('/applications/application-1');
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('authentication', () => {
+  it('returns 401 with no credential', async () => {
+    const { app } = createTestApp({ applications: [sampleApplication], authenticatedAs: null });
+
+    const res = await app.request('/applications');
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Authentication required' });
+  });
 });
 
 describe('POST /applications', () => {
@@ -177,6 +206,7 @@ describe('POST /applications', () => {
     const app = createApp({
       applicationStore: { ...store, byId },
       profileStore: inMemoryProfileStore(),
+      requireAuth: fakeAuth(BOOTSTRAP_USER_ID),
     });
 
     const res = await app.request('/applications', {
@@ -213,6 +243,7 @@ describe('POST /applications', () => {
         byId: async () => null,
       },
       profileStore: inMemoryProfileStore(),
+      requireAuth: fakeAuth(BOOTSTRAP_USER_ID),
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 

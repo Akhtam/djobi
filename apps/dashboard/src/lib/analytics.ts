@@ -176,8 +176,25 @@ export interface YearsOfExperienceCount {
 }
 
 /**
- * How often each stated `yearsOfExperience` value appears across `applications`, ascending by
- * years. Requirements with no stated figure — the common case — are excluded rather than counted
+ * Explicit year thresholds written in one requirement. The structured field is authoritative, but
+ * persisted requirements saved before that field existed were lifted with `yearsOfExperience: null`.
+ * Reading an adjacent numeric "3+ years" from their original text recovers stated data rather than
+ * guessing it. A set prevents a modern `{ text: "3+ years", yearsOfExperience: 3 }` row from being
+ * counted twice.
+ */
+function statedYears(requirement: Application['jobInfo']['requirements'][number]): number[] {
+  const years = new Set<number>();
+  if (requirement.yearsOfExperience !== null) years.add(requirement.yearsOfExperience);
+
+  const pattern =
+    /\b(\d+(?:\.\d+)?)\s*(?:(?:[-\u2013\u2014]|to)\s*\d+(?:\.\d+)?|\+|or\s+more)?\s*(?:years?|yrs?)\b/gi;
+  for (const match of requirement.text.matchAll(pattern)) years.add(Number(match[1]));
+  return [...years];
+}
+
+/**
+ * How many requirements state each years-of-experience threshold across `applications`, ascending
+ * by years. Requirements with no stated figure — the common case — are excluded rather than counted
  * under a `null` bucket: this reports the distribution of what postings *did* state, not a census
  * of what they left silent.
  */
@@ -187,11 +204,9 @@ export function yearsOfExperienceDistribution(
   const counts = new Map<number, number>();
   for (const application of applications) {
     for (const requirement of application.jobInfo.requirements) {
-      if (requirement.yearsOfExperience === null) continue;
-      counts.set(
-        requirement.yearsOfExperience,
-        (counts.get(requirement.yearsOfExperience) ?? 0) + 1,
-      );
+      for (const years of statedYears(requirement)) {
+        counts.set(years, (counts.get(years) ?? 0) + 1);
+      }
     }
   }
   return [...counts.entries()]

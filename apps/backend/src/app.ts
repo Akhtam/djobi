@@ -1,7 +1,9 @@
 import type { BackendErrorBody } from '@djobi/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import type { MiddlewareHandler } from 'hono';
 import { auth } from './auth.js';
+import type { AuthEnv } from './authMiddleware.js';
 import { StructuredCallError } from './llm/structuredCall.js';
 import { RequestValidationError } from './requestBody.js';
 import type { ApplicationStore } from './db/applicationStore.js';
@@ -14,14 +16,23 @@ import { renderResumePdfRoute } from './routes/render-resume-pdf.js';
 /**
  * What the app needs from the outside world, and the only thing `index.ts` supplies.
  *
- * Persistence is the whole of it: the four LLM operations and the PDF renderer reach their own
- * upstreams and are substituted at their own seams (`llm/fakeModel.ts`, and a `vi.mock` of
- * `pdf/renderResume.js`), which is why they are not here. Adding a dependency to this interface is
- * a deliberate widening of what the app cannot construct for itself.
+ * `requireAuth` is a dependency for the same reason the two stores are: `authMiddleware.ts`'s real
+ * `requireAuth()` reaches through `auth.ts` into the real (lazy) `db` the first time a request
+ * actually calls it, and hardcoding that into every request this app serves would force every route
+ * test — most of which have nothing to do with auth — into either a real Better Auth sign-up or
+ * losing the documented "importable with no `.env`" property. `testApp.ts` supplies
+ * `authMiddleware.ts`'s `fakeAuth`/`fakeUnauthenticated` instead, the same role
+ * `inMemoryApplicationStore`/`inMemoryProfileStore` already play for persistence.
+ *
+ * The four LLM operations and the PDF renderer reach their own upstreams and are substituted at
+ * their own seams (`llm/fakeModel.ts`, and a `vi.mock` of `pdf/renderResume.js`), which is why they
+ * are not here. Adding a dependency to this interface is a deliberate widening of what the app
+ * cannot construct for itself.
  */
 export interface AppDependencies {
   applicationStore: ApplicationStore;
   profileStore: ProfileStore;
+  requireAuth: MiddlewareHandler<AuthEnv>;
 }
 
 /**
@@ -35,8 +46,8 @@ export interface AppDependencies {
  * hand. A parameter cannot be forgotten the way that convention could, and two tests can now hold
  * two independent apps instead of sharing one and resetting mocks between cases.
  */
-export function createApp(deps: AppDependencies): Hono {
-  const app = new Hono();
+export function createApp(deps: AppDependencies): Hono<AuthEnv> {
+  const app = new Hono<AuthEnv>();
 
   /**
    * Cross-origin access for `apps/dashboard`, which runs on its own dev server and is therefore a
@@ -159,12 +170,21 @@ export function createApp(deps: AppDependencies): Hono {
    * handler, so this is a pass-through rather than a route this file has any business parsing —
    * see `auth.ts` for what's actually configured.
    *
-   * Registered after the CORS and content-type middleware above (same ordering the auth
-   * *verification* middleware `docs/multi-tenant-auth.md`'s Phase B calls for will need — Hono
-   * composes in registration order), so a sign-up POST gets the same CSRF-relevant content-type
-   * check every other state-changing route already gets.
+   * Registered after the CORS and content-type middleware above, so a sign-up POST gets the same
+   * CSRF-relevant content-type check every other state-changing route already gets — and **before**
+   * `deps.requireAuth` below, which is what has to stay true: signing up or signing in is exactly
+   * the thing an unauthenticated request needs to be able to do. Hono composes in registration
+   * order, so a request matching this route never reaches the middleware registered after it.
    */
   app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+
+  /**
+   * Everything below this line requires a session. `docs/multi-tenant-auth.md`'s Phase B: routes
+   * that don't themselves scope on `userId` (the four LLM operations, PDF rendering) still sit
+   * behind this — an unauthenticated caller has no business spending this backend's OpenRouter
+   * budget just because a given route doesn't happen to read the id it authenticated.
+   */
+  app.use('*', deps.requireAuth);
 
   app.route('/', llmRoutes);
   app.route('/', profileRoute(deps.profileStore));

@@ -17,6 +17,7 @@
  */
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { bearer } from 'better-auth/plugins';
 import { db } from './db/client.js';
 import * as schema from './db/schema.js';
 
@@ -62,6 +63,12 @@ function createAuth() {
         clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
       },
     },
+    // `docs/multi-tenant-auth.md`: "Bearer token for the extension, httpOnly cookie for the
+    // dashboard." The extension is not a browser page and has no same-site relationship with this
+    // backend, so it can't rely on a cookie the way the dashboard can. This plugin is what makes
+    // `auth.api.getSession` also accept `Authorization: Bearer <token>`, verified directly in
+    // `authMiddleware.test.ts` rather than assumed from the plugin's own docs.
+    plugins: [bearer()],
   });
 }
 

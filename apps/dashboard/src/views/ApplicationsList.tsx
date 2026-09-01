@@ -40,22 +40,25 @@ export function ApplicationsList({
 }) {
   const { query, stage } = filters;
 
-  const visible = useMemo(() => {
+  const searchMatches = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return (
-      applications
+    return applications.filter((application) =>
+      needle
+        ? application.company.toLowerCase().includes(needle) ||
+          application.roleTitle.toLowerCase().includes(needle)
+        : true,
+    );
+  }, [applications, query]);
+
+  const visible = useMemo(
+    () =>
+      searchMatches
         // Compared through `stageFilterOf` rather than against the stage itself: the Rejected pill
         // stands for both rejections, so an equality check would hide every ATS-rejected row.
         .filter((application) => (stage ? stageFilterOf(application.stage) === stage : true))
-        .filter((application) =>
-          needle
-            ? application.company.toLowerCase().includes(needle) ||
-              application.roleTitle.toLowerCase().includes(needle)
-            : true,
-        )
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    );
-  }, [applications, stage, query]);
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [searchMatches, stage],
+  );
 
   /*
     Load more rather than numbered pages: the rows already on screen stay there, so nothing the
@@ -75,7 +78,7 @@ export function ApplicationsList({
     `${applications.length} ${applications.length === 1 ? 'application' : 'applications'}` +
     (inProgress > 0 ? ` · ${inProgress} in progress` : '');
 
-  const counts = countByOption(STAGE_FILTERS, applications, (a) => stageFilterOf(a.stage));
+  const counts = countByOption(STAGE_FILTERS, searchMatches, (a) => stageFilterOf(a.stage));
 
   return (
     <>

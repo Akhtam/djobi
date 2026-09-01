@@ -5,8 +5,8 @@ import {
   UpdateApplicationStageRequestSchema,
 } from '@djobi/shared';
 import { Hono, type Context } from 'hono';
+import type { AuthEnv } from '../authMiddleware.js';
 import type { ApplicationStore, Written } from '../db/applicationStore.js';
-import { BOOTSTRAP_USER_ID } from '../db/bootstrapUser.js';
 import { parseBody } from '../requestBody.js';
 
 /**
@@ -22,12 +22,13 @@ import { parseBody } from '../requestBody.js';
  * routes are exercised end to end against an in-memory adapter, and `index.ts` is the only place the
  * Postgres one is named. See `db/applicationStore.ts`.
  *
- * `BOOTSTRAP_USER_ID` stands in for the authenticated request's own id until Phase B
- * (`docs/multi-tenant-auth.md`) adds a real auth provider — this is the one place that constant is
- * used here, so Phase B's edit is confined to this file plus `db/bootstrapUser.ts` itself.
+ * `userId` comes from context on every handler below, set by `app.ts`'s `requireAuth` middleware
+ * (real in production, a test double in `testApp.ts`) before any of these run — Phase B's
+ * `docs/multi-tenant-auth.md` replaced the `BOOTSTRAP_USER_ID` constant this file used to read
+ * directly with that.
  */
-export function applicationsRoute(store: ApplicationStore): Hono {
-  const route = new Hono();
+export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
+  const route = new Hono<AuthEnv>();
 
   /**
    * Answers a write: the compact acknowledgement the store produced, or the full row the write left
@@ -53,7 +54,7 @@ export function applicationsRoute(store: ApplicationStore): Hono {
    * `result` is what the store returned — `null` when no row has that id.
    */
   async function writeResponse<Result extends { id: string }>(
-    c: Context,
+    c: Context<AuthEnv>,
     result: Written<Result> | null,
   ): Promise<Response> {
     if (!result) return c.json({ error: 'Application not found' }, 404);
@@ -66,7 +67,7 @@ export function applicationsRoute(store: ApplicationStore): Hono {
 
     if (application) return c.json(application);
 
-    const readBack = await store.byId(BOOTSTRAP_USER_ID, result.id);
+    const readBack = await store.byId(c.get('userId'), result.id);
     if (!readBack) return c.json({ error: 'Application not found' }, 404);
     return c.json(readBack);
   }
@@ -81,15 +82,15 @@ export function applicationsRoute(store: ApplicationStore): Hono {
     if (jobUrl) {
       return c.json(
         c.req.query('response') === 'compact'
-          ? await store.duplicateSummary(BOOTSTRAP_USER_ID, jobUrl)
-          : await store.byJobUrl(BOOTSTRAP_USER_ID, jobUrl),
+          ? await store.duplicateSummary(c.get('userId'), jobUrl)
+          : await store.byJobUrl(c.get('userId'), jobUrl),
       );
     }
-    return c.json(await store.list(BOOTSTRAP_USER_ID));
+    return c.json(await store.list(c.get('userId')));
   });
 
   route.get('/applications/:id', async (c) => {
-    const application = await store.byId(BOOTSTRAP_USER_ID, c.req.param('id'));
+    const application = await store.byId(c.get('userId'), c.req.param('id'));
     if (!application) {
       return c.json({ error: 'Application not found' }, 404);
     }
@@ -97,17 +98,14 @@ export function applicationsRoute(store: ApplicationStore): Hono {
   });
 
   route.post('/applications', async (c) =>
-    writeResponse(
-      c,
-      await store.create(BOOTSTRAP_USER_ID, await parseBody(c, NewApplicationSchema)),
-    ),
+    writeResponse(c, await store.create(c.get('userId'), await parseBody(c, NewApplicationSchema))),
   );
 
   route.patch('/applications/:id', async (c) =>
     writeResponse(
       c,
       await store.replaceSnapshot(
-        BOOTSTRAP_USER_ID,
+        c.get('userId'),
         c.req.param('id'),
         await parseBody(c, ApplicationSnapshotSchema),
       ),
@@ -122,14 +120,14 @@ export function applicationsRoute(store: ApplicationStore): Hono {
    */
   route.patch('/applications/:id/stage', async (c) => {
     const { stage } = await parseBody(c, UpdateApplicationStageRequestSchema);
-    return writeResponse(c, await store.setStage(BOOTSTRAP_USER_ID, c.req.param('id'), stage));
+    return writeResponse(c, await store.setStage(c.get('userId'), c.req.param('id'), stage));
   });
 
   route.post('/applications/:id/notes', async (c) =>
     writeResponse(
       c,
       await store.appendNote(
-        BOOTSTRAP_USER_ID,
+        c.get('userId'),
         c.req.param('id'),
         await parseBody(c, AddApplicationNoteRequestSchema),
       ),

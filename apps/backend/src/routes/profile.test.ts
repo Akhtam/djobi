@@ -49,6 +49,27 @@ describe('GET /profile', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toBeNull();
   });
+
+  it('returns 401 with no credential', async () => {
+    const { app } = createTestApp({ profile: sampleProfile, authenticatedAs: null });
+
+    const res = await app.request('/profile');
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Authentication required' });
+  });
+
+  it("never returns a different user's profile", async () => {
+    const { app } = createTestApp({
+      profile: sampleProfile,
+      authenticatedAs: '00000000-0000-4000-8000-000000000099',
+    });
+
+    const res = await app.request('/profile');
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toBeNull();
+  });
 });
 
 describe('POST /profile', () => {

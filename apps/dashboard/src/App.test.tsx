@@ -132,6 +132,21 @@ describe('applications list', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('counts each stage within the company or role search', async () => {
+    const { user } = renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search company or role' }), 'ramp');
+
+    expect(screen.getByRole('button', { name: /^Applied/ })).toHaveAccessibleName('Applied0');
+    expect(screen.getByRole('button', { name: /^Phone screen/ })).toHaveAccessibleName(
+      'Phone screen1',
+    );
+    expect(screen.getByRole('button', { name: /^Onsite/ })).toHaveAccessibleName('Onsite0');
+    expect(screen.getByRole('button', { name: /^Offer/ })).toHaveAccessibleName('Offer0');
+    expect(screen.getByRole('button', { name: /^Rejected/ })).toHaveAccessibleName('Rejected0');
+  });
+
   it('keeps the filters through opening an application and coming back', async () => {
     // The whole reason the filters live in the URL. `ApplicationsList` unmounts on the way to the
     // detail page, so anything held in its own state is gone by the time the user returns.
@@ -899,6 +914,45 @@ describe('analytics', () => {
     expect(
       screen.queryByRole('link', { name: /Brex — Senior Frontend Engineer/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it('presents requested experience as readable thresholds', async () => {
+    const applications = structuredClone(fixtureApplications.slice(0, 2));
+    applications[0].jobInfo.requirements[0].yearsOfExperience = 1;
+    applications[1].jobInfo.requirements[1].yearsOfExperience = 5;
+    const { user, container } = renderApp(createFixtureDashboardClient(applications));
+
+    await screen.findByRole('group', { name: 'Min. appearances' });
+    const summary = container.querySelector('.analytics-summary-strip') as HTMLElement;
+    const toggle = within(summary).getByRole('button', { name: /^Experience requested/ });
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(summary).toHaveTextContent('2 thresholds');
+    expect(summary.querySelectorAll('.analytics-summary-strip__year')).toHaveLength(0);
+
+    await user.click(toggle);
+
+    const thresholds = summary.querySelectorAll('.analytics-summary-strip__year');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(thresholds[0]).toHaveTextContent('1+ year · 1 request');
+    expect(thresholds[1]).toHaveTextContent('5+ years · 2 requests');
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(summary.querySelectorAll('.analytics-summary-strip__year')).toHaveLength(0);
+  });
+
+  it('scopes the requirements summary to postings matching the selected keyword', async () => {
+    window.location.hash = '#/analytics?range=30d';
+    const { user, container } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+
+    await user.click(await screen.findByRole('button', { name: /Next\.js/ }));
+
+    const summary = container.querySelector('.analytics-summary-strip');
+    expect(summary).not.toHaveTextContent('Experience requested');
+    expect(summary).not.toHaveTextContent('5+ years');
   });
 
   it('returns to Analytics with its filters intact from a posting opened in the requirements panel', async () => {

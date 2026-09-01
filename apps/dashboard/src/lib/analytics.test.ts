@@ -238,6 +238,41 @@ describe('yearsOfExperienceDistribution', () => {
     ]);
   });
 
+  it('counts explicit years in legacy requirement text when the structured field is absent', () => {
+    const applications = [
+      application({
+        jobInfo: {
+          ...application().jobInfo,
+          requirements: [
+            requirement({ text: '3+ years building production systems' }),
+            requirement({ text: 'At least 3 years of TypeScript experience' }),
+            requirement({ text: 'Between 5-7 years of backend experience' }),
+          ],
+        },
+      }),
+    ];
+
+    expect(yearsOfExperienceDistribution(applications)).toEqual([
+      { years: 3, count: 2 },
+      { years: 5, count: 1 },
+    ]);
+  });
+
+  it('does not count a structured threshold again when the text repeats it', () => {
+    const applications = [
+      application({
+        jobInfo: {
+          ...application().jobInfo,
+          requirements: [
+            requirement({ text: '5+ years of backend experience', yearsOfExperience: 5 }),
+          ],
+        },
+      }),
+    ];
+
+    expect(yearsOfExperienceDistribution(applications)).toEqual([{ years: 5, count: 1 }]);
+  });
+
   it('returns nothing when no requirement states a figure', () => {
     const applications = [
       application({
