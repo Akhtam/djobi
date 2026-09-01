@@ -64,6 +64,13 @@
       "when": 1788227783111,
       "tag": "0008_numerous_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788281711214,
+      "tag": "0009_eminent_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

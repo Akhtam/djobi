@@ -15,6 +15,7 @@ import { EXTRACTION_VERSION, type Application, type ApplicationSnapshot } from '
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app.js';
 import { inMemoryApplicationStore } from '../db/applicationStore.js';
+import { BOOTSTRAP_USER_ID } from '../db/bootstrapUser.js';
 import { inMemoryProfileStore } from '../db/profileStore.js';
 import { createTestApp } from '../testApp.js';
 
@@ -159,7 +160,9 @@ describe('POST /applications', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string };
     expect(Object.keys(body)).toEqual(['id']);
-    expect(await applicationStore.byId(body.id)).toMatchObject({ company: 'Acme' });
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, body.id)).toMatchObject({
+      company: 'Acme',
+    });
   });
 
   /**
@@ -203,8 +206,8 @@ describe('POST /applications', () => {
     const app = createApp({
       applicationStore: {
         ...vanishing,
-        create: async (application) => ({
-          ...(await vanishing.create(application)),
+        create: async (userId, application) => ({
+          ...(await vanishing.create(userId, application)),
           application: null,
         }),
         byId: async () => null,
@@ -262,7 +265,7 @@ describe('POST /applications', () => {
 
     expect(res.status).toBe(200);
     const { id } = (await res.json()) as { id: string };
-    expect(await applicationStore.byId(id)).toMatchObject({
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, id)).toMatchObject({
       source: 'autofill',
       stage: 'applied',
       notes: [],
@@ -281,7 +284,7 @@ describe('POST /applications', () => {
 
     expect(res.status).toBe(200);
     const { id } = (await res.json()) as { id: string };
-    expect(await applicationStore.byId(id)).toMatchObject({ source: 'manual' });
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, id)).toMatchObject({ source: 'manual' });
   });
 
   it('returns 400 and stores nothing when the body fails validation', async () => {
@@ -295,7 +298,7 @@ describe('POST /applications', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await applicationStore.list()).toEqual([]);
+    expect(await applicationStore.list(BOOTSTRAP_USER_ID)).toEqual([]);
   });
 });
 
@@ -314,7 +317,7 @@ describe('PATCH /applications/:id', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: 'application-1' });
-    expect(await applicationStore.byId('application-1')).toMatchObject({
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toMatchObject({
       roleTitle: 'Staff Engineer',
     });
   });
@@ -341,7 +344,7 @@ describe('PATCH /applications/:id', () => {
       body: JSON.stringify(snapshot satisfies ApplicationSnapshot),
     });
 
-    expect(await applicationStore.byId('application-1')).toMatchObject({
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toMatchObject({
       source: 'manual',
       stage: 'onsite',
       notes: tracked.notes,
@@ -382,7 +385,9 @@ describe('PATCH /applications/:id', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await applicationStore.byId('application-1')).toEqual(sampleApplication);
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toEqual(
+      sampleApplication,
+    );
   });
 
   /**
@@ -399,7 +404,9 @@ describe('PATCH /applications/:id', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await applicationStore.byId('application-1')).toEqual(sampleApplication);
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toEqual(
+      sampleApplication,
+    );
   });
 });
 
@@ -415,7 +422,9 @@ describe('PATCH /applications/:id/stage', () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ id: 'application-1', stage: 'onsite' });
-    expect(await applicationStore.byId('application-1')).toMatchObject({ stage: 'onsite' });
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toMatchObject({
+      stage: 'onsite',
+    });
   });
 
   it('returns the full updated Application for a legacy stage change', async () => {
@@ -440,7 +449,9 @@ describe('PATCH /applications/:id/stage', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await applicationStore.byId('application-1')).toMatchObject({ stage: 'applied' });
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toMatchObject({
+      stage: 'applied',
+    });
   });
 
   it('404s for an application that does not exist', async () => {
@@ -470,7 +481,9 @@ describe('PATCH /applications/:id/stage', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await applicationStore.byId('application-1')).toEqual(sampleApplication);
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toEqual(
+      sampleApplication,
+    );
   });
 });
 
@@ -494,7 +507,7 @@ describe('POST /applications/:id/notes', () => {
         createdAt: expect.any(String),
       },
     });
-    expect((await applicationStore.byId('application-1'))?.notes).toMatchObject([
+    expect((await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1'))?.notes).toMatchObject([
       { category: 'technical', text: 'Asked about idempotency keys.' },
     ]);
   });
@@ -528,7 +541,7 @@ describe('POST /applications/:id/notes', () => {
       }),
     });
 
-    const [note] = (await applicationStore.byId('application-1'))?.notes ?? [];
+    const [note] = (await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1'))?.notes ?? [];
     expect(note.id).not.toBe('chosen-by-the-client');
     expect(note.createdAt).not.toBe('1999-01-01T00:00:00.000Z');
   });
@@ -543,7 +556,7 @@ describe('POST /applications/:id/notes', () => {
     });
 
     expect(res.status).toBe(400);
-    expect((await applicationStore.byId('application-1'))?.notes).toEqual([]);
+    expect((await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1'))?.notes).toEqual([]);
   });
 
   it('404s for an application that does not exist', async () => {

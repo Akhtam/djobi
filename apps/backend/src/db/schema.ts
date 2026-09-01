@@ -1,12 +1,30 @@
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
+ * One row per account. Minimal on purpose — Phase A (multi-tenant auth, `docs/multi-tenant-auth.md`)
+ * exists only to give every other table an owner to scope on; there is exactly one row today,
+ * `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID`, with no auth provider yet issuing real ones. Phase B
+ * (the real auth provider) reconciles this table with its own user shape rather than this phase
+ * guessing at columns (email, name, …) an auth library will want in its own way.
+ */
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * The base profile, stored whole. `data` holds a `Profile` object (from `@djobi/shared`) as
  * jsonb — no migration is needed when the `Profile` shape changes, since Drizzle just reads/writes
  * whatever is in the column.
+ *
+ * Keyed by `userId` rather than a separate `id`: one profile per user is a schema guarantee this way
+ * rather than a rule to remember, and `postgresProfileStore.saveProfile` stays one atomic upsert on
+ * the primary key, exactly as it was on the old singleton `id`.
  */
 export const profiles = pgTable('profiles', {
-  id: uuid('id').primaryKey(),
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id),
   data: jsonb('data').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -22,6 +40,14 @@ export const applications = pgTable(
   'applications',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /**
+     * Whose application this is. `NOT NULL` with no default: every insert must go through code that
+     * knows who's asking, which today means `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID` and after
+     * Phase B means the authenticated request's own id.
+     */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
     company: text('company').notNull(),
     roleTitle: text('role_title').notNull(),
     jobUrl: text('job_url').notNull(),
@@ -54,14 +80,27 @@ export const applications = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index('applications_job_url_created_at_idx').on(table.jobUrl, table.createdAt.desc()),
-    index('applications_job_key_created_at_idx').on(table.jobKey, table.createdAt.desc()),
+    /**
+     * All three indexes below lead with `userId`, not just the two the Duplicate Guard uses —
+     * doc'd in `docs/multi-tenant-auth.md` as "both existing indexes", written before this one
+     * `ORDER BY created_at DESC` scoped by user needed the same prefix it always needed to avoid a
+     * per-user sequential scan. Same reasoning as the original unscoped index, just per-user now.
+     */
+    index('applications_user_job_url_created_at_idx').on(
+      table.userId,
+      table.jobUrl,
+      table.createdAt.desc(),
+    ),
+    index('applications_user_job_key_created_at_idx').on(
+      table.userId,
+      table.jobKey,
+      table.createdAt.desc(),
+    ),
     /**
      * For the unfiltered history — `ApplicationStore.list`, which the dashboard loads on every
-     * visit. The two indexes above lead with a job column, so neither can serve an `ORDER BY
-     * created_at DESC` that has no `WHERE`; without this one that read is a sequential scan and a
-     * sort of the whole table.
+     * visit, scoped to one user's rows. Without this one that read is a per-user sequential scan
+     * and a sort of the whole table.
      */
-    index('applications_created_at_idx').on(table.createdAt.desc()),
+    index('applications_user_created_at_idx').on(table.userId, table.createdAt.desc()),
   ],
 );

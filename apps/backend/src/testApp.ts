@@ -13,6 +13,7 @@
 import type { Application, Profile } from '@djobi/shared';
 import { createApp } from './app.js';
 import { inMemoryApplicationStore, type ApplicationStore } from './db/applicationStore.js';
+import { BOOTSTRAP_USER_ID } from './db/bootstrapUser.js';
 import { inMemoryProfileStore, type ProfileStore } from './db/profileStore.js';
 
 export interface TestApp {
@@ -25,8 +26,12 @@ export interface TestApp {
 export function createTestApp(
   seed: { applications?: Application[]; profile?: Profile | null } = {},
 ): TestApp {
-  const applicationStore = inMemoryApplicationStore(seed.applications ?? []);
-  const profileStore = inMemoryProfileStore(seed.profile ?? null);
+  const applicationStore = inMemoryApplicationStore(
+    (seed.applications ?? []).map((application) => ({ userId: BOOTSTRAP_USER_ID, application })),
+  );
+  const profileStore = inMemoryProfileStore(
+    seed.profile ? new Map([[BOOTSTRAP_USER_ID, seed.profile]]) : new Map(),
+  );
 
   return { app: createApp({ applicationStore, profileStore }), applicationStore, profileStore };
 }

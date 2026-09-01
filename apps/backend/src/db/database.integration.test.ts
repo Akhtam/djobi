@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { BOOTSTRAP_USER_ID } from './bootstrapUser.js';
 
 vi.mock('./client.js', async () => {
   const { PGlite } = await import('@electric-sql/pglite');
@@ -31,6 +32,9 @@ beforeAll(async () => {
       -- as production does, and a fixture table that omitted it could only be inserted into by
       -- tests that supplied one — which is how this table came to be exercised by reads alone.
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      -- No default, matching \`db/schema.ts\`: every real insert supplies a real \`userId\` now that
+      -- the store takes one, so the fixture \`INSERT\` below lists it explicitly instead.
+      user_id uuid NOT NULL,
       company text NOT NULL,
       role_title text NOT NULL,
       job_url text NOT NULL,
@@ -49,17 +53,17 @@ beforeAll(async () => {
     );
 
     INSERT INTO applications
-      (id, company, role_title, job_url, job_key, job_info, tailored_resume, answers, stage,
-       created_at)
+      (id, user_id, company, role_title, job_url, job_key, job_info, tailored_resume, answers,
+       stage, created_at)
     VALUES
-      ('00000000-0000-4000-8000-000000000011', 'Acme', 'Engineer I',
+      ('00000000-0000-4000-8000-000000000011', '${BOOTSTRAP_USER_ID}', 'Acme', 'Engineer I',
        'https://example.com/jobs/1', 'https://example.com/jobs/1',
        '{}', '{}', '[]', 'applied', '2026-01-01T00:00:00Z'),
-      ('00000000-0000-4000-8000-000000000012', 'Acme', 'Engineer II',
+      ('00000000-0000-4000-8000-000000000012', '${BOOTSTRAP_USER_ID}', 'Acme', 'Engineer II',
        'https://example.com/jobs/1', 'https://example.com/jobs/1',
        '{}', '{}', '[]', 'onsite', '2026-02-01T00:00:00Z'),
       -- Written before job_key existed: only an exact job_url can find it.
-      ('00000000-0000-4000-8000-000000000013', 'Globex', 'Analyst',
+      ('00000000-0000-4000-8000-000000000013', '${BOOTSTRAP_USER_ID}', 'Globex', 'Analyst',
        'https://example.com/jobs/legacy?utm_source=old', NULL,
        '{}', '{}', '[]', 'rejected', '2026-03-01T00:00:00Z');
   `);
@@ -82,9 +86,9 @@ const newestForJob1 = {
 
 describe('getApplicationDuplicateSummary integration', () => {
   it('returns the full count and newest projected metadata from one matching row', async () => {
-    await expect(getApplicationDuplicateSummary('https://example.com/jobs/1')).resolves.toEqual(
-      newestForJob1,
-    );
+    await expect(
+      getApplicationDuplicateSummary(BOOTSTRAP_USER_ID, 'https://example.com/jobs/1'),
+    ).resolves.toEqual(newestForJob1);
   });
 
   /**
@@ -97,18 +101,23 @@ describe('getApplicationDuplicateSummary integration', () => {
     ['an application-route suffix', 'https://example.com/jobs/1/apply'],
     ['a trailing slash', 'https://example.com/jobs/1/'],
   ])('matches the same posting reached with %s', async (_label, url) => {
-    await expect(getApplicationDuplicateSummary(url)).resolves.toEqual(newestForJob1);
+    await expect(getApplicationDuplicateSummary(BOOTSTRAP_USER_ID, url)).resolves.toEqual(
+      newestForJob1,
+    );
   });
 
   it('still distinguishes postings a query parameter separates', async () => {
     await expect(
-      getApplicationDuplicateSummary('https://example.com/jobs/1?jobId=other'),
+      getApplicationDuplicateSummary(BOOTSTRAP_USER_ID, 'https://example.com/jobs/1?jobId=other'),
     ).resolves.toEqual({ count: 0, latest: null });
   });
 
   it('finds a row written before job_key existed by its exact url', async () => {
     await expect(
-      getApplicationDuplicateSummary('https://example.com/jobs/legacy?utm_source=old'),
+      getApplicationDuplicateSummary(
+        BOOTSTRAP_USER_ID,
+        'https://example.com/jobs/legacy?utm_source=old',
+      ),
     ).resolves.toEqual({
       count: 1,
       latest: {
@@ -123,7 +132,7 @@ describe('getApplicationDuplicateSummary integration', () => {
 
   it('returns the consistent empty summary when no row matches', async () => {
     await expect(
-      getApplicationDuplicateSummary('https://example.com/jobs/missing'),
+      getApplicationDuplicateSummary(BOOTSTRAP_USER_ID, 'https://example.com/jobs/missing'),
     ).resolves.toEqual({ count: 0, latest: null });
   });
 
@@ -200,10 +209,11 @@ function newApplication(overrides: Record<string, unknown> = {}) {
 describe('postgresApplicationStore integration', () => {
   it('stores a new application and reads it back parsed, with its defaults applied', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/write-defaults' }),
     );
 
-    await expect(getApplicationById(id)).resolves.toMatchObject({
+    await expect(getApplicationById(BOOTSTRAP_USER_ID, id)).resolves.toMatchObject({
       id,
       company: 'Initech',
       roleTitle: 'Staff Engineer',
@@ -215,15 +225,21 @@ describe('postgresApplicationStore integration', () => {
     });
     // Assigned by the database, not the caller, and ISO rather than a `Date` — the shape
     // `ApplicationSchema` states and every client parses against.
-    const stored = await getApplicationById(id);
+    const stored = await getApplicationById(BOOTSTRAP_USER_ID, id);
     expect(stored?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('derives the Job Key on write, so the guard finds the posting through a tracking link', async () => {
-    await saveApplication(newApplication({ jobUrl: 'https://example.com/jobs/keyed' }));
+    await saveApplication(
+      BOOTSTRAP_USER_ID,
+      newApplication({ jobUrl: 'https://example.com/jobs/keyed' }),
+    );
 
     await expect(
-      getApplicationDuplicateSummary('https://example.com/jobs/keyed?utm_source=newsletter'),
+      getApplicationDuplicateSummary(
+        BOOTSTRAP_USER_ID,
+        'https://example.com/jobs/keyed?utm_source=newsletter',
+      ),
     ).resolves.toMatchObject({ count: 1 });
   });
 
@@ -234,10 +250,11 @@ describe('postgresApplicationStore integration', () => {
    */
   it('re-derives the Job Key when a re-save corrects the job URL', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/typo' }),
     );
 
-    await updateApplication(id, {
+    await updateApplication(BOOTSTRAP_USER_ID, id, {
       company: 'Initech',
       roleTitle: 'Staff Engineer',
       jobUrl: 'https://example.com/jobs/corrected',
@@ -247,9 +264,14 @@ describe('postgresApplicationStore integration', () => {
     });
 
     await expect(
-      getApplicationDuplicateSummary('https://example.com/jobs/corrected?gh_src=board'),
+      getApplicationDuplicateSummary(
+        BOOTSTRAP_USER_ID,
+        'https://example.com/jobs/corrected?gh_src=board',
+      ),
     ).resolves.toMatchObject({ count: 1 });
-    await expect(getApplicationDuplicateSummary('https://example.com/jobs/typo')).resolves.toEqual({
+    await expect(
+      getApplicationDuplicateSummary(BOOTSTRAP_USER_ID, 'https://example.com/jobs/typo'),
+    ).resolves.toEqual({
       count: 0,
       latest: null,
     });
@@ -261,12 +283,16 @@ describe('postgresApplicationStore integration', () => {
    */
   it('leaves Stage and Notes alone when a snapshot is re-saved over the row', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/resave' }),
     );
-    await updateApplicationStage(id, 'onsite');
-    await addApplicationNote(id, { category: 'technical', text: 'Asked about indexes.' });
+    await updateApplicationStage(BOOTSTRAP_USER_ID, id, 'onsite');
+    await addApplicationNote(BOOTSTRAP_USER_ID, id, {
+      category: 'technical',
+      text: 'Asked about indexes.',
+    });
 
-    await updateApplication(id, {
+    await updateApplication(BOOTSTRAP_USER_ID, id, {
       company: 'Initech',
       roleTitle: 'Principal Engineer',
       jobUrl: 'https://example.com/jobs/resave',
@@ -275,7 +301,7 @@ describe('postgresApplicationStore integration', () => {
       answers: [],
     });
 
-    await expect(getApplicationById(id)).resolves.toMatchObject({
+    await expect(getApplicationById(BOOTSTRAP_USER_ID, id)).resolves.toMatchObject({
       roleTitle: 'Principal Engineer',
       stage: 'onsite',
       notes: [expect.objectContaining({ text: 'Asked about indexes.' })],
@@ -284,15 +310,18 @@ describe('postgresApplicationStore integration', () => {
 
   it('answers with the authoritative Stage a move landed on', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/stage' }),
     );
 
-    await expect(updateApplicationStage(id, 'phone_screen')).resolves.toEqual({
+    await expect(updateApplicationStage(BOOTSTRAP_USER_ID, id, 'phone_screen')).resolves.toEqual({
       id,
       stage: 'phone_screen',
       application: expect.objectContaining({ id, stage: 'phone_screen' }),
     });
-    await expect(getApplicationById(id)).resolves.toMatchObject({ stage: 'phone_screen' });
+    await expect(getApplicationById(BOOTSTRAP_USER_ID, id)).resolves.toMatchObject({
+      stage: 'phone_screen',
+    });
   });
 
   /**
@@ -303,15 +332,16 @@ describe('postgresApplicationStore integration', () => {
    */
   it('keeps both notes when two are appended concurrently', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/notes' }),
     );
 
     await Promise.all([
-      addApplicationNote(id, { category: 'technical', text: 'First note.' }),
-      addApplicationNote(id, { category: 'behavioral', text: 'Second note.' }),
+      addApplicationNote(BOOTSTRAP_USER_ID, id, { category: 'technical', text: 'First note.' }),
+      addApplicationNote(BOOTSTRAP_USER_ID, id, { category: 'behavioral', text: 'Second note.' }),
     ]);
 
-    const stored = await getApplicationById(id);
+    const stored = await getApplicationById(BOOTSTRAP_USER_ID, id);
     expect(stored?.notes.map((note) => note.text).sort()).toEqual(['First note.', 'Second note.']);
   });
 
@@ -322,10 +352,11 @@ describe('postgresApplicationStore integration', () => {
    */
   it('assigns each note its own id and timestamp, and answers with the note it wrote', async () => {
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/note-identity' }),
     );
 
-    const appended = await addApplicationNote(id, {
+    const appended = await addApplicationNote(BOOTSTRAP_USER_ID, id, {
       category: 'general',
       text: 'They asked about availability.',
     });
@@ -339,7 +370,7 @@ describe('postgresApplicationStore integration', () => {
         createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       },
     });
-    await expect(getApplicationById(id)).resolves.toMatchObject({
+    await expect(getApplicationById(BOOTSTRAP_USER_ID, id)).resolves.toMatchObject({
       notes: [expect.objectContaining({ id: appended!.note.id })],
     });
   });
@@ -351,15 +382,22 @@ describe('postgresApplicationStore integration', () => {
    * outcome of a client holding an id for something that has since been deleted.
    */
   it.each([
-    ['updateApplicationStage', () => updateApplicationStage(MISSING_ID, 'rejected')],
+    [
+      'updateApplicationStage',
+      () => updateApplicationStage(BOOTSTRAP_USER_ID, MISSING_ID, 'rejected'),
+    ],
     [
       'addApplicationNote',
-      () => addApplicationNote(MISSING_ID, { category: 'general', text: 'Nowhere.' }),
+      () =>
+        addApplicationNote(BOOTSTRAP_USER_ID, MISSING_ID, {
+          category: 'general',
+          text: 'Nowhere.',
+        }),
     ],
     [
       'updateApplication',
       () =>
-        updateApplication(MISSING_ID, {
+        updateApplication(BOOTSTRAP_USER_ID, MISSING_ID, {
           company: 'Initech',
           roleTitle: 'Staff Engineer',
           jobUrl: 'https://example.com/jobs/missing-row',
@@ -368,19 +406,22 @@ describe('postgresApplicationStore integration', () => {
           answers: [],
         }),
     ],
-    ['getApplicationById', () => getApplicationById(MISSING_ID)],
+    ['getApplicationById', () => getApplicationById(BOOTSTRAP_USER_ID, MISSING_ID)],
   ])('reports a row that does not exist as null from %s', async (_name, call) => {
     await expect(call()).resolves.toBeNull();
   });
 
   it('lists an exact job URL, without the postings a Job Key would also match', async () => {
-    await saveApplication(newApplication({ jobUrl: 'https://example.com/jobs/exact' }));
-
-    await expect(listApplicationsByJobUrl('https://example.com/jobs/exact')).resolves.toMatchObject(
-      [{ jobUrl: 'https://example.com/jobs/exact' }],
+    await saveApplication(
+      BOOTSTRAP_USER_ID,
+      newApplication({ jobUrl: 'https://example.com/jobs/exact' }),
     );
+
     await expect(
-      listApplicationsByJobUrl('https://example.com/jobs/exact?utm_source=x'),
+      listApplicationsByJobUrl(BOOTSTRAP_USER_ID, 'https://example.com/jobs/exact'),
+    ).resolves.toMatchObject([{ jobUrl: 'https://example.com/jobs/exact' }]);
+    await expect(
+      listApplicationsByJobUrl(BOOTSTRAP_USER_ID, 'https://example.com/jobs/exact?utm_source=x'),
     ).resolves.toEqual([]);
   });
 
@@ -393,10 +434,11 @@ describe('postgresApplicationStore integration', () => {
   it('lists the readable rows newest-first and skips the ones an older build wrote', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { id } = await saveApplication(
+      BOOTSTRAP_USER_ID,
       newApplication({ jobUrl: 'https://example.com/jobs/listed', roleTitle: 'Newest' }),
     );
 
-    const listed = await listApplications();
+    const listed = await listApplications(BOOTSTRAP_USER_ID);
 
     expect(listed[0]).toMatchObject({ id, roleTitle: 'Newest' });
     expect(listed.map((application) => application.id)).not.toContain(
@@ -475,6 +517,130 @@ describe('0004 singleton profile migration', () => {
       await applySingletonMigration(client);
       const result = await client.query<{ count: number }>(
         'SELECT count(*)::int AS count FROM profiles',
+      );
+      expect(result.rows[0].count).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+const BOOTSTRAP_USER_ID = '00000000-0000-4000-8000-000000000001';
+
+async function createPreOwnershipTables(client: PGlite): Promise<void> {
+  // The shape both tables had immediately before migration 0009 — no `users` table, no `user_id`
+  // anywhere. `profiles` still keyed by the singleton `id` migration 0004 pinned.
+  await client.exec(`
+    CREATE TABLE profiles (
+      id uuid PRIMARY KEY,
+      data jsonb NOT NULL,
+      updated_at timestamp with time zone NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE applications (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      company text NOT NULL,
+      role_title text NOT NULL,
+      job_url text NOT NULL,
+      job_info jsonb NOT NULL,
+      tailored_resume jsonb NOT NULL,
+      answers jsonb NOT NULL,
+      job_key text,
+      source text NOT NULL DEFAULT 'autofill',
+      stage text NOT NULL DEFAULT 'applied',
+      notes jsonb NOT NULL DEFAULT '[]'::jsonb,
+      raw_description text,
+      extraction_version text,
+      requirement_evidence jsonb,
+      bullet_provenance jsonb,
+      created_at timestamp with time zone NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX applications_job_url_created_at_idx ON applications (job_url, created_at DESC);
+    CREATE INDEX applications_job_key_created_at_idx ON applications (job_key, created_at DESC);
+    CREATE INDEX applications_created_at_idx ON applications (created_at DESC);
+  `);
+}
+
+async function applyOwnershipMigration(client: PGlite): Promise<void> {
+  const sql = await readFile(
+    new URL('./migrations/0009_eminent_thunderbolt.sql', import.meta.url),
+    'utf8',
+  );
+  const statements = sql
+    .split('--> statement-breakpoint')
+    .map((statement) =>
+      statement
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n')
+        .trim(),
+    )
+    .filter(Boolean);
+
+  await client.exec('BEGIN');
+  try {
+    for (const statement of statements) await client.exec(statement);
+    await client.exec('COMMIT');
+  } catch (error) {
+    await client.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+describe('0009 user ownership migration', () => {
+  it('creates the bootstrap user and assigns every existing row to it', async () => {
+    const client = new PGlite();
+    try {
+      await createPreOwnershipTables(client);
+      await client.exec(`
+        INSERT INTO profiles (id, data) VALUES
+          ('${BOOTSTRAP_USER_ID}', '{"fullName":"Jane Doe"}');
+
+        INSERT INTO applications (id, company, role_title, job_url, job_info, tailored_resume, answers)
+        VALUES
+          ('00000000-0000-4000-8000-000000000011', 'Acme', 'Engineer', 'https://example.com/jobs/1', '{}', '{}', '[]'),
+          ('00000000-0000-4000-8000-000000000012', 'Globex', 'Engineer II', 'https://example.com/jobs/2', '{}', '{}', '[]');
+      `);
+
+      await applyOwnershipMigration(client);
+
+      const users = await client.query<{ id: string }>('SELECT id FROM users');
+      expect(users.rows).toEqual([{ id: BOOTSTRAP_USER_ID }]);
+
+      const profileRow = await client.query<{ user_id: string }>('SELECT user_id FROM profiles');
+      expect(profileRow.rows).toEqual([{ user_id: BOOTSTRAP_USER_ID }]);
+
+      const applicationRows = await client.query<{ user_id: string }>(
+        'SELECT user_id FROM applications ORDER BY id',
+      );
+      expect(applicationRows.rows).toEqual([
+        { user_id: BOOTSTRAP_USER_ID },
+        { user_id: BOOTSTRAP_USER_ID },
+      ]);
+
+      const notNull = await client.query<{ is_nullable: string }>(`
+        SELECT is_nullable FROM information_schema.columns
+        WHERE table_name = 'applications' AND column_name = 'user_id'
+      `);
+      expect(notNull.rows[0].is_nullable).toBe('NO');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('also migrates an applications table with no rows yet', async () => {
+    const client = new PGlite();
+    try {
+      await createPreOwnershipTables(client);
+      await client.exec(`
+        INSERT INTO profiles (id, data) VALUES ('${BOOTSTRAP_USER_ID}', '{}');
+      `);
+
+      await applyOwnershipMigration(client);
+
+      const result = await client.query<{ count: number }>(
+        'SELECT count(*)::int AS count FROM applications',
       );
       expect(result.rows[0].count).toBe(0);
     } finally {

@@ -1,5 +1,5 @@
 /**
- * Singleton profile persistence, driven against a stubbed Drizzle client.
+ * Per-user profile persistence, driven against a stubbed Drizzle client.
  */
 import { EMPTY_PROFILE, type Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,10 +13,15 @@ vi.mock('./client.js', () => ({
   db: { insert: mockInsert, select: mockSelect },
 }));
 
-const { PROFILE_ID, postgresProfileStore } = await import('./postgresProfileStore.js');
+const { BOOTSTRAP_USER_ID } = await import('./bootstrapUser.js');
+const { postgresProfileStore } = await import('./postgresProfileStore.js');
 const { get: getProfile, save: saveProfile } = postgresProfileStore;
 
 const profile: Profile = { ...EMPTY_PROFILE, fullName: 'Jane Doe', email: 'jane@example.com' };
+
+/** A second account, to prove `getProfile`/`saveProfile` scope on the `userId` they're given rather
+ * than always reaching for the one bootstrap user. */
+const SECOND_USER_ID = '00000000-0000-4000-8000-000000000099';
 
 function stubInsert() {
   const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
@@ -31,18 +36,26 @@ beforeEach(() => {
 });
 
 describe('saveProfile', () => {
-  it('uses one atomic upsert statement with the fixed profile ID', async () => {
+  it('upserts under the given user ID in one atomic statement', async () => {
     const { values, onConflictDoUpdate } = stubInsert();
 
-    await expect(saveProfile(profile)).resolves.toEqual(profile);
+    await expect(saveProfile(BOOTSTRAP_USER_ID, profile)).resolves.toEqual(profile);
 
     expect(mockInsert).toHaveBeenCalledTimes(1);
-    expect(values).toHaveBeenCalledWith({ id: PROFILE_ID, data: profile });
+    expect(values).toHaveBeenCalledWith({ userId: BOOTSTRAP_USER_ID, data: profile });
     expect(onConflictDoUpdate).toHaveBeenCalledWith({
       target: expect.anything(),
       set: { data: profile, updatedAt: expect.any(Date) },
     });
     expect(mockSelect).not.toHaveBeenCalled();
+  });
+
+  it("upserts a second user under their own ID, not the first user's", async () => {
+    const { values } = stubInsert();
+
+    await saveProfile(SECOND_USER_ID, profile);
+
+    expect(values).toHaveBeenCalledWith({ userId: SECOND_USER_ID, data: profile });
   });
 });
 
@@ -56,16 +69,31 @@ describe('getProfile', () => {
     return { where, limit };
   }
 
-  it('selects only the fixed profile ID and resolves null when it is absent', async () => {
+  it('selects only the given user ID and resolves null when it is absent', async () => {
     const { where, limit } = stubSelect([]);
-    await expect(getProfile()).resolves.toBeNull();
+    await expect(getProfile(BOOTSTRAP_USER_ID)).resolves.toBeNull();
     expect(where).toHaveBeenCalledTimes(1);
     expect(limit).toHaveBeenCalledWith(1);
     expect(
       where.mock.calls[0][0].queryChunks.some(
-        (chunk: { value?: unknown }) => chunk.value === PROFILE_ID,
+        (chunk: { value?: unknown }) => chunk.value === BOOTSTRAP_USER_ID,
       ),
     ).toBe(true);
+  });
+
+  it("never returns a match against a different user's ID", async () => {
+    const { where } = stubSelect([]);
+    await getProfile(SECOND_USER_ID);
+    expect(
+      where.mock.calls[0][0].queryChunks.some(
+        (chunk: { value?: unknown }) => chunk.value === SECOND_USER_ID,
+      ),
+    ).toBe(true);
+    expect(
+      where.mock.calls[0][0].queryChunks.some(
+        (chunk: { value?: unknown }) => chunk.value === BOOTSTRAP_USER_ID,
+      ),
+    ).toBe(false);
   });
 
   /** The reason this parses rather than casts: jsonb comes back exactly as it was written. */
@@ -73,11 +101,11 @@ describe('getProfile', () => {
     const { screeningAnswers: _screeningAnswers, ...withoutScreeningAnswers } = profile;
     stubSelect([{ data: withoutScreeningAnswers }]);
 
-    await expect(getProfile()).resolves.toEqual(profile);
+    await expect(getProfile(BOOTSTRAP_USER_ID)).resolves.toEqual(profile);
   });
 
   it('throws on a row that cannot be read as a Profile', async () => {
     stubSelect([{ data: { fullName: 'Jane Doe' } }]);
-    await expect(getProfile()).rejects.toThrow();
+    await expect(getProfile(BOOTSTRAP_USER_ID)).rejects.toThrow();
   });
 });

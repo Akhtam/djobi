@@ -2,10 +2,11 @@
  * One suite, both `ApplicationStore` adapters.
  *
  * An in-memory adapter is only worth having if it agrees with Postgres about the things routes rely
- * on — newest-first ordering, what the Duplicate Guard counts as the same posting, and which fields
- * a write leaves alone. A fake that disagrees is worse than no fake: every route test then passes
- * against behaviour production does not have, and the disagreement surfaces as a bug in the
- * dashboard rather than as a red test here.
+ * on — newest-first ordering, what the Duplicate Guard counts as the same posting, which fields a
+ * write leaves alone, and (since Phase A, `docs/multi-tenant-auth.md`) that one user's rows are
+ * invisible to another's reads and untouchable by another's writes. A fake that disagrees is worse
+ * than no fake: every route test then passes against behaviour production does not have, and the
+ * disagreement surfaces as a bug in the dashboard rather than as a red test here.
  *
  * The Postgres side runs against PGlite, the same in-process Postgres `database.integration.test.ts`
  * uses, so the contract is checked against real SQL — real `count(*) over ()`, real jsonb, the real
@@ -29,16 +30,30 @@ vi.mock('./client.js', async () => {
 
 const { inMemoryApplicationStore } = await import('./applicationStore.js');
 const { postgresApplicationStore } = await import('./postgresApplicationStore.js');
+const { BOOTSTRAP_USER_ID } = await import('./bootstrapUser.js');
 const { contractClient } = (await import('./client.js')) as unknown as {
   contractClient: PGlite;
 };
+
+/** The user every non-scoping test in this suite writes and reads as. */
+const USER_A = BOOTSTRAP_USER_ID;
+/** A second account, present only in the "user scoping" block below. */
+const USER_B = '00000000-0000-4000-8000-000000000099';
 
 beforeAll(async () => {
   // Mirrors `db/schema.ts`, including every default — the store writes rows without an id, a
   // stage or notes, exactly as production does.
   await contractClient.exec(`
+    CREATE TABLE users (
+      id uuid PRIMARY KEY,
+      created_at timestamp with time zone NOT NULL DEFAULT now()
+    );
+
+    INSERT INTO users (id) VALUES ('${USER_A}'), ('${USER_B}');
+
     CREATE TABLE applications (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES users(id),
       company text NOT NULL,
       role_title text NOT NULL,
       job_url text NOT NULL,
@@ -115,75 +130,92 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
   });
 
   it('assigns an id and a createdAt on create, and reads the row back by that id', async () => {
-    const { id } = await store.create(newApplication({ company: 'Globex' }));
+    const { id } = await store.create(USER_A, newApplication({ company: 'Globex' }));
 
-    const stored = await store.byId(id);
+    const stored = await store.byId(USER_A, id);
     expect(stored).toMatchObject({ id, company: 'Globex', jobUrl: 'https://example.com/jobs/1' });
     expect(stored?.createdAt).toEqual(expect.any(String));
     expect(Number.isNaN(Date.parse(stored!.createdAt))).toBe(false);
   });
 
   it('defaults a created application to applied, autofill and no notes', async () => {
-    const { id } = await store.create(newApplication());
+    const { id } = await store.create(USER_A, newApplication());
 
-    expect(await store.byId(id)).toMatchObject({ stage: 'applied', source: 'autofill', notes: [] });
+    expect(await store.byId(USER_A, id)).toMatchObject({
+      stage: 'applied',
+      source: 'autofill',
+      notes: [],
+    });
   });
 
   it('answers null for an id no row has', async () => {
-    expect(await store.byId('00000000-0000-4000-8000-0000000000ff')).toBeNull();
+    expect(await store.byId(USER_A, '00000000-0000-4000-8000-0000000000ff')).toBeNull();
   });
 
   it('lists every application, most recently created first', async () => {
-    const first = await store.create(newApplication({ company: 'First' }));
+    const first = await store.create(USER_A, newApplication({ company: 'First' }));
     await afterAMoment();
-    const second = await store.create(newApplication({ company: 'Second' }));
+    const second = await store.create(USER_A, newApplication({ company: 'Second' }));
 
-    expect((await store.list()).map((row) => row.id)).toEqual([second.id, first.id]);
+    expect((await store.list(USER_A)).map((row) => row.id)).toEqual([second.id, first.id]);
   });
 
   it('lists by exact job url, and excludes a posting reached through a different one', async () => {
-    const exact = await store.create(newApplication({ jobUrl: 'https://example.com/jobs/7' }));
-    await store.create(newApplication({ jobUrl: 'https://example.com/jobs/7?utm_source=ad' }));
+    const exact = await store.create(
+      USER_A,
+      newApplication({ jobUrl: 'https://example.com/jobs/7' }),
+    );
+    await store.create(
+      USER_A,
+      newApplication({ jobUrl: 'https://example.com/jobs/7?utm_source=ad' }),
+    );
 
-    expect((await store.byJobUrl('https://example.com/jobs/7')).map((row) => row.id)).toEqual([
-      exact.id,
-    ]);
+    expect(
+      (await store.byJobUrl(USER_A, 'https://example.com/jobs/7')).map((row) => row.id),
+    ).toEqual([exact.id]);
   });
 
   describe('duplicateSummary', () => {
     it('answers a zero count and no latest when nothing matches', async () => {
-      expect(await store.duplicateSummary('https://example.com/jobs/none')).toEqual({
+      expect(await store.duplicateSummary(USER_A, 'https://example.com/jobs/none')).toEqual({
         count: 0,
         latest: null,
       });
     });
 
     it('matches a posting revisited through a tracking parameter, and counts both', async () => {
-      await store.create(newApplication({ jobUrl: 'https://example.com/jobs/9' }));
+      await store.create(USER_A, newApplication({ jobUrl: 'https://example.com/jobs/9' }));
       await afterAMoment();
       const newest = await store.create(
+        USER_A,
         newApplication({ company: 'Newest', jobUrl: 'https://example.com/jobs/9?gh_src=ad' }),
       );
 
-      const summary = await store.duplicateSummary('https://example.com/jobs/9?utm_source=x');
+      const summary = await store.duplicateSummary(
+        USER_A,
+        'https://example.com/jobs/9?utm_source=x',
+      );
 
       expect(summary.count).toBe(2);
       expect(summary.latest).toMatchObject({ id: newest.id, company: 'Newest', stage: 'applied' });
     });
 
     it('reports the newest match, and its current stage rather than its stage at save time', async () => {
-      const older = await store.create(newApplication({ jobUrl: 'https://example.com/jobs/11' }));
-      await store.setStage(older.id, 'rejected');
+      const older = await store.create(
+        USER_A,
+        newApplication({ jobUrl: 'https://example.com/jobs/11' }),
+      );
+      await store.setStage(USER_A, older.id, 'rejected');
 
-      const summary = await store.duplicateSummary('https://example.com/jobs/11');
+      const summary = await store.duplicateSummary(USER_A, 'https://example.com/jobs/11');
 
       expect(summary).toMatchObject({ count: 1, latest: { id: older.id, stage: 'rejected' } });
     });
 
     it('does not treat a different posting on the same host as the same job', async () => {
-      await store.create(newApplication({ jobUrl: 'https://example.com/jobs/1' }));
+      await store.create(USER_A, newApplication({ jobUrl: 'https://example.com/jobs/1' }));
 
-      expect(await store.duplicateSummary('https://example.com/jobs/2')).toEqual({
+      expect(await store.duplicateSummary(USER_A, 'https://example.com/jobs/2')).toEqual({
         count: 0,
         latest: null,
       });
@@ -192,9 +224,9 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
   describe('replaceSnapshot', () => {
     it('replaces the editable snapshot', async () => {
-      const { id } = await store.create(newApplication({ company: 'Before' }));
+      const { id } = await store.create(USER_A, newApplication({ company: 'Before' }));
 
-      await store.replaceSnapshot(id, {
+      await store.replaceSnapshot(USER_A, id, {
         company: 'After',
         roleTitle: 'Staff Engineer',
         jobUrl: 'https://example.com/jobs/2',
@@ -203,7 +235,7 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
         answers: [],
       });
 
-      expect(await store.byId(id)).toMatchObject({
+      expect(await store.byId(USER_A, id)).toMatchObject({
         company: 'After',
         roleTitle: 'Staff Engineer',
         jobUrl: 'https://example.com/jobs/2',
@@ -211,11 +243,11 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     });
 
     it('leaves stage, notes and source alone — a re-save is not a relabelling', async () => {
-      const { id } = await store.create(newApplication({ source: 'manual' }));
-      await store.setStage(id, 'onsite');
-      await store.appendNote(id, { category: 'technical', text: 'Asked about indexes' });
+      const { id } = await store.create(USER_A, newApplication({ source: 'manual' }));
+      await store.setStage(USER_A, id, 'onsite');
+      await store.appendNote(USER_A, id, { category: 'technical', text: 'Asked about indexes' });
 
-      await store.replaceSnapshot(id, {
+      await store.replaceSnapshot(USER_A, id, {
         company: 'Acme',
         roleTitle: 'Engineer',
         jobUrl: 'https://example.com/jobs/1',
@@ -224,7 +256,7 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
         answers: [],
       });
 
-      expect(await store.byId(id)).toMatchObject({
+      expect(await store.byId(USER_A, id)).toMatchObject({
         source: 'manual',
         stage: 'onsite',
         notes: [expect.objectContaining({ text: 'Asked about indexes' })],
@@ -232,9 +264,12 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     });
 
     it('re-derives the job key, so a corrected url is what the guard matches on', async () => {
-      const { id } = await store.create(newApplication({ jobUrl: 'https://example.com/jobs/1' }));
+      const { id } = await store.create(
+        USER_A,
+        newApplication({ jobUrl: 'https://example.com/jobs/1' }),
+      );
 
-      await store.replaceSnapshot(id, {
+      await store.replaceSnapshot(USER_A, id, {
         company: 'Acme',
         roleTitle: 'Engineer',
         jobUrl: 'https://example.com/jobs/42',
@@ -244,16 +279,16 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
       });
 
       expect(
-        await store.duplicateSummary('https://example.com/jobs/42?utm_source=x'),
+        await store.duplicateSummary(USER_A, 'https://example.com/jobs/42?utm_source=x'),
       ).toMatchObject({ count: 1, latest: { id } });
-      expect(await store.duplicateSummary('https://example.com/jobs/1')).toEqual({
+      expect(await store.duplicateSummary(USER_A, 'https://example.com/jobs/1')).toEqual({
         count: 0,
         latest: null,
       });
     });
 
     it('answers null for an id no row has', async () => {
-      const result = await store.replaceSnapshot('00000000-0000-4000-8000-0000000000ff', {
+      const result = await store.replaceSnapshot(USER_A, '00000000-0000-4000-8000-0000000000ff', {
         company: 'Acme',
         roleTitle: 'Engineer',
         jobUrl: 'https://example.com/jobs/1',
@@ -268,29 +303,34 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
   describe('setStage', () => {
     it('answers with the authoritative stage and stores it', async () => {
-      const { id } = await store.create(newApplication());
+      const { id } = await store.create(USER_A, newApplication());
 
       // Including the row the write returned: both adapters carry it back so the route can answer a
       // full-row write without a second query, and an adapter that quietly stopped would send that
       // query back only in production.
-      expect(await store.setStage(id, 'phone_screen')).toEqual({
+      expect(await store.setStage(USER_A, id, 'phone_screen')).toEqual({
         id,
         stage: 'phone_screen',
         application: expect.objectContaining({ id, stage: 'phone_screen' }),
       });
-      expect(await store.byId(id)).toMatchObject({ stage: 'phone_screen' });
+      expect(await store.byId(USER_A, id)).toMatchObject({ stage: 'phone_screen' });
     });
 
     it('answers null for an id no row has', async () => {
-      expect(await store.setStage('00000000-0000-4000-8000-0000000000ff', 'rejected')).toBeNull();
+      expect(
+        await store.setStage(USER_A, '00000000-0000-4000-8000-0000000000ff', 'rejected'),
+      ).toBeNull();
     });
   });
 
   describe('appendNote', () => {
     it('assigns the note its own id and createdAt rather than taking them from the caller', async () => {
-      const { id } = await store.create(newApplication());
+      const { id } = await store.create(USER_A, newApplication());
 
-      const result = await store.appendNote(id, { category: 'general', text: 'Recruiter call' });
+      const result = await store.appendNote(USER_A, id, {
+        category: 'general',
+        text: 'Recruiter call',
+      });
 
       expect(result?.note).toMatchObject({ category: 'general', text: 'Recruiter call' });
       expect(result?.note.id).toEqual(expect.any(String));
@@ -298,22 +338,98 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     });
 
     it('appends rather than overwrites, keeping both notes in order', async () => {
-      const { id } = await store.create(newApplication());
+      const { id } = await store.create(USER_A, newApplication());
 
-      await store.appendNote(id, { category: 'technical', text: 'First' });
-      await store.appendNote(id, { category: 'behavioral', text: 'Second' });
+      await store.appendNote(USER_A, id, { category: 'technical', text: 'First' });
+      await store.appendNote(USER_A, id, { category: 'behavioral', text: 'Second' });
 
-      const stored = await store.byId(id);
+      const stored = await store.byId(USER_A, id);
       expect(stored?.notes.map((note) => note.text)).toEqual(['First', 'Second']);
     });
 
     it('answers null for an id no row has', async () => {
-      const result = await store.appendNote('00000000-0000-4000-8000-0000000000ff', {
+      const result = await store.appendNote(USER_A, '00000000-0000-4000-8000-0000000000ff', {
         category: 'general',
         text: 'Nowhere',
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  /**
+   * The property Phase A (`docs/multi-tenant-auth.md`) exists to guarantee: nothing here is
+   * reachable, readable or writable by a `userId` other than the one that created it. Every one of
+   * `ApplicationStore`'s eight methods gets one case, `duplicateSummary` most deliberately of all —
+   * an unscoped guard would tell USER_B "you already applied" to a posting only USER_A has ever seen.
+   */
+  describe('user scoping', () => {
+    it("list only ever returns the calling user's own rows", async () => {
+      const mine = await store.create(USER_A, newApplication({ company: 'Mine' }));
+      await store.create(USER_B, newApplication({ company: 'Not mine' }));
+
+      expect((await store.list(USER_A)).map((row) => row.id)).toEqual([mine.id]);
+    });
+
+    it('byId answers null for a real id that belongs to a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+
+      expect(await store.byId(USER_B, id)).toBeNull();
+    });
+
+    it('byJobUrl excludes a match on the same URL saved by a different user', async () => {
+      await store.create(USER_A, newApplication({ jobUrl: 'https://example.com/jobs/shared' }));
+
+      expect(await store.byJobUrl(USER_B, 'https://example.com/jobs/shared')).toEqual([]);
+    });
+
+    it('duplicateSummary never lets one user see another user has already applied', async () => {
+      await store.create(USER_A, newApplication({ jobUrl: 'https://example.com/jobs/shared' }));
+
+      expect(await store.duplicateSummary(USER_B, 'https://example.com/jobs/shared')).toEqual({
+        count: 0,
+        latest: null,
+      });
+    });
+
+    it('replaceSnapshot answers null and leaves the row untouched for a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication({ company: 'Untouched' }));
+
+      const result = await store.replaceSnapshot(USER_B, id, {
+        company: 'Hijacked',
+        roleTitle: 'Engineer',
+        jobUrl: 'https://example.com/jobs/1',
+        jobInfo: JOB_INFO,
+        tailoredResume: { skills: [], workExperience: [] },
+        answers: [],
+      });
+
+      expect(result).toBeNull();
+      expect(await store.byId(USER_A, id)).toMatchObject({ company: 'Untouched' });
+    });
+
+    it('setStage answers null and leaves the row untouched for a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+
+      expect(await store.setStage(USER_B, id, 'rejected')).toBeNull();
+      expect(await store.byId(USER_A, id)).toMatchObject({ stage: 'applied' });
+    });
+
+    it('appendNote answers null and leaves the row untouched for a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+
+      expect(
+        await store.appendNote(USER_B, id, { category: 'general', text: 'Not yours' }),
+      ).toBeNull();
+      expect(await store.byId(USER_A, id)).toMatchObject({ notes: [] });
+    });
+
+    it('create assigns the row to the calling user, not whichever user created earlier ones', async () => {
+      await store.create(USER_A, newApplication());
+      const { id } = await store.create(USER_B, newApplication({ company: 'B-owned' }));
+
+      expect(await store.byId(USER_A, id)).toBeNull();
+      expect(await store.byId(USER_B, id)).toMatchObject({ company: 'B-owned' });
     });
   });
 });
@@ -334,9 +450,9 @@ describe('inMemoryApplicationStore', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
     };
 
-    const store = inMemoryApplicationStore([seeded]);
+    const store = inMemoryApplicationStore([{ userId: USER_A, application: seeded }]);
 
-    expect(await store.list()).toEqual([seeded]);
-    expect(await store.byId('seed-1')).toEqual(seeded);
+    expect(await store.list(USER_A)).toEqual([seeded]);
+    expect(await store.byId(USER_A, 'seed-1')).toEqual(seeded);
   });
 });

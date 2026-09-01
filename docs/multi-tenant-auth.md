@@ -1,7 +1,13 @@
 # Multi-tenant authentication — design and roadmap
 
-> **Status: proposed, not started (2026-08-25).** No code exists yet. This records the decisions and
-> the order to build in. ADR 0001 (single Cloudflare Worker) is explicitly _not_ assumed here.
+> **Status: proposed, not started (2026-08-25; re-verified against the codebase 2026-09-01).** No
+> ownership or auth code exists yet — confirmed by grep: `db/schema.ts` has no `user_id`/`owner_id`
+> column anywhere. This records the decisions and the order to build in. ADR 0001 (single Cloudflare
+> Worker) is explicitly _not_ assumed here.
+>
+> The file/module names below were corrected on the 2026-09-01 pass — the repo has moved since this
+> was written (Phases 12–19 landed in between) and a few names in the original plan no longer exist.
+> See the note at the end of _Blast radius_.
 
 ## This is two jobs, and the order matters
 
@@ -73,33 +79,50 @@ integration surface against its own docs before committing to it.
 
 ## Blast radius
 
-| Area                               | What changes                                                                                                           |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `db/schema.ts`                     | New `users` table; `user_id` on `applications`; `profiles` re-keyed to `user_id`; both indexes gain a `user_id` prefix |
-| `db/profileRepository.ts`          | `getProfile(userId)` / `saveProfile(userId, profile)`; `PROFILE_ID` deleted                                            |
-| `db/applicationsRepository.ts`     | All eight exported functions take a `userId` and scope on it                                                           |
-| `routes/*.ts`                      | Every handler reads the user from context instead of assuming one                                                      |
-| `app.ts`                           | Auth middleware, registered after CORS and the content-type guard, before the routes                                   |
-| `llm/client.ts`                    | Module-scope `new Anthropic()` must become per-request if BYOK is chosen                                               |
-| `extension/lib/callBackend.ts`     | One line in `request()` attaches the token; 401 handling                                                               |
-| `extension/options/`               | The login surface, and where a user's own API key would go                                                             |
-| `dashboard/lib/dashboardClient.ts` | One line in `request()` sets `credentials: 'include'`; 401 handling                                                    |
-| `dashboard/lib/useHashRoute.ts`    | A `#/login` route, and an unauthenticated redirect                                                                     |
+| Area                                                        | What changes                                                                                                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `db/schema.ts`                                              | New `users` table; `user_id` on `applications`; `profiles` re-keyed to `user_id`; both indexes gain a `user_id` prefix                                                   |
+| `db/profileStore.ts` / `db/postgresProfileStore.ts`         | `ProfileStore.get`/`.save` take a `userId`; `PROFILE_ID` deleted from `postgresProfileStore.ts`; `inMemoryProfileStore` gains the same parameter                         |
+| `db/applicationStore.ts` / `db/postgresApplicationStore.ts` | All eight `ApplicationStore` methods take a `userId` and scope on it, in both the Postgres adapter and `inMemoryApplicationStore`                                        |
+| `routes/*.ts`                                               | Every handler reads the user from context instead of assuming one                                                                                                        |
+| `app.ts`                                                    | Auth middleware, registered after CORS and the content-type guard, before the routes                                                                                     |
+| `llm/client.ts`                                             | Module-scope `createOpenRouter()` must become per-request if BYOK is chosen                                                                                              |
+| `packages/http-client/src/index.ts`                         | New: a way for a caller to attach a bearer token or request `credentials: 'include'` — `HttpTransportOptions`/`RequestOptions` today carry no auth-related fields at all |
+| `extension/lib/callBackend.ts`                              | Passes a token into the shared transport; 401 handling                                                                                                                   |
+| `extension/options/`                                        | The login surface, and where a user's own API key would go                                                                                                               |
+| `dashboard/lib/dashboardClient.ts`                          | Passes `credentials: 'include'` into the shared transport; 401 handling                                                                                                  |
+| `dashboard/lib/useHashRoute.ts`                             | A `#/login` route, and an unauthenticated redirect                                                                                                                       |
 
-Both clients have exactly one transport chokepoint, which is why the client-side change is small:
-`request()` in `callBackend.ts` feeds both `callBackend` and `callBackendBinary`, and `request()` in
-`dashboardClient.ts` feeds both `request` and `send`.
+**Corrected from the original plan:** both clients now go through one shared package,
+`@djobi/http-client` (`createHttpTransport`), not two independent per-app `request()` functions —
+that consolidation happened while this doc sat unstarted. This makes the auth wiring _smaller_ than
+originally scoped: bearer-token/cookie-credentials support is one change in the shared package's
+`RequestOptions`, and `callBackend.ts` / `dashboardClient.ts` each become a one-line caller of it,
+rather than two implementations to keep in sync.
+
+## Naming corrections (2026-09-01 pass)
+
+The rest of this document still says `db/profileRepository.ts` and `db/applicationsRepository.ts` in
+a few places below — read those as `db/profileStore.ts` + `db/postgresProfileStore.ts` and
+`db/applicationStore.ts` + `db/postgresApplicationStore.ts` respectively; the "repository" naming was
+never adopted. `applicationStore.contract.test.ts` already runs the same suite against both the
+in-memory and a real Postgres (PGlite) adapter — that existing file is where Phase A's
+cross-user-isolation tests belong, not a new one. Migration numbering has also moved: the newest
+migration in the repo is `0008` (Phase 19), so Phase A's migration is `0009`, not `0007`.
 
 ## The thing that will bite you
 
-**One server-side `ANTHROPIC_API_KEY` funds every user who signs up.** Today that is fine because
-there is one user. The moment signup is public, an analysis run is three model calls that someone
-else pays for, and there is no upper bound. This is not a hardening task to do later — it gates
-going public at all.
+**One server-side `OPENROUTER_API_KEY` funds every user who signs up.** (Corrected: this was
+`ANTHROPIC_API_KEY` when the doc was written; Phase 11 moved the whole backend onto OpenRouter, and
+`llm/client.ts` is now a single `createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })`
+instance — the module-scope-singleton problem below is unchanged, just under a different name.)
+Today that is fine because there is one user. The moment signup is public, an analysis run is three
+model calls that someone else pays for, and there is no upper bound. This is not a hardening task to
+do later — it gates going public at all.
 
 Two workable answers:
 
-- **Bring your own key.** Each user stores their own Anthropic key, encrypted at rest. Honest, cost-
+- **Bring your own key.** Each user stores their own OpenRouter key, encrypted at rest. Honest, cost-
   safe, and it makes the `llm/client.ts` refactor mandatory: the module-scope singleton reads the key
   at import time and must become a per-request client. Costs you a worse first-run experience.
 - **Hard per-user quotas.** You keep paying, with a counted ceiling per user per period, enforced
@@ -115,17 +138,22 @@ page grows a key field.
 
 The whole mechanical change, performed while there is still one tenant.
 
-- [ ] Migration `0007`: create `users`; add `applications.user_id` (nullable, then backfilled, then
-      `not null`); re-key `profiles` to `user_id` as primary key; recreate both application indexes
-      with a `user_id` prefix
+- [ ] Migration `0009` (next free number — `0008` is Phase 19's): create `users`; add
+      `applications.user_id` (nullable, then backfilled, then `not null`); re-key `profiles` to
+      `user_id` as primary key; recreate both application indexes with a `user_id` prefix
 - [ ] Backfill: insert one bootstrap user, assign the existing profile row and every existing
       application to it
-- [ ] `profileRepository` and `applicationsRepository`: every function takes `userId` and scopes on
-      it; delete `PROFILE_ID`
+- [ ] `db/profileStore.ts` (interface) + `db/postgresProfileStore.ts` (impl): `ProfileStore.get`/
+      `.save` take `userId`; delete `PROFILE_ID`; `inMemoryProfileStore` gains the same parameter
+- [ ] `db/applicationStore.ts` (interface) + `db/postgresApplicationStore.ts` (impl): all eight
+      `ApplicationStore` methods take `userId` and scope on it, in both the Postgres adapter and
+      `inMemoryApplicationStore`
 - [ ] Routes thread a single exported `BOOTSTRAP_USER_ID` constant — one place, easy to grep, and the
       only thing Phase B replaces
-- [ ] Tests: every repository test gains a **second user** whose rows must never appear. This is the
-      test category that matters and it is worth over-covering
+- [ ] Tests: `applicationStore.contract.test.ts` already runs one suite against both adapters — add a
+      **second user** to it whose rows must never appear in the first user's reads. This is the test
+      category that matters and it is worth over-covering. Extend `postgresProfileStore.test.ts`
+      the same way
 - [ ] Integration test: the Duplicate Guard does not match across users
 
 ### Phase B — Auth provider and session verification

@@ -1,6 +1,10 @@
 /**
  * The production `ProfileStore`: Neon Postgres through Drizzle. The interface, and the in-memory
  * adapter this is held against, are in `db/profileStore.ts`.
+ *
+ * Scoped by `userId` (`docs/multi-tenant-auth.md`, Phase A): every caller supplies one, which today
+ * means `routes/profile.ts` passing `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID` — the constant Phase
+ * B deletes once a real auth provider supplies the id instead.
  */
 import { ProfileSchema, type Profile } from '@djobi/shared';
 import { eq } from 'drizzle-orm';
@@ -8,10 +12,8 @@ import { db } from './client.js';
 import type { ProfileStore } from './profileStore.js';
 import { profiles } from './schema.js';
 
-export const PROFILE_ID = '00000000-0000-4000-8000-000000000001';
-
 /**
- * Reads the single stored profile, if one exists.
+ * Reads the stored profile for `userId`, if one exists.
  *
  * Parsed rather than cast. `data` is jsonb, so a row written before a field was added to
  * {@link ProfileSchema} comes back without it, and `row.data as Profile` asserted a shape the row
@@ -20,21 +22,21 @@ export const PROFILE_ID = '00000000-0000-4000-8000-000000000001';
  * one. Parsing repairs fields with explicit schema defaults; missing required data still fails here,
  * naming the field instead of surfacing somewhere further downstream.
  */
-async function getProfile(): Promise<Profile | null> {
-  const [row] = await db.select().from(profiles).where(eq(profiles.id, PROFILE_ID)).limit(1);
+async function getProfile(userId: string): Promise<Profile | null> {
+  const [row] = await db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1);
   if (!row) return null;
   return ProfileSchema.parse(row.data);
 }
 
 /**
- * Atomically inserts or updates the singleton row in one database statement.
+ * Atomically inserts or updates `userId`'s row in one database statement.
  */
-async function saveProfile(profile: Profile): Promise<Profile> {
+async function saveProfile(userId: string, profile: Profile): Promise<Profile> {
   await db
     .insert(profiles)
-    .values({ id: PROFILE_ID, data: profile })
+    .values({ userId, data: profile })
     .onConflictDoUpdate({
-      target: profiles.id,
+      target: profiles.userId,
       set: { data: profile, updatedAt: new Date() },
     });
 

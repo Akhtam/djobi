@@ -41,6 +41,10 @@ function rowShape(row: ApplicationRow) {
  * without it, and `row.jobInfo as JobInfo` asserted a shape the row didn't have — the compiler then
  * vouched for fields that were `undefined` at runtime. This module used to be the one place that
  * cast, which meant two policies for one hazard.
+ *
+ * `row.userId` never reaches this parse: `ApplicationSchema` (`@djobi/shared`) has no such field —
+ * ownership stays a persistence detail, not part of the wire type — and zod's default non-strict
+ * `.parse()` silently drops any key the schema doesn't declare.
  */
 function toApplication(row: ApplicationRow): Application {
   return ApplicationSchema.parse(rowShape(row));
@@ -82,47 +86,71 @@ function toWrittenApplication(row: ApplicationRow): Application | null {
   return null;
 }
 
-/** Lists all stored applications, most recently created first. */
-async function listApplications(): Promise<Application[]> {
-  const rows = await db.select().from(applications).orderBy(desc(applications.createdAt));
-  return toApplications(rows);
-}
-
-/** Reads a single application by id, or `null` if none exists with that id. */
-async function getApplicationById(id: string): Promise<Application | null> {
-  const [row] = await db.select().from(applications).where(eq(applications.id, id)).limit(1);
-  if (!row) return null;
-  return toApplication(row);
-}
-
-/** Lists full applications for an exact job URL for legacy API consumers. */
-async function listApplicationsByJobUrl(jobUrl: string): Promise<Application[]> {
+/** Lists `userId`'s stored applications, most recently created first. */
+async function listApplications(userId: string): Promise<Application[]> {
   const rows = await db
     .select()
     .from(applications)
-    .where(eq(applications.jobUrl, jobUrl))
+    .where(eq(applications.userId, userId))
     .orderBy(desc(applications.createdAt));
   return toApplications(rows);
 }
 
 /**
- * Inserts a new application row — after the candidate explicitly saves an autofill run, or when
- * they log an application they made by hand (`source: 'manual'`).
+ * Reads a single application by id, scoped to `userId`.
+ *
+ * `null` both when no row has that id at all, and when one does but belongs to a different user —
+ * the two cases must answer identically, or a 403-shaped response would confirm a real id exists
+ * under someone else's account. `and()` in the `WHERE`, not a second check after the query, is what
+ * makes that true at the SQL level rather than by remembering to compare afterward.
+ */
+async function getApplicationById(userId: string, id: string): Promise<Application | null> {
+  const [row] = await db
+    .select()
+    .from(applications)
+    .where(and(eq(applications.id, id), eq(applications.userId, userId)))
+    .limit(1);
+  if (!row) return null;
+  return toApplication(row);
+}
+
+/** Lists `userId`'s full applications for an exact job URL, for legacy API consumers. */
+async function listApplicationsByJobUrl(userId: string, jobUrl: string): Promise<Application[]> {
+  const rows = await db
+    .select()
+    .from(applications)
+    .where(and(eq(applications.userId, userId), eq(applications.jobUrl, jobUrl)))
+    .orderBy(desc(applications.createdAt));
+  return toApplications(rows);
+}
+
+/**
+ * Inserts a new application row owned by `userId` — after the candidate explicitly saves an autofill
+ * run, or when they log an application they made by hand (`source: 'manual'`).
  */
 async function saveApplication(
+  userId: string,
   newApplication: NewApplication,
 ): Promise<Written<ApplicationWriteResult>> {
   // Every column, not just `id`: `RETURNING *` costs the same round trip as `RETURNING id`, and it
   // is what spares the route a second query when the caller wants the row back. Same below.
   const [row] = await db
     .insert(applications)
-    .values({ ...newApplication, jobKey: jobKeyForUrl(newApplication.jobUrl) })
+    .values({
+      ...newApplication,
+      userId,
+      jobKey: jobKeyForUrl(newApplication.jobUrl),
+    })
     .returning();
   return { id: row.id, application: toWrittenApplication(row) };
 }
 
-/** Replaces an application's editable snapshot without disturbing interview tracking or `source`. */
+/**
+ * Replaces an application's editable snapshot without disturbing interview tracking or `source` —
+ * only if `userId` owns the row; otherwise `null`, same as if it didn't exist.
+ */
 async function updateApplication(
+  userId: string,
   id: string,
   snapshot: ApplicationSnapshot,
 ): Promise<Written<ApplicationWriteResult> | null> {
@@ -131,14 +159,14 @@ async function updateApplication(
     // Re-derived rather than left alone: the snapshot can carry a corrected `jobUrl`, and a key
     // still pointing at the old one would make the guard match a posting this row is no longer for.
     .set({ ...snapshot, jobKey: jobKeyForUrl(snapshot.jobUrl) })
-    .where(eq(applications.id, id))
+    .where(and(eq(applications.id, id), eq(applications.userId, userId)))
     .returning();
   if (!row) return null;
   return { id: row.id, application: toWrittenApplication(row) };
 }
 
 /**
- * Summarizes applications to the same job posting without loading their large snapshots.
+ * Summarizes `userId`'s applications to the same job posting without loading their large snapshots.
  *
  * Backs the compact duplicate guard response: the extension asks this before spending any LLM call,
  * so a posting the candidate already applied to stops the run instead of re-tailoring a resume for
@@ -160,8 +188,14 @@ async function updateApplication(
  * derived from the URL — so the unqualified version only made Postgres scan the `job_url` index for
  * rows the `job_key` index had found already. Keying the fallback to the rows that are actually
  * missing a key says the same thing about which rows match, and asks for less to say it.
+ *
+ * The `userId` filter is `and`-ed around the whole `job_key`-or-`job_url` clause, not appended after
+ * it — this is the one query in the file where getting that wrong would be a real leak, not just an
+ * inefficiency: it is exactly what stops one user's saved application from telling a different user
+ * they already applied to a posting they've never seen.
  */
 async function getApplicationDuplicateSummary(
+  userId: string,
   jobUrl: string,
 ): Promise<DuplicateApplicationSummary> {
   const jobKey = jobKeyForUrl(jobUrl);
@@ -177,12 +211,15 @@ async function getApplicationDuplicateSummary(
     })
     .from(applications)
     .where(
-      jobKey === null
-        ? eq(applications.jobUrl, jobUrl)
-        : or(
-            eq(applications.jobKey, jobKey),
-            and(isNull(applications.jobKey), eq(applications.jobUrl, jobUrl)),
-          ),
+      and(
+        eq(applications.userId, userId),
+        jobKey === null
+          ? eq(applications.jobUrl, jobUrl)
+          : or(
+              eq(applications.jobKey, jobKey),
+              and(isNull(applications.jobKey), eq(applications.jobUrl, jobUrl)),
+            ),
+      ),
     )
     .orderBy(desc(applications.createdAt))
     .limit(1);
@@ -200,15 +237,19 @@ async function getApplicationDuplicateSummary(
   };
 }
 
-/** Moves an application to a new interview stage, or `null` if no application has that id. */
+/**
+ * Moves an application to a new interview stage, or `null` if `userId` has no application with that
+ * id.
+ */
 async function updateApplicationStage(
+  userId: string,
   id: string,
   stage: ApplicationStage,
 ): Promise<Written<UpdateApplicationStageResult> | null> {
   const [row] = await db
     .update(applications)
     .set({ stage })
-    .where(eq(applications.id, id))
+    .where(and(eq(applications.id, id), eq(applications.userId, userId)))
     .returning();
 
   if (!row) return null;
@@ -222,7 +263,7 @@ async function updateApplicationStage(
 }
 
 /**
- * Appends one note to an application's log, or `null` if no application has that id.
+ * Appends one note to an application's log, or `null` if `userId` has no application with that id.
  *
  * `id` and `createdAt` are generated here, never taken from the caller — a note whose timestamp the
  * sender chose isn't trustworthy history, which is the rule `NoteSchema` states and this is where
@@ -235,6 +276,7 @@ async function updateApplicationStage(
  * where it is atomic.
  */
 async function addApplicationNote(
+  userId: string,
   id: string,
   note: NewNote,
 ): Promise<Written<AddApplicationNoteResult> | null> {
@@ -247,7 +289,7 @@ async function addApplicationNote(
   const [row] = await db
     .update(applications)
     .set({ notes: sql`${applications.notes} || ${JSON.stringify([appended])}::jsonb` })
-    .where(eq(applications.id, id))
+    .where(and(eq(applications.id, id), eq(applications.userId, userId)))
     .returning();
 
   if (!row) return null;

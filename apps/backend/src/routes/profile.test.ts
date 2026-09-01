@@ -9,6 +9,7 @@
  */
 import type { Profile } from '@djobi/shared';
 import { describe, expect, it } from 'vitest';
+import { BOOTSTRAP_USER_ID } from '../db/bootstrapUser.js';
 import { createTestApp } from '../testApp.js';
 
 const sampleProfile: Profile = {
@@ -62,7 +63,7 @@ describe('POST /profile', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(sampleProfile);
-    expect(await profileStore.get()).toEqual(sampleProfile);
+    expect(await profileStore.get(BOOTSTRAP_USER_ID)).toEqual(sampleProfile);
   });
 
   it('returns 400 and leaves the stored profile alone when the body fails validation', async () => {
@@ -76,6 +77,6 @@ describe('POST /profile', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await profileStore.get()).toEqual(sampleProfile);
+    expect(await profileStore.get(BOOTSTRAP_USER_ID)).toEqual(sampleProfile);
   });
 });
