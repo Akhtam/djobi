@@ -33,6 +33,9 @@ function deferred<T>() {
 function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
   return {
     listApplications: () => Promise.resolve([structuredClone(application)]),
+    extractJob: () => Promise.resolve(structuredClone(application.jobInfo)),
+    createApplication: () => Promise.resolve(structuredClone(application)),
+    findApplicationDuplicates: () => Promise.resolve({ count: 0, latest: null }),
     updateStage: (id, stage) => Promise.resolve({ id, stage }),
     addNote: (id, appended) =>
       Promise.resolve({
@@ -53,6 +56,25 @@ async function loadedStore(dashboardClient: DashboardClient) {
 }
 
 describe('useApplicationStore', () => {
+  it('inserts a newly created application into the shared list', async () => {
+    const created = { ...structuredClone(application), id: 'app-created', company: 'New company' };
+    const store = await loadedStore(client({ createApplication: () => Promise.resolve(created) }));
+
+    await act(async () => {
+      await store.current.createApplication({
+        company: created.company,
+        roleTitle: created.roleTitle,
+        jobUrl: created.jobUrl,
+        jobInfo: created.jobInfo,
+        tailoredResume: created.tailoredResume,
+        answers: [],
+        source: 'manual',
+      });
+    });
+
+    expect(store.current.applications[0]).toEqual(created);
+  });
+
   it('shows a new Stage before the server has answered', async () => {
     const write = deferred<{ id: string; stage: ApplicationStage }>();
     const store = await loadedStore(client({ updateStage: () => write.promise }));

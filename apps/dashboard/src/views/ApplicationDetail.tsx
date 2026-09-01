@@ -100,24 +100,45 @@ export function ApplicationDetail({
         {jobInfo.requirements.length > 0 ? (
           <>
             <h3>Requirements</h3>
-            <ul className="bullets">
-              {jobInfo.requirements.map((requirement) => (
-                <li key={requirement.text}>
-                  {requirement.kind !== 'unspecified' ? (
-                    <span className={`requirement-kind requirement-kind--${requirement.kind}`}>
-                      {requirement.kind}
-                    </span>
-                  ) : null}
-                  {requirement.text}
-                  {requirement.yearsOfExperience !== null ? (
-                    <span className="requirement-years">
-                      {' '}
-                      ({requirement.yearsOfExperience}+ yrs)
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <div className="requirement-groups">
+              {[
+                {
+                  kind: 'required' as const,
+                  requirements: jobInfo.requirements.filter(
+                    (requirement) => requirement.kind !== 'preferred',
+                  ),
+                },
+                {
+                  kind: 'preferred' as const,
+                  requirements: jobInfo.requirements.filter(
+                    (requirement) => requirement.kind === 'preferred',
+                  ),
+                },
+              ].map(({ kind, requirements }) =>
+                requirements.length > 0 ? (
+                  <section key={kind} className={`requirement-group requirement-group--${kind}`}>
+                    <h4
+                      className={`requirement-group__title requirement-kind requirement-kind--${kind}`}
+                    >
+                      {kind}
+                    </h4>
+                    <ul className="bullets requirement-group__items">
+                      {requirements.map((requirement) => (
+                        <li key={requirement.text}>
+                          {requirement.text}
+                          {requirement.yearsOfExperience !== null ? (
+                            <span className="requirement-years">
+                              {' '}
+                              ({requirement.yearsOfExperience}+ yrs)
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null,
+              )}
+            </div>
           </>
         ) : null}
         {jobInfo.keywords.length > 0 ? (

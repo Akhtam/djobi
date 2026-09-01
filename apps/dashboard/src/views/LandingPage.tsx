@@ -2,7 +2,7 @@ import { useEffect, type CSSProperties } from 'react';
 import logoUrl from '../assets/icons/djobi-icon.svg';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 
-const DASHBOARD_PATH = '/#/login';
+const DASHBOARD_PATH = '/#/';
 
 function ArrowIcon() {
   return (

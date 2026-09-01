@@ -153,9 +153,7 @@ describe('loginPath', () => {
   });
 
   it('escapes a from target into the query string', () => {
-    expect(loginPath('#/applications/app-brex')).toBe(
-      '#/login?from=%23%2Fapplications%2Fapp-brex',
-    );
+    expect(loginPath('#/applications/app-brex')).toBe('#/login?from=%23%2Fapplications%2Fapp-brex');
   });
 });
 

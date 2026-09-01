@@ -402,6 +402,20 @@ h3 {
   color: var(--text-muted);
 }
 
+.requirement-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.requirement-group__title {
+  margin: 0 0 5px;
+}
+
+.requirement-group__items {
+  margin: 0;
+}
+
 .tag__category {
   color: var(--text-muted);
   font-size: 11px;
@@ -449,15 +463,9 @@ h3 {
   --stage-bg: var(--danger-bg);
 }
 
-/*
- * Sits above the card's stretched link so the dropdown opens instead of navigating.
- *
- * Fixed width, wide enough for the longest stage name, rather than sized to the current one:
- * otherwise picking a shorter stage shrinks the control and reflows the card under the pointer.
- * The caret pins to the right edge, so the control keeps one silhouette whatever it reads.
- */
+/* Fixed width, wide enough for the longest stage name, rather than sized to the current one:
+   otherwise picking a shorter stage shrinks the control and reflows its row under the pointer. */
 .stage-badge--editable {
-  z-index: 1;
   width: 146px;
   justify-content: space-between;
   padding: 5px 12px;
@@ -583,82 +591,6 @@ h3 {
   border-color: var(--primary);
 }
 
-.card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.card {
-  position: relative;
-  padding: 14px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  transition:
-    border-color 120ms,
-    box-shadow 120ms;
-}
-
-.card:hover {
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
-  box-shadow: var(--shadow-md);
-}
-
-.card__top {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.card__company {
-  min-width: 120px;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 600;
-}
-
-/*
- * The stretched link: one real anchor per card, expanded to cover it. This is why the card is a
- * plain <li> and not an <a> — the stage <select> is interactive and cannot legally nest inside a
- * link.
- */
-.card__link {
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 400;
-  text-decoration: none;
-}
-
-.card__link::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-md);
-}
-
-.card__link:focus-visible::after {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.card__bottom {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-/*
- * Layered above the card's stretched link (`z-index: 1`, as the stage control is) so it opens the
- * posting rather than being swallowed by the link covering the card.
- */
 .posting-link {
   display: inline-flex;
   align-items: center;
@@ -673,12 +605,6 @@ h3 {
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
-}
-
-/* Layers the card's copy above `.card__link::after`, which otherwise swallows the click. */
-.posting-link--above-card {
-  position: relative;
-  z-index: 1;
 }
 
 .posting-link:hover {
@@ -701,9 +627,607 @@ h3 {
   stroke-linejoin: round;
 }
 
-.card__date {
+/* The applications index uses the wider, scan-first table layout. Detail and analytics retain the
+   narrower reading measure above. */
+.page--applications {
+  max-width: 1280px;
+  padding-top: 42px;
+}
+
+.page--applications .list-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 34px;
+}
+
+.page--applications .list-header h1 {
+  font-size: clamp(32px, 4vw, 42px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.page--applications .list-header__summary {
+  margin-top: 5px;
+  font-size: 16px;
+}
+
+.log-application-button {
+  display: inline-flex;
+  min-height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color 140ms,
+    box-shadow 140ms,
+    transform 140ms;
+}
+
+.log-application-button:hover {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.log-application-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.log-application-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.page--applications .list-filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.62fr) minmax(620px, 1.38fr);
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.list-search {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.list-search:focus-within {
+  border-color: var(--primary);
+  outline: 2px solid var(--ring);
+}
+
+.list-search svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+.list-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.list-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.list-stage-filters {
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.list-stage-filters .filter-pills {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(max-content, 1fr));
+  gap: 2px;
+}
+
+.list-stage-filters .filter-pill {
+  justify-content: center;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
   white-space: nowrap;
+}
+
+.list-stage-filters .filter-pill:hover {
+  background: var(--surface-muted);
+}
+
+.list-stage-filters .filter-pill.is-selected {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+.list-stage-filters .filter-pill__count {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.application-table-wrap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.application-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.application-table th {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 45%, var(--surface));
+  color: color-mix(in srgb, var(--text-muted) 75%, var(--border));
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.application-table th:nth-child(1) {
+  width: 19%;
+}
+
+.application-table th:nth-child(2) {
+  width: 12%;
+}
+
+.application-table th:nth-child(3) {
+  width: 28%;
+}
+
+.application-table th:nth-child(4) {
+  width: 13%;
+}
+
+.application-table th:nth-child(5) {
+  width: 16%;
+}
+
+.application-table th:nth-child(6) {
+  width: 12%;
+}
+
+.application-table__date-heading {
+  display: table-cell;
+}
+
+.application-table__date-heading svg {
+  width: 12px;
+  height: 12px;
+  margin-left: 3px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  vertical-align: -2px;
+}
+
+.application-table td {
+  height: 66px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.application-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.application-table tbody tr {
+  transition: background 120ms;
+}
+
+.application-table tbody tr:hover {
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+}
+
+.application-table__company {
+  overflow: hidden;
+  color: var(--text) !important;
+  font-size: 14px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-table__role a {
+  display: block;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-table__role a:hover {
+  color: var(--primary);
+}
+
+.application-table__role a:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.application-source {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-source--greenhouse {
+  color: var(--success);
+}
+
+.application-source--lever {
+  color: var(--stage-applied-fg);
+}
+
+.application-source--ashby {
+  color: var(--stage-phone-fg);
+}
+
+.application-source--workday {
+  color: #d95d16;
+}
+
+.application-source--manual,
+.application-source--other {
+  color: var(--text-muted);
+}
+
+.application-table .stage-badge--editable {
+  --stage-fg: var(--text-muted);
+  --stage-bg: var(--surface-muted);
+  width: 100%;
+  max-width: 146px;
+  padding: 6px 10px;
+  background: var(--stage-bg);
+  color: var(--stage-fg);
+  font-size: 12px;
+}
+
+.application-table .stage--phone-screen {
+  --stage-fg: #99501e;
+  --stage-bg: #fff4c7;
+}
+
+:root[data-theme='dark'] .application-table .stage--phone-screen {
+  --stage-fg: #f2c26f;
+  --stage-bg: rgb(242 194 111 / 15%);
+}
+
+.application-table .stage--onsite {
+  --stage-fg: var(--stage-phone-fg);
+  --stage-bg: var(--stage-phone-bg);
+}
+
+.application-table .stage--offer {
+  --stage-fg: var(--success);
+  --stage-bg: var(--success-bg);
+}
+
+.application-table .stage--rejected,
+.application-table .stage--rejected-ats {
+  --stage-fg: var(--danger);
+  --stage-bg: var(--danger-bg);
+}
+
+.application-table__date {
+  white-space: nowrap;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.application-table__posting {
+  white-space: nowrap;
+}
+
+.application-table__posting .posting-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+}
+
+.application-table__posting .posting-link:hover {
+  border: 0;
+  background: transparent;
+  color: var(--primary-hover);
+}
+
+.application-table__posting .posting-link svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── New application ────────────────────────────────────────────────────── */
+
+.new-application-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  overflow-y: auto;
+  padding: 32px 20px;
+  place-items: center;
+  background: rgb(20 21 31 / 48%);
+  backdrop-filter: blur(5px);
+}
+
+.new-application {
+  position: relative;
+  width: min(720px, 100%);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: 0 28px 80px rgb(20 21 31 / 28%);
+}
+
+.new-application__close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.new-application__close:hover {
+  color: var(--text);
+}
+
+.new-application__close:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.new-application__close svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.new-application__heading {
+  padding-right: 44px;
+  margin-bottom: 28px;
+}
+
+.new-application__eyebrow {
+  margin: 0 0 4px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.new-application__heading h1 {
+  font-size: 32px;
+  letter-spacing: -0.03em;
+}
+
+.new-application__heading > p:last-child {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.new-application__state {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.new-application__panel {
+  padding: 0;
+}
+
+.new-application__state {
+  color: var(--text-muted);
+}
+
+.new-application__state strong {
+  color: var(--text);
+}
+
+.new-application__state p {
+  margin: 5px 0 0;
+}
+
+.new-application__state--error strong,
+.new-application__state--error p {
+  color: var(--danger);
+}
+
+.new-application__fields {
+  display: grid;
+  gap: 18px;
+}
+
+.new-application__fields--review {
+  grid-template-columns: 1fr 1fr;
+}
+
+.new-application__fields label {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.new-application__fields .search {
+  width: 100%;
+  flex: none;
+  padding: 10px 12px;
+}
+
+.new-application__fields textarea {
+  min-height: 260px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+}
+
+.new-application__fields textarea:focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid var(--ring);
+}
+
+.new-application__fields small {
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.new-application__submit {
+  min-width: 180px;
+  margin-top: 20px;
+}
+
+.new-application__panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.new-application__panel-head span {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.new-application__panel-head h2 {
+  margin-top: 2px;
+  font-size: 20px;
+}
+
+.new-application__back-button {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+
+.new-application__duplicate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--stage-offer-fg) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--stage-offer-bg);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.new-application__duplicate strong {
+  color: var(--stage-offer-fg);
+}
+
+.new-application__extraction-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.new-application__extraction-summary span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@media (width <= 1040px) {
+  .page--applications .list-filters {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
 }
 
 /* ── Detail view ────────────────────────────────────────────────────────── */
@@ -712,7 +1236,7 @@ h3 {
 
 /*
  * Centred under the list rather than pinned to one edge: it is the end of the column, and the eye
- * is already tracking down the middle of the cards by the time it gets here.
+ * is already tracking down the middle of the rows by the time it gets here.
  */
 .load-more {
   display: flex;
@@ -965,8 +1489,7 @@ h3 {
 }
 
 /* A card, not a bare row of controls — the same `--shadow-sm`/`--border` treatment `.search` and
-   `.list-filters` sit in, so the control surface reads as one thing rather than three floating
-   pieces. */
+   `.list-filters` sit in, so the filters read as one control surface. */
 .analytics-controls {
   display: flex;
   flex-wrap: wrap;
@@ -992,6 +1515,13 @@ h3 {
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+.analytics-toggle-row {
+  flex: 1 0 100%;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
 }
 
 /*
@@ -1077,9 +1607,8 @@ h3 {
  */
 .analytics-toggle {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  align-items: flex-start;
+  gap: 10px;
   cursor: pointer;
   user-select: none;
 }
@@ -1099,10 +1628,29 @@ h3 {
   position: relative;
   width: 34px;
   height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
   border-radius: 999px;
   background: var(--surface-muted);
   box-shadow: inset 0 0 0 1px var(--border);
   transition: background 0.15s ease;
+}
+
+.analytics-toggle__copy {
+  display: grid;
+  gap: 2px;
+}
+
+.analytics-toggle__label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.analytics-toggle__description {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .analytics-toggle__track::after {
@@ -1209,8 +1757,8 @@ h3 {
 }
 
 /*
- * Bordered/shadowed like `.card`, distinct from it because a card is a clickable list row and a
- * panel is a static content region — sharing the class would tie their looks together by accident.
+ * Bordered/shadowed like the applications rows, but a panel is a static content region rather than
+ * one item in a result set, so it keeps a distinct class.
  *
  * A flex column capped at the same `max-height` both scroll regions used to carry individually: with
  * `.analytics-grid` stretching both panels to the row's height, the cap has to live here so a panel
@@ -1446,32 +1994,31 @@ h3 {
   white-space: nowrap;
 }
 
+.analytics-req-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.analytics-req-group__title {
+  margin: 0 0 5px;
+}
+
 .analytics-reqs {
   display: grid;
   gap: 6px;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
 }
 
 .analytics-req {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: baseline;
-  gap: 9px;
   font-size: 13px;
+  line-height: 1.5;
 }
 
-/* `list-style: none` on `.analytics-reqs` (needed for the grid layout the kind badge sits in) took
-   the browser's own bullet with it — a requirement whose posting drew no required/preferred
-   distinction otherwise had nothing at all marking it as a list item. This fills that column with a
-   plain marker instead, so every row reads as one regardless of whether it also carries a badge. */
-.analytics-req__bullet {
-  display: inline-block;
-  width: 1em;
+.analytics-req::marker {
   color: var(--text-muted);
-  font-size: 15px;
-  text-align: center;
 }
 
 .analytics-req__text mark {
@@ -1611,16 +2158,6 @@ h3 {
     padding: 12px 16px;
   }
 
-  .card__top,
-  .card__bottom {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .card__company {
-    min-width: 0;
-  }
-
   .add-note__row {
     flex-direction: column;
     align-items: stretch;
@@ -1638,6 +2175,131 @@ h3 {
 
   .analytics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .page--applications {
+    padding-top: 26px;
+  }
+
+  .page--applications .list-header {
+    flex-direction: column;
+    align-items: stretch;
+    margin-bottom: 24px;
+  }
+
+  .log-application-button {
+    min-height: 40px;
+    align-self: flex-start;
+    padding-inline: 12px;
+  }
+
+  .list-stage-filters {
+    overflow-x: auto;
+  }
+
+  .list-stage-filters .filter-pills {
+    display: flex;
+    width: max-content;
+  }
+
+  .application-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .application-table,
+  .application-table tbody {
+    display: block;
+  }
+
+  .application-table thead {
+    display: none;
+  }
+
+  .application-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .application-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 14px;
+    padding: 15px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .application-table td {
+    display: block;
+    height: auto;
+    padding: 0;
+    border: 0;
+  }
+
+  .application-table__company,
+  .application-table__role,
+  .application-table__date {
+    grid-column: 1;
+  }
+
+  .application-table__company {
+    grid-row: 1;
+  }
+
+  .application-table__role {
+    grid-row: 2;
+  }
+
+  .application-table td:nth-child(4) {
+    grid-row: 3;
+    grid-column: 1;
+    margin-top: 6px;
+  }
+
+  .application-table td:nth-child(5) {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+
+  .application-table__date {
+    grid-row: 4;
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  .application-table__date::before {
+    content: 'Applied ';
+  }
+
+  .application-table__posting {
+    grid-row: 3 / span 2;
+    grid-column: 2;
+    align-self: end;
+  }
+
+  .application-table .stage-badge--editable {
+    width: 128px;
+  }
+
+  .new-application__fields--review {
+    grid-template-columns: 1fr;
+  }
+
+  .new-application-modal {
+    padding: 12px;
+    place-items: end center;
+  }
+
+  .new-application {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    padding: 22px 18px;
+    border-radius: 18px;
   }
 }
 

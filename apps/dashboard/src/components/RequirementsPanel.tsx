@@ -155,30 +155,50 @@ export function RequirementsPanel({
                 <span className="analytics-posting__meta">{formatDate(application.createdAt)}</span>
               </div>
               {application.jobInfo.requirements.length > 0 ? (
-                <ul className="analytics-reqs">
-                  {application.jobInfo.requirements.map((requirement) => (
-                    <li key={requirement.text} className="analytics-req">
-                      {requirement.kind !== 'unspecified' ? (
-                        <span className={`requirement-kind requirement-kind--${requirement.kind}`}>
-                          {requirement.kind}
-                        </span>
-                      ) : (
-                        <span className="analytics-req__bullet" aria-hidden="true">
-                          •
-                        </span>
-                      )}
-                      <span className="analytics-req__text">
-                        {highlightTerm(requirement.text, selectedKeyword)}
-                        {requirement.yearsOfExperience !== null ? (
-                          <span className="analytics-req__years">
-                            {' '}
-                            · {requirement.yearsOfExperience}+ yrs
-                          </span>
-                        ) : null}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="analytics-req-groups">
+                  {[
+                    {
+                      kind: 'required' as const,
+                      requirements: application.jobInfo.requirements.filter(
+                        (requirement) => requirement.kind !== 'preferred',
+                      ),
+                    },
+                    {
+                      kind: 'preferred' as const,
+                      requirements: application.jobInfo.requirements.filter(
+                        (requirement) => requirement.kind === 'preferred',
+                      ),
+                    },
+                  ].map(({ kind, requirements }) =>
+                    requirements.length > 0 ? (
+                      <section
+                        key={kind}
+                        className={`analytics-req-group analytics-req-group--${kind}`}
+                      >
+                        <h3
+                          className={`analytics-req-group__title requirement-kind requirement-kind--${kind}`}
+                        >
+                          {kind}
+                        </h3>
+                        <ul className="analytics-reqs">
+                          {requirements.map((requirement) => (
+                            <li key={requirement.text} className="analytics-req">
+                              <span className="analytics-req__text">
+                                {highlightTerm(requirement.text, selectedKeyword)}
+                                {requirement.yearsOfExperience !== null ? (
+                                  <span className="analytics-req__years">
+                                    {' '}
+                                    · {requirement.yearsOfExperience}+ yrs
+                                  </span>
+                                ) : null}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null,
+                  )}
+                </div>
               ) : null}
             </article>
           ))}

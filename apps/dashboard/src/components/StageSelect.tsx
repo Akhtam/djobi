@@ -12,7 +12,7 @@
  *
  * The control is a **fixed width**, not sized to its current label. Stage names differ in length
  * ("Applied" against "Phone screen"), so an intrinsically-sized badge changes width when the value
- * changes — which on the list reflows the row under the pointer at the moment of the click.
+ * changes — which would reflow a table row under the pointer at the moment of the click.
  */
 import type { ApplicationStage } from '@djobi/shared';
 import { STAGES, STAGE_LABELS, stageClass } from '../lib/stages';

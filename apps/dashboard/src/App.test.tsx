@@ -57,9 +57,9 @@ async function lowerAnalyticsMinimumToOne(user: ReturnType<typeof userEvent.setu
   for (let value = 5; value > 1; value--) await user.click(decrease);
 }
 
-/** The list renders one card per application; each card's link is the role title. */
-function cardFor(roleTitle: string): HTMLElement {
-  return screen.getByRole('link', { name: roleTitle }).closest('li')!;
+/** The list renders one row per application; each row's detail link is the role title. */
+function rowFor(roleTitle: string): HTMLElement {
+  return screen.getByRole('link', { name: roleTitle }).closest('[data-application-row]')!;
 }
 
 beforeEach(() => {
@@ -80,7 +80,7 @@ describe('landing page', () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Open dashboard' })[0]).toHaveAttribute(
       'href',
-      '/#/login',
+      '/#/',
     );
     expect(screen.getByRole('navigation', { name: 'Landing page' })).toBeInTheDocument();
     expect(listApplications).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe('landing page', () => {
 });
 
 describe('applications list', () => {
-  it('renders a card per application once loaded', async () => {
+  it('renders a row per application once loaded', async () => {
     renderApp();
 
     expect(
@@ -140,6 +140,19 @@ describe('applications list', () => {
   it('summarises the count and how many are live', async () => {
     renderApp();
     expect(await screen.findByText(/8 applications · 4 in progress/)).toBeInTheDocument();
+  });
+
+  it('renders the scan-first table columns and manual-log action', async () => {
+    renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    expect(screen.getAllByRole('columnheader').map((header) => header.textContent?.trim())).toEqual(
+      ['Company', 'Posting', 'Role', 'Source', 'Status', 'Applied'],
+    );
+    expect(screen.getByRole('button', { name: 'Log application' })).toBeInTheDocument();
+    const row = rowFor('Senior Frontend Engineer');
+    expect(within(row).getByText('Job posting')).toBeInTheDocument();
+    expect(within(row).getByText('Greenhouse')).toBeInTheDocument();
   });
 
   it('filters by stage', async () => {
@@ -157,7 +170,7 @@ describe('applications list', () => {
   });
 
   it('shows both kinds of rejection under the one Rejected pill', async () => {
-    // There is no ATS-only pill by design. The kind still shows on each card's stage badge.
+    // There is no ATS-only pill by design. The kind still shows on each row's stage badge.
     const { user } = renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
@@ -346,16 +359,16 @@ describe('applications list', () => {
     renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
-    expect(within(cardFor('Senior Frontend Engineer')).getByText('Brex')).toBeInTheDocument();
+    expect(within(rowFor('Senior Frontend Engineer')).getByText('Brex')).toBeInTheDocument();
   });
 
-  it('does not show a note count on the card', async () => {
+  it('does not show a note count on the row', async () => {
     renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
     // app-brex has three notes; the count belonged on the detail page, not the list.
     expect(
-      within(cardFor('Senior Frontend Engineer')).queryByText(/notes?$/),
+      within(rowFor('Senior Frontend Engineer')).queryByText(/notes?$/),
     ).not.toBeInTheDocument();
   });
 
@@ -363,18 +376,18 @@ describe('applications list', () => {
     renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
-    const posting = within(cardFor('Senior Frontend Engineer')).getByRole('link', {
+    const posting = within(rowFor('Senior Frontend Engineer')).getByRole('link', {
       name: /Open the Brex job posting in a new tab/,
     });
 
     expect(posting).toHaveAttribute('href', 'https://boards.greenhouse.io/brex/jobs/4012');
     expect(posting).toHaveAttribute('target', '_blank');
     expect(posting).toHaveAttribute('rel', 'noreferrer');
-    // It must not be the card's stretched link, which navigates to the detail page.
+    // It must remain an external posting link, not the row's application-detail link.
     expect(posting).not.toHaveAttribute('href', '#/applications/app-brex');
   });
 
-  it('changes a stage from the card without navigating away', async () => {
+  it('changes a stage from the row without navigating away', async () => {
     const { user } = renderApp();
     await screen.findByRole('link', { name: 'Staff Engineer, Platform' });
 
@@ -387,8 +400,98 @@ describe('applications list', () => {
   });
 });
 
+describe('log application', () => {
+  it('extracts, reviews, and adds a manual application to the shared dashboard store', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
+    const { user } = renderApp(client);
+    await user.click(await screen.findByRole('button', { name: 'Log application' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Log an application' });
+    expect(dialog).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/');
+
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Job posting URL' }),
+      'https://example.com/jobs/platform-engineer',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Job description' }),
+      'Platform engineer role using TypeScript and Postgres.',
+    );
+    await user.click(screen.getByRole('button', { name: 'Extract job details' }));
+
+    const company = await screen.findByRole('textbox', { name: 'Company' });
+    const role = screen.getByRole('textbox', { name: 'Role' });
+    await user.clear(company);
+    await user.type(company, 'Example Labs');
+    await user.clear(role);
+    await user.type(role, 'Platform Engineer');
+    await user.click(within(dialog).getByRole('button', { name: 'Log application' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Log an application' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Platform Engineer' })).toBeInTheDocument();
+    expect(within(rowFor('Platform Engineer')).getByText('Example Labs')).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/');
+    expect((await client.listApplications())[0]).toMatchObject({
+      company: 'Example Labs',
+      roleTitle: 'Platform Engineer',
+      source: 'manual',
+    });
+  });
+
+  it('explains that a base profile is required before logging', async () => {
+    const { user } = renderApp(createFixtureDashboardClient(fixtureApplications));
+    await user.click(await screen.findByRole('button', { name: 'Log application' }));
+
+    expect(await screen.findByText('A profile is required first')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Extract job details' })).not.toBeInTheDocument();
+  });
+
+  it('closes the modal without navigating and returns focus to its trigger', async () => {
+    const { user } = renderApp();
+    const trigger = await screen.findByRole('button', { name: 'Log application' });
+    await user.click(trigger);
+
+    await user.click(screen.getByRole('button', { name: 'Close log application' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Log an application' })).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(window.location.hash).toBe('#/');
+  });
+
+  it('locks page scrolling and closes from Escape or the backdrop', async () => {
+    const { user } = renderApp();
+    const trigger = await screen.findByRole('button', { name: 'Log application' });
+
+    await user.click(trigger);
+    expect(document.body).toHaveStyle({ overflow: 'hidden' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Log an application' })).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('');
+
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Log an application' });
+    await user.click(dialog.parentElement!);
+    expect(screen.queryByRole('dialog', { name: 'Log an application' })).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('keeps keyboard focus inside the modal', async () => {
+    const { user } = renderApp(createFixtureDashboardClient(fixtureApplications, fixtureProfile));
+    await user.click(await screen.findByRole('button', { name: 'Log application' }));
+
+    const close = screen.getByRole('button', { name: 'Close log application' });
+    const description = await screen.findByRole('textbox', { name: 'Job description' });
+    expect(close).toHaveFocus();
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(description).toHaveFocus();
+    await user.keyboard('{Tab}');
+    expect(close).toHaveFocus();
+  });
+});
+
 describe('routing', () => {
-  it('opens an application from its card link', async () => {
+  it('opens an application from its row link', async () => {
     const { user } = renderApp();
     await user.click(await screen.findByRole('link', { name: 'Senior Frontend Engineer' }));
 
@@ -405,16 +508,27 @@ describe('routing', () => {
     expect(await screen.findByRole('heading', { name: 'Product Engineer' })).toBeInTheDocument();
   });
 
-  it('renders requirement kind/years badges and keyword categories from the widened JobInfo shape', async () => {
+  it('groups requirement kinds once while preserving years and keyword categories', async () => {
     window.location.hash = '#/applications/app-brex';
     renderApp();
 
     await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+    const jobInfo = screen.getByText('Job info').closest('details') as HTMLElement;
+    const required = within(jobInfo).getByRole('heading', { name: 'required', level: 4 });
+    const preferred = within(jobInfo).getByRole('heading', { name: 'preferred', level: 4 });
 
-    expect(screen.getByText('required')).toBeInTheDocument();
-    expect(screen.getByText('preferred')).toBeInTheDocument();
-    expect(screen.getByText(/\(5\+ yrs\)/)).toBeInTheDocument();
-    expect(screen.getByText('· Framework')).toBeInTheDocument();
+    expect(within(jobInfo).getAllByRole('heading', { level: 4 })).toHaveLength(2);
+    expect(
+      within(required.closest('section')!).getByText(/5\+ years building production React/),
+    ).toBeInTheDocument();
+    expect(
+      within(required.closest('section')!).getByText(/Comfort owning a service end to end/),
+    ).toBeInTheDocument();
+    expect(
+      within(preferred.closest('section')!).getByText(/Experience with design systems at scale/),
+    ).toBeInTheDocument();
+    expect(within(jobInfo).getByText(/\(5\+ yrs\)/)).toBeInTheDocument();
+    expect(within(jobInfo).getByText('· Framework')).toBeInTheDocument();
   });
 
   it('shows the same brand header on both routes', async () => {
@@ -576,7 +690,7 @@ describe('application detail', () => {
 
   /**
    * Job-board URLs run long enough to push the record's own content off the first screen, so the
-   * detail page shows the same pill the cards do and keeps the URL on the `title`.
+   * detail page shows the same pill the rows do and keeps the URL on the `title`.
    */
   it('does not print the raw job URL', async () => {
     window.location.hash = '#/applications/app-brex';
@@ -764,6 +878,9 @@ describe('failures', () => {
   it('reports a failure to load rather than showing an empty list', async () => {
     renderApp({
       listApplications: () => Promise.reject(new Error('backend is not running')),
+      extractJob: () => Promise.reject(new Error('unused')),
+      createApplication: () => Promise.reject(new Error('unused')),
+      findApplicationDuplicates: () => Promise.reject(new Error('unused')),
       updateStage: () => Promise.reject(new Error('unused')),
       addNote: () => Promise.reject(new Error('unused')),
       getProfile: () => Promise.reject(new Error('unused')),
@@ -933,13 +1050,27 @@ describe('analytics', () => {
     expect(marks.length).toBeGreaterThan(0);
   });
 
-  it('marks an unspecified requirement with a bullet, since it carries no kind badge', async () => {
+  it('groups each posting under one Required and one Preferred heading', async () => {
     renderApp();
 
-    // Brex's "Comfort owning a service end to end" is the one fixture requirement left unspecified.
-    const text = await screen.findByText(/Comfort owning a service end to end/);
-    const row = text.closest('li');
-    expect(row?.querySelector('.analytics-req__bullet')).toHaveTextContent('•');
+    const link = await screen.findByRole('link', {
+      name: /Brex — Senior Frontend Engineer/,
+    });
+    const posting = link.closest('article') as HTMLElement;
+    const required = within(posting).getByRole('heading', { name: 'required', level: 3 });
+    const preferred = within(posting).getByRole('heading', { name: 'preferred', level: 3 });
+
+    expect(within(posting).getAllByRole('heading', { level: 3 })).toHaveLength(2);
+    expect(
+      within(required.closest('section')!).getByText(/5\+ years building production React/),
+    ).toBeInTheDocument();
+    // Unclassified requirements stay visible under Required instead of creating a third heading.
+    expect(
+      within(required.closest('section')!).getByText(/Comfort owning a service end to end/),
+    ).toBeInTheDocument();
+    expect(
+      within(preferred.closest('section')!).getByText(/Experience with design systems at scale/),
+    ).toBeInTheDocument();
   });
 
   it('narrows the range and drops postings outside it', async () => {

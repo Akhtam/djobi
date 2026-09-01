@@ -5,5 +5,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
+    // `auth.ts` refuses to construct Better Auth without `BETTER_AUTH_SECRET` set (a real .env is
+    // not loaded for tests) — every suite that builds a real `auth` instance against PGlite
+    // (`auth.test.ts`, `authMiddleware.test.ts`) needs some value here, and its exact contents
+    // don't matter since nothing in this suite runs against a real deployment.
+    env: {
+      BETTER_AUTH_SECRET: 'test-only-secret-do-not-use-in-production',
+    },
   },
 });

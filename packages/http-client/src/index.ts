@@ -242,23 +242,28 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
       throw new Error(`GET ${path} was given a body; use POST, or send it in the path.`);
     }
 
-    // Resolved fresh per call, not once at transport construction — see `getAuthorization`'s own
-    // comment for why a captured value would go stale. Awaited before the headers are built, so a
-    // GET (which otherwise has none) still gets an `Authorization` header when there is a token.
-    //
-    // The conditional guards a real behavior difference, not just a style preference: `await
-    // undefined` still suspends this async function for a microtask, which delays `doFetch` below
-    // past the point a caller's synchronous `signal.abort()` (called right after this function is
-    // invoked, before anything here has awaited) would otherwise be observed by a listener that
-    // registers on call. Every transport without `getAuthorization` set — the dashboard included —
-    // must see exactly the old synchronous-up-to-`doFetch` behavior, which skipping the `await`
-    // entirely preserves.
-    const authorization = options.getAuthorization ? await options.getAuthorization() : undefined;
-
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const deadline = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
     try {
+      // Resolved fresh per call, not once at transport construction — see `getAuthorization`'s own
+      // comment for why a captured value would go stale. Awaited before the headers are built, so a
+      // GET (which otherwise has none) still gets an `Authorization` header when there is a token.
+      //
+      // The conditional guards a real behavior difference, not just a style preference: `await
+      // undefined` still suspends this async function for a microtask, which delays `doFetch` below
+      // past the point a caller's synchronous `signal.abort()` (called right after this function is
+      // invoked, before anything here has awaited) would otherwise be observed by a listener that
+      // registers on call. Every transport without `getAuthorization` set — the dashboard included —
+      // must see exactly the old synchronous-up-to-`doFetch` behavior, which skipping the `await`
+      // entirely preserves.
+      //
+      // Now inside the `try`/under the deadline: a rejecting `getAuthorization()` (e.g.
+      // `chrome.storage.session` unavailable during service-worker teardown) is mapped to an
+      // `HttpError` like every other failure here, instead of escaping as a raw error past callers
+      // that branch on `HttpError.kind`/`.status`.
+      const authorization = options.getAuthorization ? await options.getAuthorization() : undefined;
+
       const response = await doFetch(`${options.baseUrl}${path}`, {
         ...init,
         signal: deadline,

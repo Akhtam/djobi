@@ -29,6 +29,7 @@ export function FilterPills<T extends string>({
   selected,
   onSelect,
   allLabel = 'All',
+  allCount,
   groupLabel,
   counts,
 }: {
@@ -37,6 +38,8 @@ export function FilterPills<T extends string>({
   selected: T | null;
   onSelect: (value: T | null) => void;
   allLabel?: string;
+  /** Optional count beside the All label. */
+  allCount?: number;
   groupLabel: string;
   /** Optional per-option counts, rendered alongside the label. */
   counts?: Record<T, number>;
@@ -50,6 +53,7 @@ export function FilterPills<T extends string>({
         onClick={() => onSelect(null)}
       >
         {allLabel}
+        {allCount !== undefined ? <span className="filter-pill__count">{allCount}</span> : null}
       </button>
       {options.map((option) => (
         <button

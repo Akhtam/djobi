@@ -2,7 +2,7 @@
  * The dashboard's single copy of the applications, loaded once and shared by both views.
  *
  * The alternative — each view fetching what it needs — makes the two views able to disagree: change
- * a stage from the list card, open that application, and the detail page shows whatever it fetched.
+ * a stage from the list row, open that application, and the detail page shows whatever it fetched.
  * Keeping one array above the router means a write is visible everywhere by construction rather
  * than by remembering to invalidate. At this dataset's scale (one person's applications) fetching
  * the list to render one record costs nothing worth designing around.
@@ -18,6 +18,7 @@ import {
   failureMessage,
   type Application,
   type ApplicationStage,
+  type NewApplicationRequest,
   type NewNote,
 } from '@djobi/shared';
 import type { DashboardClient } from './dashboardClient';
@@ -40,6 +41,8 @@ export interface ApplicationStore {
   updateStage(id: string, stage: ApplicationStage): Promise<boolean>;
   /** Resolves `true` if the note was appended, so a composer knows whether to clear itself. */
   addNote(id: string, note: NewNote): Promise<boolean>;
+  /** Creates and inserts a full row, or resolves null after reporting the failed write. */
+  createApplication(payload: NewApplicationRequest): Promise<Application | null>;
   /**
    * Re-fetches from scratch and clears `unauthorized` — what `App` calls once a fresh sign-in has
    * replaced the session that expired. Resetting `unauthorized` here, rather than the instant a 401
@@ -277,5 +280,38 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     [client, mutate],
   );
 
-  return { applications, loading, loadError, writeError, unauthorized, updateStage, addNote, reload };
+  const createApplication = useCallback(
+    async (payload: NewApplicationRequest): Promise<Application | null> => {
+      setWriteError(null);
+      try {
+        const created = await client.createApplication(payload);
+        setApplications((current) => [
+          created,
+          ...current.filter((item) => item.id !== created.id),
+        ]);
+        return created;
+      } catch (err: unknown) {
+        if (isUnauthorized(err)) {
+          setApplications([]);
+          setUnauthorized(true);
+        } else {
+          setWriteError(failureMessage(err));
+        }
+        return null;
+      }
+    },
+    [client],
+  );
+
+  return {
+    applications,
+    loading,
+    loadError,
+    writeError,
+    unauthorized,
+    updateStage,
+    addNote,
+    createApplication,
+    reload,
+  };
 }

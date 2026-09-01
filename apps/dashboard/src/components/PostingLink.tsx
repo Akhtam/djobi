@@ -6,24 +6,20 @@
  * pushed the record's own content down the page for no information a "Job posting" label doesn't
  * already give. The full URL stays reachable on hover and through the accessible name.
  *
- * `stretched` is for the list card, whose whole surface is covered by a stretched link to the detail
- * page (`.card__link::after`). This link has to be layered above it or the click is swallowed and
- * takes the reader to the detail page instead of the posting; `stopPropagation` isn't needed and
- * isn't used, since being on top is enough.
+ * The visible label stays present in both the applications table and detail view; the full URL is
+ * available from the title and accessible name without consuming a table column.
  */
 export function PostingLink({
   jobUrl,
   company,
-  stretched = false,
 }: {
   jobUrl: string;
-  /** Named in the accessible label, so a screen reader hears which posting a card links to. */
+  /** Named in the accessible label, so a screen reader hears which posting the link opens. */
   company: string;
-  stretched?: boolean;
 }) {
   return (
     <a
-      className={stretched ? 'posting-link posting-link--above-card' : 'posting-link'}
+      className="posting-link"
       href={jobUrl}
       target="_blank"
       rel="noreferrer"

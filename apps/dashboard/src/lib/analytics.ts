@@ -176,20 +176,18 @@ export interface YearsOfExperienceCount {
 }
 
 /**
- * Explicit year thresholds written in one requirement. The structured field is authoritative, but
- * persisted requirements saved before that field existed were lifted with `yearsOfExperience: null`.
- * Reading an adjacent numeric "3+ years" from their original text recovers stated data rather than
- * guessing it. A set prevents a modern `{ text: "3+ years", yearsOfExperience: 3 }` row from being
- * counted twice.
+ * The year threshold stated in one requirement, if any. The structured field is authoritative;
+ * persisted requirements saved before that field existed fall back to scanning their original text
+ * for a number like "3+ years". Returns at most one value, so a requirement contributes to a single
+ * bucket rather than every number its text happens to mention.
  */
 function statedYears(requirement: Application['jobInfo']['requirements'][number]): number[] {
-  const years = new Set<number>();
-  if (requirement.yearsOfExperience !== null) years.add(requirement.yearsOfExperience);
+  if (requirement.yearsOfExperience !== null) return [requirement.yearsOfExperience];
 
   const pattern =
     /\b(\d+(?:\.\d+)?)\s*(?:(?:[-\u2013\u2014]|to)\s*\d+(?:\.\d+)?|\+|or\s+more)?\s*(?:years?|yrs?)\b/gi;
-  for (const match of requirement.text.matchAll(pattern)) years.add(Number(match[1]));
-  return [...years];
+  const match = pattern.exec(requirement.text);
+  return match ? [Number(match[1])] : [];
 }
 
 /**

@@ -4,9 +4,10 @@
  * middleware supplies a real `userId` from context instead (`app.ts`, `authMiddleware.ts`).
  *
  * Kept, not deleted, for two reasons. First, it names a real row: migration `0009` actually inserted
- * this id into `users`, and the single profile that existed before Phase B is still that row's —
- * how it gets claimed by a real login is Phase B's own open question (see `db/schema.ts`'s `users`
- * table comment), not something deleting the name would resolve. Second, `testApp.ts` and the
+ * this id into `users`, and the single profile that existed before Phase B is still that row's.
+ * `scripts/claimBootstrapData.ts` is how it gets claimed by a real login — Better Auth mints a fresh
+ * random id for every sign-up, never this one, so that data stays orphaned until that script (or
+ * an equivalent manual reassignment) is run once against the real account. Second, `testApp.ts` and the
  * store-level tests (`applicationStore.contract.test.ts`, `database.integration.test.ts`,
  * `postgresProfileStore.test.ts`) still need *some* concrete, real-looking user id to seed and
  * assert against — this is that id, not a re-purposed stand-in.

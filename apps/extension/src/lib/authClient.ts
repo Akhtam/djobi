@@ -70,8 +70,9 @@ export async function signOut(): Promise<void> {
     try {
       const response = await fetch(`${EXTENSION_BACKEND_ORIGIN}/api/auth/sign-out`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         credentials: 'omit',
+        body: '{}',
       });
       if (response.ok) SignOutResultSchema.parse(await response.json());
     } catch {

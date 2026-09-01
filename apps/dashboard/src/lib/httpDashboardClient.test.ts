@@ -51,6 +51,58 @@ describe('listApplications', () => {
   });
 });
 
+describe('manual application calls', () => {
+  it('POSTs a job description for extraction', async () => {
+    const fetchMock = stubFetch({ jsonBody: sample.jobInfo });
+
+    await expect(httpDashboardClient.extractJob('Full posting text')).resolves.toEqual(
+      sample.jobInfo,
+    );
+    expect(fetchMock).toHaveBeenCalledWith('/extract-job', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jobDescription: 'Full posting text' }),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+  });
+
+  it('POSTs a new application and validates the full row response', async () => {
+    const { id: _id, createdAt: _createdAt, ...payload } = sample;
+    const fetchMock = stubFetch({ jsonBody: sample });
+
+    await expect(httpDashboardClient.createApplication(payload)).resolves.toEqual(sample);
+    expect(fetchMock).toHaveBeenCalledWith('/applications', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+  });
+
+  it('checks exact-URL duplicates through the compact query', async () => {
+    const summary = {
+      count: 1,
+      latest: {
+        id: sample.id,
+        company: sample.company,
+        roleTitle: sample.roleTitle,
+        stage: sample.stage,
+        createdAt: sample.createdAt,
+      },
+    };
+    const fetchMock = stubFetch({ jsonBody: summary });
+
+    await expect(
+      httpDashboardClient.findApplicationDuplicates('https://example.com/job?id=1'),
+    ).resolves.toEqual(summary);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/applications?jobUrl=https%3A%2F%2Fexample.com%2Fjob%3Fid%3D1&response=compact',
+    );
+  });
+});
+
 describe('getProfile', () => {
   it('GETs /profile and validates it', async () => {
     const profile = {
@@ -175,6 +227,8 @@ describe('signOut', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/sign-out', {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
       signal: expect.any(AbortSignal),
       credentials: 'include',
     });

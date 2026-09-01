@@ -65,8 +65,9 @@ describe('signOut', () => {
 
     expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/api/auth/sign-out`, {
       method: 'POST',
-      headers: { authorization: 'Bearer the-token' },
+      headers: { authorization: 'Bearer the-token', 'content-type': 'application/json' },
       credentials: 'omit',
+      body: '{}',
     });
     await expect(getAuthToken()).resolves.toBeUndefined();
   });

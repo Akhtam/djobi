@@ -68,6 +68,34 @@ describe('createFixtureDashboardClient', () => {
     const second = await client.getProfile();
     expect(second!.fullName).not.toBe('Mutated');
   });
+
+  it('creates a full application row and includes it in later lists', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
+    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0];
+
+    const created = await client.createApplication({
+      ...template,
+      company: 'New company',
+      roleTitle: 'New role',
+      jobUrl: 'https://example.com/jobs/new-role',
+      source: 'manual',
+    });
+
+    expect(created.id).toBeTruthy();
+    expect(created.createdAt).toBeTruthy();
+    expect(created.source).toBe('manual');
+    expect((await client.listApplications())[0]).toEqual(created);
+  });
+
+  it('reports duplicates for an exact posting URL', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    const existing = fixtureApplications[0];
+
+    await expect(client.findApplicationDuplicates(existing.jobUrl)).resolves.toMatchObject({
+      count: 1,
+      latest: { id: existing.id },
+    });
+  });
 });
 
 describe('createFixtureDashboardClient, auth', () => {
@@ -87,6 +115,12 @@ describe('createFixtureDashboardClient, auth', () => {
       client.addNote('app-sonar', { category: 'technical', text: 'x' }),
     ).rejects.toBeInstanceOf(HttpError);
     await expect(client.getProfile()).rejects.toBeInstanceOf(HttpError);
+    await expect(client.extractJob('posting')).rejects.toBeInstanceOf(HttpError);
+    await expect(client.findApplicationDuplicates('https://example.com')).rejects.toBeInstanceOf(
+      HttpError,
+    );
+    const { id: _id, createdAt: _createdAt, ...payload } = fixtureApplications[0];
+    await expect(client.createApplication(payload)).rejects.toBeInstanceOf(HttpError);
   });
 
   it('signs in with the default credentials and then serves normally', async () => {

@@ -13,6 +13,11 @@
  */
 import { createHttpTransport, HttpError } from '@djobi/http-client';
 import {
+  DuplicateApplicationSummarySchema,
+  type DuplicateApplicationSummary,
+  type ExtractJobRequest,
+  type JobInfo,
+  JobInfoSchema,
   type AddApplicationNoteRequest,
   AddApplicationNoteResultSchema,
   type AddApplicationNoteResult,
@@ -20,6 +25,8 @@ import {
   ApplicationSchema,
   type ApplicationStage,
   type NewNote,
+  NewApplicationSchema,
+  type NewApplicationRequest,
   type Note,
   type Profile,
   ProfileSchema,
@@ -47,6 +54,12 @@ const MaybeProfileSchema = ProfileSchema.nullable();
  */
 export interface DashboardClient {
   listApplications(): Promise<Application[]>;
+  /** Extracts the reviewable job details used by a manual dashboard entry. */
+  extractJob(jobDescription: string): Promise<JobInfo>;
+  /** Creates a manual application and returns the full authoritative row. */
+  createApplication(payload: NewApplicationRequest): Promise<Application>;
+  /** Existing rows saved against the exact posting URL, for the manual-entry warning. */
+  findApplicationDuplicates(jobUrl: string): Promise<DuplicateApplicationSummary>;
   /** Resolves with the authoritative Stage after an optimistic write. */
   updateStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult>;
   /** Appends to the notes log. `id`/`createdAt` are assigned by the server, never sent. */
@@ -105,9 +118,9 @@ const transport = createHttpTransport({
 /**
  * The production adapter: the same local Hono server the extension talks to.
  *
- * Full list rows are parsed through `ApplicationSchema` rather than cast. Write paths explicitly
- * request compact acknowledgements and parse their operation-specific schemas, avoiding a second
- * full-row database read after each write.
+ * Full rows are parsed through `ApplicationSchema` rather than cast. Tracking writes request compact
+ * acknowledgements; manual creation deliberately asks for the full row so the shared dashboard store
+ * can insert it without another list request.
  *
  * Write bodies are built against the shared wire schemas via `satisfies`, the same way
  * `apps/extension/src/lib/backendClient.ts` does it: a drift between what this sends and what the
@@ -115,6 +128,21 @@ const transport = createHttpTransport({
  */
 export const httpDashboardClient: DashboardClient = {
   listApplications: () => transport.json('/applications', ApplicationSchema.array()),
+
+  extractJob: (jobDescription) =>
+    transport.json('/extract-job', JobInfoSchema, {
+      method: 'POST',
+      body: { jobDescription } satisfies ExtractJobRequest,
+    }),
+
+  createApplication: (payload) =>
+    transport.json('/applications', ApplicationSchema, { method: 'POST', body: payload }),
+
+  findApplicationDuplicates: (jobUrl) =>
+    transport.json(
+      `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
+      DuplicateApplicationSummarySchema,
+    ),
 
   updateStage: (id, stage) =>
     transport.json(
@@ -140,7 +168,10 @@ export const httpDashboardClient: DashboardClient = {
   },
 
   signOut: async () => {
-    await transport.json('/api/auth/sign-out', SignOutResultSchema, { method: 'POST' });
+    await transport.json('/api/auth/sign-out', SignOutResultSchema, {
+      method: 'POST',
+      body: {},
+    });
   },
 };
 
@@ -227,6 +258,56 @@ export function createFixtureDashboardClient(
     listApplications: () => {
       if (!hasSession) return unauthorized('/applications');
       return Promise.resolve(structuredClone(applications));
+    },
+
+    extractJob: (jobDescription) => {
+      if (!hasSession) return unauthorized('/extract-job');
+      const first = applications[0]?.jobInfo;
+      return Promise.resolve(
+        structuredClone(
+          first ?? {
+            company: 'Example company',
+            team: null,
+            roleTitle: 'Example role',
+            seniority: null,
+            location: null,
+            requirements: [],
+            keywords: [],
+          },
+        ),
+      );
+    },
+
+    createApplication: (payload) => {
+      if (!hasSession) return unauthorized('/applications');
+      const parsed = NewApplicationSchema.parse(structuredClone(payload));
+      const application = ApplicationSchema.parse({
+        ...parsed,
+        id: `application-${Math.random().toString(36).slice(2, 10)}`,
+        createdAt: new Date().toISOString(),
+      });
+      applications = [application, ...applications];
+      return Promise.resolve(structuredClone(application));
+    },
+
+    findApplicationDuplicates: (jobUrl) => {
+      if (!hasSession) return unauthorized('/applications');
+      const matches = applications
+        .filter((application) => application.jobUrl === jobUrl)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const latest = matches[0];
+      return Promise.resolve({
+        count: matches.length,
+        latest: latest
+          ? {
+              id: latest.id,
+              company: latest.company,
+              roleTitle: latest.roleTitle,
+              stage: latest.stage,
+              createdAt: latest.createdAt,
+            }
+          : null,
+      });
     },
 
     updateStage: (id, stage) => {

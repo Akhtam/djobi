@@ -26,6 +26,15 @@ import * as schema from './db/schema.js';
 // it to this specific literal options object resolves to `Auth<BetterAuthOptions>` — a wider type
 // the actual instance below isn't assignable to.
 function createAuth() {
+  // Better Auth falls back to a well-known default signing key when `secret` is falsy — including
+  // the empty string `.env.example` ships for this var — with no warning, which would make every
+  // session token forgeable by anyone who knows that default. Fail loudly at first use instead of
+  // silently accepting it.
+  if (!process.env.BETTER_AUTH_SECRET) {
+    throw new Error(
+      'BETTER_AUTH_SECRET is not set. Set it in .env to a random value before starting the backend.',
+    );
+  }
   return betterAuth({
     database: drizzleAdapter(db, {
       provider: 'pg',
@@ -59,16 +68,15 @@ function createAuth() {
       database: {
         generateId: 'uuid',
       },
-      // The dashboard (`:5174`) and this backend (`:5391`) are different origins, so the session
-      // cookie is cross-site by construction — Better Auth's own default (`SameSite=Lax`) is sent
-      // back only on a top-level navigation, never on a cross-origin `fetch`, which is all this app
-      // ever does. Without this override, sign-in sets the cookie but the very next request (loading
-      // applications) never carries it back and reads as signed-out again. `SameSite=None` requires
-      // `Secure`; both `localhost` and `127.0.0.1` are treated as secure contexts by browsers even
-      // over plain `http`, so this works locally without TLS.
+      // `vite.config.ts`'s dev-server `proxy` makes the dashboard same-origin with this backend (see
+      // `dashboardClient.ts`'s `transport` comment), so the session cookie is same-site and Better
+      // Auth's own default (`SameSite=Lax`) is sent back on every `fetch` without an override.
+      // `Secure` is left off deliberately: `localhost`/`127.0.0.1` are secure contexts in Chrome and
+      // Firefox even over plain `http`, but Safari refuses to store a `Secure` cookie on an `http://`
+      // origin at all — sign-in would 200 and the very next request would 401, the exact symptom the
+      // proxy was added to fix. Nothing here forces TLS locally, so this stays correct with none.
       defaultCookieAttributes: {
-        sameSite: 'none',
-        secure: true,
+        sameSite: 'lax',
       },
     },
     user: {

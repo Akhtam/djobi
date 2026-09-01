@@ -1,6 +1,6 @@
 /**
  * The one description of an {@link ApplicationStage} for display, shared by the three places a
- * stage is rendered: the list card's editable badge, the detail page's segmented picker, and the
+ * stage is rendered: the list row's editable badge, the detail page's segmented picker, and the
  * list's filter pills.
  *
  * `ApplicationStageSchema.options` is the source of order, not a hand-written array. The schema
@@ -33,7 +33,7 @@ export const IN_PROGRESS_STAGES: readonly ApplicationStage[] = ['phone_screen', 
  * Not `STAGES`. The two rejections share a pill: they are both "this one is over", and splitting
  * them across two pills puts two of the five options on the same outcome while making the common
  * case (show me everything that ended) take two clicks and a mental union. The distinction still
- * shows on every card's badge and is still set from the stage picker; it just isn't a filter.
+ * shows on every row's badge and is still set from the stage picker; it just isn't a filter.
  *
  * Hand-listed for the same reason {@link IN_PROGRESS_STAGES} is: which stages collapse together is
  * a judgement, not something the enum's order can answer. `stageFilterOf` is the other half — a

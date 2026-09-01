@@ -210,16 +210,25 @@ export function Analytics({
           />
         </div>
 
-        <label className="analytics-toggle">
-          <input
-            type="checkbox"
-            checked={gapsOnly}
-            disabled={profileState.kind !== 'ready'}
-            onChange={(event) => setGapsOnly(event.target.checked)}
-          />
-          <span className="analytics-toggle__track" />
-          <span>Gaps only</span>
-        </label>
+        <div className="analytics-toggle-row">
+          <label className="analytics-toggle">
+            <input
+              type="checkbox"
+              aria-label="Gaps only"
+              aria-describedby="gaps-only-description"
+              checked={gapsOnly}
+              disabled={profileState.kind !== 'ready'}
+              onChange={(event) => setGapsOnly(event.target.checked)}
+            />
+            <span className="analytics-toggle__track" />
+            <span className="analytics-toggle__copy">
+              <span className="analytics-toggle__label">Gaps only</span>
+              <span id="gaps-only-description" className="analytics-toggle__description">
+                Show only keywords your profile doesn’t evidence yet.
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
 
       {applications.length === 0 ? null : filtered.length === 0 ? (

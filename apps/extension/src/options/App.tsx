@@ -249,7 +249,14 @@ export function App({ client }: { client: BackendClient }) {
         setDirty(false);
         setStatus({ kind: 'saved', message: 'Profile saved.' });
       })
-      .catch((error: Error) => setStatus({ kind: 'error', message: error.message }))
+      .catch((error: unknown) => {
+        if (isUnauthorized(error)) {
+          setUnauthorized(true);
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus({ kind: 'error', message });
+      })
       .finally(() => setSaving(false));
   }
 

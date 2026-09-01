@@ -6,7 +6,7 @@
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
  * place the real app's client is named, and it always names the HTTP one.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
@@ -73,6 +73,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     unauthorized,
     updateStage,
     addNote,
+    createApplication,
     reload,
   } = useApplicationStore(client);
 
@@ -94,6 +95,10 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     reload();
     replaceRoute(route.name === 'login' && route.from ? route.from : '#/');
   }
+
+  const handleNewApplicationUnauthorized = useCallback(() => {
+    replaceRoute(loginPath(window.location.hash));
+  }, [replaceRoute]);
 
   const application =
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
@@ -167,7 +172,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
         </div>
       </header>
 
-      <div className="page">
+      <div className={`page ${route.name === 'list' ? 'page--applications' : ''}`}>
         {/*
         A failed write is recoverable and must not replace the view — the user's change was
         reverted and they can retry. It is announced instead, above whatever they were looking at.
@@ -190,6 +195,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
           ) : route.name === 'list' ? (
             <ApplicationsList
               applications={applications}
+              client={client}
               filters={route.filters}
               shown={route.shown}
               onFiltersChange={(filters) =>
@@ -199,6 +205,8 @@ function DashboardApp({ client }: { client: DashboardClient }) {
               }
               onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
               onStageChange={(id, stage) => void updateStage(id, stage)}
+              onCreateApplication={createApplication}
+              onUnauthorized={handleNewApplicationUnauthorized}
             />
           ) : route.name === 'analytics' ? (
             <Analytics
