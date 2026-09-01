@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { ApplicationStageSchema } from '@djobi/shared';
+import { DEFAULT_RANGE, RANGES, type Range } from './analytics';
 import { stageFilterOf, type StageFilter } from './stages';
 
 /**
@@ -52,7 +53,29 @@ export interface ListFilters {
 export type ListRoute = { name: 'list'; filters: ListFilters; shown: number };
 /** One application's detail page. */
 export type DetailRoute = { name: 'detail'; id: string };
-export type Route = ListRoute | DetailRoute;
+/**
+ * The Analytics view: the same `?stage=` pill as the list, filtered instead by `?range=` — a
+ * different question ("what have I been applying to lately") over the same rows, so it borrows the
+ * list's stage vocabulary rather than inventing its own.
+ */
+export type AnalyticsRoute = { name: 'analytics'; range: Range; stage: StageFilter | null };
+export type Route = ListRoute | DetailRoute | AnalyticsRoute;
+
+/** A valid {@link Range}, or `null` for anything else — the same shape `stageFilterOf` answers in. */
+function rangeOf(value: string | null): Range | null {
+  return (RANGES as readonly string[]).includes(value ?? '') ? (value as Range) : null;
+}
+
+/**
+ * The `?stage=` pill, shared by the list and Analytics routes: parsed through the schema rather
+ * than cast, so `?stage=banana` means "no filter" rather than a stage nothing can render, and a
+ * valid stage with no pill of its own (`?stage=rejected_ats`) normalises onto the pill it shares
+ * rather than dropping the filter.
+ */
+function stageFilterFrom(params: URLSearchParams): StageFilter | null {
+  const stage = ApplicationStageSchema.safeParse(params.get('stage'));
+  return stage.success ? stageFilterOf(stage.data) : null;
+}
 
 /**
  * Parses a location hash into a {@link Route}.
@@ -61,14 +84,10 @@ export type Route = ListRoute | DetailRoute;
  * dashboard that renders "not found" because a URL has no fragment would be a worse answer than
  * showing the user their applications.
  *
- * A hash is user-editable text, so `stage` is parsed through the schema rather than cast: `?stage=
- * banana` has to mean "no stage filter", not a stage nothing can render. Same reasoning for the
- * unrecognised-hash fallback, one level down.
- *
- * A valid stage that has no pill of its own — `?stage=rejected_ats` — is normalised onto the pill
- * it shares rather than dropped. Both are things a person can end up with by hand-editing or from
- * a stale link, and landing on "all rejections" is closer to what was asked for than showing
- * everything.
+ * A hash is user-editable text, so `stage` and `range` are each parsed through a closed set rather
+ * than cast: `?stage=banana` has to mean "no stage filter" and `?range=lots` has to mean the
+ * default range, neither a value nothing can render. Same reasoning for the unrecognised-hash
+ * fallback, one level down.
  *
  * `?show=` is floored at one batch, but *not* capped: this function parses a URL and knows nothing
  * about how many applications exist. The list caps it against the real count at render time.
@@ -80,13 +99,21 @@ export function parseHash(hash: string): Route {
   if (match) return { name: 'detail', id: decodeURIComponent(match[1]) };
 
   const params = new URLSearchParams(search);
-  const stage = ApplicationStageSchema.safeParse(params.get('stage'));
+
+  if (path === '#/analytics') {
+    return {
+      name: 'analytics',
+      range: rangeOf(params.get('range')) ?? DEFAULT_RANGE,
+      stage: stageFilterFrom(params),
+    };
+  }
+
   const shown = Number(params.get('show'));
   return {
     name: 'list',
     filters: {
       query: params.get('q') ?? '',
-      stage: stage.success ? stageFilterOf(stage.data) : null,
+      stage: stageFilterFrom(params),
     },
     shown: Number.isInteger(shown) && shown > PAGE_SIZE ? shown : PAGE_SIZE,
   };
@@ -111,6 +138,20 @@ export function listPath(filters: ListFilters, shown: number = PAGE_SIZE): strin
   if (shown > PAGE_SIZE) params.set('show', String(shown));
   const search = params.toString();
   return search ? `#/?${search}` : '#/';
+}
+
+/**
+ * The path for the Analytics view under `range` and `stage` — the inverse of {@link parseHash}'s
+ * `#/analytics` branch. `range` is omitted at its default for the same reason `listPath` omits an
+ * empty filter: `#/analytics` and `#/analytics?range=7d` render identically, and only the shorter
+ * one is a URL worth keeping.
+ */
+export function analyticsPath(range: Range, stage: StageFilter | null): string {
+  const params = new URLSearchParams();
+  if (range !== DEFAULT_RANGE) params.set('range', range);
+  if (stage) params.set('stage', stage);
+  const search = params.toString();
+  return search ? `#/analytics?${search}` : '#/analytics';
 }
 
 export interface HashRoute {

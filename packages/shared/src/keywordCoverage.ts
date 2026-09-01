@@ -44,10 +44,14 @@ export interface KeywordCoverage {
  * a recruiter's filter reads first. A blank keyword is skipped rather than matched — it is
  * contained in every bullet, so scoring it would report a resume as covering something the posting
  * never asked for.
+ *
+ * `jobInfo` only needs `keywords` — the Analytics view asks this once per distinct keyword across a
+ * whole date range, against a synthesized `{ keywords: distinct }` that is not a real posting's
+ * `JobInfo` and has none of its other fields to give.
  */
 export function keywordCoverage(
   resume: TailoredResume,
-  jobInfo: JobInfo,
+  jobInfo: Pick<JobInfo, 'keywords'>,
   profile: Pick<Profile, 'workExperience'>,
 ): KeywordCoverage[] {
   const bullets = resume.workExperience.flatMap((entry) => entry.bullets);

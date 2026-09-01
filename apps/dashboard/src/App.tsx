@@ -1,5 +1,5 @@
 /**
- * The dashboard shell: theme, the one application store, and the route switch between the two
+ * The dashboard shell: theme, the one application store, and the route switch between the three
  * views.
  *
  * `client` is a prop rather than something this component constructs, so component tests can drive
@@ -11,7 +11,8 @@ import logoUrl from './assets/icons/djobi-icon.svg';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
 import { useApplicationStore } from './lib/useApplicationStore';
-import { listPath, useHashRoute } from './lib/useHashRoute';
+import { analyticsPath, listPath, useHashRoute } from './lib/useHashRoute';
+import { Analytics } from './views/Analytics';
 import { ApplicationDetail } from './views/ApplicationDetail';
 import { ApplicationsList } from './views/ApplicationsList';
 
@@ -25,16 +26,25 @@ export function App({ client }: { client: DashboardClient }) {
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
 
   /*
-    Where the detail page's back link points. The browser's own Back already returns to the
-    filtered list — that is what the push/replace split in `useHashRoute` buys — but the in-page
-    link has no history to read, so it needs the last list URL handed to it. A ref rather than
-    state: it only ever feeds the next render's href and must not cause one of its own.
+    Where the detail page's back link points, and what it calls that place. The browser's own Back
+    already returns to the filtered index route — that is what the push/replace split in
+    `useHashRoute` buys — but the in-page link has no history to read, so it needs the last index
+    URL handed to it. A ref rather than state: it only ever feeds the next render's href and must
+    not cause one of its own.
 
-    Deep-linking straight into a detail page leaves it at its initial `#/`, which is the right
-    answer there: there is no filtered list to go back to.
+    Written by whichever index route rendered last (Applications or Analytics), so a posting opened
+    from the Analytics requirements panel returns there with its range and stage intact rather than
+    being sent to the applications list by a hard-coded default.
+
+    Deep-linking straight into a detail page leaves it at its initial default, which is the right
+    answer there: there is no filtered index page to go back to.
   */
-  const listHref = useRef('#/');
-  if (route.name === 'list') listHref.current = listPath(route.filters, route.shown);
+  const backTarget = useRef({ href: '#/', label: 'Applications' });
+  if (route.name === 'list') {
+    backTarget.current = { href: listPath(route.filters, route.shown), label: 'Applications' };
+  } else if (route.name === 'analytics') {
+    backTarget.current = { href: analyticsPath(route.range, route.stage), label: 'Analytics' };
+  }
 
   return (
     <>
@@ -46,9 +56,9 @@ export function App({ client }: { client: DashboardClient }) {
       <header className="page-header">
         <div className="page-header__inner">
           {/*
-            The same brand lockup on every route. Going back to the list is the *page's* business,
-            not the chrome's, so the back link lives at the top of the detail view beside the
-            record it belongs to — see `ApplicationDetail`.
+            The same brand lockup on every route. Going back to an index route is the *page's*
+            business, not the chrome's, so the back link lives at the top of the detail view beside
+            the record it belongs to — see `ApplicationDetail`.
 
             The SVG rather than one of the PNGs: it stays crisp on a high-DPI display where a 26px
             raster wouldn't, and it's 642 bytes. It is emitted as a file rather than inlined as a
@@ -60,6 +70,26 @@ export function App({ client }: { client: DashboardClient }) {
             <img className="brand__logo" src={logoUrl} alt="" width={26} height={26} />
             <span className="wordmark">djobi</span>
           </a>
+          {/*
+            A peer of the brand lockup, not something `.page` lays out: the nav belongs to the
+            chrome that sits on every route, the same reason the brand link and theme toggle do.
+          */}
+          <nav className="nav" aria-label="Views">
+            <a
+              className="nav-link"
+              href="#/"
+              aria-current={route.name === 'list' ? 'page' : undefined}
+            >
+              Applications
+            </a>
+            <a
+              className="nav-link"
+              href="#/analytics"
+              aria-current={route.name === 'analytics' ? 'page' : undefined}
+            >
+              Analytics
+            </a>
+          </nav>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
@@ -95,16 +125,26 @@ export function App({ client }: { client: DashboardClient }) {
               onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
               onStageChange={(id, stage) => void updateStage(id, stage)}
             />
+          ) : route.name === 'analytics' ? (
+            <Analytics
+              applications={applications}
+              range={route.range}
+              stage={route.stage}
+              onFiltersChange={(range, stage) => replaceRoute(analyticsPath(range, stage))}
+              getProfile={client.getProfile}
+            />
           ) : application ? (
             <ApplicationDetail
               application={application}
-              backHref={listHref.current}
+              back={backTarget.current}
               onStageChange={(id, stage) => void updateStage(id, stage)}
               onAddNote={addNote}
             />
           ) : (
             <p className="empty-state">
-              No application with that id. <a href={listHref.current}>Back to all applications</a>.
+              No application with that id.{' '}
+              <a href={backTarget.current.href}>Back to {backTarget.current.label.toLowerCase()}</a>
+              .
             </p>
           )}
         </main>

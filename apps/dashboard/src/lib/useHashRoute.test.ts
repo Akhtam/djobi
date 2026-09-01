@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { applicationPath, listPath, PAGE_SIZE, parseHash, type ListFilters } from './useHashRoute';
+import {
+  analyticsPath,
+  applicationPath,
+  listPath,
+  PAGE_SIZE,
+  parseHash,
+  type ListFilters,
+} from './useHashRoute';
 
 /** The list route under no filters — what every hash without a query string parses to. */
 const unfiltered = { name: 'list', filters: { query: '', stage: null }, shown: PAGE_SIZE };
@@ -59,6 +66,62 @@ describe('parseHash', () => {
       filters: { query: 'a&b', stage: null },
       shown: PAGE_SIZE,
     });
+  });
+});
+
+describe('parseHash, analytics', () => {
+  it('reads the analytics route from its own hash, defaulting range and stage', () => {
+    expect(parseHash('#/analytics')).toEqual({ name: 'analytics', range: '7d', stage: null });
+  });
+
+  it('reads range and stage from the query string', () => {
+    expect(parseHash('#/analytics?range=7d&stage=interviewing')).toEqual({
+      name: 'analytics',
+      range: '7d',
+      stage: 'interviewing',
+    });
+  });
+
+  it('falls back to the default range for a value nothing recognises', () => {
+    expect(parseHash('#/analytics?range=lots')).toEqual({
+      name: 'analytics',
+      range: '7d',
+      stage: null,
+    });
+  });
+
+  it('normalises a stage that shares a pill, the same as the list route', () => {
+    expect(parseHash('#/analytics?stage=rejected_ats')).toEqual({
+      name: 'analytics',
+      range: '7d',
+      stage: 'rejected',
+    });
+  });
+
+  it('round-trips range and stage through analyticsPath', () => {
+    expect(parseHash(analyticsPath('60d', 'phone_screen'))).toEqual({
+      name: 'analytics',
+      range: '60d',
+      stage: 'phone_screen',
+    });
+  });
+});
+
+describe('analyticsPath', () => {
+  it('writes the bare analytics hash at the default range with no stage filter', () => {
+    expect(analyticsPath('7d', null)).toBe('#/analytics');
+  });
+
+  it('omits the range param at its default even with a stage set', () => {
+    expect(analyticsPath('7d', 'applied')).toBe('#/analytics?stage=applied');
+  });
+
+  it('writes a non-default range with no stage filter', () => {
+    expect(analyticsPath('30d', null)).toBe('#/analytics?range=30d');
+  });
+
+  it('writes both when both are set', () => {
+    expect(analyticsPath('14d', 'rejected')).toBe('#/analytics?range=14d&stage=rejected');
   });
 });
 

@@ -54,6 +54,17 @@ describe('extractJob', () => {
     expect(promptText()).toContain('Senior Software Engineer at Acme');
   });
 
+  it('instructs canonical keyword naming and non-fabrication of requirement kind/years', async () => {
+    mockDoGenerate.mockResolvedValue(objectGeneration(sampleJobInfo));
+
+    await extractJob('some page text');
+
+    expect(promptText()).toContain('canonical, expanded, industry-standard form');
+    expect(promptText()).toContain('Kubernetes');
+    expect(promptText()).toContain('never default to "required"');
+    expect(promptText()).toContain('leave it null rather than guessing');
+  });
+
   it('throws when the model answers with something that is not the object', async () => {
     mockDoGenerate.mockResolvedValue(generation('no can do'));
 

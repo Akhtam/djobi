@@ -3,9 +3,10 @@ import {
   ApplicationSourceSchema,
   ApplicationStageSchema,
   NoteCategorySchema,
+  ProfileSchema,
 } from '@djobi/shared';
 import { describe, expect, it } from 'vitest';
-import { fixtureApplications } from './fixtures';
+import { fixtureApplications, fixtureProfile } from './fixtures';
 
 describe('fixtureApplications', () => {
   it('every fixture is a valid Application', () => {
@@ -39,5 +40,21 @@ describe('fixtureApplications', () => {
   it('includes the empty-state rows the UI branches on', () => {
     expect(fixtureApplications.some((a) => a.notes.length === 0)).toBe(true);
     expect(fixtureApplications.some((a) => a.answers.length === 0)).toBe(true);
+  });
+});
+
+describe('fixtureProfile', () => {
+  it('is a valid Profile', () => {
+    expect(() => ProfileSchema.parse(fixtureProfile)).not.toThrow();
+  });
+
+  it('covers some but not all keywords fixtureApplications extracts, so a coverage report has both verdicts to show', () => {
+    const keywordTerms = new Set(
+      fixtureApplications.flatMap((a) => a.jobInfo.keywords.map((k) => k.term)),
+    );
+    const covered = [...keywordTerms].filter((term) => fixtureProfile.skills.includes(term));
+
+    expect(covered.length).toBeGreaterThan(0);
+    expect(covered.length).toBeLessThan(keywordTerms.size);
   });
 });

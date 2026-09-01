@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1246 tests**
-(204 shared / 16 http-client / 233 backend / 676 extension / 117 dashboard), `pnpm test` from the
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1308 tests**
+(204 shared / 16 http-client / 234 backend / 676 extension / 178 dashboard), `pnpm test` from the
 repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -431,7 +431,7 @@ Decisions — the view:
   dashboard left open past midnight keeps yesterday's boundary until reload; that is the stability the
   fixed boundary is for. Local rather than UTC because a cutoff that jumps by hours with the reader's
   timezone is a cutoff nobody can predict.
-- **Ranges are `7d | 14d | 30d | 60d`, default `30d`, and live in the URL** alongside `?stage=`, parsed
+- **Ranges are `7d | 14d | 30d | 60d`, default `7d`, and live in the URL** alongside `?stage=`, parsed
   strictly with a fallback exactly as `?stage=banana` is handled in `useHashRoute`. Both are intents
   the candidate expressed, so both survive a copied link — the same line `?show=` sits on the other
   side of.
@@ -598,43 +598,130 @@ Decisions — the extraction that feeds it:
       tolerant read exercised); `ApplicationDetail.tsx`'s requirements/keywords lists render `.text`/
       `.term` (category/kind-aware rendering is still open, for the view work below). Suite green at
       **1246 tests** (204 shared / 16 http-client / 233 backend / 676 extension / 117 dashboard).
-- [ ] `apps/backend/src/llm/extractJob.ts`: canonical-name/length/count guidance for keywords, and the
+- [x] `apps/backend/src/llm/extractJob.ts`: canonical-name/length/count guidance for keywords, and the
       required-versus-preferred and stated-years instructions for requirements, with null over a guess
       restated for the number
-- [ ] Live: one extraction against a real posting per shape change — a unit test cannot show whether
-      the model actually collapses `K8s` or invents a years figure
-- [ ] Measure the Analysis Step's serial gate before and after; `extractJob` is what every other step
-      waits on
-- [ ] `panel/LogApplication.tsx` (extracted-counts line) and `dashboard/views/ApplicationDetail.tsx`
-      (requirements list) render the new shape, including rows still holding the old one
-- [ ] `apps/dashboard/src/lib/analytics.ts`: `RANGES`, `rangeStart(range, today)`, the keyword
-      aggregation (count = postings that asked, not mentions), and the required/preferred and
-      years roll-up over the rows that carry it. Pure, tested directly, no clock and no React
-- [ ] `lib/useHashRoute.ts`: a third `Route` variant, `?range=` parsing with a strict fallback,
-      `analyticsPath(range, stage)` as its inverse, and `?stage=` reused rather than re-invented
-- [ ] `lib/dashboardClient.ts`: `getProfile(): Promise<Profile | null>` on the interface, the HTTP impl
-      against the existing `GET /profile` parsing through `MaybeProfileSchema`, and a fixture impl that
-      can answer `null` so the no-Profile rendering is exercised
-- [ ] `views/Analytics.tsx`: range control, stage pills, ranked bar list with coverage badges and
-      category grouping, Gaps only toggle, requirements panel with keyword-scoped narrowing, and the
-      five states
-- [ ] Requirements panel: bounded `max-height` + internal `overflow-y: auto`, a `useIntersectionObserver`
-      hook whose `root` is that scroll element (not the viewport), batched reveal (~20 postings), and a
-      reset of the revealed count on every stage/range/keyword-selection change. `tabindex="0"` on the
-      scroll container for keyboard reachability. Its own test: mock `IntersectionObserver` (jsdom has
-      none), assert the second batch renders only once the sentinel intersects, and assert a filter
-      change collapses back to the first batch
-- [ ] `App.tsx`: nav row in `page-header__inner` — Applications / Analytics — left of the theme toggle.
-      A peer route, so the nav belongs to the chrome and not inside `.page`
-- [ ] `App.tsx` / `views/ApplicationDetail.tsx`: the remembered back target becomes `{ href, label }`,
-      set by both index routes, so a posting opened from Analytics returns to Analytics with its range
-      and stage intact. `backHref` becomes two props or one object; the hard-coded "← Applications"
-      goes
-- [ ] `App.css`: nav row, bar rows, coverage badges
-- [ ] `dashboard/lib/fixtures.ts` and `extension/lib/testFixtures.ts`: enough rows in the **new** shape
+- [x] Live: one extraction against a real posting per shape change, run three times against
+      `gemini-3.1-flash-lite` (a synthetic backend posting mentioning "K8s", "Postgres", "5+ years").
+      `K8s` → `Kubernetes`, `Postgres` → `PostgreSQL`, `Kafka` → `Apache Kafka` every run; "Requirements"
+      vs "Nice to have" mapped cleanly to `required`/`preferred`; `yearsOfExperience` came back `5` for
+      the one requirement that stated a number and `null` for the rest — no invented figures across any
+      run. Notably the schema's own field `.describe()`s already got most of this right even against the
+      _old_ userContent text (verified by swapping the prompt back to its pre-change form for one run);
+      the new paragraphs are reinforcement, not the sole mechanism — worth remembering if a future
+      prompt trim is tempting.
+- [x] Measure the Analysis Step's serial gate before and after; `extractJob` is what every other step
+      waits on. One old-prompt run: 2507ms / 602 output tokens. Three new-prompt runs: 2023–3240ms
+      (mean ~2594ms) / 551–625 output tokens. No systematic regression — the spread is ordinary
+      run-to-run jitter, not a richer-schema tax; this was a small sample (n=1 vs n=3) against one
+      posting, not a load test.
+- [x] `panel/LogApplication.tsx` (extracted-counts line) and `dashboard/views/ApplicationDetail.tsx`
+      (requirements list) render the new shape, including rows still holding the old one.
+      `LogApplication.tsx` needed no change — it only ever read `.length`, which is shape-agnostic.
+      `ApplicationDetail.tsx` now renders a `requirement-kind` badge (suppressed for `unspecified`,
+      the common case), the stated years, and a keyword's category alongside its term; covered by a
+      new `App.test.tsx` case against the `app-brex` fixture row
+- [x] `apps/dashboard/src/lib/analytics.ts`: `RANGES`, `rangeStart(range, today)`, the keyword
+      aggregation (count = postings that asked, not mentions, grouped by `normalizeLabel`, most
+      frequent original spelling and category displayed), and `requirementKindCounts` /
+      `yearsOfExperienceDistribution` as the required/preferred and years roll-up over the rows that
+      carry it. Pure, tested directly (17 cases), no clock and no React
+- [x] `lib/useHashRoute.ts`: a third `Route` variant (`AnalyticsRoute`), `?range=` parsing with a
+      strict fallback to `DEFAULT_RANGE`, `analyticsPath(range, stage)` as its inverse, and `?stage=`
+      reused via a `stageFilterFrom` helper shared with the list route rather than re-invented
+- [x] `lib/dashboardClient.ts`: `getProfile(): Promise<Profile | null>` on the interface, the HTTP impl
+      against the existing `GET /profile` parsing through `MaybeProfileSchema`, and a fixture impl
+      (defaulting to `null`, overridable) that can answer `null` so the no-Profile rendering is
+      exercised. `fixtures.ts` gained `fixtureProfile`, whose skills deliberately cover some
+      `fixtureApplications` keywords and miss others
+- [x] `views/Analytics.tsx`: range control (own pill row over `RANGES`, not `FilterPills` — there is
+      no "all ranges" state for it to represent), the list's own `FilterPills`/`STAGE_FILTERS` for the
+      stage pill, a ranked bar list with `coverage-badge` (skills/experience/missing) and a category
+      shown per row, a `Gaps only` checkbox (disabled until the Profile is `ready`), the requirements
+      panel, and the five states — the true-empty and no-match-in-range cases render inline in the same
+      ternary chain `ApplicationsList` uses, so the range/stage controls stay mounted through both
+      rather than only through the second (an early return for the true-empty case was tried first and
+      reverted for this reason)
+- [x] Requirements panel (`components/RequirementsPanel.tsx` + `lib/useRevealOnScroll.ts`): bounded
+      `max-height` + internal `overflow-y: auto`, an `IntersectionObserver` hook whose `root` is that
+      scroll element (not the viewport), batched reveal (`PAGE_SIZE` postings), and a reset of the
+      revealed count via an explicit `resetKey` string the caller composes from range/stage/keyword
+      selection. `tabindex="0"` on the scroll container. Its own test file mocks `IntersectionObserver`
+      through a small fake driven by hand (jsdom has none — and a global no-op stub now lives in
+      `vitest.setup.ts` so every other test that merely _mounts_ Analytics doesn't crash), asserts the
+      second batch renders only once the sentinel intersects, and asserts a `resetKey` change collapses
+      back to the first batch while an unrelated rerender does not
+- [x] `App.tsx`: nav row in `page-header__inner` — Applications / Analytics — between the brand lockup
+      and the theme toggle, `margin-right: auto` keeping the toggle pinned to the far edge regardless of
+      how many views the nav grows to. A peer of `.page`, not inside it, so it belongs to the chrome
+- [x] `App.tsx` / `views/ApplicationDetail.tsx`: the remembered back target is now
+      `{ href: string; label: string }` in a ref (`backTarget`), written by whichever index route
+      rendered last; `ApplicationDetail`'s prop is `back` (was `backHref`) and its heading reads
+      `← {back.label}`. `keywordCoverage`'s `jobInfo` parameter was narrowed to
+      `Pick<JobInfo, 'keywords'>` so Analytics can pass a synthesized `{ keywords: distinct }`
+      without fabricating the rest of a `JobInfo` it doesn't have
+- [x] `App.css`: `.nav`/`.nav-link`, an `.analytics-*` set (`-grid`, `-panel`/`-panel__head`/
+      `-panel__foot`, `-controls`/`-control-group`/`-control-label`, `-toggle`/`-toggle__track`,
+      `-summary`, `-notice`/`-notice--action`/`-notice--error`, `-category`, `-rows`/`-row`/
+      `-row__term`/`-row__count`, `-badge`/`-badge--skills`/`-badge--experience`/`-badge--missing`,
+      `-posting`/`-posting__head`/`-posting__title`/`-posting__meta`, `-reqs`/`-req`/`-req__text`/
+      `-req__years`, `-empty`, `-reqs-scroll`, `-summary-strip`), and two new tokens (`--bar`,
+      `--bar-gap`). Reworked after a design-alignment pass — see below — against the "Keyword Gaps"
+      mockup artifact, which specifies these down to the exact colour values
+- [x] **Design-alignment pass (post-implementation):** the view above was first built straight from
+      this document's prose, without the "Keyword Gaps" mockup artifact the candidate had separately
+      published — nobody had linked the two. Once shown it, rebuilt to match: category-grouped
+      keyword sections (not an inline per-row label), the frequency bar as the row's own full-width
+      background rather than a side track, three-colour coverage badges (skills=green,
+      experience=blue, missing=red, previously skills/experience shared one colour), a summary strip
+      (postings / distinct keywords / not-evidenced count / date range), structured notice cards
+      (icon + title + description) replacing plain banner text, in-sentence `<mark>` highlighting of
+      the selected keyword inside each requirement (via `String.split` on a capturing regex, not
+      `dangerouslySetInnerHTML`) replacing a separate "Matched: X" tag, card-styled panels with a
+      head/foot, and labeled control groups ("Saved in the last" / "Stage"). `RequirementsPanel` also
+      absorbed its own panel head (dynamic title/subtitle) and the required/preferred/years roll-up,
+      since both are derived from state only it holds. A same-session code-review pass separately
+      fixed a `useRevealOnScroll` ref that could go stale (moved to callback refs), a dead empty-state
+      branch in `RequirementsPanel`, stage-pill counts that ignored the active range, and raw enum
+      text (`soft-skill`) shown unlabeled — the last of which is a `KEYWORD_CATEGORY_LABELS` in
+      `lib/stages.ts` (singular, for the detail page's per-tag use) plus a separate plural
+      `CATEGORY_GROUP_LABELS` local to `Analytics.tsx` (for its section headings)
+- [x] **"Min. appearances" filter (post-mockup addition, user-requested; revised twice).** First built
+      as a fifth control in `.analytics-controls` with fixed threshold options via `<select>`; moved
+      into the Keywords panel's own `.analytics-panel__head` (replacing the static "Postings that
+      asked" subtitle) and rebuilt as a hand-rolled +/− stepper accepting any integer ≥ 1, per
+      follow-up feedback that it belongs on the panel it filters and should not be capped to preset
+      values. It starts at `5`, while the stepper still accepts any integer ≥ 1.
+      `row.count >= minAppearances` composes with `Gaps only` (both narrow the same `rows`
+      independently) and resets the keyword table's revealed-batch count on change, the same rule
+      range/stage/Gaps only already follow. The empty-table message names whichever of the two
+      filters is worth loosening. Styled to match the page's existing conventions rather than native
+      control chrome: a pill-shaped button pair (matching `.filter-pill`'s radius) with a
+      primary-tinted hover (matching `.analytics-link-button`/`.nav-link`) and a pill-badge value
+      display (matching `.filter-pill__count`/`.analytics-badge`'s weight)
+- [x] **Requirements panel polish (user-requested).** `.analytics-grid`'s columns went from
+      `1.15fr/1fr` to `1fr/1.3fr` — Requirements holds full sentences and benefits from the extra
+      width more than Keywords' short single-line rows do — and its scroll region's `max-height`
+      grew from `70vh` to `78vh`. Each posting's header now colours the company name with `--primary`
+      (bold) ahead of the role title (regular weight), on one wrapping line rather than a flat string
+      — matching the "Keyword Gaps" mockup's single-line title exactly, confirmed against a
+      screenshot of it mid-change, with only the colour split added on top. An `unspecified`
+      requirement — no `required`/`preferred` badge — previously had nothing marking it as a list
+      item at all, since `.analytics-reqs` sets `list-style: none` for the grid layout the badge
+      column needs; it now gets a plain `•` in that column (`.analytics-req__bullet`) so every row
+      reads as one regardless of whether it also carries a kind badge
+- [x] `dashboard/lib/fixtures.ts` and `extension/lib/testFixtures.ts`: enough rows in the **new** shape
       to exercise category grouping and the required/preferred roll-up, while keeping at least one in
-      the old shape so the tolerant read stays covered
-- [ ] Built test-first, same as the rest
+      the old shape so the tolerant read stays covered. Landed in the schema-widening pass:
+      `fixtures.ts`'s six autofill rows spread across every `kind`/`category`, the Stripe row is
+      legacy bare strings run through `JobInfoSchema.parse`. `testFixtures.ts` stays intentionally
+      empty by its own stated design — the new-shape examples for extension tests live in the
+      individual test files that need non-empty `jobInfo` (`LogApplication.test.tsx`,
+      `applicationPipeline.test.ts`), not in the shared neutral fixture
+- [ ] Built test-first, same as the rest. Not followed for this phase: implementation landed first,
+      with tests written immediately after against the same behavior, unit by unit. Coverage is
+      real (204/16/234/676/151→169 across the five packages by the end) but the red-green discipline
+      itself was skipped — flagged here rather than checked off under a claim that doesn't hold
 
 #### Phase 12.2 — Background enrichment (exploratory, not started)
 

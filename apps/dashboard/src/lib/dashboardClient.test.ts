@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createFixtureDashboardClient } from './dashboardClient';
-import { fixtureApplications } from './fixtures';
+import { fixtureApplications, fixtureProfile } from './fixtures';
 
 describe('createFixtureDashboardClient', () => {
   it('lists the seed applications', async () => {
@@ -47,5 +47,24 @@ describe('createFixtureDashboardClient', () => {
     await client.updateStage('app-sonar', 'rejected');
 
     expect(fixtureApplications.find((a) => a.id === 'app-sonar')?.stage).toBe('applied');
+  });
+
+  it('defaults getProfile to null, since most callers neither know nor care about it', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    await expect(client.getProfile()).resolves.toBeNull();
+  });
+
+  it('resolves getProfile with the profile a caller passed in', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
+    await expect(client.getProfile()).resolves.toEqual(fixtureProfile);
+  });
+
+  it('does not hand getProfile out as a reference callers can mutate', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
+    const first = await client.getProfile();
+    first!.fullName = 'Mutated';
+
+    const second = await client.getProfile();
+    expect(second!.fullName).not.toBe('Mutated');
   });
 });

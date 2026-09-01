@@ -5,10 +5,10 @@
  */
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { createFixtureDashboardClient, type DashboardClient } from './lib/dashboardClient';
-import { fixtureApplications } from './lib/fixtures';
+import { fixtureApplications, fixtureProfile } from './lib/fixtures';
 import { PAGE_SIZE } from './lib/useHashRoute';
 
 function renderApp(client: DashboardClient = createFixtureDashboardClient(fixtureApplications)) {
@@ -50,6 +50,11 @@ async function tabTo(user: ReturnType<typeof userEvent.setup>, target: HTMLEleme
     await user.tab();
   }
   expect(target).toHaveFocus();
+}
+
+async function lowerAnalyticsMinimumToOne(user: ReturnType<typeof userEvent.setup>) {
+  const decrease = await screen.findByRole('button', { name: 'Decrease minimum appearances' });
+  for (let value = 5; value > 1; value--) await user.click(decrease);
 }
 
 /** The list renders one card per application; each card's link is the role title. */
@@ -322,6 +327,18 @@ describe('routing', () => {
     renderApp();
 
     expect(await screen.findByRole('heading', { name: 'Product Engineer' })).toBeInTheDocument();
+  });
+
+  it('renders requirement kind/years badges and keyword categories from the widened JobInfo shape', async () => {
+    window.location.hash = '#/applications/app-brex';
+    renderApp();
+
+    await screen.findByRole('heading', { name: 'Senior Frontend Engineer' });
+
+    expect(screen.getByText('required')).toBeInTheDocument();
+    expect(screen.getByText('preferred')).toBeInTheDocument();
+    expect(screen.getByText(/\(5\+ yrs\)/)).toBeInTheDocument();
+    expect(screen.getByText('· Framework')).toBeInTheDocument();
   });
 
   it('shows the same brand header on both routes', async () => {
@@ -673,8 +690,248 @@ describe('failures', () => {
       listApplications: () => Promise.reject(new Error('backend is not running')),
       updateStage: () => Promise.reject(new Error('unused')),
       addNote: () => Promise.reject(new Error('unused')),
+      getProfile: () => Promise.reject(new Error('unused')),
     });
 
     expect(await screen.findByRole('alert')).toHaveTextContent('backend is not running');
+  });
+});
+
+describe('analytics', () => {
+  // `fixtures.ts` is left alone (its `createdAt` values are absolute and already months stale), so
+  // this is the one test file that fakes the clock — `rangeStart` taking `today` as a parameter is
+  // what keeps everything else clock-free. Noon UTC keeps the local calendar date the same day
+  // across the timezones this suite is likely to run under.
+  beforeEach(() => {
+    window.location.hash = '#/analytics';
+    vi.setSystemTime(new Date('2026-03-20T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is reachable from the nav and marks itself current', async () => {
+    window.location.hash = '#/';
+    const { user } = renderApp();
+
+    await user.click(await screen.findByRole('link', { name: 'Analytics' }));
+
+    expect(await screen.findByRole('heading', { name: 'Analytics' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Analytics' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Applications' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('shows a keyword frequency table over the default 7-day range', async () => {
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+
+    // React is asked for by Anthropic, Brex and Linear within seven days of the fixed clock.
+    const reactRow = await screen.findByRole('button', { name: /React/ });
+    expect(within(reactRow).getByText('3')).toBeInTheDocument();
+  });
+
+  it('groups the keyword table into category sections', async () => {
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+
+    await screen.findByRole('button', { name: /React/ });
+    expect(screen.getByText('Frameworks')).toBeInTheDocument();
+    expect(screen.getByText('Domains')).toBeInTheDocument();
+  });
+
+  it('narrows the keyword table to terms that appeared at least N times', async () => {
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+    await screen.findByRole('button', { name: /GraphQL/ });
+
+    const increase = screen.getByRole('button', { name: 'Increase minimum appearances' });
+    await user.click(increase);
+
+    // React (3) and TypeScript (2) cleared the bar; GraphQL and Next.js (1 each) did not.
+    expect(screen.getByRole('button', { name: /React/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /TypeScript/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /GraphQL/ })).not.toBeInTheDocument();
+  });
+
+  it('cannot decrease the minimum below 1, and shows the current value', async () => {
+    const { user } = renderApp();
+
+    const stepper = await screen.findByRole('group', { name: 'Min. appearances' });
+    const decrease = within(stepper).getByRole('button', { name: 'Decrease minimum appearances' });
+    expect(within(stepper).getByText('5')).toBeInTheDocument();
+    expect(decrease).not.toBeDisabled();
+
+    for (let value = 5; value > 1; value--) await user.click(decrease);
+    expect(decrease).toBeDisabled();
+
+    const increase = within(stepper).getByRole('button', { name: 'Increase minimum appearances' });
+    await user.click(increase);
+    await user.click(increase);
+    expect(within(stepper).getByText('3')).toBeInTheDocument();
+
+    await user.click(decrease);
+    expect(within(stepper).getByText('2')).toBeInTheDocument();
+  });
+
+  it('explains an empty keyword table caused by the appearance filter', async () => {
+    renderApp();
+
+    expect(await screen.findByText('No keywords match these filters')).toBeInTheDocument();
+    // The range/stage controls stay usable — the same rule every other empty state here follows.
+    expect(screen.getByRole('button', { name: 'Increase minimum appearances' })).toBeInTheDocument();
+  });
+
+  it('shows a summary strip over the filtered range', async () => {
+    const { container } = renderApp();
+
+    await screen.findByRole('group', { name: 'Min. appearances' });
+    // Anthropic, Linear and Brex fall within the default seven-day range.
+    const summary = container.querySelector('.analytics-summary');
+    expect(summary).toHaveTextContent('3 postings');
+  });
+
+  it('highlights the selected keyword inside each requirement’s text', async () => {
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+    const reactRow = await screen.findByRole('button', { name: /^React/ });
+
+    await user.click(reactRow);
+
+    // Both Anthropic's and Brex's first requirement mention "React" in the sentence itself.
+    const marks = await screen.findAllByText('React', { selector: 'mark' });
+    expect(marks.length).toBeGreaterThan(0);
+  });
+
+  it('marks an unspecified requirement with a bullet, since it carries no kind badge', async () => {
+    renderApp();
+
+    // Brex's "Comfort owning a service end to end" is the one fixture requirement left unspecified.
+    const text = await screen.findByText(/Comfort owning a service end to end/);
+    const row = text.closest('li');
+    expect(row?.querySelector('.analytics-req__bullet')).toHaveTextContent('•');
+  });
+
+  it('narrows the range and drops postings outside it', async () => {
+    window.location.hash = '#/analytics?range=30d';
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+    await screen.findByRole('button', { name: /React/ });
+
+    await user.click(screen.getByRole('button', { name: '7 days' }));
+
+    // Only Anthropic (3/19), Linear (3/16) and Brex (3/14) fall within 7 days of 3/20.
+    const reactRow = await screen.findByRole('button', { name: /React/ });
+    expect(within(reactRow).getByText('3')).toBeInTheDocument();
+  });
+
+  it('filters by stage using the same pills the applications list uses', async () => {
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+    await screen.findByRole('button', { name: /React/ });
+
+    await user.click(screen.getByRole('button', { name: /^Interviewing/ }));
+
+    // Brex is the only interviewing-stage posting inside the default 7-day range — Stripe is also
+    // interviewing but its createdAt falls outside it.
+    expect(screen.getByRole('button', { name: /GraphQL/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Next\.js/ })).not.toBeInTheDocument();
+  });
+
+  it('counts a stage pill against the selected range, not against every application ever saved', async () => {
+    renderApp();
+    await screen.findByRole('group', { name: 'Min. appearances' });
+
+    // Two applications are interviewing-stage (Brex and the legacy Stripe row), but Stripe's
+    // createdAt falls outside the default 7-day range — the pill must count only Brex.
+    expect(screen.getByRole('button', { name: /^Interviewing/ })).toHaveAccessibleName(
+      'Interviewing1',
+    );
+  });
+
+  it('shows a notice instead of coverage badges when no Profile is saved', async () => {
+    renderApp(createFixtureDashboardClient(fixtureApplications));
+
+    expect(await screen.findByText(/No profile saved yet/)).toBeInTheDocument();
+  });
+
+  it('shows a failure notice when the Profile cannot be reached', async () => {
+    renderApp({
+      ...createFixtureDashboardClient(fixtureApplications),
+      getProfile: () => Promise.reject(new Error('backend is not running')),
+    });
+
+    expect(await screen.findByText(/Couldn.t load your profile/)).toBeInTheDocument();
+    expect(screen.getByText(/backend is not running/)).toBeInTheDocument();
+  });
+
+  it('shows coverage badges and narrows Gaps only to what the Profile does not evidence', async () => {
+    const { user } = renderApp(createFixtureDashboardClient(fixtureApplications, fixtureProfile));
+    await lowerAnalyticsMinimumToOne(user);
+
+    // React is in fixtureProfile's skills — covered. Next.js is not, and evidences nowhere else.
+    const reactRow = await screen.findByRole('button', { name: /React/ });
+    expect(within(reactRow).getByText('In skills')).toBeInTheDocument();
+    const nextJsRow = screen.getByRole('button', { name: /Next\.js/ });
+    expect(within(nextJsRow).getByText('Gap')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Gaps only' }));
+
+    expect(screen.queryByRole('button', { name: /^React / })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Next\.js/ })).toBeInTheDocument();
+  });
+
+  it('narrows the requirements panel to postings that asked for a selected keyword', async () => {
+    window.location.hash = '#/analytics?range=30d';
+    const { user } = renderApp();
+    await lowerAnalyticsMinimumToOne(user);
+    const nextJsRow = await screen.findByRole('button', { name: /Next\.js/ });
+
+    await user.click(nextJsRow);
+
+    // Next.js is asked for by Anthropic and Vercel; Brex is not.
+    expect(
+      await screen.findByRole('link', { name: /Anthropic — Member of Technical Staff, Product/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Vercel — Software Engineer, Developer Experience/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /Brex — Senior Frontend Engineer/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('returns to Analytics with its filters intact from a posting opened in the requirements panel', async () => {
+    const { user } = renderApp();
+    await user.click(await screen.findByRole('button', { name: '30 days' }));
+    const link = await screen.findByRole('link', {
+      name: /Anthropic — Member of Technical Staff, Product/,
+    });
+
+    await user.click(link);
+
+    const back = await screen.findByRole('link', { name: '← Analytics' });
+    expect(back).toHaveAttribute('href', '#/analytics?range=30d');
+  });
+
+  it('keeps the range and stage controls visible when nothing is in range', async () => {
+    const { user } = renderApp();
+    await screen.findByRole('group', { name: 'Min. appearances' });
+    // Ramp (3/8) is the only phone_screen-stage posting, and it falls outside 7 days of 3/20.
+    await user.click(screen.getByRole('button', { name: /^Phone screen/ }));
+
+    expect(
+      await screen.findByText(/Widen the range or change the stage filter/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '7 days' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Phone screen/ })).toBeInTheDocument();
+  });
+
+  it('shows the empty state with no applications at all', async () => {
+    renderApp(createFixtureDashboardClient([]));
+
+    expect(
+      await screen.findByText(/No applications yet\. Fill one in with the extension/),
+    ).toBeInTheDocument();
   });
 });

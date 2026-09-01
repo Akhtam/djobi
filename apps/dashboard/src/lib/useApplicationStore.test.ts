@@ -38,6 +38,7 @@ function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
         id,
         note: { ...appended, id: `note-${Math.random()}`, createdAt: '2026-01-01T00:00:00.000Z' },
       }),
+    getProfile: () => Promise.resolve(null),
     ...overrides,
   };
 }

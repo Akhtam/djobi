@@ -21,10 +21,19 @@ import {
   type ApplicationStage,
   type NewNote,
   type Note,
+  type Profile,
+  ProfileSchema,
   type UpdateApplicationStageRequest,
   UpdateApplicationStageResultSchema,
   type UpdateApplicationStageResult,
 } from '@djobi/shared';
+
+/**
+ * What `GET /profile` answers with. Nullable rather than optional: `null` is the real answer for a
+ * candidate who hasn't set a Profile up yet, not a missing response — the same schema
+ * `apps/extension/src/lib/backendClient.ts` builds for the same route.
+ */
+const MaybeProfileSchema = ProfileSchema.nullable();
 
 /**
  * Everything the dashboard needs from the outside world.
@@ -39,6 +48,13 @@ export interface DashboardClient {
   updateStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult>;
   /** Appends to the notes log. `id`/`createdAt` are assigned by the server, never sent. */
   addNote(id: string, note: NewNote): Promise<AddApplicationNoteResult>;
+  /**
+   * The single stored Profile, or `null` before the candidate has saved one.
+   *
+   * The first thing the dashboard needs beyond Applications — fetched only by the Analytics view's
+   * coverage report, so the list and detail views must not start paying for it.
+   */
+  getProfile(): Promise<Profile | null>;
 }
 
 /**
@@ -91,6 +107,8 @@ export const httpDashboardClient: DashboardClient = {
       AddApplicationNoteResultSchema,
       { method: 'POST', body: note satisfies AddApplicationNoteRequest },
     ),
+
+  getProfile: () => transport.json('/profile', MaybeProfileSchema),
 };
 
 /**
@@ -104,8 +122,15 @@ export const httpDashboardClient: DashboardClient = {
  * `id` and `createdAt` on an appended note are generated here rather than accepted from the caller,
  * mimicking the rule `NoteSchema` states and `POST /applications/:id/notes` enforces: a note whose timestamp
  * the sender chose isn't trustworthy history.
+ *
+ * `profile` defaults to `null` — no Profile saved — rather than to a populated one, since that is
+ * the state most existing fixture callers neither know nor care about; a case that does pass it
+ * explicitly.
  */
-export function createFixtureDashboardClient(seed: Application[]): DashboardClient {
+export function createFixtureDashboardClient(
+  seed: Application[],
+  profile: Profile | null = null,
+): DashboardClient {
   let applications: Application[] = structuredClone(seed);
 
   function find(id: string): Application | undefined {
@@ -141,5 +166,7 @@ export function createFixtureDashboardClient(seed: Application[]): DashboardClie
       replace({ ...application, notes: [...application.notes, appended] });
       return Promise.resolve({ id, note: structuredClone(appended) });
     },
+
+    getProfile: () => Promise.resolve(profile ? structuredClone(profile) : null),
   };
 }

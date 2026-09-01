@@ -15,20 +15,22 @@ import { NotesLog } from '../components/NotesLog';
 import { PostingLink } from '../components/PostingLink';
 import { StageSelect } from '../components/StageSelect';
 import { formatDate } from '../lib/format';
+import { KEYWORD_CATEGORY_LABELS } from '../lib/stages';
 
 export function ApplicationDetail({
   application,
-  backHref,
+  back,
   onStageChange,
   onAddNote,
 }: {
   application: Application;
   /**
-   * Where "all applications" goes back to — the list *as the user left it*, filters included, not
-   * a bare `#/`. Passed in because this page cannot know it: the filters live in the list's URL,
-   * which is one history entry back. See `App`.
+   * Where the back link returns to, and what it calls that place — the index route *as the user
+   * left it*, filters included, not a bare `#/`. Passed in because this page cannot know it: both
+   * index routes (Applications, Analytics) can be one history entry back, each with its own
+   * filters, and only `App` knows which one rendered last. See `App`.
    */
-  backHref: string;
+  back: { href: string; label: string };
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
 }) {
@@ -43,8 +45,8 @@ export function ApplicationDetail({
   return (
     <article className="detail">
       <header className="detail__header">
-        <a className="back-link" href={backHref}>
-          ← Applications
+        <a className="back-link" href={back.href}>
+          ← {back.label}
         </a>
         <h1>{application.roleTitle}</h1>
         <p className="detail__subtitle">{subtitle}</p>
@@ -100,7 +102,20 @@ export function ApplicationDetail({
             <h3>Requirements</h3>
             <ul className="bullets">
               {jobInfo.requirements.map((requirement) => (
-                <li key={requirement.text}>{requirement.text}</li>
+                <li key={requirement.text}>
+                  {requirement.kind !== 'unspecified' ? (
+                    <span className={`requirement-kind requirement-kind--${requirement.kind}`}>
+                      {requirement.kind}
+                    </span>
+                  ) : null}
+                  {requirement.text}
+                  {requirement.yearsOfExperience !== null ? (
+                    <span className="requirement-years">
+                      {' '}
+                      ({requirement.yearsOfExperience}+ yrs)
+                    </span>
+                  ) : null}
+                </li>
               ))}
             </ul>
           </>
@@ -112,6 +127,12 @@ export function ApplicationDetail({
               {jobInfo.keywords.map((keyword) => (
                 <li key={keyword.term} className="tag">
                   {keyword.term}
+                  {keyword.category ? (
+                    <span className="tag__category">
+                      {' '}
+                      · {KEYWORD_CATEGORY_LABELS[keyword.category]}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

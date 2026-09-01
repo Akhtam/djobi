@@ -17,9 +17,15 @@
  * The Stripe row is deliberately left as bare strings, its earliest `createdAt` standing in for a
  * row logged before this shape existed, and is run through `JobInfoSchema.parse` so it exercises
  * the tolerant read the same way a stored row would rather than merely satisfying the type.
+ *
+ * `fixtureProfile` below is `getProfile`'s "ready" state — the third state, `null`, is what
+ * `createFixtureDashboardClient` defaults to, since most existing callers neither know nor care
+ * about it. Its `skills` deliberately cover some of the terms `fixtureApplications` extracts
+ * (TypeScript, React, GraphQL, Go) and miss others (Java, Ruby, Next.js, observability, ...), so a
+ * coverage report built over it has both verdicts to show rather than a wall of one.
  */
 import { JobInfoSchema } from '@djobi/shared';
-import type { Application } from '@djobi/shared';
+import type { Application, Profile } from '@djobi/shared';
 
 export const fixtureApplications: Application[] = [
   {
@@ -477,3 +483,31 @@ export const fixtureApplications: Application[] = [
     ],
   },
 ];
+
+export const fixtureProfile: Profile = {
+  fullName: 'Jordan Rivera',
+  email: 'jordan.rivera@example.com',
+  phone: null,
+  location: 'Remote',
+  links: { linkedin: null, portfolio: null, github: null },
+  workExperience: [
+    {
+      company: 'Northwind',
+      title: 'Senior Engineer',
+      startDate: '2022-01',
+      endDate: null,
+      bullets: [
+        'Led the migration of a 400-component design system to CSS custom properties, cutting bundle size 18%.',
+        'Reduced p99 checkout latency from 2.4s to 480ms by moving fee calculation off the request path.',
+      ],
+      maxBullets: null,
+      starredIndices: [],
+    },
+  ],
+  maxBulletsPerRole: 6,
+  education: [],
+  skills: ['TypeScript', 'React', 'Node.js', 'GraphQL', 'Go', 'SQL'],
+  stories: [],
+  screeningAnswers: {},
+  customAnswers: [],
+};

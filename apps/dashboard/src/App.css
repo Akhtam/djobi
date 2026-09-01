@@ -34,6 +34,10 @@
   --stage-applied-bg: rgb(59 92 216 / 12%);
   --stage-phone-fg: #8450d8;
   --stage-phone-bg: rgb(132 80 216 / 12%);
+  /* The Analytics keyword bar's fill — a tint of `--primary`/`--danger` rather than a flat colour,
+     since the bar sits behind the row's own text and a saturated fill would fight it for contrast. */
+  --bar: rgb(99 86 216 / 14%);
+  --bar-gap: rgb(224 67 92 / 14%);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -63,6 +67,8 @@
   --stage-applied-bg: rgb(109 127 240 / 16%);
   --stage-phone-fg: #bd97f5;
   --stage-phone-bg: rgb(166 132 240 / 16%);
+  --bar: rgb(143 131 242 / 18%);
+  --bar-gap: rgb(255 120 144 / 16%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
 }
@@ -202,6 +208,38 @@ h3 {
   stroke-linecap: round;
 }
 
+/*
+ * The nav sits between the brand lockup and the theme toggle, and grows to fill the space between
+ * them — `margin-right: auto` rather than `justify-content` on the row, so the toggle stays pinned
+ * to the far edge regardless of how many views the nav ever grows to.
+ */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  margin-left: 20px;
+}
+
+.nav-link {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.nav-link:hover {
+  color: var(--text);
+}
+
+.nav-link[aria-current='page'] {
+  background: var(--surface-muted);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
 /* ── Shared bits ────────────────────────────────────────────────────────── */
 
 .banner {
@@ -302,6 +340,42 @@ h3 {
 
 .bullets li {
   margin-bottom: 4px;
+}
+
+/*
+ * `required`/`preferred`, read off a posting's own headings — see `JobRequirementSchema`.
+ * `unspecified` renders no badge at all rather than a third color: most postings draw no
+ * distinction, and badging the common case would make the two that matter harder to spot.
+ */
+.requirement-kind {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.requirement-kind--required {
+  background: var(--stage-phone-bg);
+  color: var(--stage-phone-fg);
+}
+
+.requirement-kind--preferred {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.requirement-years {
+  color: var(--text-muted);
+}
+
+.tag__category {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* ── Stage colours ──────────────────────────────────────────────────────── */
@@ -839,6 +913,576 @@ h3 {
   border-color: var(--primary);
 }
 
+/* ── Analytics ──────────────────────────────────────────────────────────── */
+
+.analytics-head {
+  margin-bottom: 20px;
+}
+
+.analytics-head h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+.analytics-head p {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  color: var(--text-muted);
+}
+
+/* A card, not a bare row of controls — the same `--shadow-sm`/`--border` treatment `.search` and
+   `.list-filters` sit in, so the control surface reads as one thing rather than three floating
+   pieces. */
+.analytics-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.analytics-control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analytics-control-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/*
+ * The Keywords panel's own "Min. appearances" filter — a hand-rolled counter rather than a native
+ * `<input type=number>`, matching the toggle switch below: this app reskins controls that need a
+ * specific look instead of leaning on inconsistent browser chrome (a number input's spin buttons
+ * vary widely in size and style across browsers, and are barely visible in some).
+ */
+.analytics-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analytics-stepper__label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.analytics-stepper__control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 3px;
+}
+
+/* Same accent the rest of the page reaches for on an interactive control — `.analytics-link-button`
+   and `.nav-link` both go primary-tinted on hover rather than a flat neutral gray. */
+.analytics-stepper__button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.analytics-stepper__button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.analytics-stepper__button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.analytics-stepper__button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+/* A pill within a pill, the same weight `.filter-pill__count` and `.analytics-badge` already carry
+   for a number that matters — the value is the point of this control, not a label beside it. */
+.analytics-stepper__value {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/*
+ * A real checkbox under a hand-drawn switch, not a styled `<input type=checkbox>` directly —
+ * browsers render checkboxes too inconsistently to reskin in place. The input stays interactive
+ * and focusable; only its box is hidden, so a screen reader and Tab still see an ordinary checkbox.
+ */
+.analytics-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+.analytics-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.analytics-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.analytics-toggle__track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: background 0.15s ease;
+}
+
+.analytics-toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 1px var(--border);
+  transition: transform 0.15s ease;
+}
+
+/* Checked state reads danger-red rather than primary: "Gaps only" is a filter onto problems, and
+   the on-state should look like a warning light, not like the rest of the app's affirmative blue. */
+.analytics-toggle input:checked + .analytics-toggle__track {
+  background: var(--danger);
+  box-shadow: none;
+}
+
+.analytics-toggle input:checked + .analytics-toggle__track::after {
+  box-shadow: none;
+  transform: translateX(14px);
+}
+
+.analytics-toggle input:focus-visible + .analytics-toggle__track {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.analytics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin-bottom: 18px;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.analytics-summary b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.analytics-summary .gap-count {
+  color: var(--danger);
+}
+
+.analytics-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  font-size: 13px;
+}
+
+.analytics-notice--action {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+
+.analytics-notice--error {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-bg);
+}
+
+.analytics-notice__icon {
+  flex: none;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.analytics-notice strong {
+  display: block;
+  margin-bottom: 1px;
+}
+
+.analytics-notice span {
+  color: var(--text-muted);
+}
+
+/*
+ * Two columns once there is room for both side by side; one below the other on a narrow window,
+ * same as every other two-panel layout in this app collapses under `@media (width <= 720px)`.
+ */
+/* Requirements gets the larger share: it holds full sentences, where Keywords is a column of
+   short, single-line rows that don't need the extra width. */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Bordered/shadowed like `.card`, distinct from it because a card is a clickable list row and a
+   panel is a static content region — sharing the class would tie their looks together by accident. */
+.analytics-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.analytics-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+}
+
+.analytics-panel__head h2 {
+  font-size: 14px;
+}
+
+.analytics-panel__head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.analytics-panel__foot {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.analytics-link-button {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.analytics-link-button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ── Keyword bar list ────────────────────────────────────────────────────── */
+
+.analytics-category {
+  padding: 12px 16px 5px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.analytics-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * A button, not a row with a click handler on it: selecting a keyword is a real control, and the
+ * panel it narrows needs the same keyboard/focus support any other control on the page gets.
+ *
+ * The frequency bar is the row's own background (`::before`, width driven by `--w`), not a separate
+ * track beside the label — the row *is* the bar, the same way a native progress control reads as one
+ * shape rather than a label next to a meter.
+ */
+.analytics-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.analytics-rows li:first-child .analytics-row {
+  border-top: 0;
+}
+
+.analytics-row::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 3px auto 3px 8px;
+  width: calc((100% - 16px) * var(--w));
+  border-radius: 6px;
+  background: var(--bar);
+  transition: width 0.25s ease;
+}
+
+.analytics-row.is-gap::before {
+  background: var(--bar-gap);
+}
+
+.analytics-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+.analytics-row:hover {
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+}
+
+.analytics-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.analytics-row.is-selected {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.analytics-row__term {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-row__count {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * `skills`/`experience` are two flavours of covered, kept visually distinct (green/blue) so a
+ * reader can still tell *where* a term is evidenced at a glance; `missing` is the gap the Gaps only
+ * toggle narrows to. `profile-experience` is unreachable on this path (see `keywordCoverage`) and
+ * has no modifier here.
+ */
+.analytics-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.analytics-badge--skills {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.analytics-badge--experience {
+  background: var(--stage-applied-bg);
+  color: var(--stage-applied-fg);
+}
+
+.analytics-badge--missing {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* ── Requirements ────────────────────────────────────────────────────────── */
+
+.analytics-posting {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.analytics-posting:first-child {
+  border-top: 0;
+}
+
+.analytics-posting__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* The one link over both lines, so the whole header is a single click target rather than just the
+   company name or just the role. */
+.analytics-posting__link {
+  min-width: 0;
+  color: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+/* One wrapping line, matching the mockup, rather than a stacked block — a long role title wraps
+   onto a second line under the company the same way it would if this were plain text. Only the
+   company gets the brand colour: it's the thing a reader scans this list for, where the role is
+   real information but not what distinguishes one row from the next. */
+.analytics-posting__company {
+  color: var(--primary);
+}
+
+.analytics-posting__link:hover .analytics-posting__company {
+  text-decoration: underline;
+  text-decoration-color: var(--primary);
+}
+
+.analytics-posting__role {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.analytics-posting__meta {
+  flex-shrink: 0;
+  padding-top: 1px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.analytics-reqs {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analytics-req {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 13px;
+}
+
+/* `list-style: none` on `.analytics-reqs` (needed for the grid layout the kind badge sits in) took
+   the browser's own bullet with it — a requirement whose posting drew no required/preferred
+   distinction otherwise had nothing at all marking it as a list item. This fills that column with a
+   plain marker instead, so every row reads as one regardless of whether it also carries a badge. */
+.analytics-req__bullet {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-muted);
+  font-size: 15px;
+  text-align: center;
+}
+
+.analytics-req__text mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  color: inherit;
+}
+
+.analytics-req__years {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 16px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.analytics-summary-strip__years {
+  flex-basis: 100%;
+}
+
+.analytics-empty {
+  padding: 26px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.analytics-empty strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text);
+}
+
+/*
+ * Its own scroll region, not the page's — a busy range can hold 100-200 postings, and a full-height
+ * panel would swallow the page's own scroll. `tabindex="0"` (set in the component) is what makes it
+ * reachable by keyboard; without it a `overflow-y: auto` div has no way to receive scroll focus.
+ */
+.analytics-reqs-scroll {
+  max-height: 78vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.analytics-reqs-scroll:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 /* ── Narrow ─────────────────────────────────────────────────────────────── */
 
 @media (width <= 720px) {
@@ -863,5 +1507,19 @@ h3 {
   .add-note__row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .nav {
+    margin-left: 8px;
+    gap: 0;
+  }
+
+  .nav-link {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+
+  .analytics-grid {
+    grid-template-columns: 1fr;
   }
 }

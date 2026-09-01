@@ -22,3 +22,12 @@ export function formatDateTime(iso: string): string {
     minute: '2-digit',
   });
 }
+
+/**
+ * `Date` -> `Mar 14`, no year. For the Analytics summary strip's range span (`Feb 19 – Mar 20`),
+ * where the year is implied by "recent" and would only add noise to a strip already reporting three
+ * other numbers.
+ */
+export function formatShortDate(date: Date): string {
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}

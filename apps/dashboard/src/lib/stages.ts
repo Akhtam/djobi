@@ -10,6 +10,7 @@
 import {
   ApplicationStageSchema,
   type ApplicationStage,
+  type KeywordCategory,
   NoteCategorySchema,
   type NoteCategory,
 } from '@djobi/shared';
@@ -79,4 +80,18 @@ export const NOTE_CATEGORY_LABELS: Record<NoteCategory, string> = {
   technical: 'Technical',
   behavioral: 'Behavioral',
   general: 'General',
+};
+
+/**
+ * Human-readable keyword category names — `KeywordCategorySchema`'s enum values are lower-kebab
+ * for storage, not for the screen. Shared by the Analytics keyword table and the detail page's
+ * job-info tags, the same reason `STAGE_LABELS` is shared rather than duplicated per view.
+ */
+export const KEYWORD_CATEGORY_LABELS: Record<KeywordCategory, string> = {
+  language: 'Language',
+  framework: 'Framework',
+  tool: 'Tool',
+  platform: 'Platform',
+  domain: 'Domain',
+  'soft-skill': 'Soft skill',
 };

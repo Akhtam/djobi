@@ -15,11 +15,15 @@ import { fixtureApplications } from './fixtures';
 const sample: Application = fixtureApplications[0];
 
 function stubFetch(response: { ok?: boolean; status?: number; jsonBody?: unknown }) {
+  // `?? {}` would have flattened an explicit `jsonBody: null` — a real response, `GET /profile`'s
+  // answer for a candidate with none saved — into the no-body-given default. Only a caller who
+  // omitted `jsonBody` entirely gets the `{}` stand-in.
+  const body = 'jsonBody' in response ? response.jsonBody : {};
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
     ok: response.ok ?? true,
     status: response.status ?? 200,
-    json: async () => response.jsonBody,
-    text: async () => JSON.stringify(response.jsonBody ?? {}),
+    json: async () => body,
+    text: async () => JSON.stringify(body),
   }));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
@@ -43,6 +47,38 @@ describe('listApplications', () => {
   it('rejects a row that is not an Application instead of handing it to the views', async () => {
     stubFetch({ jsonBody: [{ id: 'x' }] });
     await expect(httpDashboardClient.listApplications()).rejects.toThrow();
+  });
+});
+
+describe('getProfile', () => {
+  it('GETs /profile and validates it', async () => {
+    const profile = {
+      fullName: 'Jordan Rivera',
+      email: 'jordan.rivera@example.com',
+      phone: null,
+      location: null,
+      links: { linkedin: null, portfolio: null, github: null },
+      workExperience: [],
+      maxBulletsPerRole: 6,
+      education: [],
+      skills: ['TypeScript'],
+      stories: [],
+      screeningAnswers: {},
+      customAnswers: [],
+    };
+    const fetchMock = stubFetch({ jsonBody: profile });
+
+    await expect(httpDashboardClient.getProfile()).resolves.toEqual(profile);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
+      method: 'GET',
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('resolves null for a candidate who has not set a Profile up, rather than failing to parse it', async () => {
+    stubFetch({ jsonBody: null });
+
+    await expect(httpDashboardClient.getProfile()).resolves.toBeNull();
   });
 });
 
