@@ -1,6 +1,7 @@
 import type { BackendErrorBody } from '@djobi/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { auth } from './auth.js';
 import { StructuredCallError } from './llm/structuredCall.js';
 import { RequestValidationError } from './requestBody.js';
 import type { ApplicationStore } from './db/applicationStore.js';
@@ -150,6 +151,20 @@ export function createApp(deps: AppDependencies): Hono {
 
     return c.json(body, 500);
   });
+
+  /**
+   * Better Auth's own routes — `/api/auth/sign-up/email`, `/sign-in/email`, `/sign-in/social`,
+   * the session endpoints, and (once `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set, see
+   * `.env.example`) the Google OAuth callback. `auth.handler` is Better Auth's own Fetch-standard
+   * handler, so this is a pass-through rather than a route this file has any business parsing —
+   * see `auth.ts` for what's actually configured.
+   *
+   * Registered after the CORS and content-type middleware above (same ordering the auth
+   * *verification* middleware `docs/multi-tenant-auth.md`'s Phase B calls for will need — Hono
+   * composes in registration order), so a sign-up POST gets the same CSRF-relevant content-type
+   * check every other state-changing route already gets.
+   */
+  app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 
   app.route('/', llmRoutes);
   app.route('/', profileRoute(deps.profileStore));

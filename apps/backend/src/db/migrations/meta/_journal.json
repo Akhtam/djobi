@@ -71,6 +71,13 @@
       "when": 1788281711214,
       "tag": "0009_eminent_thunderbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788284264727,
+      "tag": "0010_parched_selene",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 allowBuilds:
+  # Pulled in transitively by @better-auth/cli's optional adapters (Prisma, SQLite) — this backend
+  # only uses the Drizzle/Postgres adapter, so neither needs its native build step to run.
+  '@prisma/client': false
+  better-sqlite3: false
   esbuild: true
 minimumReleaseAgeExclude:
   - '@anthropic-ai/sdk@0.122.0'

@@ -1,16 +1,114 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
- * One row per account. Minimal on purpose — Phase A (multi-tenant auth, `docs/multi-tenant-auth.md`)
- * exists only to give every other table an owner to scope on; there is exactly one row today,
- * `db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID`, with no auth provider yet issuing real ones. Phase B
- * (the real auth provider) reconciles this table with its own user shape rather than this phase
- * guessing at columns (email, name, …) an auth library will want in its own way.
+ * One row per account. Phase A (`docs/multi-tenant-auth.md`) created this with only `id`/`createdAt`
+ * — enough to give every other table an owner to scope on, with no auth provider yet issuing real
+ * ids. Phase B widens it in place rather than letting Better Auth generate a second `user` table of
+ * its own: `auth.ts`'s `user.modelName: 'users'` points Better Auth at this exact table, so
+ * `profiles`/`applications`' existing foreign keys need no migration of their own.
+ *
+ * `name`/`email`/`image` are nullable and `emailVerified` defaults `false` — Better Auth's own
+ * generator (`pnpm exec better-auth generate`, run once to discover this shape, output not kept)
+ * marks `name`/`email` `NOT NULL`, which the row Phase A's migration already inserted
+ * (`db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID`) cannot satisfy retroactively. Every row Better Auth
+ * itself creates supplies all four; the bootstrap row is the one exception, and stays queryable
+ * rather than becoming un-migratable. How that one row acquires a real login is Phase B's own open
+ * question — see the chunk notes rather than assuming it here.
  */
 export const users = pgTable('users', {
-  id: uuid('id').primaryKey(),
+  // `.defaultRandom()` added in Phase B: Better Auth's Postgres adapter defers id generation to the
+  // database's own column default regardless of `auth.ts`'s `generateId: 'uuid'` — confirmed by
+  // `auth.test.ts` failing a NOT NULL violation without it. Every insert before Phase B (Phase A's
+  // migration 0009) already supplied an explicit id, so this is additive, not a behavior change for
+  // existing callers.
+  id: uuid('id').primaryKey().defaultRandom(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  name: text('name'),
+  email: text('email').unique(),
+  emailVerified: boolean('email_verified').notNull().default(false),
+  image: text('image'),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
+
+/**
+ * Better Auth's own tables — session, OAuth/credential account, and email-verification tokens.
+ * Nothing existing referenced these before Phase B, so unlike `users` there is no reconciliation:
+ * table and column shapes follow Better Auth's own generated schema exactly, except `id`/`userId`
+ * are `uuid` rather than its default `text`, and every `id` is `.defaultRandom()` — see the note on
+ * `users.id` above for why that default, not `auth.ts`'s config, is what actually generates it on
+ * Postgres.
+ */
+export const session = pgTable(
+  'session',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+  },
+  (table) => [index('session_user_id_idx').on(table.userId)],
+);
+
+export const account = pgTable(
+  'account',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    /**
+     * Missing entirely from `@better-auth/cli generate`'s output (v1.4.21) but required by
+     * `better-auth` itself (v1.7.2) at runtime — the two are versioned separately, and `auth.test.ts`
+     * caught the drift as a real `BetterAuthError` (`The field "issuer" does not exist`) rather than
+     * a silent gap. Nullable: only relevant to OIDC-style providers.
+     */
+    issuer: text('issuer'),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+    scope: text('scope'),
+    /** The hashed password for the `credential` (email/password) provider; null for OAuth rows. */
+    password: text('password'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [index('account_user_id_idx').on(table.userId)],
+);
+
+export const verification = pgTable(
+  'verification',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [index('verification_identifier_idx').on(table.identifier)],
+);
 
 /**
  * The base profile, stored whole. `data` holds a `Profile` object (from `@djobi/shared`) as

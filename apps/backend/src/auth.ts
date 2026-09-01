@@ -1,0 +1,81 @@
+/**
+ * The Better Auth instance — email/password plus Google, backed by the same Drizzle/Postgres
+ * connection everything else in this backend uses. See `docs/multi-tenant-auth.md`, Phase B.
+ *
+ * `user.modelName: 'users'` points Better Auth at the table Phase A already created and
+ * `applications`/`profiles` already reference by foreign key, rather than letting it generate a
+ * second `user` table of its own — the reconciliation the doc's Phase A section flagged as owed to
+ * Phase B. `session`/`account`/`verification` are new tables Better Auth owns outright; nothing
+ * existing referenced them before this phase, so there is nothing to reconcile there.
+ *
+ * Lazily constructed behind a `Proxy`, mirroring `db/client.ts`'s own reasoning exactly:
+ * `drizzleAdapter(db, ...)` reads a property off `db` synchronously to introspect the schema, which
+ * forces `db/client.ts`'s lazy Proxy to resolve `DATABASE_URL` *at import time* if `betterAuth(...)`
+ * were called eagerly here — breaking every route test that imports `app.ts` (which imports this
+ * module) without a `.env` file, `auth.test.ts` included until this was caught. Deferring
+ * construction to first actual use (a request reaching `/api/auth/*`) keeps that property intact.
+ */
+import { betterAuth } from 'better-auth';
+import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { db } from './db/client.js';
+import * as schema from './db/schema.js';
+
+// A named function, typed by its own return value, rather than `ReturnType<typeof betterAuth>`
+// directly: `betterAuth` is generic over its options, so naming the generic type without applying
+// it to this specific literal options object resolves to `Auth<BetterAuthOptions>` — a wider type
+// the actual instance below isn't assignable to.
+function createAuth() {
+  return betterAuth({
+    database: drizzleAdapter(db, {
+      provider: 'pg',
+      schema,
+    }),
+    // Signs session tokens and cookies — Better Auth otherwise falls back to an insecure generated
+    // one with no warning, which is fine for the one local developer running this today and wrong
+    // for the moment this backend is reachable by anyone else (Phase F's "before it is public").
+    secret: process.env.BETTER_AUTH_SECRET,
+    // Silences "Base URL is not set"; matches this backend's own default port (`index.ts`, `.env.example`).
+    baseURL: process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:5391',
+    // Better Auth's own default id is a random base62 string, which a `uuid` column rejects outright
+    // — every table it owns (`users`, `session`, `account`, `verification`) is `uuid` in
+    // `db/schema.ts`, matching the rest of this schema rather than switching those to `text`.
+    advanced: {
+      database: {
+        generateId: 'uuid',
+      },
+    },
+    user: {
+      modelName: 'users',
+    },
+    emailAndPassword: {
+      enabled: true,
+      // No email delivery provider wired up yet — a personal-scale tool starting with exactly one
+      // account doesn't need one to be useful. Revisit once signup is public
+      // (`docs/multi-tenant-auth.md` Phase F already lists the pieces public launch needs).
+      requireEmailVerification: false,
+    },
+    socialProviders: {
+      google: {
+        // Left blank until the app is registered in Google Cloud Console — see `.env.example` for
+        // what to fill in and where the redirect URI needs to be registered.
+        clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      },
+    },
+  });
+}
+
+type Auth = ReturnType<typeof createAuth>;
+
+let cached: Auth | undefined;
+
+function resolveAuth(): Auth {
+  if (!cached) cached = createAuth();
+  return cached;
+}
+
+export const auth: Auth = new Proxy({} as Auth, {
+  get(_target, prop, receiver) {
+    return Reflect.get(resolveAuth(), prop, receiver);
+  },
+});
