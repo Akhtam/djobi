@@ -3,11 +3,18 @@ import type { Application, JobKeyword, JobRequirement } from '@djobi/shared';
 import {
   DEFAULT_RANGE,
   RANGES,
+  coverageForKeywords,
   keywordFrequency,
   rangeStart,
   requirementKindCounts,
   yearsOfExperienceDistribution,
 } from './analytics';
+import { fixtureProfile } from './fixtures';
+import type { KeywordFrequencyRow } from './analytics';
+
+function frequencyRow(overrides: Partial<KeywordFrequencyRow> = {}): KeywordFrequencyRow {
+  return { term: 'TypeScript', category: null, count: 1, ...overrides };
+}
 
 function requirement(overrides: Partial<JobRequirement> = {}): JobRequirement {
   return { text: 'Some requirement', kind: 'unspecified', yearsOfExperience: null, ...overrides };
@@ -242,5 +249,29 @@ describe('yearsOfExperienceDistribution', () => {
     ];
 
     expect(yearsOfExperienceDistribution(applications)).toEqual([]);
+  });
+});
+
+describe('coverageForKeywords', () => {
+  it('reports a term the skills list carries as skills', () => {
+    const coverage = coverageForKeywords([frequencyRow({ term: 'TypeScript' })], fixtureProfile);
+
+    expect(coverage.get('TypeScript')).toBe('skills');
+  });
+
+  it('reports a term only a bullet carries as experience', () => {
+    const coverage = coverageForKeywords([frequencyRow({ term: 'migration' })], fixtureProfile);
+
+    expect(coverage.get('migration')).toBe('experience');
+  });
+
+  it('reports a term found nowhere as missing', () => {
+    const coverage = coverageForKeywords([frequencyRow({ term: 'Rust' })], fixtureProfile);
+
+    expect(coverage.get('Rust')).toBe('missing');
+  });
+
+  it('returns an empty map for no keywords', () => {
+    expect(coverageForKeywords([], fixtureProfile)).toEqual(new Map());
   });
 });

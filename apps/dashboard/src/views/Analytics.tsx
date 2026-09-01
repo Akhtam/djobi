@@ -15,9 +15,7 @@
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
-  baseResumeOf,
   failureMessage,
-  keywordCoverage,
   type Application,
   type CoverageVerdict,
   type KeywordCategory,
@@ -25,7 +23,7 @@ import {
 } from '@djobi/shared';
 import { countByOption, FilterPills } from '../components/FilterPills';
 import { RequirementsPanel } from '../components/RequirementsPanel';
-import { RANGES, keywordFrequency, rangeStart, type Range } from '../lib/analytics';
+import { coverageForKeywords, RANGES, keywordFrequency, rangeStart, type Range } from '../lib/analytics';
 import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
@@ -134,22 +132,7 @@ export function Analytics({
 
   const coverageByTerm = useMemo(() => {
     if (profileState.kind !== 'ready') return null;
-    const resume = baseResumeOf(profileState.profile);
-    const coverage = keywordCoverage(
-      resume,
-      {
-        // A synthesized `{ keywords: distinct }`, not a real posting's JobInfo — the same reasoning
-        // that already leaves this object without the rest of JobInfo's fields. postingSpelling is
-        // per-posting, and a term aggregated across many postings has no single one to give it.
-        keywords: frequency.map((row) => ({
-          term: row.term,
-          category: row.category,
-          postingSpelling: null,
-        })),
-      },
-      profileState.profile,
-    );
-    return new Map(coverage.map((entry) => [entry.keyword, entry.verdict]));
+    return coverageForKeywords(frequency, profileState.profile);
   }, [frequency, profileState]);
 
   const rows = frequency

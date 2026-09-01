@@ -10,9 +10,13 @@
  * that cost once rather than every function here paying it for its own sake.
  */
 import {
+  baseResumeOf,
+  keywordCoverage,
   normalizeLabel,
   type Application,
+  type CoverageVerdict,
   type KeywordCategory,
+  type Profile,
   type RequirementKind,
 } from '@djobi/shared';
 
@@ -137,6 +141,32 @@ export function requirementKindCounts(applications: Application[]): RequirementK
     }
   }
   return counts;
+}
+
+/**
+ * What `profile`'s Base Resume evidences of every term in `frequency`, keyed by {@link
+ * KeywordFrequencyRow.term}. Scored against a synthesized `{ keywords: distinct }`, not a real
+ * posting's `JobInfo` — the same reasoning that already leaves `keywordCoverage`'s second argument
+ * without the rest of `JobInfo`'s fields: `postingSpelling` is per-posting, and a term aggregated
+ * across many postings has no single one to give it.
+ */
+export function coverageForKeywords(
+  frequency: KeywordFrequencyRow[],
+  profile: Profile,
+): Map<string, CoverageVerdict> {
+  const resume = baseResumeOf(profile);
+  const coverage = keywordCoverage(
+    resume,
+    {
+      keywords: frequency.map((row) => ({
+        term: row.term,
+        category: row.category,
+        postingSpelling: null,
+      })),
+    },
+    profile,
+  );
+  return new Map(coverage.map((entry) => [entry.keyword, entry.verdict]));
 }
 
 /** One point of {@link yearsOfExperienceDistribution} — how many requirements stated `years`. */

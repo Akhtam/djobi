@@ -499,7 +499,7 @@ h3 {
   background: var(--surface);
   color: var(--text-muted);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
 }
 
