@@ -8,6 +8,7 @@
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { HttpError } from '@djobi/http-client';
 import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
 import type { DashboardClient } from './dashboardClient';
 import { fixtureApplications } from './fixtures';
@@ -39,6 +40,8 @@ function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
         note: { ...appended, id: `note-${Math.random()}`, createdAt: '2026-01-01T00:00:00.000Z' },
       }),
     getProfile: () => Promise.resolve(null),
+    signIn: () => Promise.resolve(),
+    signOut: () => Promise.resolve(),
     ...overrides,
   };
 }
@@ -226,5 +229,52 @@ describe('useApplicationStore', () => {
 
     expect(store.current.loadError).toBe('Backend unreachable');
     expect(await store.current.updateStage('app-1', 'onsite')).toBe(false);
+  });
+
+  /** A 401 is "go sign in again," not "the backend is broken" — see `isUnauthorized`. */
+  function unauthorizedError() {
+    return new HttpError('http', '/applications', 'GET /applications failed (401)', 401);
+  }
+
+  it('flags unauthorized rather than a generic load error on a 401, and clears the list', async () => {
+    const store = await loadedStore(
+      client({ listApplications: () => Promise.reject(unauthorizedError()) }),
+    );
+
+    expect(store.current.unauthorized).toBe(true);
+    expect(store.current.loadError).toBeNull();
+    expect(store.current.applications).toEqual([]);
+  });
+
+  it('flags unauthorized rather than a generic write error on a 401, and clears the list', async () => {
+    const store = await loadedStore(
+      client({ updateStage: () => Promise.reject(unauthorizedError()) }),
+    );
+
+    await act(async () => {
+      await store.current.updateStage('app-1', 'onsite');
+    });
+
+    expect(store.current.unauthorized).toBe(true);
+    expect(store.current.writeError).toBeNull();
+    expect(store.current.applications).toEqual([]);
+  });
+
+  it('reload() re-fetches and clears unauthorized, so a fresh 401 can flag it again', async () => {
+    const listApplications = vi
+      .fn()
+      .mockRejectedValueOnce(unauthorizedError())
+      .mockResolvedValueOnce([structuredClone(application)])
+      .mockRejectedValueOnce(unauthorizedError());
+    const store = await loadedStore(client({ listApplications }));
+    expect(store.current.unauthorized).toBe(true);
+
+    act(() => void store.current.reload());
+    await waitFor(() => expect(store.current.loading).toBe(false));
+    expect(store.current.unauthorized).toBe(false);
+    expect(store.current.applications).toEqual([application]);
+
+    act(() => void store.current.reload());
+    await waitFor(() => expect(store.current.unauthorized).toBe(true));
   });
 });

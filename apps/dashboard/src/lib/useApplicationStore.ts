@@ -13,6 +13,7 @@
  * {@link Mutation} for why the revert is per-record and why it reports whether the write landed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { HttpError } from '@djobi/http-client';
 import {
   failureMessage,
   type Application,
@@ -28,10 +29,23 @@ export interface ApplicationStore {
   loadError: string | null;
   /** The most recent failed write, or null. Cleared when the next write is attempted. */
   writeError: string | null;
+  /**
+   * Set when a load or a write came back 401, instead of `loadError`/`writeError` — an expired or
+   * missing session is not "the backend is broken," it is "go sign in again," and a generic banner
+   * is the wrong answer for both. `App` is what turns this into an actual redirect to `#/login`; the
+   * store only knows that the session it had is no longer good.
+   */
+  unauthorized: boolean;
   /** Resolves `true` if the write landed. A failure is reported through `writeError`. */
   updateStage(id: string, stage: ApplicationStage): Promise<boolean>;
   /** Resolves `true` if the note was appended, so a composer knows whether to clear itself. */
   addNote(id: string, note: NewNote): Promise<boolean>;
+  /**
+   * Re-fetches from scratch and clears `unauthorized` — what `App` calls once a fresh sign-in has
+   * replaced the session that expired. Resetting `unauthorized` here, rather than the instant a 401
+   * is reported, is what lets it fire again if the *new* session also turns out to be no good.
+   */
+  reload(): void;
 }
 
 /**
@@ -63,11 +77,20 @@ interface Mutation<Result> {
   rollback(application: Application, previous: Application): Application;
 }
 
+/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
+}
+
 export function useApplicationStore(client: DashboardClient): ApplicationStore {
   const [applications, setApplications] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
+  const [unauthorized, setUnauthorized] = useState(false);
+  // Bumped by `reload()` to force the fetch effect below to run again — `client` alone does not
+  // change across a sign-in, since `App` holds one client instance for the app's whole lifetime.
+  const [reloadToken, setReloadToken] = useState(0);
   // Per slot (see {@link Mutation.slot}): which mutation is the newest, and the write it queues
   // behind. Both are the store's own bookkeeping — a caller states what it is changing, not how to
   // sequence it.
@@ -87,7 +110,13 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
       })
       .catch((err: unknown) => {
         if (!current) return;
-        setLoadError(failureMessage(err));
+        if (isUnauthorized(err)) {
+          // Nothing this session loaded is this signed-out browser's to keep showing.
+          setApplications([]);
+          setUnauthorized(true);
+        } else {
+          setLoadError(failureMessage(err));
+        }
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -96,7 +125,12 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     return () => {
       current = false;
     };
-  }, [client]);
+  }, [client, reloadToken]);
+
+  const reload = useCallback(() => {
+    setUnauthorized(false);
+    setReloadToken((token) => token + 1);
+  }, []);
 
   /**
    * Runs one mutation's write behind whatever is already queued for its slot, so two writes to the
@@ -183,10 +217,17 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
         return true;
       } catch (err: unknown) {
         if (isCurrent()) {
-          setApplications((current) =>
-            current.map((a) => (a.id === id ? rollback(a, previous) : a)),
-          );
-          setWriteError(failureMessage(err));
+          if (isUnauthorized(err)) {
+            // The optimistic change was never real — nothing this session holds is this signed-out
+            // browser's to keep showing, the record it was applied to included.
+            setApplications([]);
+            setUnauthorized(true);
+          } else {
+            setApplications((current) =>
+              current.map((a) => (a.id === id ? rollback(a, previous) : a)),
+            );
+            setWriteError(failureMessage(err));
+          }
         }
         return false;
       }
@@ -236,5 +277,5 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     [client, mutate],
   );
 
-  return { applications, loading, loadError, writeError, updateStage, addNote };
+  return { applications, loading, loadError, writeError, unauthorized, updateStage, addNote, reload };
 }

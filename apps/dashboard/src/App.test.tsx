@@ -706,9 +706,59 @@ describe('failures', () => {
       updateStage: () => Promise.reject(new Error('unused')),
       addNote: () => Promise.reject(new Error('unused')),
       getProfile: () => Promise.reject(new Error('unused')),
+      signIn: () => Promise.reject(new Error('unused')),
+      signOut: () => Promise.reject(new Error('unused')),
     });
 
     expect(await screen.findByRole('alert')).toHaveTextContent('backend is not running');
+  });
+});
+
+describe('auth', () => {
+  /** `createFixtureDashboardClient` started signed out, so `App` sees the same 401 a real session-less request would. */
+  function signedOutClient() {
+    return createFixtureDashboardClient(fixtureApplications, null, { signedIn: false });
+  }
+
+  it('redirects to #/login on a 401 rather than showing a generic load error', async () => {
+    renderApp(signedOutClient());
+
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/login?from=%23%2F');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('preserves the page it redirected from as ?from=, for App to return to after sign-in', async () => {
+    window.location.hash = '#/applications/app-brex';
+
+    renderApp(signedOutClient());
+
+    await waitFor(() => expect(window.location.hash).toBe('#/login?from=%23%2Fapplications%2Fapp-brex'));
+  });
+
+  it('signs in and loads the applications list, defaulting to # when there was no from target', async () => {
+    window.location.hash = '#/login';
+    const { user } = renderApp(signedOutClient());
+    await screen.findByRole('heading', { name: 'Sign in' });
+
+    await user.type(screen.getByLabelText('Email'), 'jane@example.com');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(window.location.hash).toBe('#/'));
+    expect(await screen.findByText(fixtureApplications[0].roleTitle)).toBeInTheDocument();
+  });
+
+  it('reports a bad password without leaving the login page', async () => {
+    const { user } = renderApp(signedOutClient());
+    await screen.findByRole('heading', { name: 'Sign in' });
+
+    await user.type(screen.getByLabelText('Email'), 'jane@example.com');
+    await user.type(screen.getByLabelText('Password'), 'wrong password');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
+    expect(window.location.hash).toBe('#/login?from=%23%2F');
   });
 });
 

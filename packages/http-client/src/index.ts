@@ -93,6 +93,17 @@ export interface HttpTransportOptions {
    * starts the backend, the extension user may have it running and be blocked by a permission.
    */
   unreachableMessage?: string;
+  /**
+   * `fetch`'s own `credentials` mode, applied to every call this transport makes.
+   *
+   * A transport-level default rather than a per-call `RequestOptions` field: the dashboard
+   * (`docs/multi-tenant-auth.md`, Phase C) authenticates by httpOnly cookie, so *every* call it makes
+   * needs `'include'` or the session cookie never leaves the browser on a cross-origin request — there
+   * is no call site that would ever want a dashboard request sent without it. The extension has no
+   * cookie of its own (`Authorization: Bearer`, attached by the caller instead) and leaves this unset,
+   * which keeps `fetch`'s own default (`'same-origin'`).
+   */
+  credentials?: RequestCredentials;
 }
 
 /** One request's options. `method` defaults to `'POST'` when a body is given, `'GET'` when not. */
@@ -224,7 +235,11 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
     const deadline = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
     try {
-      const response = await doFetch(`${options.baseUrl}${path}`, { ...init, signal: deadline });
+      const response = await doFetch(`${options.baseUrl}${path}`, {
+        ...init,
+        signal: deadline,
+        ...(options.credentials ? { credentials: options.credentials } : {}),
+      });
 
       // Every body read is raced against the same deadline the request ran under, the failure path
       // included: a backend that answers `500` and then stalls sending the reason must not hang

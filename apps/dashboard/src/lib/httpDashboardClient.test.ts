@@ -41,6 +41,7 @@ describe('listApplications', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', {
       method: 'GET',
       signal: expect.any(AbortSignal),
+      credentials: 'include',
     });
   });
 
@@ -76,6 +77,7 @@ describe('getProfile', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
       method: 'GET',
       signal: expect.any(AbortSignal),
+      credentials: 'include',
     });
   });
 
@@ -99,6 +101,7 @@ describe('updateStage', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ stage: 'rejected' }),
         signal: expect.any(AbortSignal),
+        credentials: 'include',
       },
     );
   });
@@ -140,8 +143,47 @@ describe('addNote', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
         signal: expect.any(AbortSignal),
+        credentials: 'include',
       },
     );
+  });
+});
+
+describe('signIn', () => {
+  it('POSTs Better Auth’s sign-in route with credentials included', async () => {
+    const fetchMock = stubFetch({ jsonBody: { user: { id: 'user-1', email: 'jane@example.com' } } });
+
+    await httpDashboardClient.signIn('jane@example.com', 'correct horse battery staple');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'jane@example.com', password: 'correct horse battery staple' }),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+  });
+
+  it('rejects with the backend’s own message on a bad password', async () => {
+    stubFetch({ ok: false, status: 401, jsonBody: { error: 'Invalid email or password' } });
+
+    await expect(httpDashboardClient.signIn('jane@example.com', 'wrong')).rejects.toThrow(
+      /Invalid email or password/,
+    );
+  });
+});
+
+describe('signOut', () => {
+  it('POSTs Better Auth’s sign-out route with credentials included', async () => {
+    const fetchMock = stubFetch({ jsonBody: { success: true } });
+
+    await httpDashboardClient.signOut();
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/api/auth/sign-out', {
+      method: 'POST',
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
   });
 });
 

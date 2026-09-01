@@ -37,6 +37,11 @@ function createAuth() {
     secret: process.env.BETTER_AUTH_SECRET,
     // Silences "Base URL is not set"; matches this backend's own default port (`index.ts`, `.env.example`).
     baseURL: process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:5391',
+    // The dashboard's dev origins — matches `app.ts`'s CORS allowlist. Better Auth checks this
+    // itself (its own CSRF defense, independent of `app.ts`'s CORS/content-type guards) before
+    // setting or trusting a session cookie for a cross-site request; without it the dashboard's
+    // sign-in would CORS-succeed but the session cookie would never actually be issued.
+    trustedOrigins: ['http://localhost:5174', 'http://127.0.0.1:5174'],
     // Better Auth's own default id is a random base62 string, which a `uuid` column rejects outright
     // — every table it owns (`users`, `session`, `account`, `verification`) is `uuid` in
     // `db/schema.ts`, matching the rest of this schema rather than switching those to `text`.

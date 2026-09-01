@@ -37,6 +37,35 @@ export const BackendErrorBodySchema = z.object({
 /** Inferred type of {@link BackendErrorBodySchema}. */
 export type BackendErrorBody = z.infer<typeof BackendErrorBodySchema>;
 
+/**
+ * Body of `POST /api/auth/sign-in/email` — Better Auth's own route, not one this backend defines.
+ * Named here anyway, the same reasoning as every other route body in this file: the dashboard sends
+ * this shape and should get a compile error if it drifts from what Better Auth actually accepts,
+ * rather than a silently-stripped field discovered at runtime.
+ */
+export const SignInRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+/** Inferred type of {@link SignInRequestSchema}. */
+export type SignInRequest = z.infer<typeof SignInRequestSchema>;
+
+/**
+ * The fields of Better Auth's sign-in response this app actually reads. Not the full response
+ * shape — Better Auth also returns a `token` and other fields this dashboard has no use for, since
+ * the session it acts on lives in the httpOnly cookie the same response sets, not in the body.
+ */
+export const SignInResultSchema = z.object({
+  user: z.object({ id: z.string(), email: z.string() }),
+});
+/** Inferred type of {@link SignInResultSchema}. */
+export type SignInResult = z.infer<typeof SignInResultSchema>;
+
+/** The fields of Better Auth's `POST /api/auth/sign-out` response this app actually reads. */
+export const SignOutResultSchema = z.object({ success: z.boolean() });
+/** Inferred type of {@link SignOutResultSchema}. */
+export type SignOutResult = z.infer<typeof SignOutResultSchema>;
+
 /** A question as detected on the page, before it's known who will answer it. */
 export const PendingQuestionSchema = z.object({
   fieldId: z.string(),

@@ -276,6 +276,30 @@ h3 {
   font-size: 13px;
 }
 
+.login {
+  max-width: 320px;
+  margin: 64px auto 0;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.login-field .search {
+  flex: initial;
+}
+
 .button {
   padding: 8px 16px;
   border: 1px solid var(--border);

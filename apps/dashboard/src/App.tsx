@@ -6,21 +6,41 @@
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
  * place the real app's client is named, and it always names the HTTP one.
  */
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
 import { useApplicationStore } from './lib/useApplicationStore';
-import { analyticsPath, listPath, useHashRoute } from './lib/useHashRoute';
+import { analyticsPath, listPath, loginPath, useHashRoute } from './lib/useHashRoute';
 import { Analytics } from './views/Analytics';
 import { ApplicationDetail } from './views/ApplicationDetail';
 import { ApplicationsList } from './views/ApplicationsList';
+import { Login } from './views/Login';
 
 export function App({ client }: { client: DashboardClient }) {
   const { theme, toggleTheme } = useThemePreference();
   const { route, replaceRoute } = useHashRoute();
-  const { applications, loading, loadError, writeError, updateStage, addNote } =
+  const { applications, loading, loadError, writeError, unauthorized, updateStage, addNote, reload } =
     useApplicationStore(client);
+
+  /*
+    A 401 from the store means the session is gone — routed to `#/login` here rather than left to
+    render as a generic load/write failure. `route.name !== 'login'` is what stops this from firing
+    again once there: `unauthorized` does not reset itself, only `reload()` (called after a
+    successful sign-in) does, so without that guard every render on the login page would try to
+    `replaceRoute` to itself.
+  */
+  useEffect(() => {
+    if (unauthorized && route.name !== 'login') {
+      replaceRoute(loginPath(window.location.hash));
+    }
+  }, [unauthorized, route.name, replaceRoute]);
+
+  async function handleSignIn(email: string, password: string) {
+    await client.signIn(email, password);
+    reload();
+    replaceRoute(route.name === 'login' && route.from ? route.from : '#/');
+  }
 
   const application =
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
@@ -106,7 +126,9 @@ export function App({ client }: { client: DashboardClient }) {
         ) : null}
 
         <main>
-          {loading ? (
+          {route.name === 'login' ? (
+            <Login onSignIn={handleSignIn} />
+          ) : loading ? (
             <p className="empty-state">Loading applications…</p>
           ) : loadError ? (
             <p className="empty-state empty-state--error" role="alert">

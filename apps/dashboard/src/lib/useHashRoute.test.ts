@@ -3,6 +3,7 @@ import {
   analyticsPath,
   applicationPath,
   listPath,
+  loginPath,
   PAGE_SIZE,
   parseHash,
   type ListFilters,
@@ -122,6 +123,39 @@ describe('analyticsPath', () => {
 
   it('writes both when both are set', () => {
     expect(analyticsPath('14d', 'rejected')).toBe('#/analytics?range=14d&stage=rejected');
+  });
+});
+
+describe('parseHash, login', () => {
+  it('reads the login route with no from when there is nothing to return to', () => {
+    expect(parseHash('#/login')).toEqual({ name: 'login', from: null });
+  });
+
+  it('reads the from param, undoing whatever percent-escaping it needed', () => {
+    expect(parseHash('#/login?from=%23%2Fapplications%2Fapp-brex')).toEqual({
+      name: 'login',
+      from: '#/applications/app-brex',
+    });
+  });
+
+  it('round-trips a from target through loginPath', () => {
+    expect(parseHash(loginPath('#/analytics?range=30d'))).toEqual({
+      name: 'login',
+      from: '#/analytics?range=30d',
+    });
+  });
+});
+
+describe('loginPath', () => {
+  it('writes the bare login hash with no from target', () => {
+    expect(loginPath()).toBe('#/login');
+    expect(loginPath(null)).toBe('#/login');
+  });
+
+  it('escapes a from target into the query string', () => {
+    expect(loginPath('#/applications/app-brex')).toBe(
+      '#/login?from=%23%2Fapplications%2Fapp-brex',
+    );
   });
 });
 

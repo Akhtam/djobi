@@ -1,9 +1,9 @@
 # Multi-tenant authentication — design and roadmap
 
-> **Status: proposed, not started (2026-08-25; re-verified against the codebase 2026-09-01).** No
-> ownership or auth code exists yet — confirmed by grep: `db/schema.ts` has no `user_id`/`owner_id`
-> column anywhere. This records the decisions and the order to build in. ADR 0001 (single Cloudflare
-> Worker) is explicitly _not_ assumed here.
+> **Status: Phases A–C complete (2026-09-01).** Ownership, Better Auth session verification, and
+> dashboard login are all implemented and tested — see the checklists below. Phases D–F (extension
+> login, cost control, pre-public hardening) are not started. ADR 0001 (single Cloudflare Worker) is
+> explicitly _not_ assumed here.
 >
 > The file/module names below were corrected on the 2026-09-01 pass — the repo has moved since this
 > was written (Phases 12–19 landed in between) and a few names in the original plan no longer exist.

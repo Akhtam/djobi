@@ -62,7 +62,16 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
    *
    * And the origin is an explicit list rather than `*`. This server holds an Anthropic API key and a
    * live database connection, and *any* page in the browser can reach `127.0.0.1` — a wildcard would
-   * let an unrelated site the candidate happens to have open read their applications.
+   * let an unrelated site the candidate happens to have open read their applications. `credentials:
+   * true` and an explicit list are a package deal: the fetch spec forbids a wildcard origin on a
+   * credentialed response outright, so this could not be `*` even before that reasoning.
+   *
+   * `credentials: true` is what lets the browser both send the dashboard's httpOnly session cookie
+   * on a cross-origin request and expose the response to it — without it, `auth.ts`'s cookie-based
+   * session (Phase B) can never reach `deps.requireAuth` from `apps/dashboard`, which runs on its own
+   * dev server (`docs/multi-tenant-auth.md`, Phase C). The extension's `Authorization: Bearer` path
+   * needs none of this — a header a script sets itself was never subject to the cookie jar — so this
+   * is purely for the dashboard's benefit.
    *
    * Note what this allowlist does **not** do on its own: it stops cross-origin *reads*, because the
    * browser withholds a response the server didn't label for that origin. It does not stop every
@@ -77,6 +86,7 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
       origin: ['http://localhost:5174', 'http://127.0.0.1:5174'],
       allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
       allowHeaders: ['content-type'],
+      credentials: true,
     }),
   );
 

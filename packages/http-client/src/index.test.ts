@@ -42,6 +42,23 @@ describe('createHttpTransport', () => {
     expect(calls[1].init?.body).toBe('{"name":"Ada"}');
   });
 
+  it('applies the transport-level credentials mode to every call, unset by default', async () => {
+    const { fetchImpl: withoutCreds, calls: callsWithoutCreds } = respondWith(
+      () => new Response('{"id":"a"}'),
+    );
+    await createHttpTransport({ baseUrl: '', fetch: withoutCreds }).json('/profile', Schema);
+    expect(callsWithoutCreds[0].init?.credentials).toBeUndefined();
+
+    const { fetchImpl: withCreds, calls: callsWithCreds } = respondWith(
+      () => new Response('{"id":"a"}'),
+    );
+    await createHttpTransport({ baseUrl: '', fetch: withCreds, credentials: 'include' }).json(
+      '/profile',
+      Schema,
+    );
+    expect(callsWithCreds[0].init?.credentials).toBe('include');
+  });
+
   it('reports a non-2xx as an http failure carrying the status and the path', async () => {
     const { fetchImpl } = respondWith(
       () => new Response('{"error":"Application not found"}', { status: 404 }),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { HttpError } from '@djobi/http-client';
 import { createFixtureDashboardClient } from './dashboardClient';
 import { fixtureApplications, fixtureProfile } from './fixtures';
 
@@ -66,5 +67,62 @@ describe('createFixtureDashboardClient', () => {
 
     const second = await client.getProfile();
     expect(second!.fullName).not.toBe('Mutated');
+  });
+});
+
+describe('createFixtureDashboardClient, auth', () => {
+  it('starts signed in by default, so most tests need no login step', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    await expect(client.listApplications()).resolves.toHaveLength(fixtureApplications.length);
+  });
+
+  it('rejects every route with a 401 when started signed out, matching requireAuth', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, null, { signedIn: false });
+
+    const error = await client.listApplications().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({ kind: 'http', status: 401 });
+    await expect(client.updateStage('app-sonar', 'onsite')).rejects.toBeInstanceOf(HttpError);
+    await expect(
+      client.addNote('app-sonar', { category: 'technical', text: 'x' }),
+    ).rejects.toBeInstanceOf(HttpError);
+    await expect(client.getProfile()).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('signs in with the default credentials and then serves normally', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, null, { signedIn: false });
+
+    await client.signIn('jane@example.com', 'correct horse battery staple');
+
+    await expect(client.listApplications()).resolves.toHaveLength(fixtureApplications.length);
+  });
+
+  it('rejects signIn with the wrong password rather than granting a session', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, null, { signedIn: false });
+
+    await expect(client.signIn('jane@example.com', 'wrong')).rejects.toMatchObject({
+      status: 401,
+    });
+    await expect(client.listApplications()).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('accepts credentials a caller configured in place of the defaults', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, null, {
+      signedIn: false,
+      email: 'sam@example.com',
+      password: 'a different password',
+    });
+
+    await client.signIn('sam@example.com', 'a different password');
+
+    await expect(client.listApplications()).resolves.toHaveLength(fixtureApplications.length);
+  });
+
+  it('signOut ends a session started signed in, so a later call is rejected', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+
+    await client.signOut();
+
+    await expect(client.listApplications()).rejects.toBeInstanceOf(HttpError);
   });
 });

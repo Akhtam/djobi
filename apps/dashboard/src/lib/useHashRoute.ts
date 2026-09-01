@@ -59,7 +59,14 @@ export type DetailRoute = { name: 'detail'; id: string };
  * list's stage vocabulary rather than inventing its own.
  */
 export type AnalyticsRoute = { name: 'analytics'; range: Range; stage: StageFilter | null };
-export type Route = ListRoute | DetailRoute | AnalyticsRoute;
+/**
+ * The sign-in view. `from` is the full hash (including its own `?query`) the app redirected from,
+ * for `App` to send the user back to after a successful sign-in — a bookmarked detail page or a
+ * filtered list, not always `#/`. `null` when there was nothing to return to: navigating here
+ * directly, or a fresh document that redirected before any other route had rendered.
+ */
+export type LoginRoute = { name: 'login'; from: string | null };
+export type Route = ListRoute | DetailRoute | AnalyticsRoute | LoginRoute;
 
 /** A valid {@link Range}, or `null` for anything else — the same shape `stageFilterOf` answers in. */
 function rangeOf(value: string | null): Range | null {
@@ -99,6 +106,10 @@ export function parseHash(hash: string): Route {
   if (match) return { name: 'detail', id: decodeURIComponent(match[1]) };
 
   const params = new URLSearchParams(search);
+
+  if (path === '#/login') {
+    return { name: 'login', from: params.get('from') };
+  }
 
   if (path === '#/analytics') {
     return {
@@ -152,6 +163,17 @@ export function analyticsPath(range: Range, stage: StageFilter | null): string {
   if (stage) params.set('stage', stage);
   const search = params.toString();
   return search ? `#/analytics?${search}` : '#/analytics';
+}
+
+/**
+ * The path to the login view — the inverse of {@link parseHash}'s `#/login` branch. `from` is
+ * carried as-is (typically another `pathXxx` helper's own output, `#` and all) rather than split
+ * into parts, since this route only ever needs to hand it back to `App` unchanged.
+ */
+export function loginPath(from?: string | null): string {
+  if (!from) return '#/login';
+  const params = new URLSearchParams({ from });
+  return `#/login?${params.toString()}`;
 }
 
 export interface HashRoute {
