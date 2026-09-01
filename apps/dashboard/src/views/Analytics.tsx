@@ -14,6 +14,7 @@
  * and the switch-styled Gaps only toggle are all specified there, down to the token values.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { HttpError } from '@djobi/http-client';
 import {
   failureMessage,
   type Application,
@@ -72,18 +73,24 @@ const CATEGORY_GROUP_LABELS: Record<KeywordCategory, string> = {
 };
 const UNCATEGORIZED_LABEL = 'Other';
 
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof HttpError && error.kind === 'http' && error.status === 401;
+}
+
 export function Analytics({
   applications,
   range,
   stage,
   onFiltersChange,
   getProfile,
+  onUnauthorized,
 }: {
   applications: Application[];
   range: Range;
   stage: StageFilter | null;
   onFiltersChange: (range: Range, stage: StageFilter | null) => void;
   getProfile: () => Promise<Profile | null>;
+  onUnauthorized: () => void;
 }) {
   // Captured once per mount, never a `useMemo`: a range is "the last N days as of when I opened
   // this page," and re-deriving it as the clock ticks would shift the boundary under the reader
@@ -105,13 +112,14 @@ export function Analytics({
       },
       (error: unknown) => {
         if (!current) return;
-        setProfileState({ kind: 'unreachable', message: failureMessage(error) });
+        if (isUnauthorized(error)) onUnauthorized();
+        else setProfileState({ kind: 'unreachable', message: failureMessage(error) });
       },
     );
     return () => {
       current = false;
     };
-  }, [getProfile]);
+  }, [getProfile, onUnauthorized]);
 
   // Keyword selection resets on stage/range alone: it is the requirements panel's own concern (see
   // `RequirementsPanel`'s `resetKey`), not this table's.

@@ -2,13 +2,17 @@
  * The sign-in view — `#/login`, `docs/multi-tenant-auth.md` Phase C.
  *
  * Email/password only: Better Auth is configured for it (`apps/backend/src/auth.ts`), and there is
- * exactly one account today (Phase A's bootstrap user). No sign-up form here on purpose — creating
- * the first account is an operator action, not something this view needs to offer.
+ * exactly one real account today. No sign-up form here on purpose — creating accounts is an
+ * operator action, not something this view needs to offer.
  */
 import { useState, type FormEvent } from 'react';
 import { failureMessage } from '@djobi/shared';
 
-export function Login({ onSignIn }: { onSignIn: (email: string, password: string) => Promise<void> }) {
+export function Login({
+  onSignIn,
+}: {
+  onSignIn: (email: string, password: string) => Promise<void>;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);

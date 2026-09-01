@@ -3,14 +3,11 @@
  * `docs/multi-tenant-auth.md`. No route reads this constant any more: Phase B's `requireAuth`
  * middleware supplies a real `userId` from context instead (`app.ts`, `authMiddleware.ts`).
  *
- * Kept, not deleted, for two reasons. First, it names a real row: migration `0009` actually inserted
- * this id into `users`, and the single profile that existed before Phase B is still that row's.
- * `scripts/claimBootstrapData.ts` is how it gets claimed by a real login — Better Auth mints a fresh
- * random id for every sign-up, never this one, so that data stays orphaned until that script (or
- * an equivalent manual reassignment) is run once against the real account. Second, `testApp.ts` and the
- * store-level tests (`applicationStore.contract.test.ts`, `database.integration.test.ts`,
- * `postgresProfileStore.test.ts`) still need *some* concrete, real-looking user id to seed and
- * assert against — this is that id, not a re-purposed stand-in.
+ * Kept because it names the historical row inserted by migration `0009`, and because `testApp.ts`
+ * and the store-level tests (`applicationStore.contract.test.ts`, `database.integration.test.ts`,
+ * `postgresProfileStore.test.ts`) need a concrete, real-looking user id to seed and assert against.
+ * The production profile and applications have already been reassigned to the real Better Auth
+ * account; no runtime route or operator script uses this id.
  *
  * Reuses the value `postgresProfileStore.ts` used as `PROFILE_ID` before Phase A's migration, rather
  * than minting a fresh one: it is already the one real profile's identity, and renumbering it would

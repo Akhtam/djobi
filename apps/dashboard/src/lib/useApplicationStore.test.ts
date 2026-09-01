@@ -282,6 +282,15 @@ describe('useApplicationStore', () => {
     expect(store.current.applications).toEqual([]);
   });
 
+  it('reports a 401 from a request outside the store and clears the list', async () => {
+    const store = await loadedStore(client());
+
+    act(() => store.current.reportUnauthorized());
+
+    expect(store.current.unauthorized).toBe(true);
+    expect(store.current.applications).toEqual([]);
+  });
+
   it('reload() re-fetches and clears unauthorized, so a fresh 401 can flag it again', async () => {
     const listApplications = vi
       .fn()

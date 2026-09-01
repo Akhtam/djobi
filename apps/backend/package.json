@@ -15,7 +15,6 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "eval:extraction": "tsx scripts/evalExtraction.ts",
-    "claim-bootstrap-data": "tsx scripts/claimBootstrapData.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

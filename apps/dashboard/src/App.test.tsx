@@ -5,6 +5,7 @@
  */
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpError } from '@djobi/http-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { createFixtureDashboardClient, type DashboardClient } from './lib/dashboardClient';
@@ -372,8 +373,20 @@ describe('applications list', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('opens the application detail when a non-interactive part of its row is clicked', async () => {
+    const { user } = renderApp();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    await user.click(within(rowFor('Senior Frontend Engineer')).getByText('Brex'));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Senior Frontend Engineer' }),
+    ).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/applications/app-brex');
+  });
+
   it('opens the job posting in a new tab, without going to the detail page', async () => {
-    renderApp();
+    const { user } = renderApp();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
     const posting = within(rowFor('Senior Frontend Engineer')).getByRole('link', {
@@ -385,6 +398,9 @@ describe('applications list', () => {
     expect(posting).toHaveAttribute('rel', 'noreferrer');
     // It must remain an external posting link, not the row's application-detail link.
     expect(posting).not.toHaveAttribute('href', '#/applications/app-brex');
+    posting.addEventListener('click', (event) => event.preventDefault(), { once: true });
+    await user.click(posting);
+    expect(window.location.hash).toBe('#/');
   });
 
   it('changes a stage from the row without navigating away', async () => {
@@ -1122,6 +1138,19 @@ describe('analytics', () => {
 
     expect(await screen.findByText(/Couldn.t load your profile/)).toBeInTheDocument();
     expect(screen.getByText(/backend is not running/)).toBeInTheDocument();
+  });
+
+  it('clears cached applications and redirects to sign-in when loading the Profile returns 401', async () => {
+    renderApp({
+      ...createFixtureDashboardClient(fixtureApplications),
+      getProfile: () =>
+        Promise.reject(new HttpError('http', '/profile', 'Authentication required', 401)),
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/login?from=%23%2Fanalytics');
+    expect(screen.queryByText(/Couldn.t load your profile/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Brex')).not.toBeInTheDocument();
   });
 
   it('shows coverage badges and narrows Gaps only to what the Profile does not evidence', async () => {

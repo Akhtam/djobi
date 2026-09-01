@@ -865,6 +865,7 @@ h3 {
 }
 
 .application-table tbody tr {
+  cursor: pointer;
   transition: background 120ms;
 }
 

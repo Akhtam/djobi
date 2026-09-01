@@ -185,11 +185,23 @@ export function ApplicationsList({
               {visibleNow.map((application) => {
                 const source = sourceLabel(application);
                 return (
-                  <tr key={application.id} data-application-row>
+                  <tr
+                    key={application.id}
+                    data-application-row
+                    onClick={(event) => {
+                      const target = event.target as Element;
+                      if (target.closest('a, [data-row-navigation-ignore]')) return;
+                      window.location.hash = applicationPath(application.id);
+                    }}
+                  >
                     <td data-label="Company" className="application-table__company">
                       {application.company}
                     </td>
-                    <td data-label="Posting" className="application-table__posting">
+                    <td
+                      data-label="Posting"
+                      className="application-table__posting"
+                      data-row-navigation-ignore
+                    >
                       <PostingLink jobUrl={application.jobUrl} company={application.company} />
                     </td>
                     <td data-label="Role" className="application-table__role">
@@ -200,7 +212,7 @@ export function ApplicationsList({
                         {source.label}
                       </span>
                     </td>
-                    <td data-label="Status">
+                    <td data-label="Status" data-row-navigation-ignore>
                       <StageSelect
                         stage={application.stage}
                         label={`Stage for ${application.roleTitle} at ${application.company}`}

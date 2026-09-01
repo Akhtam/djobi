@@ -37,6 +37,8 @@ export interface ApplicationStore {
    * store only knows that the session it had is no longer good.
    */
   unauthorized: boolean;
+  /** Clears session-owned data and asks `App` to route to sign-in after a 401 outside this store. */
+  reportUnauthorized(): void;
   /** Resolves `true` if the write landed. A failure is reported through `writeError`. */
   updateStage(id: string, stage: ApplicationStage): Promise<boolean>;
   /** Resolves `true` if the note was appended, so a composer knows whether to clear itself. */
@@ -133,6 +135,11 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
   const reload = useCallback(() => {
     setUnauthorized(false);
     setReloadToken((token) => token + 1);
+  }, []);
+
+  const reportUnauthorized = useCallback(() => {
+    setApplications([]);
+    setUnauthorized(true);
   }, []);
 
   /**
@@ -309,6 +316,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     loadError,
     writeError,
     unauthorized,
+    reportUnauthorized,
     updateStage,
     addNote,
     createApplication,

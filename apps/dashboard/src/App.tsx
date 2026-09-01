@@ -71,6 +71,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     loadError,
     writeError,
     unauthorized,
+    reportUnauthorized,
     updateStage,
     addNote,
     createApplication,
@@ -96,9 +97,9 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     replaceRoute(route.name === 'login' && route.from ? route.from : '#/');
   }
 
-  const handleNewApplicationUnauthorized = useCallback(() => {
-    replaceRoute(loginPath(window.location.hash));
-  }, [replaceRoute]);
+  const handleUnauthorized = useCallback(() => {
+    reportUnauthorized();
+  }, [reportUnauthorized]);
 
   const application =
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
@@ -206,7 +207,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
               onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
               onStageChange={(id, stage) => void updateStage(id, stage)}
               onCreateApplication={createApplication}
-              onUnauthorized={handleNewApplicationUnauthorized}
+              onUnauthorized={handleUnauthorized}
             />
           ) : route.name === 'analytics' ? (
             <Analytics
@@ -215,6 +216,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
               stage={route.stage}
               onFiltersChange={(range, stage) => replaceRoute(analyticsPath(range, stage))}
               getProfile={client.getProfile}
+              onUnauthorized={handleUnauthorized}
             />
           ) : application ? (
             <ApplicationDetail
