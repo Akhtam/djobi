@@ -6,7 +6,7 @@
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
  * place the real app's client is named, and it always names the HTTP one.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
@@ -18,9 +18,48 @@ import { ApplicationsList } from './views/ApplicationsList';
 import { LandingPage } from './views/LandingPage';
 import { Login } from './views/Login';
 
+/**
+ * Whether the current URL asks for the dashboard rather than the landing page — a dashboard hash
+ * route (`#/`, `#/login`, `#/applications/...`, `#/analytics`), as opposed to no hash at all or an
+ * in-page landing-page anchor (`#product`, `#workflow`, ...). `startsWith('#/')` is what tells the
+ * two apart: every route `useHashRoute.ts` parses starts with a slash, and no landing-page anchor
+ * does.
+ */
+function isDashboardRoute(hash: string): boolean {
+  return hash.startsWith('#/');
+}
+
+/**
+ * The homepage is always the public landing page — `docs/multi-tenant-auth.md`'s login flow links
+ * into the dashboard from there (`LandingPage.tsx`'s `DASHBOARD_PATH`, `/#/login`), never the
+ * reverse. Both apps are served from the same static `index.html` under one path (no server rewrite
+ * rule — see `useHashRoute.ts`), so which one renders is decided entirely by the hash, not by a real
+ * path `main.tsx` would need a route for.
+ *
+ * Reactive to `hashchange` rather than read once: clicking a landing-page CTA does not reload the
+ * document (it's a hash-only navigation on the same page), so the initial read alone would leave a
+ * candidate who clicked "Open dashboard" stuck looking at the landing page's markup under a changed
+ * URL.
+ *
+ * The landing page's own IO story is what makes this a real answer to "the route shouldn't be
+ * authenticated," not just an accident of the split: `LandingPage` owns no `DashboardClient` and
+ * starts no request, so nothing here ever attempts a session check before a candidate has asked for
+ * the dashboard at all.
+ */
 export function App({ client }: { client: DashboardClient }) {
-  const path = window.location.pathname.replace(/\/+$/, '') || '/';
-  return path === '/landing-page' ? <LandingPage /> : <DashboardApp client={client} />;
+  const [dashboardRoute, setDashboardRoute] = useState(() =>
+    isDashboardRoute(window.location.hash),
+  );
+
+  useEffect(() => {
+    function onHashChange() {
+      setDashboardRoute(isDashboardRoute(window.location.hash));
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  return dashboardRoute ? <DashboardApp client={client} /> : <LandingPage />;
 }
 
 function DashboardApp({ client }: { client: DashboardClient }) {

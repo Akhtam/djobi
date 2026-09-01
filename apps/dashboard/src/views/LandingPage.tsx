@@ -40,7 +40,7 @@ export function LandingPage() {
 
       <header className="landing-header">
         <div className="landing-shell landing-header__inner">
-          <a className="landing-brand" href="/landing-page" aria-label="djobi home">
+          <a className="landing-brand" href="/" aria-label="djobi home">
             <img src={logoUrl} alt="" width={30} height={30} />
             <span>djobi</span>
           </a>
@@ -409,7 +409,7 @@ export function LandingPage() {
 
       <footer className="landing-footer">
         <div className="landing-shell">
-          <a className="landing-brand" href="/landing-page" aria-label="djobi home">
+          <a className="landing-brand" href="/" aria-label="djobi home">
             <img src={logoUrl} alt="" width={26} height={26} />
             <span>djobi</span>
           </a>

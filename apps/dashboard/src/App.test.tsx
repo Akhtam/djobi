@@ -68,8 +68,8 @@ beforeEach(() => {
 });
 
 describe('landing page', () => {
-  it('renders at /landing-page without loading authenticated dashboard data', () => {
-    window.history.replaceState(null, '', '/landing-page');
+  it('renders at the bare homepage without loading authenticated dashboard data', () => {
+    window.location.hash = '';
     const client = createFixtureDashboardClient(fixtureApplications);
     const listApplications = vi.spyOn(client, 'listApplications');
 
@@ -87,7 +87,7 @@ describe('landing page', () => {
   });
 
   it('offers product details in accessible disclosures', async () => {
-    window.history.replaceState(null, '', '/landing-page');
+    window.location.hash = '';
     const { user } = renderApp();
     const question = screen.getByText('Does djobi submit applications for me?');
 
@@ -96,6 +96,34 @@ describe('landing page', () => {
 
     expect(question.closest('details')).toHaveAttribute('open');
     expect(screen.getByText(/you review the page and submit/)).toBeInTheDocument();
+  });
+
+  it('switches to the dashboard on a hash-only navigation, with no document reload', async () => {
+    window.location.hash = '';
+    const client = createFixtureDashboardClient(fixtureApplications);
+    renderApp(client);
+    screen.getByRole('navigation', { name: 'Landing page' });
+
+    act(() => {
+      window.location.hash = '#/login';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Landing page' })).not.toBeInTheDocument();
+  });
+
+  it('leaves an in-page landing anchor on the landing page rather than switching to the dashboard', () => {
+    window.location.hash = '';
+    renderApp();
+    screen.getByRole('navigation', { name: 'Landing page' });
+
+    act(() => {
+      window.location.hash = '#product';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(screen.getByRole('navigation', { name: 'Landing page' })).toBeInTheDocument();
   });
 });
 
