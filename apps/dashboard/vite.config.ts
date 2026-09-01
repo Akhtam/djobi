@@ -12,5 +12,29 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: true,
+    /**
+     * Proxies the backend's routes onto this dev server's own origin, so `dashboardClient.ts` can
+     * call them as relative paths and the browser sees every request as same-origin.
+     *
+     * This is the fix for real login breakage, not a nicety: the dashboard (`:5174`) and backend
+     * (`:5391`) were genuinely cross-origin, which makes the session cookie a *third-party* cookie
+     * from the browser's point of view — Chrome partitions/blocks those by default regardless of
+     * `SameSite`/`Secure`. That's exactly what was observed: sign-in appeared to succeed (the
+     * `Set-Cookie` response is never blocked), but the very next `GET /applications` came back 401
+     * because the cookie was never attached. No cookie attribute fixes that; only not being
+     * cross-origin does. It also matches where this was always headed —
+     * `docs/multi-tenant-auth.md`'s ADR-0001 already has the deployed dashboard served from the same
+     * Worker as the API, at which point this becomes moot rather than something to unwind.
+     *
+     * Paths only, not a catch-all: the dashboard's own routing lives entirely in the hash fragment
+     * (`#/...`), which never reaches the server, so these three prefixes are exactly the backend's
+     * real HTTP surface (`app.ts`'s `/api/auth/*`, `/applications`, `/profile`) and nothing here can
+     * collide with an asset or page path this dev server itself needs to serve.
+     */
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:5391', changeOrigin: true },
+      '/applications': { target: 'http://127.0.0.1:5391', changeOrigin: true },
+      '/profile': { target: 'http://127.0.0.1:5391', changeOrigin: true },
+    },
   },
 });

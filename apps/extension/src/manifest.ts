@@ -11,6 +11,13 @@ export default defineManifest({
   name: 'djobi — Job Application Autofill',
   version: pkg.version,
   description: 'Autofills job applications with an AI-tailored resume and drafted answers.',
+  // Pins this extension's id to `EXTENSION_ID` regardless of load order or machine — an unpinned
+  // dev build gets a fresh random id every reload, which `apps/backend/src/auth.ts`'s
+  // `trustedOrigins` can't whitelist (`docs/multi-tenant-auth.md`, Phase D). Only the *public* half
+  // of the keypair; the private half never leaves `~/.djobi-secrets` and is not needed again unless
+  // this is ever packaged as a signed `.crx` for the Chrome Web Store. `manifest.test.ts` asserts
+  // this base64 actually derives to `EXTENSION_ID` — the two are otherwise free to drift silently.
+  key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxHCAgIsu0C+GZhKbMXMdRq9UPEy1NH5VZ0WzxsnrV7F3jOIRnn8pv6t7pcvLuh421jcamfnR5ADLCHy8Jbc+IsRvX+9LuA8Q1PmMDhbwzPQlW3RxgPs0pwsCUDQpFdK7m6klk/acXr3O4ytpZaoISaTjHOotYQeygqG4GXM8vq8Jqxl5INYd53/fdNlJNSwSOmvYCFNuVDhp4wO1q8XrLSQWplo2WRqa6EvA+BACgYXzVUZ/1KDLhGLoEKPr3KOTE5TjDc6Nnx7OX3BrGll7kQbI8cpaYVmhV/thSLqYmzUH048X5i2T13NyPmjrimoQqzGPl4ep0Xz67RT539ci1QIDAQAB',
   icons: {
     16: 'src/assets/icons/icon16.png',
     48: 'src/assets/icons/icon48.png',

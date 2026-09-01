@@ -37,17 +37,38 @@ function createAuth() {
     secret: process.env.BETTER_AUTH_SECRET,
     // Silences "Base URL is not set"; matches this backend's own default port (`index.ts`, `.env.example`).
     baseURL: process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:5391',
-    // The dashboard's dev origins — matches `app.ts`'s CORS allowlist. Better Auth checks this
-    // itself (its own CSRF defense, independent of `app.ts`'s CORS/content-type guards) before
-    // setting or trusting a session cookie for a cross-site request; without it the dashboard's
-    // sign-in would CORS-succeed but the session cookie would never actually be issued.
-    trustedOrigins: ['http://localhost:5174', 'http://127.0.0.1:5174'],
+    // The dashboard's dev origins, plus the extension's — matches `app.ts`'s CORS allowlist for the
+    // dashboard. Better Auth checks this itself (its own CSRF defense, independent of `app.ts`'s
+    // CORS/content-type guards, and *not* limited to cookie-carrying requests — a bearer-only POST
+    // still gets origin-validated) before accepting a request at all.
+    //
+    // `chrome-extension://fgfmcenbbggfhbddflgfoehjahnbimkg` is the extension's origin, stable only
+    // because `manifest.ts` pins its id with a `key` (`docs/multi-tenant-auth.md`, Phase D) — an
+    // unpinned dev build gets a fresh random id every reload, which no static allowlist entry could
+    // ever match. Without this the extension's sign-in gets a 403 `Invalid origin` before it ever
+    // reaches Better Auth's own credential check.
+    trustedOrigins: [
+      'http://localhost:5174',
+      'http://127.0.0.1:5174',
+      'chrome-extension://fgfmcenbbggfhbddflgfoehjahnbimkg',
+    ],
     // Better Auth's own default id is a random base62 string, which a `uuid` column rejects outright
     // — every table it owns (`users`, `session`, `account`, `verification`) is `uuid` in
     // `db/schema.ts`, matching the rest of this schema rather than switching those to `text`.
     advanced: {
       database: {
         generateId: 'uuid',
+      },
+      // The dashboard (`:5174`) and this backend (`:5391`) are different origins, so the session
+      // cookie is cross-site by construction — Better Auth's own default (`SameSite=Lax`) is sent
+      // back only on a top-level navigation, never on a cross-origin `fetch`, which is all this app
+      // ever does. Without this override, sign-in sets the cookie but the very next request (loading
+      // applications) never carries it back and reads as signed-out again. `SameSite=None` requires
+      // `Secure`; both `localhost` and `127.0.0.1` are treated as secure contexts by browsers even
+      // over plain `http`, so this works locally without TLS.
+      defaultCookieAttributes: {
+        sameSite: 'none',
+        secure: true,
       },
     },
     user: {

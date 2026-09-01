@@ -62,7 +62,8 @@ import {
   type SaveProfileRequest,
   type TailoredResume,
 } from '@djobi/shared';
-import { callBackend, callBackendBinary } from './callBackend';
+import { signIn as authSignIn, signOut as authSignOut } from './authClient';
+import { callBackend, callBackendBinary, HttpError } from './callBackend';
 
 /**
  * What the Ask tab has to say to ask one turn. `jobInfo` is nullable rather than optional because
@@ -114,6 +115,10 @@ export interface BackendClient {
     jobUrl: string,
     signal?: AbortSignal,
   ): Promise<DuplicateApplicationSummary>;
+  /** Establishes a session, storing the bearer token every other method here then attaches. */
+  signIn(email: string, password: string): Promise<void>;
+  /** Ends the session, backend-side and locally. */
+  signOut(): Promise<void>;
 }
 
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
@@ -191,7 +196,28 @@ export const httpBackendClient: BackendClient = {
       'GET',
       signal,
     ),
+
+  signIn: authSignIn,
+  signOut: authSignOut,
 };
+
+/** What `signIn` accepts against a fake client that was never given its own credentials. */
+const FAKE_EMAIL = 'jane@example.com';
+const FAKE_PASSWORD = 'correct horse battery staple';
+
+/**
+ * How a fake client's session starts, and what credentials `signIn` accepts against it.
+ *
+ * `signedIn` defaults to `true` — most of this suite drives the panel and options page past login,
+ * the same reasoning `apps/dashboard`'s `FixtureAuthOptions` states for its own default. A test of
+ * the sign-in flow itself, or of a 401 mid-run (`docs/multi-tenant-auth.md`, Phase D), is the one
+ * that opts out.
+ */
+export interface FakeBackendAuthOptions {
+  signedIn?: boolean;
+  email?: string;
+  password?: string;
+}
 
 /**
  * A `BackendClient` for tests: every route answered from memory, each answer overridable.
@@ -206,9 +232,36 @@ export const httpBackendClient: BackendClient = {
  * Not wired into either `main.tsx`, deliberately, for the reason the dashboard's comment gives: a
  * runtime flag that swaps the real backend for fake data is a flag that can be left on.
  */
-export function createFakeBackendClient(overrides: Partial<BackendClient> = {}): BackendClient {
+export function createFakeBackendClient(
+  overrides: Partial<BackendClient> = {},
+  auth: FakeBackendAuthOptions = {},
+): BackendClient {
+  const { signedIn = true, email = FAKE_EMAIL, password = FAKE_PASSWORD } = auth;
+  let hasSession = signedIn;
+
+  /**
+   * `requireAuth()`'s own answer, reproduced here — every route below sits behind it in `app.ts`,
+   * so a fake that never rejects would let a test drive a signed-out UI as if it didn't exist.
+   * `HttpError`'s `kind`/`status` are what `background/pipelineFailure.ts` and
+   * `useApplicationStore`-style consumers actually switch on, so this has to be the same shape a
+   * real 401 arrives in.
+   */
+  function unauthorized<T>(path: string): Promise<T> {
+    return Promise.reject(
+      new HttpError('http', path, `${path} failed (401): Authentication required`, 401),
+    );
+  }
+
+  /** Gates one route behind `hasSession`, so every fake method states its own path once. */
+  function guarded<Args extends unknown[], T>(
+    path: string,
+    respond: (...args: Args) => Promise<T>,
+  ): (...args: Args) => Promise<T> {
+    return (...args) => (hasSession ? respond(...args) : unauthorized<T>(path));
+  }
+
   const fake: BackendClient = {
-    extractJob: () =>
+    extractJob: guarded('/extract-job', () =>
       Promise.resolve({
         company: 'Acme',
         team: null,
@@ -218,24 +271,53 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
         requirements: [],
         keywords: [],
       }),
-    tailorResume: (profile) => Promise.resolve(baseResumeOf(profile)),
-    answerQuestions: (_profile, _jobInfo, questions) =>
-      Promise.resolve(
-        questions.map((question) => ({
-          fieldId: question.fieldId,
-          question: question.question,
-          answer: question.knownAnswer ?? 'Draft answer.',
-          sourceStoryIds: [],
-        })),
-      ),
-    answerChat: () => Promise.resolve({ reply: 'Here you go.' }),
+    ),
+    tailorResume: guarded('/tailor-resume', (profile: Profile) =>
+      Promise.resolve(baseResumeOf(profile)),
+    ),
+    answerQuestions: guarded(
+      '/answer-questions',
+      (_profile: Profile, _jobInfo: JobInfo, questions: QuestionForModel[]) =>
+        Promise.resolve(
+          questions.map((question) => ({
+            fieldId: question.fieldId,
+            question: question.question,
+            answer: question.knownAnswer ?? 'Draft answer.',
+            sourceStoryIds: [],
+          })),
+        ),
+    ),
+    answerChat: guarded('/answer-chat', () => Promise.resolve({ reply: 'Here you go.' })),
     // Four bytes of `%PDF`, which is all any caller here does anything with.
-    renderResumePdf: () => Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
-    getProfile: () => Promise.resolve(null),
-    saveProfile: (profile) => Promise.resolve(profile),
-    saveApplication: () => Promise.resolve({ id: 'application-1' }),
-    updateApplication: () => Promise.resolve({ id: 'application-1' }),
-    findApplicationDuplicates: () => Promise.resolve({ count: 0, latest: null }),
+    renderResumePdf: guarded('/render-resume-pdf', () =>
+      Promise.resolve(new Uint8Array([37, 80, 68, 70]).buffer),
+    ),
+    getProfile: guarded('/profile', () => Promise.resolve(null)),
+    saveProfile: guarded('/profile', (profile: Profile) => Promise.resolve(profile)),
+    saveApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
+    updateApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
+    findApplicationDuplicates: guarded('/applications', () =>
+      Promise.resolve({ count: 0, latest: null }),
+    ),
+
+    signIn: (attemptedEmail, attemptedPassword) => {
+      if (attemptedEmail === email && attemptedPassword === password) {
+        hasSession = true;
+        return Promise.resolve();
+      }
+      return Promise.reject(
+        new HttpError(
+          'http',
+          '/api/auth/sign-in/email',
+          'Invalid email or password',
+          401,
+        ),
+      );
+    },
+    signOut: () => {
+      hasSession = false;
+      return Promise.resolve();
+    },
   };
 
   return { ...fake, ...overrides };

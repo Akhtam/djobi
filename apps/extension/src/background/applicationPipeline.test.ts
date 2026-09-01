@@ -164,6 +164,9 @@ function makeDeps(
     // No past application for this URL by default, so the duplicate guard lets every other test
     // through untouched.
     findApplicationDuplicates: vi.fn(cancellable({ count: 0, latest: null })),
+    // Auth routes, likewise never reached from the pipeline — present only to satisfy the interface.
+    signIn: vi.fn().mockResolvedValue(undefined),
+    signOut: vi.fn().mockResolvedValue(undefined),
   };
   const page: PageClient = {
     fill: vi.fn().mockImplementation((_tabId: number, command: FillPageCommand) =>

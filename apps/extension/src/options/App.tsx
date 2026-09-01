@@ -10,7 +10,9 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import type { BackendClient } from '../lib/backendClient';
+import { HttpError } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
+import { Login } from './Login';
 import {
   normalizeProfileDraft,
   optionalText,
@@ -18,6 +20,11 @@ import {
   storyTags,
   withScreeningAnswer,
 } from './profileDraft';
+
+/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
+}
 
 /** The Profile keys holding an editable list of entries. */
 type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
@@ -141,6 +148,13 @@ export function App({ client }: { client: BackendClient }) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const editRevisionRef = useRef(0);
+  // Set on a 401 from `getProfile` rather than surfaced through `status` — an absent or expired
+  // session is "go sign in again," not "the backend is broken," and this is what routes to `Login`
+  // below instead of a generic error banner over an unusable empty form.
+  const [unauthorized, setUnauthorized] = useState(false);
+  // Bumped by `handleSignIn` to force the fetch effect below to run again once a fresh sign-in has
+  // replaced the session that expired.
+  const [reloadToken, setReloadToken] = useState(0);
 
   function setProfile(next: Profile) {
     ++editRevisionRef.current;
@@ -154,12 +168,29 @@ export function App({ client }: { client: BackendClient }) {
       .getProfile()
       // `parseProfile` completes a stored profile against the empty one and validates it, so a
       // profile saved before a field existed can't crash the form that binds to that key.
-      .then((loaded) => setProfileState(parseProfile(loaded)))
-      .catch((error: Error) => {
+      .then((loaded) => {
+        setUnauthorized(false);
+        setProfileState(parseProfile(loaded));
+      })
+      .catch((error: unknown) => {
+        if (isUnauthorized(error)) {
+          setUnauthorized(true);
+          return;
+        }
         setProfileState(EMPTY_PROFILE);
-        setStatus({ kind: 'error', message: `Failed to load profile: ${error.message}` });
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus({ kind: 'error', message: `Failed to load profile: ${message}` });
       });
-  }, []);
+  }, [client, reloadToken]);
+
+  async function handleSignIn(email: string, password: string) {
+    await client.signIn(email, password);
+    setReloadToken((token) => token + 1);
+  }
+
+  if (unauthorized) {
+    return <Login onSignIn={handleSignIn} />;
+  }
 
   if (!profile) {
     return (

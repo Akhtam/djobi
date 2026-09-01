@@ -38,7 +38,7 @@ describe('listApplications', () => {
     const fetchMock = stubFetch({ jsonBody: [sample] });
 
     await expect(httpDashboardClient.listApplications()).resolves.toEqual([sample]);
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/applications', {
+    expect(fetchMock).toHaveBeenCalledWith('/applications', {
       method: 'GET',
       signal: expect.any(AbortSignal),
       credentials: 'include',
@@ -74,7 +74,7 @@ describe('getProfile', () => {
       resumePageSize: 'A4',
       showRolePrefix: true,
     });
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
+    expect(fetchMock).toHaveBeenCalledWith('/profile', {
       method: 'GET',
       signal: expect.any(AbortSignal),
       credentials: 'include',
@@ -94,16 +94,13 @@ describe('updateStage', () => {
 
     await httpDashboardClient.updateStage('app-brex', 'rejected');
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/applications/app-brex/stage?response=compact',
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ stage: 'rejected' }),
-        signal: expect.any(AbortSignal),
-        credentials: 'include',
-      },
-    );
+    expect(fetchMock).toHaveBeenCalledWith('/applications/app-brex/stage?response=compact', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'rejected' }),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
   });
 
   it('escapes an id rather than letting it change the path', async () => {
@@ -111,9 +108,7 @@ describe('updateStage', () => {
 
     await httpDashboardClient.updateStage('a/b', 'applied');
 
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      'http://127.0.0.1:5391/applications/a%2Fb/stage?response=compact',
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb/stage?response=compact');
   });
 });
 
@@ -136,26 +131,25 @@ describe('addNote', () => {
       text: 'Race condition.',
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:5391/applications/app-brex/notes?response=compact',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
-        signal: expect.any(AbortSignal),
-        credentials: 'include',
-      },
-    );
+    expect(fetchMock).toHaveBeenCalledWith('/applications/app-brex/notes?response=compact', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: 'technical', text: 'Race condition.' }),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
   });
 });
 
 describe('signIn', () => {
   it('POSTs Better Auth’s sign-in route with credentials included', async () => {
-    const fetchMock = stubFetch({ jsonBody: { user: { id: 'user-1', email: 'jane@example.com' } } });
+    const fetchMock = stubFetch({
+      jsonBody: { user: { id: 'user-1', email: 'jane@example.com' } },
+    });
 
     await httpDashboardClient.signIn('jane@example.com', 'correct horse battery staple');
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/api/auth/sign-in/email', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sign-in/email', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: 'jane@example.com', password: 'correct horse battery staple' }),
@@ -179,7 +173,7 @@ describe('signOut', () => {
 
     await httpDashboardClient.signOut();
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/api/auth/sign-out', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sign-out', {
       method: 'POST',
       signal: expect.any(AbortSignal),
       credentials: 'include',

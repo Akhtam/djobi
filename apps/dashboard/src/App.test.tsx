@@ -63,7 +63,40 @@ function cardFor(roleTitle: string): HTMLElement {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/');
   window.location.hash = '#/';
+});
+
+describe('landing page', () => {
+  it('renders at /landing-page without loading authenticated dashboard data', () => {
+    window.history.replaceState(null, '', '/landing-page');
+    const client = createFixtureDashboardClient(fixtureApplications);
+    const listApplications = vi.spyOn(client, 'listApplications');
+
+    renderApp(client);
+
+    expect(
+      screen.getByRole('heading', { name: 'Apply with context. Follow up with clarity.' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Open dashboard' })[0]).toHaveAttribute(
+      'href',
+      '/#/login',
+    );
+    expect(screen.getByRole('navigation', { name: 'Landing page' })).toBeInTheDocument();
+    expect(listApplications).not.toHaveBeenCalled();
+  });
+
+  it('offers product details in accessible disclosures', async () => {
+    window.history.replaceState(null, '', '/landing-page');
+    const { user } = renderApp();
+    const question = screen.getByText('Does djobi submit applications for me?');
+
+    expect(question.closest('details')).not.toHaveAttribute('open');
+    await user.click(question);
+
+    expect(question.closest('details')).toHaveAttribute('open');
+    expect(screen.getByText(/you review the page and submit/)).toBeInTheDocument();
+  });
 });
 
 describe('applications list', () => {
@@ -733,7 +766,9 @@ describe('auth', () => {
 
     renderApp(signedOutClient());
 
-    await waitFor(() => expect(window.location.hash).toBe('#/login?from=%23%2Fapplications%2Fapp-brex'));
+    await waitFor(() =>
+      expect(window.location.hash).toBe('#/login?from=%23%2Fapplications%2Fapp-brex'),
+    );
   });
 
   it('signs in and loads the applications list, defaulting to # when there was no from target', async () => {

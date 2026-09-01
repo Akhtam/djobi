@@ -59,6 +59,68 @@ describe('createHttpTransport', () => {
     expect(callsWithCreds[0].init?.credentials).toBe('include');
   });
 
+  it('attaches Authorization: Bearer <token> when getAuthorization resolves one', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({
+      baseUrl: '',
+      fetch: fetchImpl,
+      getAuthorization: () => Promise.resolve('the-token'),
+    });
+
+    await client.json('/applications', Schema);
+
+    expect(calls[0].init?.headers).toMatchObject({ authorization: 'Bearer the-token' });
+  });
+
+  it('sends no Authorization header when getAuthorization resolves undefined, or is unset', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    await createHttpTransport({
+      baseUrl: '',
+      fetch: fetchImpl,
+      getAuthorization: () => undefined,
+    }).json('/applications', Schema);
+    expect(calls[0].init?.headers as Record<string, string> | undefined).toBeUndefined();
+
+    const { fetchImpl: withoutGetter, calls: callsWithoutGetter } = respondWith(
+      () => new Response('{"id":"a"}'),
+    );
+    await createHttpTransport({ baseUrl: '', fetch: withoutGetter }).json('/applications', Schema);
+    expect(callsWithoutGetter[0].init?.headers).toBeUndefined();
+  });
+
+  it('resolves getAuthorization fresh on every call rather than caching it', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    let token = 'first';
+    const client = createHttpTransport({
+      baseUrl: '',
+      fetch: fetchImpl,
+      getAuthorization: () => token,
+    });
+
+    await client.json('/applications', Schema);
+    token = 'second';
+    await client.json('/applications', Schema);
+
+    expect(calls[0].init?.headers).toMatchObject({ authorization: 'Bearer first' });
+    expect(calls[1].init?.headers).toMatchObject({ authorization: 'Bearer second' });
+  });
+
+  it('preserves the content-type header on a POST while adding Authorization', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({
+      baseUrl: '',
+      fetch: fetchImpl,
+      getAuthorization: () => 'the-token',
+    });
+
+    await client.json('/profile', Schema, { body: { name: 'Ada' } });
+
+    expect(calls[0].init?.headers).toEqual({
+      'content-type': 'application/json',
+      authorization: 'Bearer the-token',
+    });
+  });
+
   it('reports a non-2xx as an http failure carrying the status and the path', async () => {
     const { fetchImpl } = respondWith(
       () => new Response('{"error":"Application not found"}', { status: 404 }),

@@ -16,6 +16,7 @@ describe('pipelineFailure', () => {
   });
 
   it.each([
+    [new HttpError('http', '/extract-job', 'Authentication required', 401), 'unauthorized'],
     [new HttpError('network', '/extract-job', 'failed to fetch'), 'backend-unreachable'],
     [new HttpError('timeout', '/extract-job', 'timed out'), 'temporary'],
     [new HttpError('http', '/extract-job', 'retry later', 408), 'temporary'],

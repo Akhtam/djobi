@@ -69,13 +69,8 @@ export interface DashboardClient {
 }
 
 /**
- * The backend's origin.
- *
- * Absolute while the dashboard runs on its own dev server. Under ADR-0001 the deployed dashboard is
- * served from the same Worker as the API, where this becomes a relative `'/api'` — which is why the
- * transport takes it as configuration rather than owning one constant for both apps. The extension
- * cannot do the same: it has no origin of its own, and its absolute URL must also match its
- * `host_permissions` entry.
+ * The backend's real origin — used only to name it in {@link transport}'s `unreachableMessage`, not
+ * as the transport's `baseUrl`. See that constant for why the two are no longer the same value.
  */
 const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
 
@@ -86,16 +81,23 @@ const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
  * extension's did not, and the actionable "is it running?" message lived here rather than in the app
  * more likely to hit it. Both are now one implementation and both apps get the better half.
  *
- * `credentials: 'include'` is what carries the dashboard's session — an httpOnly cookie Better Auth
- * sets, per `docs/multi-tenant-auth.md`'s "cookie for the dashboard, bearer for the extension" split
- * — on every cross-origin call to `BACKEND_ORIGIN`. It has to sit here, on the shared transport,
- * rather than per-call: there is no request this app makes that should go out unauthenticated, sign-in
- * and sign-out included — the cookie a sign-in response sets has to be sent right back on the very
- * next call for a session to exist at all. `app.ts`'s matching `credentials: true` in its CORS
- * config is what makes the browser honor this rather than silently withhold the cookie.
+ * `baseUrl` is relative (`''`), not `BACKEND_ORIGIN`, so every call this app makes is same-origin
+ * from the browser's point of view. It was `BACKEND_ORIGIN` originally, and that broke real login:
+ * the dashboard (`:5174`) and the backend (`:5391`) are different origins, which makes the session
+ * cookie a *third-party* cookie — Chrome partitions/blocks those by default no matter what
+ * `SameSite`/`Secure` say. Sign-in still appeared to succeed (`Set-Cookie` on the response is never
+ * blocked), but the very next authenticated call came back 401 because the cookie was never sent
+ * back. `vite.config.ts`'s dev-server `proxy` is the other half of this fix — it forwards these
+ * relative paths to the real backend server-side, invisibly to the browser, which is also exactly
+ * what production looks like once `docs/multi-tenant-auth.md`'s ADR-0001 (dashboard served from the
+ * same Worker as the API) ships: this was always the eventual shape, not a dev-only workaround.
+ *
+ * `credentials: 'include'` is kept anyway: harmless once same-origin (`fetch`'s own default,
+ * `'same-origin'`, would behave identically here), and it's what carries the session correctly for
+ * anyone running this against a genuinely cross-origin backend without the proxy in front of it.
  */
 const transport = createHttpTransport({
-  baseUrl: BACKEND_ORIGIN,
+  baseUrl: '',
   unreachableMessage: `Couldn't reach the djobi backend at ${BACKEND_ORIGIN}. Is it running? (pnpm dev:backend)`,
   credentials: 'include',
 });

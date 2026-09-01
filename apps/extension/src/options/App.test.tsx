@@ -1,5 +1,5 @@
 import type { Profile } from '@djobi/shared';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { App } from './App';
@@ -782,5 +782,45 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await screen.findByText('Backend unreachable');
+  });
+});
+
+describe('options App, auth', () => {
+  it('shows the sign-in view on a 401 rather than an unusable empty form', async () => {
+    render(<App client={createFakeBackendClient({}, { signedIn: false })} />);
+
+    expect(await screen.findByRole('heading', { name: 'djobi' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Full name')).not.toBeInTheDocument();
+  });
+
+  it('signs in and shows the profile editor once a session exists', async () => {
+    const signedOutClient = createFakeBackendClient({}, { signedIn: false });
+    render(<App client={signedOutClient} />);
+    await screen.findByLabelText('Email');
+
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'jane@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'correct horse battery staple' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Full name')).toBeInTheDocument());
+  });
+
+  it('reports a bad password without leaving the sign-in view', async () => {
+    render(<App client={createFakeBackendClient({}, { signedIn: false })} />);
+    await screen.findByLabelText('Email');
+
+    fireEvent.change(screen.getByLabelText('Email'), {
+      target: { value: 'jane@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
+    expect(screen.getByLabelText('Email')).toBeInTheDocument();
   });
 });

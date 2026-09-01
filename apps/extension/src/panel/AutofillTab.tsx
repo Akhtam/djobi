@@ -61,6 +61,8 @@ function failureReason(kind: RunFailureKind, step: RunStep): string {
       return 'This page returned data the extension could not use. Reload the page before trying again.';
     case 'invalid-model-output':
       return 'The model returned an unusable result. Try again.';
+    case 'unauthorized':
+      return 'You have been signed out. Sign in again from the extension options, then retry.';
     case 'cancelled':
       return 'This attempt was cancelled.';
     case 'unknown':

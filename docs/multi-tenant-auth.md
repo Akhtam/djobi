@@ -1,8 +1,10 @@
 # Multi-tenant authentication — design and roadmap
 
-> **Status: Phases A–C complete (2026-09-01).** Ownership, Better Auth session verification, and
-> dashboard login are all implemented and tested — see the checklists below. Phases D–F (extension
-> login, cost control, pre-public hardening) are not started. ADR 0001 (single Cloudflare Worker) is
+> **Status: Phases A–D complete (2026-09-01), email/password only.** Ownership, Better Auth session
+> verification, dashboard login, and extension login are all implemented and tested — see the
+> checklists below. Google/GitHub OAuth (part of the original Phase B and D plans) is deferred until
+> a provider is actually registered; only email/password works today, for one real account. Phases E–F
+> (cost control, pre-public hardening) are not started. ADR 0001 (single Cloudflare Worker) is
 > explicitly _not_ assumed here.
 >
 > The file/module names below were corrected on the 2026-09-01 pass — the repo has moved since this
@@ -134,62 +136,102 @@ page grows a key field.
 
 ## Phases
 
-### Phase A — Ownership in the data model (no auth yet)
+### Phase A — Ownership in the data model (no auth yet) — done
 
 The whole mechanical change, performed while there is still one tenant.
 
-- [ ] Migration `0009` (next free number — `0008` is Phase 19's): create `users`; add
+- [x] Migration `0009` (next free number — `0008` is Phase 19's): create `users`; add
       `applications.user_id` (nullable, then backfilled, then `not null`); re-key `profiles` to
       `user_id` as primary key; recreate both application indexes with a `user_id` prefix
-- [ ] Backfill: insert one bootstrap user, assign the existing profile row and every existing
+- [x] Backfill: insert one bootstrap user, assign the existing profile row and every existing
       application to it
-- [ ] `db/profileStore.ts` (interface) + `db/postgresProfileStore.ts` (impl): `ProfileStore.get`/
+- [x] `db/profileStore.ts` (interface) + `db/postgresProfileStore.ts` (impl): `ProfileStore.get`/
       `.save` take `userId`; delete `PROFILE_ID`; `inMemoryProfileStore` gains the same parameter
-- [ ] `db/applicationStore.ts` (interface) + `db/postgresApplicationStore.ts` (impl): all eight
+- [x] `db/applicationStore.ts` (interface) + `db/postgresApplicationStore.ts` (impl): all eight
       `ApplicationStore` methods take `userId` and scope on it, in both the Postgres adapter and
       `inMemoryApplicationStore`
-- [ ] Routes thread a single exported `BOOTSTRAP_USER_ID` constant — one place, easy to grep, and the
+- [x] Routes thread a single exported `BOOTSTRAP_USER_ID` constant — one place, easy to grep, and the
       only thing Phase B replaces
-- [ ] Tests: `applicationStore.contract.test.ts` already runs one suite against both adapters — add a
+- [x] Tests: `applicationStore.contract.test.ts` already runs one suite against both adapters — add a
       **second user** to it whose rows must never appear in the first user's reads. This is the test
       category that matters and it is worth over-covering. Extend `postgresProfileStore.test.ts`
       the same way
-- [ ] Integration test: the Duplicate Guard does not match across users
+- [x] Integration test: the Duplicate Guard does not match across users
 
-### Phase B — Auth provider and session verification
+### Phase B — Auth provider and session verification — done except social login
 
-- [ ] Better Auth (or the chosen equivalent) mounted on the Hono app, using the existing Drizzle
-      Postgres connection; reconcile its user table with Phase A's
-- [ ] Google and GitHub providers configured; PKCE public-client flow enabled
-- [ ] Auth middleware in `app.ts`, registered **after** CORS and the content-type guard and **before**
+- [x] Better Auth mounted on the Hono app (`apps/backend/src/auth.ts`), using the existing Drizzle
+      Postgres connection; reconciled with Phase A's `users` table via `user.modelName: 'users'`
+- [ ] Google and GitHub providers configured; PKCE public-client flow enabled — **not done.** Only
+      Google is wired, and with blank `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`.env.example`) —
+      the app isn't registered in Google Cloud Console yet. GitHub is not configured at all.
+      Email/password is what actually works today.
+- [x] Auth middleware in `app.ts`, registered **after** CORS and the content-type guard and **before**
       the routes — Hono composes in registration order, and the CORS comment in `app.ts` explains why
       that ordering is not negotiable. Auth routes themselves are exempt
-- [ ] Middleware accepts an httpOnly session cookie or a `Bearer` token, sets `c.set('userId', ...)`,
+- [x] Middleware accepts an httpOnly session cookie or a `Bearer` token, sets `c.set('userId', ...)`,
       and answers 401 with the existing `BackendErrorBody` shape so both clients' error paths already
-      handle it
-- [ ] `BOOTSTRAP_USER_ID` deleted; routes read the user from context
-- [ ] Route tests cover: no credential, expired credential, and another user's id in the path
+      handle it (`authMiddleware.ts`)
+- [x] `BOOTSTRAP_USER_ID` no longer read by any route — every handler reads `c.get('userId')` instead.
+      The constant itself is kept (not literally deleted): migration `0009`'s backfill and several
+      store-level tests still need a concrete, real-looking id — see `db/bootstrapUser.ts`'s own
+      comment. **How that bootstrap row acquires a real login is still an open question** — no route
+      or script exists yet to give it a password; see the note below on signup.
+- [x] Route tests cover: no credential (`authMiddleware.test.ts`), an invalid/garbage credential
+      (bearer and cookie), and a valid session mapping to the right `userId`
 
-### Phase C — Dashboard login
+### Phase C — Dashboard login — done
 
-- [ ] `#/login` route, and a redirect for any unauthenticated view
-- [ ] `credentials: 'include'` in `dashboardClient.request()`
-- [ ] 401 clears local state and routes to login rather than surfacing a generic backend error
-- [ ] `createFixtureDashboardClient` grows an authenticated-user notion, so `App.test.tsx` keeps
-      driving the whole app with nothing mocked
+- [x] `#/login` route (`useHashRoute.ts`'s `LoginRoute`, `loginPath`), and a redirect for any
+      unauthenticated view (`App.tsx`'s effect on `unauthorized`)
+- [x] `credentials: 'include'` — landed on `@djobi/http-client`'s `HttpTransportOptions` (a
+      transport-level default, since every dashboard call needs it) rather than literally inside a
+      `dashboardClient.request()`, which doesn't exist as its own function; `dashboardClient.ts`'s
+      shared `transport` sets it
+- [x] 401 clears local state (`useApplicationStore`'s `unauthorized`/`reload`) and routes to login
+      rather than surfacing a generic backend error
+- [x] `createFixtureDashboardClient` grows a `FixtureAuthOptions` authenticated-user notion
+      (`signedIn`/`email`/`password`), so `App.test.tsx` keeps driving the whole app with nothing
+      mocked
 
-### Phase D — Extension login
+**Resolved:** the open question above (how the one real user claims the bootstrap row) was decided
+as option (a). `aismatov1991@gmail.com` signed up for real through `/api/auth/sign-up/email`, and a
+one-off script reassigned `applications.user_id`/`profiles.user_id` from `BOOTSTRAP_USER_ID` to that
+account's real id (200 applications, 1 profile — verified 0 rows left on the bootstrap id
+afterward). This also surfaced two bugs the migration to real auth had not yet been tested against,
+both now fixed: the pending `0009`/`0010` migrations had never been applied to the live Neon database
+(applied), and the dashboard's session cookie was `SameSite=Lax` with no `Secure`, which Chrome
+silently drops as a third-party cookie on the cross-origin dashboard↔backend calls — fixed by a
+same-origin Vite dev proxy (`apps/dashboard/vite.config.ts`) rather than a cookie-attribute patch.
 
-- [ ] Pin the extension id with a manifest `key`; register
-      `https://<extension-id>.chromiumapp.org/` with both providers
-- [ ] `identity` permission; the deployed backend origin added to `host_permissions`
-- [ ] Sign-in on the options page via `chrome.identity.launchWebAuthFlow` with PKCE
-- [ ] Token in `chrome.storage.session`; `lib/fakeChrome.ts` and `fakeSessionStorage.ts` already
-      model this, so the test seam exists
-- [ ] `callBackend.request()` attaches the token; a 401 clears it and surfaces "sign in again" in the
-      panel, reusing the existing `BackendError` status branch
-- [ ] The panel must handle signed-out mid-run: a 401 during the Analysis Step is a normal step
-      failure and should checkpoint through `checkpointFailure` like any other
+### Phase D — Extension login — done except OAuth
+
+**Scoped down from the original OAuth/PKCE plan below to email/password**, matching Phase B/C: neither
+Google nor GitHub has real credentials configured yet, so `chrome.identity.launchWebAuthFlow` + PKCE
+infrastructure couldn't actually be exercised end to end. Better Auth's `bearer()` plugin already
+returns the session token via a `set-auth-token` response header on **any** successful sign-in,
+credential-based included, so the extension doesn't need OAuth to get a working bearer token. The
+OAuth items below are kept as the documented follow-up once a provider is registered, not implemented.
+
+- [x] Pin the extension id with a manifest `key` (`manifest.ts`, `EXTENSION_ID` in
+      `extensionConfig.ts`) — needed regardless of OAuth, since Better Auth's `trustedOrigins`
+      (`auth.ts`) rejects a POST from an origin it doesn't recognize, `chrome-extension://` included,
+      and an unpinned dev build gets a fresh random id every reload
+- [ ] Register `https://<extension-id>.chromiumapp.org/` with a provider — deferred with OAuth
+- [ ] `identity` permission — not added; not needed for the email/password path, only for
+      `launchWebAuthFlow`. The backend origin was already in `host_permissions` since Phase A
+- [ ] Sign-in via `chrome.identity.launchWebAuthFlow` with PKCE — deferred; `options/Login.tsx` is an
+      email/password form instead, calling `lib/authClient.ts`
+- [x] Token in `chrome.storage.session` (`lib/authToken.ts`); `lib/fakeChrome.ts` and
+      `fakeSessionStorage.ts` already modeled this, exactly as anticipated
+- [x] `callBackend.ts`'s transport attaches the token (`@djobi/http-client`'s new
+      `getAuthorization` option, resolved fresh per call); a 401 surfaces as "sign in again" in the
+      panel — a new `RunFailureKind: 'unauthorized'`, mapped in `background/pipelineFailure.ts` and
+      worded in `panel/AutofillTab.tsx`'s `failureReason` (there is no `BackendError` status branch
+      in this codebase to reuse — the doc's original wording assumed one)
+- [x] The panel handles signed-out mid-run: a 401 during any step already checkpointed through
+      `checkpointFailure` like any other `HttpError` before this phase (`background/runClaim.ts`'s
+      generic catch), so this needed only the new failure kind above, not new checkpointing logic
 
 ### Phase E — Cost control
 

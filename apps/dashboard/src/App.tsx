@@ -1,6 +1,6 @@
 /**
- * The dashboard shell: theme, the one application store, and the route switch between the three
- * views.
+ * The dashboard entry: the public landing-page path, or the authenticated dashboard shell and its
+ * hash-routed views.
  *
  * `client` is a prop rather than something this component constructs, so component tests can drive
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
@@ -15,13 +15,27 @@ import { analyticsPath, listPath, loginPath, useHashRoute } from './lib/useHashR
 import { Analytics } from './views/Analytics';
 import { ApplicationDetail } from './views/ApplicationDetail';
 import { ApplicationsList } from './views/ApplicationsList';
+import { LandingPage } from './views/LandingPage';
 import { Login } from './views/Login';
 
 export function App({ client }: { client: DashboardClient }) {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path === '/landing-page' ? <LandingPage /> : <DashboardApp client={client} />;
+}
+
+function DashboardApp({ client }: { client: DashboardClient }) {
   const { theme, toggleTheme } = useThemePreference();
   const { route, replaceRoute } = useHashRoute();
-  const { applications, loading, loadError, writeError, unauthorized, updateStage, addNote, reload } =
-    useApplicationStore(client);
+  const {
+    applications,
+    loading,
+    loadError,
+    writeError,
+    unauthorized,
+    updateStage,
+    addNote,
+    reload,
+  } = useApplicationStore(client);
 
   /*
     A 401 from the store means the session is gone — routed to `#/login` here rather than left to

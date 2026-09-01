@@ -104,6 +104,17 @@ export interface HttpTransportOptions {
    * which keeps `fetch`'s own default (`'same-origin'`).
    */
   credentials?: RequestCredentials;
+  /**
+   * Resolves the bearer token to send as `Authorization: Bearer <token>` on every call, or
+   * `undefined` for none. A function rather than a fixed string: the extension's token lives in
+   * `chrome.storage.session` (`docs/multi-tenant-auth.md`, Phase D) and can change — sign-in,
+   * sign-out, a session that expires — after `createHttpTransport` is called once at module scope, so
+   * a value captured at construction time would go stale the first time that happened. Called fresh
+   * before every request; may be async, since reading `chrome.storage.session` is. The dashboard has
+   * no use for this — its session is the httpOnly cookie `credentials` already carries — and leaves
+   * it unset.
+   */
+  getAuthorization?: () => string | undefined | Promise<string | undefined>;
 }
 
 /** One request's options. `method` defaults to `'POST'` when a body is given, `'GET'` when not. */
@@ -231,6 +242,19 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
       throw new Error(`GET ${path} was given a body; use POST, or send it in the path.`);
     }
 
+    // Resolved fresh per call, not once at transport construction — see `getAuthorization`'s own
+    // comment for why a captured value would go stale. Awaited before the headers are built, so a
+    // GET (which otherwise has none) still gets an `Authorization` header when there is a token.
+    //
+    // The conditional guards a real behavior difference, not just a style preference: `await
+    // undefined` still suspends this async function for a microtask, which delays `doFetch` below
+    // past the point a caller's synchronous `signal.abort()` (called right after this function is
+    // invoked, before anything here has awaited) would otherwise be observed by a listener that
+    // registers on call. Every transport without `getAuthorization` set — the dashboard included —
+    // must see exactly the old synchronous-up-to-`doFetch` behavior, which skipping the `await`
+    // entirely preserves.
+    const authorization = options.getAuthorization ? await options.getAuthorization() : undefined;
+
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const deadline = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
@@ -239,6 +263,9 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
         ...init,
         signal: deadline,
         ...(options.credentials ? { credentials: options.credentials } : {}),
+        ...(authorization
+          ? { headers: { ...init.headers, authorization: `Bearer ${authorization}` } }
+          : {}),
       });
 
       // Every body read is raced against the same deadline the request ran under, the failure path

@@ -109,6 +109,20 @@ body {
   color: var(--text-muted);
 }
 
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .page-header {
   position: sticky;
   top: 0;

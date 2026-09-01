@@ -16,6 +16,7 @@
 import { createHttpTransport } from '@djobi/http-client';
 import type { ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+import { getAuthToken } from './authToken';
 
 export { HttpError, type HttpErrorKind } from '@djobi/http-client';
 
@@ -45,6 +46,12 @@ const transport = createHttpTransport({
   unreachableMessage:
     `Couldn't reach the djobi backend at ${EXTENSION_BACKEND_ORIGIN}. Check it's running (pnpm dev:backend), ` +
     `and that the extension was reloaded since its host permissions last changed.`,
+  // Every route here (`/api/auth/*` aside, which never goes through this transport — see
+  // `lib/authClient.ts`) sits behind `app.ts`'s `requireAuth`, so every call needs whatever token
+  // `chrome.storage.session` currently holds. Resolved fresh per call rather than read once: the
+  // token can change — sign-in, sign-out, a session that expires — after this module's first import,
+  // and a value captured at that moment would go stale the first time it did.
+  getAuthorization: getAuthToken,
 });
 
 type Method = 'GET' | 'POST' | 'PATCH';

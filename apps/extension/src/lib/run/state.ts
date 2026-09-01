@@ -29,6 +29,7 @@ export const RUN_FAILURE_KINDS = [
   'backend-unreachable',
   'invalid-page',
   'invalid-model-output',
+  'unauthorized',
   'cancelled',
   'unknown',
 ] as const;

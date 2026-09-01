@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationWriteResultSchema, DuplicateApplicationSummarySchema } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+import { fakeSessionStorage } from './fakeSessionStorage';
 import { callBackend, callBackendBinary } from './callBackend';
 
 /**
@@ -13,6 +14,10 @@ const Result = ApplicationWriteResultSchema;
 describe('callBackend', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
+    // `callBackend.ts`'s transport reads a bearer token from `chrome.storage.session` on every
+    // call (`docs/multi-tenant-auth.md`, Phase D) — empty here, so these tests see the same
+    // no-`Authorization`-header requests they did before that existed.
+    vi.stubGlobal('chrome', { storage: fakeSessionStorage() });
   });
 
   it('posts the body as JSON to the local backend and resolves with the parsed response', async () => {
@@ -43,6 +48,16 @@ describe('callBackend', () => {
     vi.mocked(fetch).mockImplementation((_input, init) => {
       requestSignal = init?.signal ?? undefined;
       return new Promise((_resolve, reject) => {
+        // Real `fetch` checks `signal.aborted` synchronously on call and rejects immediately for an
+        // already-aborted signal, not only a future 'abort' event — this transport now awaits
+        // `getAuthorization` before calling `fetch`, so by the time this mock runs, the caller's
+        // synchronous `controller.abort()` below may already have landed. A mock that only listened
+        // for a future event would hang forever on exactly that ordering, which a real `fetch` never
+        // would.
+        if (requestSignal?.aborted) {
+          reject(requestSignal.reason);
+          return;
+        }
         requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), {
           once: true,
         });

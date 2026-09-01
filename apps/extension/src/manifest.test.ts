@@ -1,11 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { EXTENSION_BACKEND_ORIGIN } from './extensionConfig';
+import { EXTENSION_BACKEND_ORIGIN, EXTENSION_ID } from './extensionConfig';
 import manifestExport from './manifest';
 
 // manifest.ts passes defineManifest a plain object, not a function/Promise, so this is safe.
 const manifest = manifestExport as chrome.runtime.ManifestV3;
 
+/**
+ * Chrome's own algorithm for deriving an extension id from its public key: SHA-256 the DER-encoded
+ * SPKI key, take the first 16 bytes, and map each nibble onto 'a'..'p' instead of a hex digit.
+ * Reproduced here rather than trusted by inspection, so a future re-generated key that doesn't
+ * actually match `EXTENSION_ID` fails loudly instead of silently locking `trustedOrigins` out.
+ */
+async function extensionIdFromManifestKey(base64Key: string): Promise<string> {
+  const der = Uint8Array.from(atob(base64Key), (c) => c.charCodeAt(0));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', der));
+  return Array.from(digest.slice(0, 16))
+    .map((byte) => 'abcdefghijklmnop'[byte >> 4] + 'abcdefghijklmnop'[byte & 0x0f])
+    .join('');
+}
+
 describe('manifest', () => {
+  it("pins the extension's id via key, matching EXTENSION_ID exactly", async () => {
+    expect(manifest.key).toBeTruthy();
+    await expect(extensionIdFromManifestKey(manifest.key!)).resolves.toBe(EXTENSION_ID);
+  });
+
   it('grants host permission for each platform API oracle used by the background service worker', () => {
     expect(manifest.host_permissions).toContain('https://boards-api.greenhouse.io/*');
     expect(manifest.host_permissions).toContain('https://api.smartrecruiters.com/*');

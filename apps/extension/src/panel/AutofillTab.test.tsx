@@ -524,6 +524,27 @@ describe('AutofillTab', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('tells the candidate to sign in again on a 401, rather than a generic failure', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      jobPageData,
+      analysisFailures: [
+        new HttpError('http', '/extract-job', 'GET /extract-job failed (401)', 401),
+      ],
+    });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+
+    await screen.findByText('Something went wrong analyzing this job posting.');
+    expect(
+      screen.getByText(
+        'You have been signed out. Sign in again from the extension options, then retry.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('does not expose raw infrastructure details from a failed save', async () => {
     await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
