@@ -23,7 +23,13 @@ import {
 } from '@djobi/shared';
 import { countByOption, FilterPills } from '../components/FilterPills';
 import { RequirementsPanel } from '../components/RequirementsPanel';
-import { coverageForKeywords, RANGES, keywordFrequency, rangeStart, type Range } from '../lib/analytics';
+import {
+  coverageForKeywords,
+  RANGES,
+  keywordFrequency,
+  rangeStart,
+  type Range,
+} from '../lib/analytics';
 import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
@@ -142,7 +148,11 @@ export function Analytics({
     visibleCount: visibleKeywordCount,
     scrollRef: keywordScrollRef,
     sentinelRef: keywordSentinelRef,
-  } = useRevealOnScroll(rows.length, KEYWORD_PAGE_SIZE, `${range}|${stage ?? ''}|${gapsOnly}|${minAppearances}`);
+  } = useRevealOnScroll(
+    rows.length,
+    KEYWORD_PAGE_SIZE,
+    `${range}|${stage ?? ''}|${gapsOnly}|${minAppearances}`,
+  );
   // Sliced before grouping: the ranking is global across categories ("top 25 overall"), not a cap
   // per category, so a category can show fewer than its full count once the cutoff lands mid-group.
   const visibleRows = rows.slice(0, visibleKeywordCount);

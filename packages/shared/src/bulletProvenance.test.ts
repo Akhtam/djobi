@@ -193,9 +193,9 @@ describe('sourceRoleFor', () => {
 
   it('finds the unique role matching company, title and startDate', () => {
     const target = role({ bullets: ['Owned the on-call rotation'] });
-    expect(
-      sourceRoleFor(target, { workExperience: [role({ company: 'Other' }), target] }),
-    ).toEqual(target);
+    expect(sourceRoleFor(target, { workExperience: [role({ company: 'Other' }), target] })).toEqual(
+      target,
+    );
   });
 
   it('returns undefined when two roles are ambiguous rather than guessing', () => {

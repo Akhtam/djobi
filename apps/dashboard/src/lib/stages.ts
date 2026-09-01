@@ -25,11 +25,7 @@ export const STAGES: readonly ApplicationStage[] = ApplicationStageSchema.option
  * something the enum's order can answer. It lives here beside `STAGES` rather than in the view
  * that renders it so that adding a stage puts every decision about that stage in one file.
  */
-export const IN_PROGRESS_STAGES: readonly ApplicationStage[] = [
-  'phone_screen',
-  'onsite',
-  'offer',
-];
+export const IN_PROGRESS_STAGES: readonly ApplicationStage[] = ['phone_screen', 'onsite', 'offer'];
 
 /**
  * The stages the list's filter pills offer — one pill per option.

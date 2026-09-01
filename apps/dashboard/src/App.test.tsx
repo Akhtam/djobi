@@ -846,9 +846,7 @@ describe('analytics', () => {
 
     // Two applications are onsite-stage (Brex and the legacy Stripe row), but Stripe's
     // createdAt falls outside the default 7-day range — the pill must count only Brex.
-    expect(screen.getByRole('button', { name: /^Onsite/ })).toHaveAccessibleName(
-      'Onsite1',
-    );
+    expect(screen.getByRole('button', { name: /^Onsite/ })).toHaveAccessibleName('Onsite1');
   });
 
   it('shows a notice instead of coverage badges when no Profile is saved', async () => {

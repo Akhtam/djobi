@@ -46,7 +46,9 @@ const MIN_SHARED_WORDS = 2;
 function overlapScore(bullet: string, candidate: string): { score: number; sharedWords: number } {
   const words = contentWords(bullet);
   if (words.length === 0) return { score: 0, sharedWords: 0 };
-  const sharedWords = words.filter((word) => containsAsWords(normalizeLabel(candidate), word)).length;
+  const sharedWords = words.filter((word) =>
+    containsAsWords(normalizeLabel(candidate), word),
+  ).length;
   return { score: sharedWords / words.length, sharedWords };
 }
 
