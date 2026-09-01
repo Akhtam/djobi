@@ -521,7 +521,9 @@ describe('routing', () => {
     window.location.hash = '#/applications/app-ramp';
     renderApp();
 
-    expect(await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' }),
+    ).toBeInTheDocument();
   });
 
   it('groups requirement kinds once while preserving years and keyword categories', async () => {

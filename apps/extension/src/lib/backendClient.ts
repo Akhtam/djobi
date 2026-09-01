@@ -306,12 +306,7 @@ export function createFakeBackendClient(
         return Promise.resolve();
       }
       return Promise.reject(
-        new HttpError(
-          'http',
-          '/api/auth/sign-in/email',
-          'Invalid email or password',
-          401,
-        ),
+        new HttpError('http', '/api/auth/sign-in/email', 'Invalid email or password', 401),
       );
     },
     signOut: () => {

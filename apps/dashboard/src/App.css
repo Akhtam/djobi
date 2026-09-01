@@ -1333,7 +1333,9 @@ h3 {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 120ms, color 120ms;
+  transition:
+    background 120ms,
+    color 120ms;
 }
 
 .detail__tab:hover {

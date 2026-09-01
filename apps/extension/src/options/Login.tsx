@@ -7,7 +7,11 @@
 import { useState, type FormEvent } from 'react';
 import icon48 from '../assets/icons/icon48.png';
 
-export function Login({ onSignIn }: { onSignIn: (email: string, password: string) => Promise<void> }) {
+export function Login({
+  onSignIn,
+}: {
+  onSignIn: (email: string, password: string) => Promise<void>;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);

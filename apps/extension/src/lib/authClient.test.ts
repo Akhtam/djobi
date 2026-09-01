@@ -59,7 +59,9 @@ describe('signIn', () => {
 describe('signOut', () => {
   it('sends the stored token as a bearer header and clears it locally', async () => {
     await setAuthToken('the-token');
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), { status: 200 }),
+    );
 
     await signOut();
 

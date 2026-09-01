@@ -124,7 +124,10 @@ export function ApplicationDetail({
                 <div className="requirement-groups">
                   {requirementGroups.map(({ kind, requirements }) =>
                     requirements.length > 0 ? (
-                      <section key={kind} className={`requirement-group requirement-group--${kind}`}>
+                      <section
+                        key={kind}
+                        className={`requirement-group requirement-group--${kind}`}
+                      >
                         <h4
                           className={`requirement-group__title requirement-kind requirement-kind--${kind}`}
                         >
