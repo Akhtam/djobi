@@ -16,10 +16,13 @@
  * record. Widening the haystack to `QuestionAnswer[]` would make the report say "covered" about a
  * keyword no recruiter search will ever find. Not an oversight.
  *
- * **What this cannot see.** Synonyms. A Profile saying "K8s" against a posting saying "Kubernetes"
- * is reported missing, and there is no alias table to fix it. A false "missing" costs the candidate
- * one glance at a keyword they can dismiss; a false "covered" costs them the gap they came here to
- * find. Erring toward missing is the whole reason this is worth shipping without aliases.
+ * **What this cannot see.** Synonyms in general — there is no alias table, and this module argues
+ * against building one. The one exception is a term's own `postingSpelling`: `extractJob` already
+ * knows a posting wrote "K8s" for what it canonicalized as "Kubernetes", so matching against both
+ * spellings of that *specific* term is using data already captured, not guessing at a synonym. A
+ * false "missing" still costs the candidate one glance at a keyword they can dismiss; a false
+ * "covered" costs them the gap they came here to find — erring toward missing remains the reason
+ * this stays a report and not a correction.
  */
 import { containsAsWords, normalizeLabel } from './labelMatching.js';
 import type { JobInfo, Profile, TailoredResume } from './schemas.js';
@@ -57,12 +60,22 @@ export function keywordCoverage(
   const bullets = resume.workExperience.flatMap((entry) => entry.bullets);
   const sourceBullets = profile.workExperience.flatMap((entry) => entry.bullets);
 
-  return jobInfo.keywords.flatMap(({ term: keyword }): KeywordCoverage[] => {
-    const needle = normalizeLabel(keyword);
-    if (!needle) return [];
+  return jobInfo.keywords.flatMap(({ term: keyword, postingSpelling }): KeywordCoverage[] => {
+    // Both are candidate needles for the same term — extractJob already knows they name one thing,
+    // so a Profile carrying either spelling counts as evidence. The report itself still names the
+    // keyword by its canonical `term`, since that is the spelling the rest of the app reads.
+    const needles = [
+      normalizeLabel(keyword),
+      postingSpelling ? normalizeLabel(postingSpelling) : '',
+    ]
+      .filter(Boolean)
+      .filter((value, index, all) => all.indexOf(value) === index);
+    if (needles.length === 0) return [];
 
-    const carries = (candidate: string): boolean =>
-      containsAsWords(normalizeLabel(candidate), needle);
+    const carries = (candidate: string): boolean => {
+      const normalized = normalizeLabel(candidate);
+      return needles.some((needle) => containsAsWords(normalized, needle));
+    };
 
     const skill = resume.skills.find(carries);
     if (skill) return [{ keyword, verdict: 'skills', evidence: skill }];

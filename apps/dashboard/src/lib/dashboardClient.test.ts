@@ -19,10 +19,10 @@ describe('createFixtureDashboardClient', () => {
 
   it('persists a stage change for the session', async () => {
     const client = createFixtureDashboardClient(fixtureApplications);
-    await client.updateStage('app-sonar', 'interviewing');
+    await client.updateStage('app-sonar', 'onsite');
 
     const listed = await client.listApplications();
-    expect(listed.find((a) => a.id === 'app-sonar')?.stage).toBe('interviewing');
+    expect(listed.find((a) => a.id === 'app-sonar')?.stage).toBe('onsite');
   });
 
   it('appends a note with a server-assigned id and timestamp', async () => {

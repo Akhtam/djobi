@@ -54,9 +54,9 @@ describe('useApplicationStore', () => {
     const write = deferred<{ id: string; stage: ApplicationStage }>();
     const store = await loadedStore(client({ updateStage: () => write.promise }));
 
-    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    act(() => void store.current.updateStage('app-1', 'onsite'));
 
-    expect(store.current.applications[0].stage).toBe('interviewing');
+    expect(store.current.applications[0].stage).toBe('onsite');
   });
 
   it('puts the Stage back when the write fails, and says why', async () => {
@@ -65,7 +65,7 @@ describe('useApplicationStore', () => {
     );
 
     await act(async () => {
-      await store.current.updateStage('app-1', 'interviewing');
+      await store.current.updateStage('app-1', 'onsite');
     });
 
     expect(store.current.applications[0].stage).toBe('applied');
@@ -89,7 +89,7 @@ describe('useApplicationStore', () => {
     await act(async () => undefined);
     expect(order).toEqual(['phone_screen']);
 
-    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    act(() => void store.current.updateStage('app-1', 'onsite'));
     await act(async () => undefined);
     // Still nothing new: the second write is queued behind the first, which hasn't answered.
     expect(order).toEqual(['phone_screen']);
@@ -99,7 +99,7 @@ describe('useApplicationStore', () => {
       await first.promise;
     });
 
-    await waitFor(() => expect(order).toEqual(['phone_screen', 'interviewing']));
+    await waitFor(() => expect(order).toEqual(['phone_screen', 'onsite']));
   });
 
   /** A superseded write's authoritative Stage is a stale Stage — applying it undoes a later click. */
@@ -113,13 +113,13 @@ describe('useApplicationStore', () => {
     );
 
     act(() => void store.current.updateStage('app-1', 'phone_screen'));
-    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    act(() => void store.current.updateStage('app-1', 'onsite'));
     await act(async () => {
       first.resolve({ id: 'app-1', stage: 'phone_screen' });
       await first.promise;
     });
 
-    await waitFor(() => expect(store.current.applications[0].stage).toBe('interviewing'));
+    await waitFor(() => expect(store.current.applications[0].stage).toBe('onsite'));
   });
 
   /** The same rule on the failure path: a stale rollback would undo the newer click. */
@@ -133,13 +133,13 @@ describe('useApplicationStore', () => {
     );
 
     act(() => void store.current.updateStage('app-1', 'phone_screen'));
-    act(() => void store.current.updateStage('app-1', 'interviewing'));
+    act(() => void store.current.updateStage('app-1', 'onsite'));
     await act(async () => {
       first.reject(new Error('Backend unreachable'));
       await first.promise.catch(() => undefined);
     });
 
-    expect(store.current.applications[0].stage).toBe('interviewing');
+    expect(store.current.applications[0].stage).toBe('onsite');
   });
 
   it("appends a Note and replaces it with the server's record", async () => {
@@ -204,7 +204,7 @@ describe('useApplicationStore', () => {
 
     let stage!: Promise<boolean>;
     act(() => {
-      stage = store.current.updateStage('app-1', 'interviewing');
+      stage = store.current.updateStage('app-1', 'onsite');
     });
     await act(async () => {
       await store.current.addNote('app-1', note);
@@ -225,6 +225,6 @@ describe('useApplicationStore', () => {
     );
 
     expect(store.current.loadError).toBe('Backend unreachable');
-    expect(await store.current.updateStage('app-1', 'interviewing')).toBe(false);
+    expect(await store.current.updateStage('app-1', 'onsite')).toBe(false);
   });
 });

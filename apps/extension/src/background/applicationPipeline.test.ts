@@ -1,3 +1,4 @@
+import { EXTRACTION_VERSION } from '@djobi/shared';
 import type {
   DetectedField,
   JobInfo,
@@ -487,6 +488,7 @@ describe('runAnalysis', () => {
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       jobPageData: { fields: [questionField] },
       jobDescription: 'Senior Engineer at Acme...',
+      analyzedJobDescription: 'Senior Engineer at Acme...',
       jobInfo,
       tailoredResume,
       answers,
@@ -698,7 +700,7 @@ describe('runAnalysis', () => {
           id: 'application-2',
           company: 'Acme',
           roleTitle: 'Senior Engineer',
-          stage: 'interviewing',
+          stage: 'onsite',
           createdAt: LATER,
         },
       }),
@@ -1181,6 +1183,13 @@ describe('runFill', () => {
       jobInfo,
       tailoredResume,
       answers: [],
+      rawDescription: 'Senior Engineer at Acme...',
+      extractionVersion: EXTRACTION_VERSION,
+      // The default fake `getProfile()` answers `null` here, unstubbed by this case — so both
+      // Profile-derived provenance fields go in null, exactly as a save whose Profile lookup failed
+      // would. The case below stubs a real Profile.
+      requirementEvidence: null,
+      bulletProvenance: null,
     });
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'saved',
@@ -1195,6 +1204,44 @@ describe('runFill', () => {
       expect.any(Object),
     );
     expect(deps.backend.saveApplication).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the description Analysis actually analyzed, even if the editor has since diverged', async () => {
+    // A candidate may edit the job-description textarea after Analysis without clicking
+    // Re-analyze — `jobDescription` tracks that edit, but `jobInfo`/`tailoredResume` still reflect
+    // the original text. `rawDescription` must stay pinned to what was actually analyzed, since it
+    // exists to document what produced this saved snapshot.
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const run = await getPipelineRun(7);
+    await patchPipelineRun(7, run!.runId, { jobDescription: 'Edited after analysis, unanalyzed' });
+    const deps = makeDeps({ saveApplication: vi.fn().mockResolvedValue({ id: 'application-1' }) });
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    expect(deps.backend.saveApplication).toHaveBeenCalledWith(
+      expect.objectContaining({ rawDescription: 'Senior Engineer at Acme...' }),
+    );
+  });
+
+  it('computes requirementEvidence/bulletProvenance from the Profile fetched fresh at save time, rather than always saving null', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const deps = makeDeps({
+      getProfile: vi.fn().mockResolvedValue(profile),
+      saveApplication: vi.fn().mockResolvedValue({ id: 'application-1' } as never),
+    });
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    // The fixture Profile/Tailored Resume both carry no work experience or requirements, so the
+    // honest answer here is an empty array — the point of this case is that it is `[]`, computed,
+    // rather than `null`, skipped, now that a Profile was actually available.
+    expect(deps.backend.saveApplication).toHaveBeenCalledWith(
+      expect.objectContaining({ requirementEvidence: [], bulletProvenance: [] }),
+    );
   });
 
   it('checkpoints a save error and allows it to be retried', async () => {

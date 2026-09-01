@@ -39,6 +39,8 @@ const emptyProfile: Profile = {
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: [],
   stories: [],
@@ -96,6 +98,28 @@ describe('options App', () => {
     render(<App client={client} />);
 
     expect(await screen.findByLabelText('Full name')).toHaveValue('');
+  });
+
+  it('edits and saves resume PDF preferences', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe' };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    expect(screen.getByLabelText('Page size')).toHaveValue('A4');
+    expect(screen.getByLabelText('Prefix titles with “Role:”')).toBeChecked();
+
+    fireEvent.change(screen.getByLabelText('Page size'), { target: { value: 'LETTER' } });
+    fireEvent.click(screen.getByLabelText('Prefix titles with “Role:”'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith({
+      ...loaded,
+      resumePageSize: 'LETTER',
+      showRolePrefix: false,
+    });
   });
 
   it('edits scalar profile fields and saves them via POST /profile', async () => {
@@ -241,6 +265,7 @@ describe('options App', () => {
           bullets: ['Shipped X', 'Led Y'],
           maxBullets: null,
           starredIndices: [],
+          suppressIfEmpty: false,
         },
       ],
     });
@@ -279,6 +304,7 @@ describe('options App', () => {
           bullets: ['Shipped X'],
           maxBullets: null,
           starredIndices: [],
+          suppressIfEmpty: false,
         },
       ],
     });
@@ -296,6 +322,7 @@ describe('options App', () => {
           bullets: [],
           maxBullets: null,
           starredIndices: [],
+          suppressIfEmpty: false,
         },
       ],
     };
@@ -323,6 +350,7 @@ describe('options App', () => {
           bullets: ['First authored bullet', 'Second authored bullet', 'Third authored bullet'],
           maxBullets: null,
           starredIndices: [1],
+          suppressIfEmpty: false,
         },
       ],
     };
@@ -362,6 +390,42 @@ describe('options App', () => {
     });
   });
 
+  it('toggles suppressIfEmpty, the explicit opt-in to hide a role tailoring selects no bullets for', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      workExperience: [
+        {
+          company: 'Acme',
+          title: 'Senior Engineer',
+          startDate: '2022-01',
+          endDate: null,
+          bullets: ['Only bullet'],
+          maxBullets: null,
+          starredIndices: [],
+          suppressIfEmpty: false,
+        },
+      ],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    const toggle = screen.getByLabelText(/Hide role 1 entirely if tailoring selects no bullets/);
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith({
+      ...loaded,
+      workExperience: [{ ...loaded.workExperience[0], suppressIfEmpty: true }],
+    });
+  });
+
   it('lets each work role collapse without hiding its authored summary', async () => {
     const loaded: Profile = {
       ...emptyProfile,
@@ -374,6 +438,7 @@ describe('options App', () => {
           bullets: ['Built systems'],
           maxBullets: null,
           starredIndices: [],
+          suppressIfEmpty: false,
         },
       ],
     };
@@ -574,6 +639,7 @@ describe('options App', () => {
           bullets: [],
           maxBullets: null,
           starredIndices: [],
+          suppressIfEmpty: false,
         },
       ],
       education: [{ school: '', degree: '', field: null, graduationYear: null }],

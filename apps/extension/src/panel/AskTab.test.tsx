@@ -26,6 +26,8 @@ const profile: Profile = {
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: ['TypeScript'],
   stories: [],

@@ -24,7 +24,7 @@ export async function extractJob(jobDescription: string, signal?: AbortSignal): 
     schema: JobInfoSchema,
     userContent: `Extract structured job posting information from the following job description. Only use information present in the text — leave a field null rather than guessing.
 
-For keywords, name each term in its canonical, expanded, industry-standard form (e.g. "Kubernetes" not "K8s", "JavaScript" not "JS", "React" not "React.js"), one or two words each, roughly fifteen terms at most — the most important skills, technologies and domain terms the posting is worth echoing, not every noun it mentions.
+For keywords, name each term in its canonical, expanded, industry-standard form (e.g. "Kubernetes" not "K8s", "JavaScript" not "JS", "React" not "React.js"), one or two words each, roughly fifteen terms at most — the most important skills, technologies and domain terms the posting is worth echoing, not every noun it mentions. Also report postingSpelling: the exact wording the posting itself used for that term (e.g. "K8s"), or null if the posting already wrote it in the canonical form.
 
 For requirements, set kind to "required" or "preferred" only when the posting draws that distinction plainly, under its own heading or wording (e.g. "Requirements" versus "Nice to have"). Use "unspecified" whenever it does not — never default to "required" for a posting that states no distinction. Extract yearsOfExperience only when the posting states a number for that specific requirement; leave it null rather than guessing, the same as any other field.
 

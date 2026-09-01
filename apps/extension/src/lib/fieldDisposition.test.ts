@@ -14,6 +14,8 @@ const profile: Profile = {
   },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: [],
   stories: [],

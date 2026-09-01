@@ -2,6 +2,7 @@ import {
   DetectedFieldSchema,
   ProfileSchema,
   QuestionAnswerSchema,
+  TailoredResumeSchema,
   z,
   type DetectedField,
   type ZodTypeOf,
@@ -88,6 +89,11 @@ export const UpdateRunMessageSchema = z
       .object({
         answers: z.array(QuestionAnswerSchema),
         jobDescription: z.string(),
+        /** The candidate's own accept/reject/reorder/edit changes to the Analysis Step's output —
+         * see `panel/ResumeReview.tsx`. Optional: an answers/jobDescription-only edit sends nothing
+         * here, and the background leaves the stored resume untouched rather than overwriting it
+         * with `undefined`. */
+        tailoredResume: TailoredResumeSchema.optional(),
         /** Editing a saved snapshot makes it pending until it is saved again. */
         status: z.literal('filled').optional(),
       })

@@ -115,7 +115,7 @@ export const AnswerQuestionsRequestSchema = z.object({
 /** Inferred type of {@link AnswerQuestionsRequestSchema}. */
 export type AnswerQuestionsRequest = z.infer<typeof AnswerQuestionsRequestSchema>;
 
-/** Profile fields rendered into the PDF header and education section. */
+/** Profile fields and preferences used to render a PDF. */
 export const RenderResumePdfProfileSchema = ProfileSchema.pick({
   fullName: true,
   email: true,
@@ -123,6 +123,8 @@ export const RenderResumePdfProfileSchema = ProfileSchema.pick({
   location: true,
   links: true,
   education: true,
+  resumePageSize: true,
+  showRolePrefix: true,
 });
 export type RenderResumePdfProfile = z.infer<typeof RenderResumePdfProfileSchema>;
 
@@ -155,7 +157,7 @@ export type ApplicationWriteResult = z.infer<typeof ApplicationWriteResultSchema
 /**
  * The newest row metadata needed by the Duplicate Guard.
  *
- * `stage` rides along because it changes what the notice means: an `interviewing` row for this
+ * `stage` rides along because it changes what the notice means: an `onsite` row for this
  * posting is a live process the candidate should not restart, while a `rejected` one from a year
  * ago may well be worth re-applying to. Reporting only the date left the reader to guess which.
  */

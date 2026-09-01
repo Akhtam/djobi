@@ -447,7 +447,7 @@ describe('AutofillTab', () => {
           id: 'application-1',
           company: 'Acme',
           roleTitle: 'Senior Engineer',
-          stage: 'interviewing' as const,
+          stage: 'onsite' as const,
           createdAt: '2026-08-03T10:00:00.000Z',
         },
       ],
@@ -459,7 +459,7 @@ describe('AutofillTab', () => {
     await screen.findByText(/you already applied to this job on august 3, 2026/i);
     // The stage is the half that says whether re-applying is even sensible: a live process reads
     // very differently from a rejection, and a date alone reports neither.
-    await screen.findByText('Senior Engineer at Acme · Interviewing');
+    await screen.findByText('Senior Engineer at Acme · Onsite');
     // The review never appears — the point of the guard is that no analysis ran at all.
     expect(screen.queryByRole('button', { name: 'Edit job description' })).not.toBeInTheDocument();
 
@@ -963,6 +963,45 @@ describe('AutofillTab', () => {
     // What the tab asked for, not which URL carried it: projecting the Profile down to the fields
     // the PDF needs is `httpBackendClient`'s job, and is asserted where that adapter is tested.
     expect(renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+  });
+
+  it('edits a tailored resume bullet on the review screen and checkpoints it to the run store', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<AutofillHarness />);
+    await clickAnalyze();
+    await screen.findByText('Senior Engineer at Acme');
+
+    // The fake backend's `tailorResume` always answers with the neutral, bulletless fixture — real
+    // bullet content is injected the same way `background/applicationPipeline.ts` itself would
+    // checkpoint it, so this exercises the actual review -> store round trip rather than a
+    // hand-rolled substitute for it.
+    const analyzed = await getPipelineRun(1);
+    await patchPipelineRun(1, analyzed!.runId, {
+      tailoredResume: {
+        skills: [],
+        workExperience: [
+          {
+            company: 'Acme',
+            title: 'Senior Engineer',
+            startDate: '2022-01',
+            endDate: null,
+            bullets: ['Built the thing'],
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(await screen.findByText('Review resume bullets'));
+    fireEvent.change(screen.getByLabelText('Role 1 bullet 1'), {
+      target: { value: 'Built the thing end to end' },
+    });
+
+    await vi.waitFor(async () =>
+      expect((await getPipelineRun(1))?.tailoredResume?.workExperience[0].bullets).toEqual([
+        'Built the thing end to end',
+      ]),
+    );
   });
 
   it('clears the previous resume preview when re-analysis starts on the same page', async () => {

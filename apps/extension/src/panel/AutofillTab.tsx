@@ -29,6 +29,7 @@ import type { RunFailureKind, RunNotice, RunNoticeAction, RunStep } from '../lib
 import { CoverageReport } from './CoverageReport';
 import { getDetectedPage, subscribeDetectedPage } from '../lib/tabStore/detectedPage';
 import { type PipelineStatus } from '../lib/run';
+import { ResumeReview } from './ResumeReview';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
@@ -97,7 +98,16 @@ export function AutofillTab({
    */
   hidden: boolean;
 }) {
-  const { tabId, tabUrl, changeToken, run, status: runStatus, review, updateAnswer } = activeRun;
+  const {
+    tabId,
+    tabUrl,
+    changeToken,
+    run,
+    status: runStatus,
+    review,
+    updateAnswer,
+    updateTailoredResume,
+  } = activeRun;
 
   const [detectedPage, setDetectedPage] = useState<JobPageData | null>(null);
   const [showPageTextEditor, setShowPageTextEditor] = useState(false);
@@ -210,6 +220,15 @@ export function AutofillTab({
   function handleFill() {
     if (!jobPageData || !jobInfo || !tailoredResume) return;
     commands.fill();
+  }
+
+  function handleResumeReviewChange(next: TailoredResume) {
+    if (!run) return;
+    updateTailoredResume(run.runId, next);
+    // The open preview iframe still points at the pre-edit render; clearing it drops back to the
+    // "Preview tailored resume" button rather than showing bytes that no longer match what Fill will
+    // actually write, the same reasoning `handleAnalyze` already applies to a stale preview.
+    resumePreview.clear();
   }
 
   function handleSaveApplication() {
@@ -556,6 +575,15 @@ export function AutofillTab({
                 />
               )}
             </div>
+
+            {tailoredResume && (
+              <ResumeReview
+                tailoredResume={tailoredResume}
+                profile={profile}
+                editable={editEnabled}
+                onChange={handleResumeReviewChange}
+              />
+            )}
 
             <CoverageReport coverage={coverage} />
 

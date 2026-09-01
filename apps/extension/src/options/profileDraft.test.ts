@@ -52,6 +52,7 @@ describe('profile draft normalization', () => {
           bullets: ['Led', ' ', 'Built'],
           maxBullets: null,
           starredIndices: [0, 2],
+          suppressIfEmpty: false,
         },
       ],
       stories: [
@@ -84,6 +85,7 @@ describe('profile draft normalization', () => {
       bullets: ['First', 'Second', 'Third'],
       maxBullets: null,
       starredIndices: [0, 2],
+      suppressIfEmpty: false,
     };
 
     const inserted = spliceWorkBullets(entry, 1, 0, 'Inserted');

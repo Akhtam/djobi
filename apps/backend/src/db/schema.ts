@@ -41,6 +41,16 @@ export const applications = pgTable(
     source: text('source').notNull().default('autofill'),
     stage: text('stage').notNull().default('applied'),
     notes: jsonb('notes').notNull().default([]),
+    /**
+     * The posting text `extractJob` analyzed, and the matching provenance derived from it —
+     * `rawDescription`/`extractionVersion`/`requirementEvidence`/`bulletProvenance` on
+     * `ApplicationSchema` (`@djobi/shared`). All four nullable: every row written before this
+     * migration has none of them, and nothing here backfills a past row.
+     */
+    rawDescription: text('raw_description'),
+    extractionVersion: text('extraction_version'),
+    requirementEvidence: jsonb('requirement_evidence'),
+    bulletProvenance: jsonb('bullet_provenance'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

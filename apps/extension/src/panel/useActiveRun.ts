@@ -14,7 +14,7 @@
  * (and reads its Job Info for grounding). Both go through this one value, so there is one copy of
  * the run in the panel rather than one per tab.
  */
-import type { QuestionAnswer } from '@djobi/shared';
+import type { QuestionAnswer, TailoredResume } from '@djobi/shared';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 import type { PipelineRunState, PipelineStatus, RunStep } from '../lib/run';
@@ -68,6 +68,13 @@ export interface ActiveRun {
    * is what the tab did — leaves the click itself unguarded.
    */
   updateAnswer: (runId: string, fieldId: string, answer: string) => void;
+  /**
+   * Replaces the run's Tailored Resume with the candidate's reviewed version — accepted, edited or
+   * reordered bullets from `panel/ResumeReview.tsx`. Same rules as {@link updateAnswer}: refused for
+   * a run this panel is no longer showing, and a `saved` run reverts to `filled` since the record on
+   * file no longer matches what was reviewed.
+   */
+  updateTailoredResume: (runId: string, tailoredResume: TailoredResume) => void;
 }
 
 /**
@@ -111,6 +118,17 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     });
   }
 
+  function updateTailoredResume(runId: string, tailoredResume: TailoredResume) {
+    if (!run || run.runId !== runId || !canEditRun(status)) return;
+
+    edit({
+      answers: run.answers,
+      jobDescription: run.jobDescription,
+      tailoredResume,
+      ...(hasRecordedFill(status) ? { status: STEP_STATUS.fill.succeeded } : {}),
+    });
+  }
+
   return {
     tabId,
     tabUrl,
@@ -121,5 +139,6 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     beginCommand,
     edit,
     updateAnswer,
+    updateTailoredResume,
   };
 }

@@ -1,9 +1,10 @@
 # Resume design conventions — research for `renderResume.tsx`
 
-> **Status: mostly implemented (updated 2026-08-18).** The typography recommendations below were
+> **Status: implemented (updated 2026-08-31).** The typography recommendations below were
 > mostly applied to `apps/backend/src/pdf/renderResume.tsx`, which also gained a one-page fitting
-> ladder built on the sourced ranges. The recommendation to remove the literal `Role: ` prefix was
-> rejected and was not applied; the renderer intentionally still emits `Role: {job.title}`. This doc
+> ladder built on the sourced ranges. PDF preflight later added A4/Letter selection, registered Noto
+> Sans for Unicode text, and made the literal `Role: ` prefix a profile preference that defaults on.
+> This doc
 > is kept as the **record of where the numbers came from** — every "current state" note and the
 > summary comparison describe the code _before_ that pass, not today's. Read it as research history,
 > not as a to-do list.
@@ -527,8 +528,9 @@ const styles = StyleSheet.create({
 | first section / first entry | no special case           | `sectionTitleFirst` / `jobEntryFirst` | Avoids double spacing under `contactLine` and under each heading |
 
 **Implementation outcome:** most of this table landed, with a density ladder replacing several
-single fixed values and horizontal padding now at 60 pt. The literal `Role: ` recommendation is the
-explicit exception: it was rejected and remains in the renderer.
+single fixed values. Unicode font support later changed Helvetica to the wider Noto Sans, so
+horizontal padding is now 42 pt to prevent avoidable line wraps while remaining above the 36 pt
+floor. The literal `Role: ` recommendation is now optional and defaults on.
 
 ### What is deliberately _not_ changed
 

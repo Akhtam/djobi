@@ -11,7 +11,7 @@
  * the in-memory and Postgres adapters to one interface, so what these cases lean on is behaviour
  * both adapters are known to share.
  */
-import type { Application, ApplicationSnapshot } from '@djobi/shared';
+import { EXTRACTION_VERSION, type Application, type ApplicationSnapshot } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app.js';
 import { inMemoryApplicationStore } from '../db/applicationStore.js';
@@ -35,8 +35,8 @@ const sampleApplication: Application = {
       { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
     ],
     keywords: [
-      { term: 'TypeScript', category: null },
-      { term: 'Postgres', category: null },
+      { term: 'TypeScript', category: null, postingSpelling: null },
+      { term: 'Postgres', category: null, postingSpelling: null },
     ],
   },
   tailoredResume: {
@@ -47,6 +47,10 @@ const sampleApplication: Application = {
   source: 'autofill',
   stage: 'applied',
   notes: [],
+  rawDescription: null,
+  extractionVersion: EXTRACTION_VERSION,
+  requirementEvidence: null,
+  bulletProvenance: null,
   createdAt: '2026-08-07T00:00:00.000Z',
 };
 
@@ -319,7 +323,7 @@ describe('PATCH /applications/:id', () => {
     const tracked: Application = {
       ...sampleApplication,
       source: 'manual',
-      stage: 'interviewing',
+      stage: 'onsite',
       notes: [
         {
           id: 'note-1',
@@ -339,7 +343,7 @@ describe('PATCH /applications/:id', () => {
 
     expect(await applicationStore.byId('application-1')).toMatchObject({
       source: 'manual',
-      stage: 'interviewing',
+      stage: 'onsite',
       notes: tracked.notes,
     });
   });
@@ -406,12 +410,12 @@ describe('PATCH /applications/:id/stage', () => {
     const res = await app.request('/applications/application-1/stage?response=compact', {
       method: 'PATCH',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ stage: 'interviewing' }),
+      body: JSON.stringify({ stage: 'onsite' }),
     });
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ id: 'application-1', stage: 'interviewing' });
-    expect(await applicationStore.byId('application-1')).toMatchObject({ stage: 'interviewing' });
+    await expect(res.json()).resolves.toEqual({ id: 'application-1', stage: 'onsite' });
+    expect(await applicationStore.byId('application-1')).toMatchObject({ stage: 'onsite' });
   });
 
   it('returns the full updated Application for a legacy stage change', async () => {
@@ -420,10 +424,10 @@ describe('PATCH /applications/:id/stage', () => {
     const res = await app.request('/applications/application-1/stage', {
       method: 'PATCH',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ stage: 'interviewing' }),
+      body: JSON.stringify({ stage: 'onsite' }),
     });
 
-    await expect(res.json()).resolves.toEqual({ ...sampleApplication, stage: 'interviewing' });
+    await expect(res.json()).resolves.toEqual({ ...sampleApplication, stage: 'onsite' });
   });
 
   it('rejects a stage outside the enum rather than writing it', async () => {

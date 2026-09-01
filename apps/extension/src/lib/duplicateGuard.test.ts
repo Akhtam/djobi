@@ -8,7 +8,7 @@ const summary: DuplicateApplicationSummary = {
     id: 'application-2',
     company: 'Acme',
     roleTitle: 'Senior Engineer',
-    stage: 'interviewing',
+    stage: 'onsite',
     createdAt: '2026-08-03T10:00:00.000Z',
   },
 };

@@ -131,7 +131,7 @@ How an Application came to exist: `autofill` (the Application Pipeline produced 
 _Avoid_: type, kind, origin
 
 **Stage**:
-Where an Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `interviewing` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it.
+Where an Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `onsite` → `offer` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it.
 _Avoid_: status (there is no longer a separate status field — see Application), step
 
 **Note**:
@@ -145,5 +145,5 @@ The web app where the candidate reviews saved Applications and tracks each one's
 _Avoid_: admin, tracker page, extension dashboard (it is neither an extension surface nor an administrative one)
 
 **In Progress**:
-The Stages that mean an Application is still live — `phone_screen` and `interviewing`. A judgement about which Stages count, not something the Stage order can answer: `applied` is not in progress because nothing has come back yet, and `rejected` is over.
+The Stages that mean an Application is still live — `phone_screen`, `onsite`, and `offer`. A judgement about which Stages count, not something the Stage order can answer: `applied` is not in progress because nothing has come back yet, and `rejected` is over.
 _Avoid_: active, open (both read as "not deleted")

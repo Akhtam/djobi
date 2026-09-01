@@ -29,7 +29,8 @@ const STAGE_LABELS: Record<ApplicationStage, string> = {
   applied: 'Applied',
   rejected_ats: 'Rejected (ATS)',
   phone_screen: 'Phone screen',
-  interviewing: 'Interviewing',
+  onsite: 'Onsite',
+  offer: 'Offer',
   rejected: 'Rejected',
 };
 

@@ -216,6 +216,9 @@ importers:
       '@djobi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@expo-google-fonts/noto-sans':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.17(hono@4.13.0)
@@ -243,6 +246,9 @@ importers:
       react:
         specifier: ^18.3.1
         version: 18.3.1
+      unpdf:
+        specifier: ^1.8.0
+        version: 1.8.0
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -265,9 +271,6 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
-      unpdf:
-        specifier: ^1.8.0
-        version: 1.8.0
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)(jsdom@30.0.1(@noble/hashes@1.8.0))(lightningcss@1.33.0)
@@ -1068,6 +1071,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@expo-google-fonts/noto-sans@0.4.2':
+    resolution: {integrity: sha512-zYD8G2ijWLxqmquoQgghNh/x9p0yxWwArD0oxO1oXY1qx5vOd4t0Kbhnu/Cx8RTy08OgA8RtxuULZFaXwVPnPw==}
 
   '@hono/node-server@1.19.17':
     resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
@@ -2878,6 +2884,8 @@ snapshots:
   '@exodus/bytes@1.15.1(@noble/hashes@1.8.0)':
     optionalDependencies:
       '@noble/hashes': 1.8.0
+
+  '@expo-google-fonts/noto-sans@0.4.2': {}
 
   '@hono/node-server@1.19.17(hono@4.13.0)':
     dependencies:

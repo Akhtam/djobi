@@ -28,12 +28,15 @@
   --ring: rgb(99 86 216 / 32%);
   /* The two anchors of the brand gradient, used to colour the two live-but-early stages. Applied
      takes the blue end, phone screen the violet, so both read as djobi without reading as each
-     other. Interviewing and both rejections keep the semantic green/red they share with the rest of
-     the UI. */
+     other. Onsite and both rejections keep the semantic green/red they share with the rest of
+     the UI. Offer gets its own gold — a positive outcome, but not the same "still going" green as
+     onsite. */
   --stage-applied-fg: #3b5cd8;
   --stage-applied-bg: rgb(59 92 216 / 12%);
   --stage-phone-fg: #8450d8;
   --stage-phone-bg: rgb(132 80 216 / 12%);
+  --stage-offer-fg: #b8860b;
+  --stage-offer-bg: rgb(184 134 11 / 12%);
   /* The Analytics keyword bar's fill — a tint of `--primary`/`--danger` rather than a flat colour,
      since the bar sits behind the row's own text and a saturated fill would fight it for contrast. */
   --bar: rgb(99 86 216 / 14%);
@@ -67,6 +70,8 @@
   --stage-applied-bg: rgb(109 127 240 / 16%);
   --stage-phone-fg: #bd97f5;
   --stage-phone-bg: rgb(166 132 240 / 16%);
+  --stage-offer-fg: #e0b84a;
+  --stage-offer-bg: rgb(224 184 74 / 16%);
   --bar: rgb(143 131 242 / 18%);
   --bar-gap: rgb(255 120 144 / 16%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
@@ -402,9 +407,14 @@ h3 {
   --stage-bg: var(--stage-phone-bg);
 }
 
-.stage--interviewing {
+.stage--onsite {
   --stage-fg: var(--success);
   --stage-bg: var(--success-bg);
+}
+
+.stage--offer {
+  --stage-fg: var(--stage-offer-fg);
+  --stage-bg: var(--stage-offer-bg);
 }
 
 /* Both rejections share the red, and the one Rejected filter pill — see `STAGE_FILTERS`. They are
@@ -1167,7 +1177,7 @@ h3 {
    short, single-line rows that don't need the extra width. */
 .analytics-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }

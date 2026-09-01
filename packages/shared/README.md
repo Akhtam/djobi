@@ -35,7 +35,7 @@ All schemas, in the order data flows through the app:
 - **`QuestionAnswerSchema`** — one drafted answer to one `question` field. `sourceStoryIds[]`
   records which `Story.id`s the model drew on, so the review UI can say "this used your 'billing
   migration' story" instead of showing an opaque block of text.
-- **`ApplicationStageSchema`** — `'applied' | 'phone_screen' | 'interviewing' | 'rejected'`: how far
+- **`ApplicationStageSchema`** — `'applied' | 'phone_screen' | 'onsite' | 'offer' | 'rejected'`: how far
   an Application has got. Listed in pipeline order — which is the order a stage picker offers them
   in, and which `apps/dashboard` reads off `.options` rather than restating.
 

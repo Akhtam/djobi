@@ -68,7 +68,11 @@ describe('getProfile', () => {
     };
     const fetchMock = stubFetch({ jsonBody: profile });
 
-    await expect(httpDashboardClient.getProfile()).resolves.toEqual(profile);
+    await expect(httpDashboardClient.getProfile()).resolves.toEqual({
+      ...profile,
+      resumePageSize: 'A4',
+      showRolePrefix: true,
+    });
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:5391/profile', {
       method: 'GET',
       signal: expect.any(AbortSignal),

@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1308 tests**
-(204 shared / 16 http-client / 234 backend / 676 extension / 178 dashboard), `pnpm test` from the
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1374 tests**
+(235 shared / 16 http-client / 256 backend / 689 extension / 178 dashboard), `pnpm test` from the
 repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -134,7 +134,7 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.
-- **Application tracking is `stage` alone** (applied → phone_screen → interviewing → rejected).
+- **Application tracking is `stage` alone** (applied → phone_screen → onsite → offer → rejected).
   There was also a `status` field (draft/submitted) for "did this actually go out"; it was dropped
   in migration `0002` because nothing ever set `submitted` and the field was `draft` on all 28
   rows. The current Save Step does not establish whether employer submission happened. Notes are a
@@ -387,6 +387,316 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
   race the guard exists for. This adds no response payload: the protocol still has no replies.
 
 ## Planned
+
+### Phase 19 — Provenance persistence + a real-posting eval corpus (done)
+
+The last of the seven audit improvements (item 7) plus the audit's closing recommended step: store
+what an Application's matching actually rested on, and give extraction/matching prompt changes
+something real to be judged against. Directly closes the gap "Known loose ends" has named since
+Phase 12: `applications` never stored the posting text, so no extraction improvement could ever be
+backfilled or even checked against what it ran on.
+
+- **Four new nullable `Application` fields**, `packages/shared/src/schemas.ts`: `rawDescription`
+  (the posting text `extractJob` analyzed), `extractionVersion` (see below), `requirementEvidence`
+  (`RequirementEvidence[]`, Phase 14's matcher), `bulletProvenance` (`BulletProvenanceEntry[]`, new —
+  see below). All four `.nullable()` with no default on `ApplicationSchema` (every row read back
+  post-migration has the column, `NULL` for one written before it existed) and `.nullable().default(...)`
+  on `NewApplicationSchema` (a caller may omit any of them and get an honest default rather than a
+  400).
+- **`EXTRACTION_VERSION` is a schema default, not a value any caller sets.** A plain exported
+  constant (`packages/shared/src/schemas.ts`), stamped automatically by
+  `NewApplicationSchema.extractionVersion`'s `.default(EXTRACTION_VERSION)` — so every write from
+  today's code is tagged correctly with zero call-site changes, the same reasoning `stage`/`notes`
+  default rather than requiring every existing poster to state them. It is a compatibility marker
+  for the shape `JobInfoSchema`/`TailoredResumeSchema` produce today, bumped only on a materially
+  widening change (Phase 12/13-style), not on every prompt wording tweak.
+- **`bulletProvenance.ts` (new shared module) generalizes `panel/ResumeReview.tsx`'s bullet-pairing
+  logic**, which moved here from the extension (was `matchBulletSource.ts`) so the backend-agnostic
+  audit trail and the panel's live "Originally: …" line are one implementation, not two that can
+  drift. Adds `bulletProvenance(resume, profile)`, the whole-resume aggregate `matchBulletSource`
+  didn't have: every bullet, paired to its role, with the same verbatim/reworded/unmatched verdict
+  `ResumeReview.tsx` already showed one bullet at a time.
+- **Both provenance fields are computed client-side, at save time, not server-side.** `POST
+/applications` only ever received an `ApplicationStore`, never a Profile store — widening that
+  route to fetch a Profile for a derivation it could do itself was a bigger seam change than the
+  alternative: the extension already holds Profile, `jobInfo` and the final `tailoredResume`
+  together at the moment it calls Save, so `background/applicationPipeline.ts`'s `runSaveApplication`
+  and `panel/LogApplication.tsx`'s `handleSave` each call `requirementEvidence`/`bulletProvenance`
+  directly and attach the result. The backend stores what it's given, the same trust boundary
+  `jobInfo`/`tailoredResume` themselves already cross on this route.
+- **The Profile is fetched fresh at save time, not threaded from Analysis.** `runSaveApplication`
+  didn't have a Profile in scope before this phase (Fill does, Save didn't) — rather than widen the
+  `UPDATE_RUN`/`START_SAVE_APPLICATION` message contract to carry one, it calls
+  `deps.backend.getProfile()` itself. Deliberately not load-bearing: `.catch(() => null)` means a
+  Profile that can't be read at save time (deleted, or the backend briefly unreachable) puts `null`
+  in both provenance fields rather than failing a write the candidate is actively waiting on — and
+  arguably more correct anyway, since a save should be judged against the Profile that exists _now_,
+  not the one tailoring ran against minutes earlier.
+- **Both provenance fields are a snapshot, computed once, never recomputed.** A later Profile edit
+  does not change what a past Application says it evidenced — the same reasoning `stage`/`notes`
+  already keep untouched by a re-save (`ApplicationSnapshotSchema` still omits those two, but _does_
+  let a re-save recompute-and-resend `rawDescription`/`requirementEvidence`/`bulletProvenance`, since
+  those describe the reviewed snapshot itself rather than its tracking metadata).
+- **`RequirementEvidenceSchema`/`BulletProvenanceEntrySchema` live in `schemas.ts`, structurally
+  matching rather than being inferred from `requirementEvidence.ts`/`bulletProvenance.ts`'s own
+  types.** Those two modules import `JobRequirement`/`Profile`/`TailoredResume` _from_ `schemas.ts`
+  already; importing a schema back the other way would be a genuine runtime circular import between
+  two modules that both declare zod values, not just types. Each pair of type names would otherwise
+  collide on re-export from the package root, so `schemas.ts` deliberately exports only the
+  validators (`RequirementEvidenceSchema`, `BulletProvenanceEntrySchema`) and leaves the TS type
+  names (`RequirementEvidenceVerdict`, `BulletProvenanceEntry`, …) to their original modules as the
+  source of truth.
+- **The eval corpus is a hand-run script, not a test.** `apps/backend/scripts/evalExtraction.ts`
+  runs the real `extractJob` + `tailorResume` (live model calls, real cost, non-deterministic) against
+  three hand-written realistic postings and one sample Profile, then prints
+  `requirementEvidence`/`bulletProvenance` for each — the same checks a save now persists — so a
+  prompt change can be judged against real output before it ships. Deliberately not CI: cost and
+  nondeterminism make it a developer tool (`pnpm --filter backend eval:extraction`), not a gate.
+  `scripts/tsconfig.json` exists purely so the script (outside `src/`, outside the main `tsconfig`'s
+  `rootDir`) can still be typechecked by hand; it is not wired into `pnpm typecheck`, matching how
+  backend test files already sit outside that pass.
+
+- [x] `packages/shared/src/schemas.ts`: `EXTRACTION_VERSION`, `RequirementEvidenceVerdictSchema`,
+      `RequirementEvidenceSchema`, `BulletProvenanceVerdictSchema`, `BulletProvenanceEntrySchema`,
+      and the four new `Application`/`NewApplicationSchema` fields
+- [x] `packages/shared/src/bulletProvenance.ts` (new, replacing `apps/extension/src/panel/matchBulletSource.ts`) + `index.ts` export; `ResumeReview.tsx` re-pointed at the shared module
+- [x] `apps/backend/src/db/schema.ts` + migration `0008_numerous_doorman.sql`: `raw_description`,
+      `extraction_version`, `requirement_evidence`, `bullet_provenance`, all nullable jsonb/text.
+      Generated via `drizzle-kit generate`, which needed no live database connection
+- [x] `apps/backend/src/db/database.integration.test.ts` and `applicationStore.contract.test.ts`:
+      hand-written `CREATE TABLE applications` DDL (these don't run the real migrations) updated to
+      match — both left the new columns out of their seeded `INSERT`s on purpose, modeling rows
+      written before this phase
+- [x] `apps/extension/src/background/applicationPipeline.ts`: `runSaveApplication` fetches the
+      Profile, computes both provenance fields, attaches `rawDescription`/`extractionVersion`
+- [x] `apps/extension/src/panel/LogApplication.tsx`: same computation on the manual/Log path, against
+      `baseResumeOf(profile)` since nothing was tailored
+- [x] `apps/backend/scripts/evalExtraction.ts` (new) + `eval:extraction` package script
+- [x] Suite green at 1374 tests (235 shared / 16 http-client / 256 backend / 689 extension / 178
+      dashboard) — extension's count reflects `matchBulletSource.test.ts`'s 5 cases moving to
+      `packages/shared/src/bulletProvenance.test.ts` net of new integration coverage;
+      `typecheck`, `build` and `format:check` all clean
+- [ ] Live: `eval:extraction` has not actually been run against a live `OPENROUTER_API_KEY` yet — the
+      script is written and typechecks, but nobody has eyeballed its output for a real model
+- [ ] Not done: no dashboard UI surfaces any of the four new fields yet. This phase is persistence
+      only — "for audits and regression testing" per the audit item's own wording, which the eval
+      script and `getPipelineRun`-style manual inspection satisfy without a UI. A detail-page panel
+      showing `rawDescription`/the evidence report is a plausible later addition, deliberately not
+      built here
+
+### Phases 16–17 — Bullet truthfulness, review/edit, role ordering and suppression (done)
+
+Two more of the seven audit improvements: verifiably truthful bullet rewriting with a review surface
+(item 3, partially — see _Known loose ends_ below for what's still open), resume editing (item 4),
+and conventional experience ordering plus opt-in suppression (item 5). Built concurrently with
+another in-progress phase (PDF preflight / Unicode fonts / Letter-A4 / `Role:` prefix) touching
+`schemas.ts`, `renderResume.tsx` and `options/App.tsx` in parallel — every file this phase shares
+with that work was re-read immediately before editing, and the two landed without conflict.
+
+**Phase 16a — `apps/backend/src/llm/bulletTruthfulness.ts`.** `reconcileResume` already guarantees a
+kept bullet traces to a real source pointer; it never guaranteed the _rewrite's own wording_ stayed
+truthful. New deterministic check, wired into `bulletsFor`: a rewrite's numbers (`\d[\d,.]*(%|x|\+)?`)
+and proper-noun-like terms (capitalized words that aren't the first word of their sentence — a cheap
+proxy for a named technology, product, or metric label) must already appear somewhere in the source
+bullet it rewrote; if not, the rewrite reverts to the source **verbatim**, never to a rejection or a
+second model call. Numbers are matched by substring, not `containsAsWords`' word-boundary rule — a
+number is routinely glued to a unit (`400ms`, `1.8s`) with no non-alphanumeric character for a
+word-boundary check to anchor on, which would false-flag every truthful number-plus-unit rewrite as
+invented. A starred bullet is exempt (it's already the candidate's own sentence, never rewritten).
+
+**Phase 16b — `apps/extension/src/panel/ResumeReview.tsx`.** Lets the candidate edit, reorder or
+remove any tailored bullet before Fill runs, and shows a best-effort "Originally: …" line with a
+one-click revert for a bullet that was reworded from a Profile sentence.
+
+- **Source pairing is a best-effort _reading_, not a trace.** `sourceIndex` pointers exist only
+  inside `tailorResume.ts` and never reach the wire (`TailoredResume` is plain strings), so
+  `matchBulletSource.ts` pairs a tailored bullet back to its likely Profile source by exact match
+  first, then highest word overlap among that role's Profile bullets — the same
+  `containsAsWords`/word-overlap primitive `requirementEvidence.ts` uses, at a smaller grain. A
+  bullet the candidate typed from scratch here shows no "Originally" line; that is an honest gap in
+  what this surface can claim, not a bug.
+- **Roles are paired by company + title + startDate, not array index.** `suppressIfEmpty` (Phase
+  17 below) can drop a role from the tailored resume entirely, which would shift every later index
+  out of alignment with `profile.workExperience` if index were used.
+- **The run's `tailoredResume` becomes a third candidate-editable field, alongside `answers` and
+  `jobDescription`.** `useActiveRun.updateTailoredResume` mirrors `updateAnswer` exactly — refused
+  for a run this panel is no longer showing, and a `saved` run reverts to `filled` since the record
+  on file no longer matches what was reviewed. This crosses a line `usePipelineRun.ts`'s own
+  docstring calls out as deliberate ("ownership is deliberately lopsided" — the background owns
+  Analysis output, this hook owns typed candidate edits): `tailoredResume` starts as Analysis
+  output but becomes candidate-owned the moment a review edit touches it, the same way a drafted
+  `QuestionAnswer` already does.
+- **The optimistic-echo reconciliation (`editsOf`, the pending-edit dedup) had to widen with it, not
+  just the type.** `editsOf` now includes `tailoredResume`, and `edit()`'s own-edit signature is
+  computed from the _merged_ local state (`editsOf(merged)`) rather than from the raw `edits`
+  argument — serializing `edits` directly would drop `tailoredResume` from an answers-only edit's
+  signature, and the echo for the _next_ resume edit would then never be recognized as this hook's
+  own, leaving it "pending" forever. Caught by re-running `usePipelineRun.test.ts` before trusting
+  the change, not by inspection.
+- **`updates.tailoredResume` is optional on the wire (`UpdateRunMessageSchema`), never sent as
+  `undefined`.** An answers-only edit omits the key entirely, which is what lets
+  `patchPipelineRun`'s partial-merge (`{...state.run, ...patch}`) leave the stored resume alone.
+- **No new pipeline status or hard approval gate.** The audit item asked to "require approval… before
+  automatically attaching" — this app has no auto-attach step to begin with; Fill was already an
+  explicit, reviewed click. Adding a blocking gate specific to the resume would have meant extending
+  `reviewOf`/`canReview`/`FILLABLE_FROM` (see _Constraints that look like mistakes_ above) under a
+  deadline, which is exactly the kind of change that file's own history says to get right or not do.
+  Recorded as a real, deliberate scope cut — see _Known loose ends_.
+- **The open PDF preview is cleared, not refreshed, on a review edit.** `useResumePreview` renders
+  on demand only; clearing it drops back to the "Preview tailored resume" button rather than leaving
+  a blob on screen that no longer matches what Fill will write. Same reasoning `handleAnalyze`
+  already applies to a stale preview.
+
+**Phase 17 — role order and suppression, `packages/shared/src/schemas.ts` +
+`apps/backend/src/llm/tailorResume.ts`.**
+
+- **Bug fix, not just an addition: `reconcileResume` let the model reorder roles.** A `sourceIndex`
+  was read as controlling both _which_ role's bullets to use and _where_ that role sat in the
+  output — `safeModelRoles.length === profile.workExperience.length` (every role present exactly
+  once) was sufficient to let the model's own order win. Role order now always equals
+  `profile.workExperience`'s order, full stop; a `sourceIndex` only selects which role's bullets a
+  model entry describes. This also simplified the function — `safelyReordered` and its branch are
+  gone.
+- **`WorkExperienceSchema.suppressIfEmpty`** (`.default(false)`, per-role, same shape as
+  `maxBullets`/`starredIndices`): when tailoring selects zero bullets for a role, `reconcileResume`
+  drops it from the output entirely only if this is explicitly set — never by default, since
+  silently hiding a role nobody asked to hide would misrepresent the candidate's own employment
+  history. Enforced as a `.filter()` after bullet resolution, not asked of the model: same reasoning
+  `maxBullets` capping already uses (see Phase 10) — a rule the model is merely told about is a rule
+  that holds until the run where it doesn't.
+- **`baseResumeOf` deliberately does not apply suppression.** A manually logged application
+  (`source: 'manual'`) documents what the candidate actually sent, with nothing dropped — the same
+  "capping is a tailoring decision and belongs only on the tailoring path" reasoning Phase 10
+  already established for `maxBullets`.
+- **Options-page toggle**: a checkbox per role, "Hide role N entirely if tailoring selects no
+  bullets for it", next to the existing "Bullet cap N" field — `apps/extension/src/options/App.tsx`.
+
+- [x] `packages/shared/src/schemas.ts`: `WorkExperienceSchema.suppressIfEmpty`
+- [x] `apps/backend/src/llm/bulletTruthfulness.ts` (new) + wired into `tailorResume.ts`'s `bulletsFor`
+- [x] `apps/backend/src/llm/tailorResume.ts`: `reconcileResume` role-order fix + suppression filter;
+      prompt instructions updated to state role order is fixed, not model-controlled
+- [x] `apps/extension/src/panel/matchBulletSource.ts` (new), `ResumeReview.tsx` (new)
+- [x] `apps/extension/src/panel/usePipelineRun.ts`, `useActiveRun.ts`, `lib/messages.ts`: the
+      `tailoredResume` edit channel described above
+- [x] `apps/extension/src/panel/AutofillTab.tsx`: `ResumeReview` slotted into the review screen
+      between the PDF preview and `CoverageReport`; preview cleared on a review edit
+- [x] `apps/extension/src/options/App.tsx`: `suppressIfEmpty` checkbox + blank-role-template default
+- [x] Suite green at 1365 tests (222 shared / 16 http-client / 256 backend / 693 extension / 178
+      dashboard); `typecheck`, `build` and `format:check` all clean. Ripple from the new default
+      field resolved via the type-checker: `apps/dashboard/src/lib/fixtures.ts`,
+      `apps/backend/src/llm/tailorResume.test.ts`, and every extension test fixturing a
+      `WorkExperience` (`options/App.test.tsx`, `profileDraft.test.ts`, `LogApplication.test.tsx`)
+- [x] `apps/extension/src/panel/AutofillTab.test.tsx`: one full round-trip test (message ->
+      `background/router.ts` -> `applicationPipeline` -> `tabStore` -> `chrome.storage.onChanged` ->
+      hook -> render -> edit -> checkpoint), not just the isolated `ResumeReview` unit tests, since
+      the risk in this phase was the plumbing between them
+- [ ] Live: no live model call exercises `bulletTruthfulness.ts` against real rewrites yet — the
+      fake-model suite covers the logic, not whether real Sonnet 5 output trips the false-positive
+      rate up (a legitimate rewrite that happens to introduce a number/proper noun already implied,
+      but not stated, by the source)
+
+Known loose ends this phase leaves open:
+
+- **No hard "must review before Fill" gate.** The candidate can Fill without ever opening "Review
+  resume bullets" — nothing currently forces the panel open or blocks the button. Scoped out
+  deliberately (see above); building it means touching `reviewOf`/`canReview`/`FILLABLE_FROM`, which
+  is real surgery on a state machine `PROGRESS.md`'s own _Constraints_ section calls delicate.
+- **Source pairing can mislabel or miss.** Word-overlap is a heuristic; a short bullet reworded
+  heavily enough can show no "Originally" line, or pair with the wrong role's bullet if two roles
+  share very similar phrasing. Nothing here claims more precision than that.
+- **No persisted diff/warning trail.** A reverted bullet (Phase 16a) or a candidate's edit (Phase
+  16b) leaves no record beyond the current `tailoredResume` value — audit item 7 (persist matching
+  provenance) is unstarted, and this phase doesn't touch it.
+
+### Phases 13–15 — Posting-spelling preservation, requirement-to-evidence matching, and evidence-aware tailoring (done)
+
+Three of the seven highest-impact improvements from a codebase audit, in the sequence the audit
+recommended: finish extraction, then requirement-level matching (not just keyword-level), then feed
+that matching into what `tailorResume` prioritizes. The remaining four (verifiable bullet rewriting
+with a source-vs-rewrite diff, resume edit/approval, ordering/suppression, PDF preflight, provenance
+persistence) are unstarted — see the audit's original phase list for what's next.
+
+**Phase 13 — `JobKeyword.postingSpelling`.** `extractJob` already canonicalized keyword spelling
+(Phase 12); the audit's remaining gap was that the posting's own wording was discarded once
+canonicalized. `JobKeywordSchema` gained `postingSpelling: string | null`, `.nullable().default(null)`
+so every existing row and every hand-built fixture across the repo keeps parsing/compiling with no
+edit required at the call site — the same tolerant-default shape `maxBullets` already established.
+The field is read, not just kept: `keywordCoverage.ts` now matches a keyword's `term` **or** its
+`postingSpelling` against a Profile — a Profile saying "K8s" is no longer reported `missing` merely
+because the posting's canonical echo is "Kubernetes". This is not a synonym table (which
+`keywordCoverage.ts`'s own doc comment argues against at length): both spellings come from the same
+`extractJob` call about the same posting, so using both is using data already captured, not guessing
+at an alias. The report still names the keyword by `term`, since that's the spelling the rest of the
+app reads.
+
+**Phase 14 — `packages/shared/src/requirementEvidence.ts`.** `keywordCoverage.ts` answers "does a
+keyword string appear"; nothing answered the higher-level question the audit named: does the Profile
+actually evidence a stated _requirement_, only as a bare skill with no story behind it, only in the
+Profile but dropped from this tailored/capped resume, ambiguously, or not at all. New module, same
+discipline as `keywordCoverage.ts` — deterministic, no model call, a report and never a correction,
+since `reconcileResume` already forces every kept bullet through the authoritative Profile and this
+module cannot add anything to a resume.
+
+- **Five verdicts**, not `keywordCoverage`'s four: `direct-evidence`, `skill-only`,
+  `omitted-profile-evidence`, `needs-confirmation`, `unsupported`. `needs-confirmation` is the new
+  one keyword-level matching had no room for — a partial word-overlap match, or a years requirement
+  whose tenure can't be established either way. Deliberately not collapsed into `unsupported`: an
+  ambiguous signal and a genuine absence should not read as identical to the candidate.
+- **Word-overlap matching, scoped to this module.** A small local stopword list and a
+  `containsAsWords`-based hit ratio (reused from `labelMatching.ts`) score a requirement's content
+  words against resume bullets, skills, and Profile-only bullets in that order; `≥60%` overlap is
+  `direct-evidence`/`skill-only`/`omitted-profile-evidence`, any lesser overlap is
+  `needs-confirmation`, none is `unsupported`. Not `labelMatching.ts`'s own stemmed
+  content-word/stopword machinery — that module's docstring frames it as one loop (scraped label ↔
+  drafted answer ↔ page), and requirement-vs-resume matching is a different problem with its own
+  tuning; the private helpers aren't exported for reuse.
+- **`yearsOfExperience` is checked against the Profile's dated roles, summed without deduplicating
+  overlap** (two concurrent roles double-count) — a known, documented limitation, not a silent one.
+  An unparsable `startDate`/`endDate` **never** resolves to "not enough years"; it resolves to
+  `needs-confirmation`, because asserting a years claim from unreadable data is exactly the guess
+  `extractJob`'s own prompt already forbids on the model side. Tenure short of the stated number
+  still reads `needs-confirmation` (not `unsupported`) when the domain otherwise matches, since the
+  undercounting above can only be wrong in the direction of _understating_ true tenure.
+- **Only reads `workExperience` and `skills`**, the same restriction `keywordCoverage.ts` accepts —
+  neither module's inputs carry education or certifications, so a degree requirement always reads
+  `unsupported` even when the candidate has it. A false negative, not a false claim; recorded here
+  rather than silently inherited.
+- **Required first, preferred second, unspecified last**, stable within each group in posting order —
+  the audit's "prioritize required qualifications over preferred ones", answered as a sort rather
+  than a scoring formula.
+
+**Phase 15 — wired into `tailorResume`'s prompt.** Before the model call, `tailorResume.ts` now runs
+`requirementEvidence(baseResumeOf(grounding), jobInfo, grounding)` — against the **full, uncapped**
+bullet bank via `baseResumeOf`, not the eventual tailored output, since there is no tailored output
+yet and the question worth answering is "can the Profile support this at all". The result is
+serialized into a `<requirement_evidence>` block in the varying tail (alongside `<job_info>`, not the
+cached prefix — it's job-specific, same reasoning `<job_info>` itself already follows), and the
+instructions gain one paragraph: prioritize keeping/selecting the bullets it names as `evidencedBy`
+for evidenced required items over preferred-only content, and never invent a bullet for an
+`unsupported`/`needs-confirmation` required item. The block is omitted entirely (not emitted empty)
+when a posting states no requirements. `baseResumeOf`'s parameter narrowed from `Profile` to
+`Pick<Profile, 'skills' | 'workExperience'>` to make this callable against a `TailorResumeProfile`
+projection (no `fullName`/`email`/…) without widening what reaches the model.
+
+- [x] `packages/shared/src/schemas.ts`: `JobKeywordSchema.postingSpelling`, tolerant-lift branch
+      updated, `baseResumeOf` narrowed to `Pick<Profile, 'skills' | 'workExperience'>`
+- [x] `packages/shared/src/keywordCoverage.ts`: matches `term` or `postingSpelling`, doc comment
+      revised to state the one exception to "no alias table"
+- [x] `apps/backend/src/llm/extractJob.ts`: prompt asks for `postingSpelling` alongside the canonical
+      `term`
+- [x] `packages/shared/src/requirementEvidence.ts` (new) + `index.ts` export
+- [x] `apps/backend/src/llm/tailorResume.ts`: `requirementEvidenceContext`, wired into `userContent`
+      and the instructions paragraph
+- [x] Ripple from the new default field, resolved via the type-checker rather than grepped by hand:
+      `apps/dashboard/src/lib/fixtures.ts` (18 keyword literals), `apps/dashboard/src/views/Analytics.tsx`
+      (synthesized `{ keywords: distinct }` — `postingSpelling: null`, documented as a cross-posting
+      aggregate with no single posting to attribute it to), test fixtures across
+      `apps/backend/src/routes/*.test.ts`, `apps/extension/src/panel/LogApplication.test.tsx`, and
+      `apps/dashboard/src/lib/analytics.test.ts`'s `keyword()` helper
+- [x] Suite green at 1328 tests (222 shared / 16 http-client / 236 backend / 676 extension / 178
+      dashboard); `typecheck`, `build` and `format:check` all clean
+- [ ] Live: no live model call made against the new `postingSpelling` prompt instruction or the
+      `<requirement_evidence>` block — both are exercised only by the fake-model test suite so far
 
 ### Phase 12 — The Analytics view, and the extraction that feeds it (planned, not started)
 

@@ -5,7 +5,14 @@
  * neither is the whole reason it's a separate tab, so a test that had to stub them would be
  * evidence the split had leaked.
  */
-import { baseResumeOf, type Application, type JobInfo, type Profile } from '@djobi/shared';
+import {
+  baseResumeOf,
+  bulletProvenance,
+  requirementEvidence,
+  type Application,
+  type JobInfo,
+  type Profile,
+} from '@djobi/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
@@ -29,9 +36,12 @@ const profile: Profile = {
       bullets: ['Built the billing portal.'],
       maxBullets: null,
       starredIndices: [],
+      suppressIfEmpty: false,
     },
   ],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: ['TypeScript', 'Postgres'],
   stories: [],
@@ -46,7 +56,7 @@ const jobInfo: JobInfo = {
   seniority: 'Senior',
   location: null,
   requirements: [{ text: '5+ years', kind: 'unspecified', yearsOfExperience: 5 }],
-  keywords: [{ term: 'TypeScript', category: 'language' }],
+  keywords: [{ term: 'TypeScript', category: 'language', postingSpelling: null }],
 };
 
 const JOB_URL = 'https://acme.com/jobs/123';
@@ -135,6 +145,7 @@ describe('the Log tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Log application' }));
 
     await screen.findByText('Logged Senior Engineer at Acme.');
+    const manualResume = baseResumeOf(profile);
     expect(saved).toEqual([
       {
         company: 'Acme',
@@ -142,9 +153,12 @@ describe('the Log tab', () => {
         jobUrl: JOB_URL,
         jobInfo,
         // The authored resume content straight through, without Profile-only selection controls.
-        tailoredResume: baseResumeOf(profile),
+        tailoredResume: manualResume,
         answers: [],
         source: 'manual',
+        rawDescription: JOB_DESCRIPTION,
+        requirementEvidence: requirementEvidence(manualResume, jobInfo, profile),
+        bulletProvenance: bulletProvenance(manualResume, profile),
       },
     ]);
   });
@@ -284,6 +298,10 @@ describe('the Log tab', () => {
           source: 'manual',
           stage: 'applied',
           notes: [],
+          rawDescription: null,
+          extractionVersion: null,
+          requirementEvidence: null,
+          bulletProvenance: null,
           createdAt: '2026-08-07T00:00:00.000Z',
         },
       ],

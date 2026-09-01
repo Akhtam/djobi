@@ -1,5 +1,27 @@
 import type { RenderResumePdfProfile, TailoredResume } from '@djobi/shared';
-import { Document, Page, renderToBuffer, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Document, Font, Page, renderToBuffer, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { createRequire } from 'node:module';
+import { preflightResumePdf } from './preflightResume.js';
+
+const require = createRequire(import.meta.url);
+
+Font.register({
+  family: 'Noto Sans',
+  fonts: [
+    {
+      src: require.resolve('@expo-google-fonts/noto-sans/400Regular/NotoSans_400Regular.ttf'),
+      fontWeight: 400,
+    },
+    {
+      src: require.resolve('@expo-google-fonts/noto-sans/700Bold/NotoSans_700Bold.ttf'),
+      fontWeight: 700,
+    },
+  ],
+});
+// Without this, react-pdf's default hyphenation engine splits long words at a line wrap with a
+// real "-" glyph (e.g. "functionality" -> "function-" / "ality"), which corrupts the rendered
+// resume text and fails preflightResumePdf's exact-text fidelity check.
+Font.registerHyphenationCallback((word) => [word]);
 
 /**
  * The layout, per `docs/resume-design-conventions.md` — every value there is inside a range some
@@ -58,16 +80,19 @@ const createStyles = (density: Density) =>
       paddingBottom: density.pagePaddingVertical,
       // Wider than the vertical padding: it shortens the measure toward the readable line length
       // without spending the vertical space the content needs.
-      paddingHorizontal: 60,
+      // Noto Sans is wider than Helvetica; this remains above the 36pt readability floor while
+      // keeping typical achievement bullets from gaining an avoidable second line.
+      paddingHorizontal: 42,
       fontSize: 10,
       lineHeight: density.lineHeight,
-      fontFamily: 'Helvetica',
+      fontFamily: 'Noto Sans',
       color: '#000000',
     },
 
     name: {
       fontSize: 17,
-      fontFamily: 'Helvetica-Bold',
+      fontFamily: 'Noto Sans',
+      fontWeight: 700,
       // Tighter than the body: a single line has no return sweep to leave room for.
       lineHeight: 1.2,
       letterSpacing: 0.3,
@@ -79,7 +104,8 @@ const createStyles = (density: Density) =>
 
     sectionTitle: {
       fontSize: 10.5,
-      fontFamily: 'Helvetica-Bold',
+      fontFamily: 'Noto Sans',
+      fontWeight: 700,
       textTransform: 'uppercase',
       letterSpacing: 0.8,
       borderBottomWidth: 0.75,
@@ -104,7 +130,7 @@ const createStyles = (density: Density) =>
 
     jobHeader: { flexDirection: 'row', justifyContent: 'space-between' },
     // Weight rather than size or italic: Helvetica's oblique is too weak to read as emphasis.
-    jobCompany: { fontFamily: 'Helvetica-Bold' },
+    jobCompany: { fontFamily: 'Noto Sans', fontWeight: 700 },
     jobDates: { fontSize: 9.5, color: '#333333' },
     jobRole: { marginTop: 1 },
 
@@ -143,7 +169,7 @@ function ResumeDocument({
 
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
+      <Page size={profile.resumePageSize} style={styles.page}>
         <Text style={styles.name}>{profile.fullName}</Text>
         <Text style={styles.contactLine}>{contactLine(profile)}</Text>
 
@@ -162,7 +188,9 @@ function ResumeDocument({
                 {job.startDate} – {job.endDate ?? 'Present'}
               </Text>
             </View>
-            <Text style={styles.jobRole}>Role: {job.title}</Text>
+            <Text style={styles.jobRole}>
+              {profile.showRolePrefix ? `Role: ${job.title}` : job.title}
+            </Text>
             {job.bullets.map((bullet, j) => (
               <Text key={j} style={styles.bullet}>
                 • {bullet}
@@ -234,9 +262,13 @@ export async function renderResumePdf(
     rendered = await renderToBuffer(
       <ResumeDocument profile={profile} tailoredResume={tailoredResume} density={density} />,
     );
-    if (pageCount(rendered) <= 1) return rendered;
+    if (pageCount(rendered) <= 1) {
+      await preflightResumePdf(rendered, profile, tailoredResume);
+      return rendered;
+    }
   }
 
   // Non-null: the non-empty tuple guarantees the loop rendered at least once.
+  await preflightResumePdf(rendered as Buffer, profile, tailoredResume);
   return rendered as Buffer;
 }

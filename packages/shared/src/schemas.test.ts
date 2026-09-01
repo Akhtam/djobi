@@ -6,6 +6,7 @@ import {
   baseResumeOf,
   EducationSchema,
   EMPTY_PROFILE,
+  EXTRACTION_VERSION,
   parseProfile,
   JobInfoSchema,
   NewApplicationSchema,
@@ -88,6 +89,10 @@ const validApplication = {
   source: 'autofill' as const,
   stage: 'applied' as const,
   notes: [],
+  rawDescription: null,
+  extractionVersion: null,
+  requirementEvidence: null,
+  bulletProvenance: null,
   createdAt: '2026-08-07T00:00:00.000Z',
 };
 
@@ -104,6 +109,7 @@ describe('WorkExperienceSchema', () => {
       ...validWorkExperience,
       maxBullets: null,
       starredIndices: [],
+      suppressIfEmpty: false,
     });
   });
 
@@ -192,6 +198,8 @@ describe('ProfileSchema', () => {
     expect(result.success && result.data.screeningAnswers).toEqual({});
     expect(result.success && result.data.customAnswers).toEqual([]);
     expect(result.success && result.data.maxBulletsPerRole).toBe(6);
+    expect(result.success && result.data.resumePageSize).toBe('A4');
+    expect(result.success && result.data.showRolePrefix).toBe(true);
     expect(result.success && result.data.workExperience[0]).toMatchObject({
       maxBullets: null,
       starredIndices: [],
@@ -221,6 +229,8 @@ describe('parseProfile', () => {
       screeningAnswers: _screening,
       customAnswers: _custom,
       maxBulletsPerRole: _maxBullets,
+      resumePageSize: _pageSize,
+      showRolePrefix: _rolePrefix,
       ...stored
     } = EMPTY_PROFILE;
 
@@ -231,6 +241,8 @@ describe('parseProfile', () => {
       screeningAnswers: {},
       customAnswers: [],
       maxBulletsPerRole: 6,
+      resumePageSize: 'A4',
+      showRolePrefix: true,
     });
   });
 
@@ -283,8 +295,8 @@ describe('JobInfoSchema', () => {
       { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
     ]);
     expect(parsed.keywords).toEqual([
-      { term: 'TypeScript', category: null },
-      { term: 'Postgres', category: null },
+      { term: 'TypeScript', category: null, postingSpelling: null },
+      { term: 'Postgres', category: null, postingSpelling: null },
     ]);
   });
 
@@ -294,13 +306,26 @@ describe('JobInfoSchema', () => {
       requirements: [
         { text: '5+ years of backend experience', kind: 'required', yearsOfExperience: 5 },
       ],
-      keywords: [{ term: 'TypeScript', category: 'language' }],
+      keywords: [{ term: 'TypeScript', category: 'language', postingSpelling: 'TS' }],
     });
 
     expect(parsed.requirements).toEqual([
       { text: '5+ years of backend experience', kind: 'required', yearsOfExperience: 5 },
     ]);
-    expect(parsed.keywords).toEqual([{ term: 'TypeScript', category: 'language' }]);
+    expect(parsed.keywords).toEqual([
+      { term: 'TypeScript', category: 'language', postingSpelling: 'TS' },
+    ]);
+  });
+
+  it('defaults postingSpelling to null for a canonical-shape keyword written before this field existed', () => {
+    const parsed = JobInfoSchema.parse({
+      ...validJobInfo,
+      keywords: [{ term: 'TypeScript', category: 'language' }],
+    });
+
+    expect(parsed.keywords).toEqual([
+      { term: 'TypeScript', category: 'language', postingSpelling: null },
+    ]);
   });
 
   it('rejects a requirement kind or keyword category outside the closed set, rather than guessing', () => {
@@ -333,8 +358,8 @@ describe('JobInfoSchema', () => {
       { text: 'Owns incidents', kind: 'preferred', yearsOfExperience: null },
     ]);
     expect(parsed.keywords).toEqual([
-      { term: 'TypeScript', category: null },
-      { term: 'Postgres', category: 'tool' },
+      { term: 'TypeScript', category: null, postingSpelling: null },
+      { term: 'Postgres', category: 'tool', postingSpelling: null },
     ]);
   });
 });
@@ -388,7 +413,14 @@ describe('QuestionAnswerSchema', () => {
 
 describe('ApplicationStageSchema', () => {
   it('accepts every stage in the interview pipeline', () => {
-    for (const stage of ['applied', 'rejected_ats', 'phone_screen', 'interviewing', 'rejected']) {
+    for (const stage of [
+      'applied',
+      'rejected_ats',
+      'phone_screen',
+      'onsite',
+      'offer',
+      'rejected',
+    ]) {
       expect(ApplicationStageSchema.safeParse(stage).success).toBe(true);
     }
   });
@@ -549,6 +581,59 @@ describe('NewApplicationSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.notes).toEqual([validNote]);
+    }
+  });
+
+  it('auto-stamps extractionVersion with the current constant when the caller omits it', () => {
+    // Nobody has to know this field exists to get an accurate value — same reasoning as
+    // stage/notes/source defaulting, so every existing caller keeps working unchanged.
+    const { extractionVersion: _extractionVersion, ...withoutVersion } = validNewApplication;
+    expect(NewApplicationSchema.parse(withoutVersion).extractionVersion).toBe(EXTRACTION_VERSION);
+  });
+
+  it('defaults rawDescription/requirementEvidence/bulletProvenance to null when omitted', () => {
+    const {
+      rawDescription: _r,
+      requirementEvidence: _e,
+      bulletProvenance: _b,
+      ...rest
+    } = validNewApplication;
+    const result = NewApplicationSchema.parse(rest);
+
+    expect(result.rawDescription).toBeNull();
+    expect(result.requirementEvidence).toBeNull();
+    expect(result.bulletProvenance).toBeNull();
+  });
+
+  it('accepts an explicit rawDescription, requirementEvidence and bulletProvenance', () => {
+    const requirementEvidence = [
+      {
+        requirement: { text: '5+ years', kind: 'required' as const, yearsOfExperience: 5 },
+        verdict: 'direct-evidence' as const,
+        evidence: 'Led the billing service migration',
+      },
+    ];
+    const bulletProvenance = [
+      {
+        company: 'Acme Corp',
+        title: 'Senior Software Engineer',
+        bullet: 'Led the billing service migration',
+        verdict: 'verbatim' as const,
+        source: 'Led the billing service migration',
+      },
+    ];
+    const result = NewApplicationSchema.safeParse({
+      ...validNewApplication,
+      rawDescription: 'Senior Software Engineer at Acme...',
+      requirementEvidence,
+      bulletProvenance,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.rawDescription).toBe('Senior Software Engineer at Acme...');
+      expect(result.data.requirementEvidence).toEqual(requirementEvidence);
+      expect(result.data.bulletProvenance).toEqual(bulletProvenance);
     }
   });
 

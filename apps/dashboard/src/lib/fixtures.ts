@@ -51,9 +51,9 @@ export const fixtureApplications: Application[] = [
         },
       ],
       keywords: [
-        { term: 'React', category: 'framework' },
-        { term: 'TypeScript', category: 'language' },
-        { term: 'Next.js', category: 'framework' },
+        { term: 'React', category: 'framework', postingSpelling: null },
+        { term: 'TypeScript', category: 'language', postingSpelling: null },
+        { term: 'Next.js', category: 'framework', postingSpelling: null },
       ],
     },
     // The base profile as-is — nothing was tailored, because the candidate applied themselves.
@@ -74,6 +74,10 @@ export const fixtureApplications: Application[] = [
     },
     answers: [],
     notes: [],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-brex',
@@ -82,7 +86,7 @@ export const fixtureApplications: Application[] = [
     jobUrl: 'https://boards.greenhouse.io/brex/jobs/4012',
     createdAt: '2026-03-14T09:12:00.000Z',
     source: 'autofill',
-    stage: 'interviewing',
+    stage: 'onsite',
     jobInfo: {
       company: 'Brex',
       team: 'Infrastructure',
@@ -107,10 +111,10 @@ export const fixtureApplications: Application[] = [
         },
       ],
       keywords: [
-        { term: 'React', category: 'framework' },
-        { term: 'TypeScript', category: 'language' },
-        { term: 'design systems', category: 'domain' },
-        { term: 'GraphQL', category: 'tool' },
+        { term: 'React', category: 'framework', postingSpelling: null },
+        { term: 'TypeScript', category: 'language', postingSpelling: null },
+        { term: 'design systems', category: 'domain', postingSpelling: null },
+        { term: 'GraphQL', category: 'tool', postingSpelling: null },
       ],
     },
     tailoredResume: {
@@ -184,6 +188,10 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-03-22T10:30:00.000Z',
       },
     ],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-sonar',
@@ -204,9 +212,9 @@ export const fixtureApplications: Application[] = [
         { text: 'Static analysis background a plus', kind: 'preferred', yearsOfExperience: null },
       ],
       keywords: [
-        { term: 'Java', category: 'language' },
-        { term: 'static analysis', category: 'domain' },
-        { term: 'platform', category: 'domain' },
+        { term: 'Java', category: 'language', postingSpelling: null },
+        { term: 'static analysis', category: 'domain', postingSpelling: null },
+        { term: 'platform', category: 'domain', postingSpelling: null },
       ],
     },
     tailoredResume: {
@@ -223,6 +231,10 @@ export const fixtureApplications: Application[] = [
     },
     answers: [],
     notes: [],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-ramp',
@@ -243,9 +255,9 @@ export const fixtureApplications: Application[] = [
         { text: 'Strong product instincts', kind: 'preferred', yearsOfExperience: null },
       ],
       keywords: [
-        { term: 'React', category: 'framework' },
-        { term: 'product', category: 'domain' },
-        { term: 'fintech', category: 'domain' },
+        { term: 'React', category: 'framework', postingSpelling: null },
+        { term: 'product', category: 'domain', postingSpelling: null },
+        { term: 'fintech', category: 'domain', postingSpelling: null },
       ],
     },
     tailoredResume: {
@@ -280,6 +292,67 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-03-12T15:45:00.000Z',
       },
     ],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
+  },
+  {
+    id: 'app-notion',
+    company: 'Notion',
+    roleTitle: 'Frontend Engineer',
+    jobUrl: 'https://jobs.ashbyhq.com/notion/7a3c19',
+    createdAt: '2026-01-05T09:30:00.000Z',
+    source: 'autofill',
+    stage: 'offer',
+    jobInfo: {
+      company: 'Notion',
+      team: 'Editor',
+      roleTitle: 'Frontend Engineer',
+      seniority: null,
+      location: 'San Francisco, CA',
+      requirements: [
+        { text: 'Deep React experience', kind: 'required', yearsOfExperience: 4 },
+        { text: 'Editor/canvas UI experience', kind: 'preferred', yearsOfExperience: null },
+      ],
+      keywords: [
+        { term: 'React', category: 'framework', postingSpelling: null },
+        { term: 'TypeScript', category: 'language', postingSpelling: null },
+      ],
+    },
+    tailoredResume: {
+      skills: ['React', 'TypeScript', 'Product engineering'],
+      workExperience: [
+        {
+          company: 'Halcyon',
+          title: 'Engineer',
+          startDate: '2019-06',
+          endDate: '2021-12',
+          bullets: ['Built the block editor’s drag-and-drop reorder from scratch.'],
+        },
+      ],
+    },
+    answers: [
+      {
+        fieldId: 'q-editor',
+        question: 'What draws you to editor/canvas UI work?',
+        answer:
+          'I built a drag-and-drop reorder system for a block editor and liked the precision it demands more than typical CRUD work.',
+        sourceStoryIds: [],
+      },
+    ],
+    notes: [
+      {
+        id: 'note-notion-1',
+        category: 'general',
+        text: 'Offer came in a week after the onsite. Comp call scheduled for Friday.',
+        createdAt: '2026-01-12T16:00:00.000Z',
+      },
+    ],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-vercel',
@@ -300,9 +373,9 @@ export const fixtureApplications: Application[] = [
         { text: 'Next.js familiarity', kind: 'required', yearsOfExperience: null },
       ],
       keywords: [
-        { term: 'Next.js', category: 'framework' },
-        { term: 'DX', category: 'domain' },
-        { term: 'open source', category: 'domain' },
+        { term: 'Next.js', category: 'framework', postingSpelling: null },
+        { term: 'DX', category: 'domain', postingSpelling: null },
+        { term: 'open source', category: 'domain', postingSpelling: null },
       ],
     },
     tailoredResume: {
@@ -340,6 +413,10 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-03-06T09:04:00.000Z',
       },
     ],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-linear',
@@ -360,9 +437,9 @@ export const fixtureApplications: Application[] = [
         { text: 'Performance-minded', kind: 'preferred', yearsOfExperience: null },
       ],
       keywords: [
-        { term: 'React', category: 'framework' },
-        { term: 'performance', category: 'domain' },
-        { term: 'animation', category: 'domain' },
+        { term: 'React', category: 'framework', postingSpelling: null },
+        { term: 'performance', category: 'domain', postingSpelling: null },
+        { term: 'animation', category: 'domain', postingSpelling: null },
       ],
     },
     tailoredResume: {
@@ -387,6 +464,10 @@ export const fixtureApplications: Application[] = [
       },
     ],
     notes: [],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
   {
     id: 'app-stripe',
@@ -396,7 +477,7 @@ export const fixtureApplications: Application[] = [
     jobUrl: 'https://stripe.com/jobs/listing/senior-software-engineer-payments/6612001',
     createdAt: '2026-01-19T07:30:00.000Z',
     source: 'autofill',
-    stage: 'interviewing',
+    stage: 'onsite',
     jobInfo: JobInfoSchema.parse({
       company: 'Stripe',
       team: 'Payments Infrastructure',
@@ -481,6 +562,10 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-02-25T11:15:00.000Z',
       },
     ],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
   },
 ];
 
@@ -502,9 +587,12 @@ export const fixtureProfile: Profile = {
       ],
       maxBullets: null,
       starredIndices: [],
+      suppressIfEmpty: false,
     },
   ],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: ['TypeScript', 'React', 'Node.js', 'GraphQL', 'Go', 'SQL'],
   stories: [],

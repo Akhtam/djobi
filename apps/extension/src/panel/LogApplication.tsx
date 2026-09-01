@@ -12,7 +12,14 @@
  * `POST /applications` with `source: 'manual'` and the base profile as the stored resume (see
  * `baseResumeOf`). No tailoring, no answers — the candidate wrote those themselves.
  */
-import { baseResumeOf, failureMessage, type JobInfo, type Profile } from '@djobi/shared';
+import {
+  baseResumeOf,
+  bulletProvenance,
+  failureMessage,
+  requirementEvidence,
+  type JobInfo,
+  type Profile,
+} from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
 import { findDuplicate } from '../lib/duplicateGuard';
@@ -133,6 +140,10 @@ export function LogApplication({
     // put its old `kind` back and the screen would never leave `extracted`.
     setState({ ...reviewed, kind: 'saving' });
     try {
+      // No tailoring happened on this path, so the resume is the whole Profile bullet bank
+      // unfiltered — `baseResumeOf` — and provenance is computed against that same object, the way
+      // `background/applicationPipeline.ts`'s Save Step does for an autofill run.
+      const manualResume = baseResumeOf(profile);
       await client.saveApplication({
         company: company.trim(),
         roleTitle: roleTitle.trim(),
@@ -140,9 +151,12 @@ export function LogApplication({
         // The edited company/role are what the row is keyed by, so they win over the extraction
         // inside the stored snapshot too — otherwise a correction would only half apply.
         jobInfo: { ...jobInfo, company: company.trim(), roleTitle: roleTitle.trim() },
-        tailoredResume: baseResumeOf(profile),
+        tailoredResume: manualResume,
         answers: [],
         source: 'manual',
+        rawDescription: jobDescription.trim(),
+        requirementEvidence: requirementEvidence(manualResume, jobInfo, profile),
+        bulletProvenance: bulletProvenance(manualResume, profile),
       });
       setState({ kind: 'saved', company: company.trim(), roleTitle: roleTitle.trim() });
     } catch (error) {

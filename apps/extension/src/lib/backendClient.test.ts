@@ -27,6 +27,8 @@ const profile: Profile = {
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: [],
   stories: [],
@@ -89,6 +91,8 @@ describe('httpBackendClient', () => {
           location: profile.location,
           links: profile.links,
           education: profile.education,
+          resumePageSize: profile.resumePageSize,
+          showRolePrefix: profile.showRolePrefix,
         },
         tailoredResume,
       },
@@ -162,6 +166,10 @@ describe('httpBackendClient', () => {
       jobInfo,
       tailoredResume,
       answers: [],
+      rawDescription: null,
+      extractionVersion: null,
+      requirementEvidence: null,
+      bulletProvenance: null,
     });
 
     expect(callBackend).toHaveBeenCalledWith(

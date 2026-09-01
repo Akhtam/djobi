@@ -202,7 +202,7 @@ Two tables:
   (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
   jsonb snapshots of what was generated for that specific application, so past applications stay
   readable even if `Profile` or the tailoring prompt changes later. `stage`
-  (`applied` → `phone_screen` → `interviewing` → `rejected`) tracks how far it got. `notes` is a
+  (`applied` → `phone_screen` → `onsite` → `offer` → `rejected`) tracks how far it got. `notes` is a
   jsonb array appended to over the life of the application, never overwritten.
 
   A `status` column (`draft`/`submitted`) sat beside `stage` until migration `0002`. Nothing ever
@@ -402,7 +402,9 @@ The render **fits itself to one page**: it renders at the researched density, co
 PDF's own page tree, and re-renders one step tighter down a four-step ladder until it fits. Every
 step stays inside a sourced range and no step touches `fontSize` — leading and whitespace are
 spendable, legibility is not. Past ~5 roles × 6 bullets it returns two pages with all content rather
-than truncating. The common case costs exactly one render. See
+than truncating. A profile preference selects A4 or Letter and whether role titles retain the
+`Role:` prefix. Noto Sans is embedded for Unicode text, and the final render is parsed back to verify
+its size, content, and reading order before any bytes are returned. See
 `docs/resume-design-conventions.md` for where the numbers come from.
 
 ## `*.test.ts`

@@ -31,6 +31,7 @@ function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
     beginCommand: vi.fn(() => vi.fn()),
     edit: vi.fn(),
     updateAnswer: vi.fn(),
+    updateTailoredResume: vi.fn(),
     ...overrides,
   };
 }

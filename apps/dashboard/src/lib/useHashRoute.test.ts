@@ -75,10 +75,10 @@ describe('parseHash, analytics', () => {
   });
 
   it('reads range and stage from the query string', () => {
-    expect(parseHash('#/analytics?range=7d&stage=interviewing')).toEqual({
+    expect(parseHash('#/analytics?range=7d&stage=onsite')).toEqual({
       name: 'analytics',
       range: '7d',
-      stage: 'interviewing',
+      stage: 'onsite',
     });
   });
 
@@ -170,7 +170,7 @@ describe('listPath', () => {
   });
 
   it('omits the half that is empty', () => {
-    expect(listPath({ query: '', stage: 'interviewing' })).toBe('#/?stage=interviewing');
+    expect(listPath({ query: '', stage: 'onsite' })).toBe('#/?stage=onsite');
     expect(listPath({ query: 'brex', stage: null })).toBe('#/?q=brex');
   });
 });

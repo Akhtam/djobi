@@ -1,5 +1,21 @@
 import { z } from 'zod';
 import { CustomAnswerSchema, ScreeningAnswersSchema } from './screeningAnswers.js';
+// Type-only, so these add no runtime import (see the note on `RequirementEvidenceVerdictSchema`
+// below) — they exist solely so the compile-time equality checks near each schema's hand-written
+// enum can catch the two lists drifting apart.
+import type { RequirementEvidenceVerdict } from './requirementEvidence.js';
+import type { BulletProvenanceVerdict } from './bulletProvenance.js';
+
+/**
+ * Fails to typecheck unless `A` and `B` are the exact same set of literals — used below to keep a
+ * schema's hand-written `z.enum([...])` in sync with the TypeScript union it is written to match,
+ * without requiring a runtime import between the two modules that each declare one.
+ */
+type AssertSameLiterals<A extends string, B extends string> = [A] extends [B]
+  ? [B] extends [A]
+    ? true
+    : never
+  : never;
 
 /** Resume content shared by a Profile work entry and its projected Tailored Resume entry. */
 export const ResumeWorkExperienceSchema = z.object({
@@ -25,6 +41,12 @@ export const WorkExperienceSchema = ResumeWorkExperienceSchema.extend({
     .array(z.number())
     .default([])
     .describe('Indices of source bullets that every tailored resume must include verbatim'),
+  suppressIfEmpty: z
+    .boolean()
+    .default(false)
+    .describe(
+      'If tailoring selects zero bullets for this role, omit it from the resume entirely instead of showing it empty',
+    ),
 }).superRefine(({ bullets, starredIndices }, context) => {
   const unique = new Set(starredIndices);
   const allResolve = starredIndices.every(
@@ -99,6 +121,14 @@ export const ProfileSchema = z.object({
     .nonnegative()
     .default(6)
     .describe('Default maximum number of bullets selected for each tailored resume role'),
+  resumePageSize: z
+    .enum(['A4', 'LETTER'])
+    .default('A4')
+    .describe('Paper size used when rendering tailored resume PDFs'),
+  showRolePrefix: z
+    .boolean()
+    .default(true)
+    .describe('Whether resume role titles are prefixed with "Role:"'),
   education: z.array(EducationSchema),
   skills: z.array(z.string()),
   stories: z
@@ -143,6 +173,8 @@ export const EMPTY_PROFILE: Profile = {
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: [],
   stories: [],
@@ -220,6 +252,43 @@ export const JobRequirementInputSchema = z.union([
 ]);
 
 /**
+ * What the Profile/Tailored Resume pair evidences for one requirement — see
+ * `requirementEvidence.ts`, the deterministic matcher this shape mirrors. Defined here, not there,
+ * because `Application.requirementEvidence` (below) needs it for wire validation and `schemas.ts` is
+ * the one module every consumer of a persisted shape already imports; `requirementEvidence.ts` keeps
+ * declaring its own `RequirementEvidence`/`RequirementEvidenceVerdict` types as the source of truth
+ * for the *function's* return shape, which this schema is written to match structurally rather than
+ * be derived from, to avoid a runtime import cycle (that module imports `JobRequirement` from here).
+ */
+export const RequirementEvidenceVerdictSchema = z.enum([
+  'direct-evidence',
+  'skill-only',
+  'omitted-profile-evidence',
+  'needs-confirmation',
+  'unsupported',
+]);
+// No `export type` here: it would collide with `requirementEvidence.ts`'s own
+// `RequirementEvidenceVerdict`, which this schema is written to match rather than be inferred
+// from — see the doc comment above. Import that one for the type; this file exports only the
+// runtime validator.
+// If the enum above and `requirementEvidence.ts`'s own union ever drift, this line fails to
+// typecheck instead of the schema silently accepting or rejecting values the function can return.
+type _RequirementEvidenceVerdictsMatch = AssertSameLiterals<
+  z.infer<typeof RequirementEvidenceVerdictSchema>,
+  RequirementEvidenceVerdict
+>;
+const _requirementEvidenceVerdictsMatch: _RequirementEvidenceVerdictsMatch = true;
+void _requirementEvidenceVerdictsMatch;
+
+export const RequirementEvidenceSchema = z.object({
+  requirement: JobRequirementSchema,
+  verdict: RequirementEvidenceVerdictSchema,
+  evidence: z.string().nullable(),
+});
+/** Inferred type of {@link RequirementEvidenceSchema}. */
+export type RequirementEvidenceEntry = z.infer<typeof RequirementEvidenceSchema>;
+
+/**
  * The closed set a keyword is categorized into. `'soft-skill'` gets no coverage badge downstream —
  * `keywordCoverage`'s literal match cannot conclude a Profile lacks "leadership" because it says
  * "mentored" instead, and a wrong `missing` verdict is worse than an unscored row.
@@ -240,21 +309,34 @@ export type KeywordCategory = z.infer<typeof KeywordCategorySchema>;
  * so "my gaps are all in platform" is a thing analytics can show rather than something the reader
  * has to notice. `category` is null when a term predates categorization or the extractor found no
  * fit — never guessed.
+ *
+ * `postingSpelling` is the posting's own wording for the same term (`K8s` when `term` is
+ * `Kubernetes`) — `null` when a row predates this field or the posting already used the canonical
+ * form. It exists to be read, not just kept: `keywordCoverage.ts` matches against it as well as
+ * `term`, so a Profile that itself says "K8s" is not reported missing merely because the posting's
+ * canonical echo and the Profile's own wording differ.
  */
 export const JobKeywordSchema = z.object({
   term: z.string().describe('Canonical, expanded, industry-standard name, e.g. Kubernetes not K8s'),
   category: KeywordCategorySchema.nullable(),
+  postingSpelling: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      "The posting's own spelling of this term, e.g. K8s; null if it already used the canonical form",
+    ),
 });
 /** Inferred type of {@link JobKeywordSchema}. */
 export type JobKeyword = z.infer<typeof JobKeywordSchema>;
 
 /**
  * A {@link JobKeyword}, or the bare string every `keywords` row stored before this shape existed —
- * lifts to `category: null` on read, the same tolerant-read reasoning as
+ * lifts to `category: null, postingSpelling: null` on read, the same tolerant-read reasoning as
  * {@link JobRequirementInputSchema}.
  */
 export const JobKeywordInputSchema = z.union([
-  z.string().transform((term): JobKeyword => ({ term, category: null })),
+  z.string().transform((term): JobKeyword => ({ term, category: null, postingSpelling: null })),
   JobKeywordSchema,
 ]);
 
@@ -310,8 +392,12 @@ export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
  * their own resume and there is no tailored one to store — but the dashboard's detail view renders
  * `Application.tailoredResume` regardless. Storing the base profile keeps it working without a
  * nullable field, and `source` is what tells it which of the two it's looking at.
+ *
+ * Takes only the two fields it reads, not a whole `Profile` — `tailorResume.ts` calls this against
+ * a `TailorResumeProfile` projection (no `fullName`/`email`/…) to build the full, uncapped bullet
+ * bank `requirementEvidence.ts` checks Profile-side evidence against, before any model call.
  */
-export function baseResumeOf(profile: Profile): TailoredResume {
+export function baseResumeOf(profile: Pick<Profile, 'skills' | 'workExperience'>): TailoredResume {
   return {
     skills: profile.skills,
     workExperience: profile.workExperience.map(
@@ -379,7 +465,8 @@ export const ApplicationStageSchema = z.enum([
   'applied',
   'rejected_ats',
   'phone_screen',
-  'interviewing',
+  'onsite',
+  'offer',
   'rejected',
 ]);
 /** Inferred type of {@link ApplicationStageSchema}. */
@@ -437,6 +524,42 @@ export const ApplicationSourceSchema = z.enum(['autofill', 'manual']);
 export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
 
 /**
+ * The shape `extractJob`/`JobInfoSchema` and `tailorResume`/`TailoredResumeSchema` represent today —
+ * stamped onto every `Application` written from this point on (see `NewApplicationSchema`'s default
+ * below), so a later extraction or matching change can tell which rows it can safely re-derive
+ * provenance for and which predate the fields it reads. Bump it only when the *shape* those two
+ * schemas produce changes materially (a Phase 12/13-style widening), not on every prompt wording
+ * tweak — this is a compatibility marker, not a build number.
+ */
+export const EXTRACTION_VERSION = '2026-08-31';
+
+/** {@link BulletProvenanceEntry}'s verdict — mirrors `bulletProvenance.ts`'s own type, see the note on {@link RequirementEvidenceVerdictSchema}. */
+export const BulletProvenanceVerdictSchema = z.enum(['verbatim', 'reworded', 'unmatched']);
+// If the enum above and `bulletProvenance.ts`'s own union ever drift, this line fails to
+// typecheck instead of the schema silently accepting or rejecting values the function can return.
+type _BulletProvenanceVerdictsMatch = AssertSameLiterals<
+  z.infer<typeof BulletProvenanceVerdictSchema>,
+  BulletProvenanceVerdict
+>;
+const _bulletProvenanceVerdictsMatch: _BulletProvenanceVerdictsMatch = true;
+void _bulletProvenanceVerdictsMatch;
+
+/**
+ * One Tailored Resume bullet's likely Profile source, with role context — the persisted form of
+ * `bulletProvenance.ts`'s per-bullet result, computed once at save time so the audit trail reflects
+ * exactly what was saved rather than being re-derivable only while the Profile still matches.
+ */
+export const BulletProvenanceEntrySchema = z.object({
+  company: z.string(),
+  title: z.string(),
+  bullet: z.string(),
+  verdict: BulletProvenanceVerdictSchema,
+  source: z.string().nullable(),
+});
+// No `export type` here either, for the same reason: `bulletProvenance.ts` already exports
+// `BulletProvenanceEntry`, and this schema is written to match it rather than be its source.
+
+/**
  * One persisted `applications` row, keyed to the job posting, so its exact generated snapshot
  * remains available in the Dashboard.
  *
@@ -455,6 +578,25 @@ export const ApplicationSchema = z.object({
   source: ApplicationSourceSchema,
   stage: ApplicationStageSchema,
   notes: z.array(NoteSchema),
+  /**
+   * The posting text as reviewed and analyzed — `extractJob`'s input. `applications` never stored
+   * this before; every extraction/matching improvement therefore only ever helped rows saved after
+   * it shipped, since there was nothing to re-run it against (see PROGRESS.md's "Known loose ends").
+   * `null` for every row saved before this field existed, and for a Log-tab entry whose candidate
+   * chose not to keep the posting text.
+   */
+  rawDescription: z.string().nullable(),
+  /** {@link EXTRACTION_VERSION} at the moment this row was written; `null` for rows that predate it. */
+  extractionVersion: z.string().nullable(),
+  /**
+   * `requirementEvidence(tailoredResume, jobInfo, profile)`, computed once at save time against the
+   * Profile as it stood then — a later Profile edit does not change what a past application says it
+   * evidenced. `null` for a row saved before this field existed, or if the Profile could not be read
+   * at save time; never recomputed automatically.
+   */
+  requirementEvidence: z.array(RequirementEvidenceSchema).nullable(),
+  /** `bulletProvenance(tailoredResume, profile)`, computed once at save time — see the field above. */
+  bulletProvenance: z.array(BulletProvenanceEntrySchema).nullable(),
   createdAt: z.string(),
 });
 /** Inferred type of {@link ApplicationSchema}. */
@@ -473,6 +615,12 @@ export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt
   source: ApplicationSourceSchema.default('autofill'),
   stage: ApplicationStageSchema.default('applied'),
   notes: z.array(NoteSchema).default([]),
+  rawDescription: z.string().nullable().default(null),
+  // Auto-stamped: a caller never has to know this exists to get an accurate value, the same reason
+  // `stage`/`notes` default rather than requiring every existing caller to state them.
+  extractionVersion: z.string().nullable().default(EXTRACTION_VERSION),
+  requirementEvidence: z.array(RequirementEvidenceSchema).nullable().default(null),
+  bulletProvenance: z.array(BulletProvenanceEntrySchema).nullable().default(null),
 });
 /** Inferred type of {@link NewApplicationSchema}. */
 export type NewApplication = z.infer<typeof NewApplicationSchema>;

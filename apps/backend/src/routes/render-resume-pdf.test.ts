@@ -19,6 +19,9 @@ const sampleProfile: Profile = {
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
   workExperience: [],
+  maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [],
   skills: ['TypeScript'],
   stories: [],
@@ -62,6 +65,8 @@ describe('POST /render-resume-pdf', () => {
         location: sampleProfile.location,
         links: sampleProfile.links,
         education: sampleProfile.education,
+        resumePageSize: sampleProfile.resumePageSize,
+        showRolePrefix: sampleProfile.showRolePrefix,
       },
       sampleTailoredResume,
     );
@@ -117,9 +122,21 @@ describe('POST /render-resume-pdf', () => {
       location: profile.location,
       links: profile.links,
       education: profile.education,
+      resumePageSize: profile.resumePageSize,
+      showRolePrefix: profile.showRolePrefix,
     };
     expect(mockRenderResumePdf).toHaveBeenNthCalledWith(1, renderProfile, sampleTailoredResume);
     expect(mockRenderResumePdf).toHaveBeenNthCalledWith(2, renderProfile, changedResume);
+  });
+
+  it('renders again when a PDF preference changes', async () => {
+    const profile = { ...sampleProfile, fullName: 'Preference Candidate' };
+    mockRenderResumePdf.mockResolvedValue(Buffer.from('pdf'));
+
+    await renderRequest(profile);
+    await renderRequest({ ...profile, resumePageSize: 'LETTER' });
+
+    expect(mockRenderResumePdf).toHaveBeenCalledTimes(2);
   });
 
   it('retries an identical render after the previous render rejects', async () => {

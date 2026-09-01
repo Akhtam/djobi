@@ -14,7 +14,7 @@ const latestApplication = {
   id: 'application-1',
   company: 'Acme',
   roleTitle: 'Engineer',
-  stage: 'interviewing',
+  stage: 'onsite',
   createdAt: '2026-08-18T00:00:00.000Z',
 };
 

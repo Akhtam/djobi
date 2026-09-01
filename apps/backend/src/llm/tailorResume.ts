@@ -1,11 +1,14 @@
 import {
+  baseResumeOf,
+  requirementEvidence,
   TailorResumeProfileSchema,
   type JobInfo,
   type TailorResumeProfile,
   type TailoredResume,
 } from '@djobi/shared';
 import { z } from 'zod';
-import { groundingContext, jobContext } from './promptContext.js';
+import { verifyBulletRewrite } from './bulletTruthfulness.js';
+import { groundingContext, jobContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /** Compact model output: source indices replace work-experience metadata the backend already owns. */
@@ -77,11 +80,15 @@ function bulletsFor(
     if (counts.get(bullet.sourceIndex) !== 1 || role.bullets[bullet.sourceIndex] === undefined) {
       return [];
     }
+    const sourceText = role.bullets[bullet.sourceIndex];
     if (starred.has(bullet.sourceIndex)) {
-      return [{ text: role.bullets[bullet.sourceIndex], starred: true }];
+      return [{ text: sourceText, starred: true }];
     }
     const text = bullet.text?.trim();
-    return text ? [{ text, starred: false }] : [];
+    // A rewrite that introduces a number or named specific the source bullet never stated reverts to
+    // the source itself, verbatim — see bulletTruthfulness.ts. This can only ever fall back to a real
+    // sentence the candidate wrote, never to nothing: the pointer was already resolved above.
+    return text ? [{ text: verifyBulletRewrite(text, sourceText), starred: false }] : [];
   });
 
   // Invalid pointers are a malformed tailoring result, not an instruction to erase a real role.
@@ -98,7 +105,16 @@ function bulletsFor(
   });
 }
 
-/** Rejoins compact, untrusted model output to authoritative Profile fields. */
+/**
+ * Rejoins compact, untrusted model output to authoritative Profile fields.
+ *
+ * Role order always matches `profile.workExperience` — conventional reverse-chronological order is
+ * the candidate's own authored fact, not a tailoring decision, so a `sourceIndex` only ever selects
+ * *which* role's bullets to use, never *where* that role sits. Only bullets within a role are
+ * reordered/selected; see `bulletsFor`. A `sourceIndex` repeated, missing, or out of range for a
+ * role still falls back to that role's own authored-order bullets — malformed pointers are a
+ * tailoring failure to recover from, not an instruction to drop a real role.
+ */
 function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume): TailoredResume {
   const roleCounts = new Map<number, number>();
   for (const role of modelResume.workExperience) {
@@ -109,28 +125,51 @@ function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume)
       profile.workExperience[role.sourceIndex] !== undefined &&
       roleCounts.get(role.sourceIndex) === 1,
   );
-  const safelyReordered =
-    safeModelRoles.length === profile.workExperience.length &&
-    profile.workExperience.every((_, index) => roleCounts.get(index) === 1);
-
   const roleByIndex = new Map(safeModelRoles.map((role) => [role.sourceIndex, role] as const));
-  const orderedIndices = safelyReordered
-    ? safeModelRoles.map((role) => role.sourceIndex)
-    : profile.workExperience.map((_, index) => index);
-  const workExperience = orderedIndices.map((index) => {
-    const role = profile.workExperience[index];
-    const modelRole = roleByIndex.get(index);
-    const { company, title, startDate, endDate } = role;
-    return {
-      company,
-      title,
-      startDate,
-      endDate,
-      bullets: modelRole ? bulletsFor(profile, role, modelRole) : fallbackBullets(profile, role),
-    };
-  });
+
+  const workExperience = profile.workExperience
+    .map((role, index) => {
+      const modelRole = roleByIndex.get(index);
+      const { company, title, startDate, endDate } = role;
+      return {
+        company,
+        title,
+        startDate,
+        endDate,
+        bullets: modelRole ? bulletsFor(profile, role, modelRole) : fallbackBullets(profile, role),
+      };
+    })
+    // An explicit, candidate-set opt-in only — see WorkExperienceSchema.suppressIfEmpty. Silently
+    // hiding a role nobody asked to hide would misrepresent the candidate's own employment history.
+    .filter(
+      (role, index) => role.bullets.length > 0 || !profile.workExperience[index].suppressIfEmpty,
+    );
 
   return { skills: profile.skills, workExperience };
+}
+
+/**
+ * A deterministic, pre-computed reading of what the Profile's *full, uncapped* bullet bank already
+ * evidences for each requirement — required first — so the model spends its selection budget on
+ * requirements the Profile can actually support instead of re-deriving that itself from scratch.
+ *
+ * Run against `baseResumeOf(grounding)` rather than the eventual tailored output: this runs before
+ * the model call, so there is no tailored resume yet, and the question worth answering is "can the
+ * Profile support this at all", not "does today's selection happen to".
+ *
+ * `''` when the posting stated no requirements, so an empty tag is never added to the prompt.
+ */
+function requirementEvidenceContext(grounding: TailorResumeProfile, jobInfo: JobInfo): string {
+  const evidence = requirementEvidence(baseResumeOf(grounding), jobInfo, grounding);
+  if (evidence.length === 0) return '';
+
+  const summary = evidence.map(({ requirement, verdict, evidence: match }) => ({
+    requirement: requirement.text,
+    kind: requirement.kind,
+    verdict,
+    evidencedBy: match,
+  }));
+  return `\n\n<requirement_evidence>\n${sanitizeXmlContent(JSON.stringify(summary))}\n</requirement_evidence>`;
 }
 
 /** Tailors a resume using compact source pointers and server-side reconstruction. */
@@ -151,7 +190,9 @@ export async function tailorResume(
   const grounding = TailorResumeProfileSchema.parse(profile);
   const instructions = `Tailor the candidate's resume to this job. Reorder and concisely reword existing non-starred bullets to emphasize job_info requirements and keywords, using natural language that does not sound robotic. Never invent experience, skills, or achievements. A role's maxBullets overrides maxBulletsPerRole; both are maximums, never targets, so do not pad a role with weak or fabricated content.
 
-The arrays in base_profile are authoritative and zero-indexed. Skills are copied unchanged by the server and must not appear in the output. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex points into base_profile.workExperience and controls role order. Bullets may be reordered or omitted up to the role's cap. Every index in starredIndices is already selected: return each exactly once as {"sourceIndex":M} with no text, and exclude it from the bullets you select. For each selected non-starred bullet return {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its truth-preserving rewrite. Do not copy company, title, dates, or skill text into the output.
+The arrays in base_profile are authoritative and zero-indexed. Skills are copied unchanged by the server and must not appear in the output. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex selects which role's bullets you are reporting, not where that role appears — role order always follows base_profile's own reverse-chronological order and cannot be changed. Bullets may be reordered or omitted up to the role's cap. Every index in starredIndices is already selected: return each exactly once as {"sourceIndex":M} with no text, and exclude it from the bullets you select. For each selected non-starred bullet return {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its truth-preserving rewrite. Do not copy company, title, dates, or skill text into the output.
+
+A requirement_evidence block, when present, is a deterministic pre-check of what base_profile's bullets already evidence per requirement, required requirements listed first. Prioritize keeping or selecting the bullets it names as evidencedBy for direct-evidence/skill-only/omitted-profile-evidence required items over bullets that only serve a preferred item. It also names unsupported/needs-confirmation required items so you can leave them alone rather than spend a rewrite pretending to address them — never invent a bullet or a detail to cover one.
 
 ${groundingContext(grounding)}`;
 
@@ -163,7 +204,7 @@ ${groundingContext(grounding)}`;
     toolDescription: 'Report the resume content tailored to this specific job.',
     schema: TailoredResumeOutputSchema,
     cachedPrefix: instructions,
-    userContent: jobContext(jobInfo),
+    userContent: jobContext(jobInfo) + requirementEvidenceContext(grounding, jobInfo),
   });
 
   return reconcileResume(grounding, modelResume);

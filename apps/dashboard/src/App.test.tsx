@@ -78,7 +78,7 @@ describe('applications list', () => {
 
   it('summarises the count and how many are live', async () => {
     renderApp();
-    expect(await screen.findByText(/7 applications · 3 in progress/)).toBeInTheDocument();
+    expect(await screen.findByText(/8 applications · 4 in progress/)).toBeInTheDocument();
   });
 
   it('filters by stage', async () => {
@@ -303,9 +303,9 @@ describe('applications list', () => {
     await screen.findByRole('link', { name: 'Staff Engineer, Platform' });
 
     const select = screen.getByRole('combobox', { name: /Stage for Staff Engineer, Platform/ });
-    await user.selectOptions(select, 'interviewing');
+    await user.selectOptions(select, 'onsite');
 
-    await waitFor(() => expect(select).toHaveValue('interviewing'));
+    await waitFor(() => expect(select).toHaveValue('onsite'));
     // Still on the list.
     expect(screen.getByRole('searchbox', { name: 'Search company or role' })).toBeInTheDocument();
   });
@@ -394,7 +394,7 @@ describe('application detail', () => {
     renderApp();
     const picker = await screen.findByRole('combobox', { name: 'Application stage' });
 
-    expect(picker).toHaveValue('interviewing');
+    expect(picker).toHaveValue('onsite');
   });
 
   it('advances the stage from the dropdown', async () => {
@@ -604,7 +604,7 @@ describe('failures', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Phase 7 has not built this route');
     // The change is undone, not left showing a value the server rejected.
-    await waitFor(() => expect(picker).toHaveValue('interviewing'));
+    await waitFor(() => expect(picker).toHaveValue('onsite'));
   });
 
   it('keeps the typed note when the save fails, rather than throwing the user’s text away', async () => {
@@ -646,17 +646,17 @@ describe('failures', () => {
     const sonar = screen.getByRole('combobox', { name: /Stage for Staff Engineer, Platform/ });
 
     await user.selectOptions(brex, 'rejected');
-    await user.selectOptions(sonar, 'interviewing');
+    await user.selectOptions(sonar, 'onsite');
 
     // A pending write for one application does not block another application's queue.
     expect(calls).toEqual(['app-brex', 'app-sonar']);
-    await waitFor(() => expect(sonar).toHaveValue('interviewing'));
+    await waitFor(() => expect(sonar).toHaveValue('onsite'));
 
     brexWrite.reject(new Error('nope'));
     // The failing write reverts its own record...
-    await waitFor(() => expect(brex).toHaveValue('interviewing'));
+    await waitFor(() => expect(brex).toHaveValue('onsite'));
     // ...and leaves the one that succeeded alone.
-    expect(sonar).toHaveValue('interviewing');
+    expect(sonar).toHaveValue('onsite');
   });
 
   it('clears a previous failure when the next write is attempted', async () => {
@@ -832,10 +832,10 @@ describe('analytics', () => {
     await lowerAnalyticsMinimumToOne(user);
     await screen.findByRole('button', { name: /React/ });
 
-    await user.click(screen.getByRole('button', { name: /^Interviewing/ }));
+    await user.click(screen.getByRole('button', { name: /^Onsite/ }));
 
-    // Brex is the only interviewing-stage posting inside the default 7-day range — Stripe is also
-    // interviewing but its createdAt falls outside it.
+    // Brex is the only onsite-stage posting inside the default 7-day range — Stripe is also
+    // onsite but its createdAt falls outside it.
     expect(screen.getByRole('button', { name: /GraphQL/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Next\.js/ })).not.toBeInTheDocument();
   });
@@ -844,10 +844,10 @@ describe('analytics', () => {
     renderApp();
     await screen.findByRole('group', { name: 'Min. appearances' });
 
-    // Two applications are interviewing-stage (Brex and the legacy Stripe row), but Stripe's
+    // Two applications are onsite-stage (Brex and the legacy Stripe row), but Stripe's
     // createdAt falls outside the default 7-day range — the pill must count only Brex.
-    expect(screen.getByRole('button', { name: /^Interviewing/ })).toHaveAccessibleName(
-      'Interviewing1',
+    expect(screen.getByRole('button', { name: /^Onsite/ })).toHaveAccessibleName(
+      'Onsite1',
     );
   });
 

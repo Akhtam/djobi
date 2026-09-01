@@ -177,6 +177,7 @@ export function App({ client }: { client: BackendClient }) {
     bullets: [],
     maxBullets: null,
     starredIndices: [],
+    suppressIfEmpty: false,
   }));
   const education = listEditor(profile, setProfile, 'education', () => ({
     school: '',
@@ -352,6 +353,40 @@ export function App({ client }: { client: BackendClient }) {
         </fieldset>
 
         <fieldset className="card">
+          <legend>Resume PDF</legend>
+          <p className="card-hint">Formatting used for both resume previews and attachments.</p>
+          <div className="field-grid">
+            <div className="field">
+              <label htmlFor="resumePageSize">Page size</label>
+              <select
+                id="resumePageSize"
+                value={profile.resumePageSize}
+                onChange={(event) =>
+                  setProfile({
+                    ...profile,
+                    resumePageSize: event.currentTarget.value as Profile['resumePageSize'],
+                  })
+                }
+              >
+                <option value="A4">A4</option>
+                <option value="LETTER">Letter</option>
+              </select>
+            </div>
+            <label className="checkbox-field" htmlFor="showRolePrefix">
+              <input
+                id="showRolePrefix"
+                type="checkbox"
+                checked={profile.showRolePrefix}
+                onChange={(event) =>
+                  setProfile({ ...profile, showRolePrefix: event.currentTarget.checked })
+                }
+              />
+              Prefix titles with “Role:”
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="card">
           <legend>Skills</legend>
           <ul className="skills">
             {profile.skills.map((skill) => (
@@ -495,6 +530,20 @@ export function App({ client }: { client: BackendClient }) {
                       }
                     }}
                   />
+                </div>
+
+                <div className="field">
+                  <label className="checkbox-field" htmlFor={`weSuppressIfEmpty${n}`}>
+                    <input
+                      id={`weSuppressIfEmpty${n}`}
+                      type="checkbox"
+                      checked={entry.suppressIfEmpty}
+                      onChange={(event) =>
+                        work.update(index, { suppressIfEmpty: event.currentTarget.checked })
+                      }
+                    />
+                    {`Hide role ${n} entirely if tailoring selects no bullets for it`}
+                  </label>
                 </div>
 
                 <div className="field span-2">

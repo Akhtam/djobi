@@ -44,8 +44,8 @@ const sampleJobInfo: JobInfo = {
     { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
   ],
   keywords: [
-    { term: 'TypeScript', category: null },
-    { term: 'Postgres', category: null },
+    { term: 'TypeScript', category: null, postingSpelling: null },
+    { term: 'Postgres', category: null, postingSpelling: null },
   ],
 };
 

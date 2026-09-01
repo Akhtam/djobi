@@ -28,7 +28,7 @@ const jobInfo: JobInfo = {
   requirements: [
     { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
   ],
-  keywords: [{ term: 'TypeScript', category: null }],
+  keywords: [{ term: 'TypeScript', category: null, postingSpelling: null }],
 };
 
 function post(body: unknown) {

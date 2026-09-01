@@ -41,7 +41,7 @@ export interface ApplicationStore {
  * ordering and staleness bookkeeping callers used to do for themselves.
  *
  * A **slotted** mutation claims a field only one value can occupy — a Stage. Clicking through
- * `applied → phone_screen → interviewing` faster than the network answers means three writes for
+ * `applied → phone_screen → onsite` faster than the network answers means three writes for
  * one field: they are queued so the server sees them in that order, and only the newest one's
  * answer is applied, because an earlier write's authoritative Stage is a stale Stage.
  *

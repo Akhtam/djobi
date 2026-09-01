@@ -2,6 +2,7 @@ import type { Profile, TailoredResume } from '@djobi/shared';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { describe, expect, it } from 'vitest';
 import { DENSITY_STEPS, pageCount, renderResumePdf } from './renderResume.js';
+import { preflightResumePdf } from './preflightResume.js';
 
 const sampleProfile: Profile = {
   fullName: 'Jane Doe',
@@ -11,6 +12,8 @@ const sampleProfile: Profile = {
   links: { linkedin: 'linkedin.com/in/janedoe', portfolio: null, github: null },
   workExperience: [],
   maxBulletsPerRole: 6,
+  resumePageSize: 'A4',
+  showRolePrefix: true,
   education: [
     {
       school: 'State University',
@@ -58,6 +61,103 @@ describe('renderResumePdf', () => {
     expect(text).toContain('Role: Senior Software Engineer');
     // The company leads the line — the old "Senior Software Engineer, Acme" header buried it.
     expect(text).not.toContain('Senior Software Engineer, Acme');
+  });
+
+  it('can remove the Role prefix without dropping the title', async () => {
+    const buffer = await renderResumePdf(
+      { ...sampleProfile, showRolePrefix: false },
+      sampleTailoredResume,
+    );
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(buffer)), {
+      mergePages: true,
+    });
+
+    expect(text).toContain('Senior Software Engineer');
+    expect(text).not.toContain('Role: Senior Software Engineer');
+  });
+
+  it.each([
+    ['A4', 595, 842],
+    ['LETTER', 612, 792],
+  ] as const)('renders the configured %s page size', async (resumePageSize, width, height) => {
+    const buffer = await renderResumePdf(
+      { ...sampleProfile, resumePageSize },
+      sampleTailoredResume,
+    );
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1 });
+
+    expect(viewport.width).toBeCloseTo(width, 0);
+    expect(viewport.height).toBeCloseTo(height, 0);
+  });
+
+  it('embeds and extracts Unicode profile and resume text', async () => {
+    const profile = { ...sampleProfile, fullName: 'Жанна Доу', location: 'Тбилиси' };
+    const tailoredResume = {
+      ...sampleTailoredResume,
+      skills: ['TypeScript', 'Кириллица'],
+      workExperience: [
+        {
+          ...sampleTailoredResume.workExperience[0],
+          company: 'Компания',
+          bullets: ['Создала платежную платформу.'],
+        },
+      ],
+    };
+    const buffer = await renderResumePdf(profile, tailoredResume);
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(buffer)), {
+      mergePages: true,
+    });
+
+    expect(text).toContain('Жанна Доу');
+    expect(text).toContain('Тбилиси');
+    expect(text).toContain('Кириллица');
+    expect(text).toContain('Создала платежную платформу.');
+  });
+
+  it('preflight rejects a PDF whose expected resume content is missing', async () => {
+    const buffer = await renderResumePdf(sampleProfile, sampleTailoredResume);
+    const changedResume = {
+      ...sampleTailoredResume,
+      workExperience: [
+        { ...sampleTailoredResume.workExperience[0], bullets: ['Text absent from rendered PDF.'] },
+      ],
+    };
+
+    await expect(preflightResumePdf(buffer, sampleProfile, changedResume)).rejects.toThrow(
+      'missing or out-of-order text',
+    );
+  });
+
+  it('does not hyphenate a long word that falls at a line wrap', async () => {
+    // react-pdf's default hyphenation engine splits long words with a real "-" glyph when they
+    // land at a line break (e.g. "functionality" -> "function-" / "ality"). That corrupts the
+    // rendered text and used to fail preflight on bullets like this one.
+    const tailoredResume: TailoredResume = {
+      ...sampleTailoredResume,
+      workExperience: [
+        {
+          ...sampleTailoredResume.workExperience[0],
+          bullets: [
+            'Collaborated with cross-functional teams to establish a sandbox environment, ensuring seamless functionality across services',
+          ],
+        },
+      ],
+    };
+
+    const buffer = await renderResumePdf(sampleProfile, tailoredResume);
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(buffer)), {
+      mergePages: true,
+    });
+
+    expect(text).toContain('functionality');
+  });
+
+  it('preflight rejects an implausibly small file', async () => {
+    await expect(
+      preflightResumePdf(Buffer.from('%PDF-'), sampleProfile, sampleTailoredResume),
+    ).rejects.toThrow('file size');
   });
 
   it('compresses a resume that would overflow back onto a single page', async () => {

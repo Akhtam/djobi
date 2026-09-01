@@ -143,7 +143,16 @@ export function Analytics({
     const resume = baseResumeOf(profileState.profile);
     const coverage = keywordCoverage(
       resume,
-      { keywords: frequency.map((row) => ({ term: row.term, category: row.category })) },
+      {
+        // A synthesized `{ keywords: distinct }`, not a real posting's JobInfo — the same reasoning
+        // that already leaves this object without the rest of JobInfo's fields. postingSpelling is
+        // per-posting, and a term aggregated across many postings has no single one to give it.
+        keywords: frequency.map((row) => ({
+          term: row.term,
+          category: row.category,
+          postingSpelling: null,
+        })),
+      },
       profileState.profile,
     );
     return new Map(coverage.map((entry) => [entry.keyword, entry.verdict]));

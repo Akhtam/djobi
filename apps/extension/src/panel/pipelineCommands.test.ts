@@ -35,6 +35,7 @@ function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
     }),
     edit: vi.fn(),
     updateAnswer: vi.fn(),
+    updateTailoredResume: vi.fn(),
     ...overrides,
   };
 }

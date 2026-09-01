@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { TailoredResume } from '@djobi/shared';
 import {
   type PipelineFailure,
   type PipelineRunState,
@@ -97,15 +98,30 @@ export interface PipelineRunHandle {
    * see {@link answersTheCommand}.
    */
   beginCommand: (step: RunStep) => (message: string) => void;
-  /** Persists the user's edits, updating `run` immediately so typing stays responsive. */
+  /**
+   * Persists the user's edits, updating `run` immediately so typing stays responsive.
+   *
+   * `tailoredResume` is optional, unlike `answers`/`jobDescription`: an answers-only edit must not
+   * resend the whole resume on every keystroke, and omitting the key (never sending it as
+   * `undefined`) is what lets `patchPipelineRun`'s partial merge leave the stored resume alone.
+   */
   edit: (
-    edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
+    edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
+      tailoredResume?: TailoredResume;
+      status?: 'filled';
+    },
   ) => void;
 }
 
 /** The subset this hook is allowed to write — see the ownership note on {@link PipelineRunHandle}. */
-function editsOf(run: PipelineRunState): Pick<PipelineRunState, 'answers' | 'jobDescription'> {
-  return { answers: run.answers, jobDescription: run.jobDescription };
+function editsOf(
+  run: PipelineRunState,
+): Pick<PipelineRunState, 'answers' | 'jobDescription' | 'tailoredResume'> {
+  return {
+    answers: run.answers,
+    jobDescription: run.jobDescription,
+    tailoredResume: run.tailoredResume,
+  };
 }
 
 /**
@@ -261,16 +277,24 @@ export function usePipelineRun(
   }, [scopeToken, tabId]);
 
   const edit = useCallback(
-    (edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' }) => {
+    (
+      edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
+        tailoredResume?: TailoredResume;
+        status?: 'filled';
+      },
+    ) => {
       if (tabId === null || !run) return;
 
       // Apply locally first so a controlled textarea doesn't lag a storage round-trip.
-      setRun((prev) => (prev ? { ...prev, ...edits } : prev));
+      const merged = { ...run, ...edits };
+      setRun(merged);
 
-      const serialized = JSON.stringify({
-        answers: edits.answers,
-        jobDescription: edits.jobDescription,
-      });
+      // `editsOf(merged)` — not `edits` directly — so this always carries the same shape an incoming
+      // echo's `editsOf(incoming)` will, tailoredResume included even when this particular call didn't
+      // touch it. Serializing `edits` as sent would drop tailoredResume from that comparison whenever
+      // an answers-only edit omitted it, and the echo for the *next* resume edit would then never be
+      // recognized as this hook's own — leaving it "pending" forever.
+      const serialized = JSON.stringify(editsOf(merged));
       // An undo can equal the last server echo while a different local edit is still pending. It
       // must still be sent, otherwise that older pending edit eventually wins on the server.
       if (

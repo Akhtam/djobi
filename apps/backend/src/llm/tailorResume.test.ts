@@ -30,6 +30,7 @@ const profile: Profile = {
       bullets: ['Led the billing service migration', 'Owned the on-call rotation'],
       maxBullets: null,
       starredIndices: [],
+      suppressIfEmpty: false,
     },
   ],
   maxBulletsPerRole: 6,
@@ -46,8 +47,13 @@ const jobInfo: JobInfo = {
   roleTitle: 'Senior Software Engineer',
   seniority: 'Senior',
   location: 'Remote',
-  requirements: ['5+ years of backend experience'],
-  keywords: ['TypeScript', 'Postgres'],
+  requirements: [
+    { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+  ],
+  keywords: [
+    { term: 'TypeScript', category: null, postingSpelling: null },
+    { term: 'Postgres', category: null, postingSpelling: null },
+  ],
 };
 
 describe('tailorResume', () => {
@@ -120,6 +126,99 @@ describe('tailorResume', () => {
     expect(promptText().indexOf('<base_profile>')).toBeLessThan(promptText().indexOf('<job_info>'));
   });
 
+  it('tells the model, per requirement, what the full bullet bank already evidences — required first', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [] }] }),
+    );
+    const evidencedJobInfo: JobInfo = {
+      ...jobInfo,
+      requirements: [
+        { text: 'Comfort with ambiguity', kind: 'preferred', yearsOfExperience: null },
+        { text: 'Led the billing service migration', kind: 'required', yearsOfExperience: null },
+      ],
+    };
+
+    await tailorResume(profile, evidencedJobInfo);
+
+    const summary = JSON.parse(
+      promptText().split('<requirement_evidence>\n')[1].split('\n</requirement_evidence>')[0],
+    );
+    // Required first, even though it was listed second in the posting.
+    expect(summary).toEqual([
+      {
+        requirement: 'Led the billing service migration',
+        kind: 'required',
+        verdict: 'direct-evidence',
+        evidencedBy: 'Led the billing service migration',
+      },
+      {
+        requirement: 'Comfort with ambiguity',
+        kind: 'preferred',
+        verdict: 'unsupported',
+        evidencedBy: null,
+      },
+    ]);
+    expect(promptText()).toContain('Prioritize keeping or selecting the bullets it names');
+  });
+
+  it('omits the requirement_evidence block entirely when the posting states no requirements', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [] }] }),
+    );
+
+    await tailorResume(profile, { ...jobInfo, requirements: [] });
+
+    expect(promptText()).not.toContain('<requirement_evidence>');
+  });
+
+  it('reverts a rewrite to the exact source bullet when it invents a metric the source never stated', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          {
+            sourceIndex: 0,
+            bullets: [{ sourceIndex: 0, text: 'Cut billing migration downtime by 90%' }],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(profile, jobInfo);
+
+    expect(result.workExperience[0].bullets).toEqual([profile.workExperience[0].bullets[0]]);
+  });
+
+  it('reverts a rewrite to the exact source bullet when it names a technology the source never mentioned', async () => {
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          {
+            sourceIndex: 0,
+            bullets: [{ sourceIndex: 1, text: 'Owned the on-call rotation using PagerDuty' }],
+          },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(profile, jobInfo);
+
+    expect(result.workExperience[0].bullets).toEqual([profile.workExperience[0].bullets[1]]);
+  });
+
+  it('keeps a starred bullet immune to the truthfulness check, since it is already the candidate’s own sentence', async () => {
+    const starredProfile = {
+      ...profile,
+      workExperience: [{ ...profile.workExperience[0], starredIndices: [0] }],
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [{ sourceIndex: 0 }] }] }),
+    );
+
+    const result = await tailorResume(starredProfile, jobInfo);
+
+    expect(result.workExperience[0].bullets).toEqual([profile.workExperience[0].bullets[0]]);
+  });
+
   it('throws when the compact output fails schema validation', async () => {
     mockDoGenerate.mockResolvedValue(objectGeneration({ workExperience: 'not-an-array' }));
 
@@ -143,7 +242,7 @@ describe('tailorResume', () => {
     expect(result.skills).toEqual(profile.skills);
   });
 
-  it('uses complete unique role indices to preserve the model-selected role order', async () => {
+  it('keeps role order matching the Profile’s own reverse-chronological order, regardless of the order the model returns roles in', async () => {
     const secondRole = {
       company: 'Beta Corp',
       title: 'Software Engineer',
@@ -157,6 +256,7 @@ describe('tailorResume', () => {
     mockDoGenerate.mockResolvedValue(
       objectGeneration({
         workExperience: [
+          // The model lists Beta Corp (index 1) first; Profile order must win regardless.
           { sourceIndex: 1, bullets: [{ sourceIndex: 0, text: 'Built developer tooling' }] },
           { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Led the billing migration' }] },
         ],
@@ -165,8 +265,67 @@ describe('tailorResume', () => {
 
     const result = await tailorResume(twoRoleProfile, jobInfo);
 
-    expect(result.workExperience.map((role) => role.company)).toEqual(['Beta Corp', 'Acme Corp']);
-    expect(result.workExperience[0].bullets).toEqual(['Built developer tooling']);
+    expect(result.workExperience.map((role) => role.company)).toEqual(['Acme Corp', 'Beta Corp']);
+    expect(result.workExperience[1].bullets).toEqual(['Built developer tooling']);
+    expect(promptText()).toContain('role order always follows base_profile');
+  });
+
+  it('omits a role only when tailoring selected zero bullets for it and the candidate opted into suppression', async () => {
+    const emptyableRole = {
+      company: 'Beta Corp',
+      title: 'Software Engineer',
+      startDate: '2020-01',
+      endDate: '2021-12',
+      bullets: ['Built internal developer tooling'],
+      maxBullets: null,
+      starredIndices: [],
+      suppressIfEmpty: true,
+    };
+    const twoRoleProfile = {
+      ...profile,
+      workExperience: [...profile.workExperience, emptyableRole],
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Led the billing migration' }] },
+          { sourceIndex: 1, bullets: [] },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoRoleProfile, jobInfo);
+
+    expect(result.workExperience.map((role) => role.company)).toEqual(['Acme Corp']);
+  });
+
+  it('keeps an empty role visible when suppressIfEmpty was never set, the default', async () => {
+    const emptyableRole = {
+      company: 'Beta Corp',
+      title: 'Software Engineer',
+      startDate: '2020-01',
+      endDate: '2021-12',
+      bullets: ['Built internal developer tooling'],
+      maxBullets: null,
+      starredIndices: [],
+    };
+    const twoRoleProfile = {
+      ...profile,
+      workExperience: [...profile.workExperience, emptyableRole],
+    };
+    mockDoGenerate.mockResolvedValue(
+      objectGeneration({
+        workExperience: [
+          { sourceIndex: 0, bullets: [{ sourceIndex: 0, text: 'Led the billing migration' }] },
+          { sourceIndex: 1, bullets: [] },
+        ],
+      }),
+    );
+
+    const result = await tailorResume(twoRoleProfile, jobInfo);
+
+    expect(result.workExperience.map((role) => role.company)).toEqual(['Acme Corp', 'Beta Corp']);
+    expect(result.workExperience[1].bullets).toEqual([]);
   });
 
   it('falls back to profile order and content for missing, duplicate, or invalid role indices', async () => {

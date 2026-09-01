@@ -49,6 +49,10 @@ beforeAll(async () => {
       source text NOT NULL DEFAULT 'autofill',
       stage text NOT NULL DEFAULT 'applied',
       notes jsonb NOT NULL DEFAULT '[]'::jsonb,
+      raw_description text,
+      extraction_version text,
+      requirement_evidence jsonb,
+      bullet_provenance jsonb,
       created_at timestamp with time zone NOT NULL DEFAULT now()
     );
   `);
@@ -208,7 +212,7 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
     it('leaves stage, notes and source alone — a re-save is not a relabelling', async () => {
       const { id } = await store.create(newApplication({ source: 'manual' }));
-      await store.setStage(id, 'interviewing');
+      await store.setStage(id, 'onsite');
       await store.appendNote(id, { category: 'technical', text: 'Asked about indexes' });
 
       await store.replaceSnapshot(id, {
@@ -222,7 +226,7 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
       expect(await store.byId(id)).toMatchObject({
         source: 'manual',
-        stage: 'interviewing',
+        stage: 'onsite',
         notes: [expect.objectContaining({ text: 'Asked about indexes' })],
       });
     });

@@ -14,7 +14,14 @@
  * every new step output then has to be added to the step, to whatever spreads its result, and to
  * the store.
  */
-import { keywordCoverage, resumeFileName, splitPreparedQuestions } from '@djobi/shared';
+import {
+  bulletProvenance,
+  EXTRACTION_VERSION,
+  keywordCoverage,
+  requirementEvidence,
+  resumeFileName,
+  splitPreparedQuestions,
+} from '@djobi/shared';
 import type { DetectedField, JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
 import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
@@ -324,6 +331,13 @@ export async function runSaveApplication(
       requires: asAnalyzedRun,
     },
     async ({ run }) => {
+      // Best-effort, not load-bearing: a Profile that can't be read at save time (deleted, or the
+      // backend briefly unreachable between Fill and Save) means the two provenance fields below go
+      // in as `null` rather than failing a write the candidate is actively waiting on. Fetched fresh
+      // here rather than threaded from Analysis, since the Profile a save should be judged against
+      // is the one that exists *now*, not the one tailoring ran against.
+      const profile = await deps.backend.getProfile().catch(() => null);
+
       const payload = {
         company: run.jobInfo.company,
         roleTitle: run.jobInfo.roleTitle,
@@ -331,6 +345,12 @@ export async function runSaveApplication(
         jobInfo: run.jobInfo,
         tailoredResume: run.tailoredResume,
         answers: run.answers,
+        rawDescription: run.analyzedJobDescription,
+        extractionVersion: EXTRACTION_VERSION,
+        requirementEvidence: profile
+          ? requirementEvidence(run.tailoredResume, run.jobInfo, profile)
+          : null,
+        bulletProvenance: profile ? bulletProvenance(run.tailoredResume, profile) : null,
       };
 
       const application = run.applicationId
@@ -378,6 +398,7 @@ export async function runAnalysis(
         tabUrl,
         jobPageData: { fields: [] },
         jobDescription,
+        analyzedJobDescription: jobDescription,
         jobInfo: null,
         tailoredResume: null,
         answers: [],

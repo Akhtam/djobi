@@ -60,7 +60,7 @@ export interface DuplicateApplication {
   roleTitle: string;
   /**
    * Where that past application got to. Shown because it changes what the notice means: an
-   * `interviewing` row is a live process, a `rejected` one from a year ago may be worth retrying.
+   * `onsite` row is a live process, a `rejected` one from a year ago may be worth retrying.
    */
   stage: ApplicationStage;
   /** The *most recent* save for this posting — the lookup returns matches newest-first. */
@@ -76,10 +76,19 @@ export interface PipelineRunState {
   tabUrl: string | null;
   jobPageData: JobPageData;
   /**
-   * The candidate-reviewed job description, as analyzed. Kept on the run so the panel can show
-   * it back for editing and a re-analysis, and so a reopened panel doesn't lose it.
+   * The job description shown in the panel's editor. Starts equal to {@link analyzedJobDescription}
+   * but can drift from it: the candidate may edit this text after Analysis has already produced
+   * `jobInfo`/`tailoredResume`, and editing alone does not re-run Analysis. Kept on the run so the
+   * panel can show it back for editing and a re-analysis, and so a reopened panel doesn't lose it.
    */
   jobDescription: string;
+  /**
+   * The exact text passed to `extractJob` for this run's `jobInfo`/`tailoredResume` — frozen at the
+   * start of the Analysis Step, unlike {@link jobDescription}, which the candidate can keep editing
+   * afterward. This is what Save persists as `rawDescription`, so that field always names the
+   * posting text the pipeline's output actually reflects, even if the editor has since diverged.
+   */
+  analyzedJobDescription: string;
   jobInfo: JobInfo | null;
   tailoredResume: TailoredResume | null;
   answers: QuestionAnswer[];

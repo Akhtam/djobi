@@ -22,8 +22,8 @@ const sampleJobInfo = {
     { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
   ],
   keywords: [
-    { term: 'TypeScript', category: null },
-    { term: 'Postgres', category: null },
+    { term: 'TypeScript', category: null, postingSpelling: 'TS' },
+    { term: 'PostgreSQL', category: null, postingSpelling: 'Postgres' },
   ],
 };
 
@@ -61,6 +61,7 @@ describe('extractJob', () => {
 
     expect(promptText()).toContain('canonical, expanded, industry-standard form');
     expect(promptText()).toContain('Kubernetes');
+    expect(promptText()).toContain('postingSpelling');
     expect(promptText()).toContain('never default to "required"');
     expect(promptText()).toContain('leave it null rather than guessing');
   });

@@ -14,7 +14,7 @@ function requirement(overrides: Partial<JobRequirement> = {}): JobRequirement {
 }
 
 function keyword(overrides: Partial<JobKeyword> = {}): JobKeyword {
-  return { term: 'TypeScript', category: null, ...overrides };
+  return { term: 'TypeScript', category: null, postingSpelling: null, ...overrides };
 }
 
 function application(overrides: Partial<Application> = {}): Application {
@@ -38,6 +38,10 @@ function application(overrides: Partial<Application> = {}): Application {
     tailoredResume: { skills: [], workExperience: [] },
     answers: [],
     notes: [],
+    rawDescription: null,
+    extractionVersion: null,
+    requirementEvidence: null,
+    bulletProvenance: null,
     ...overrides,
   };
 }

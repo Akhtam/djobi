@@ -385,6 +385,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   font: inherit;
@@ -400,6 +401,21 @@ textarea {
     background 120ms ease;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  align-self: end;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.checkbox-field input {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
 textarea {
   resize: vertical;
   min-height: 72px;
@@ -407,11 +423,13 @@ textarea {
 }
 
 input:hover,
+select:hover,
 textarea:hover {
   border-color: color-mix(in srgb, var(--border) 40%, var(--text-muted));
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   background: var(--surface);

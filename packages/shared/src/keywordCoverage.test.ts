@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { keywordCoverage } from './keywordCoverage.js';
 import type { JobInfo, Profile, TailoredResume } from './schemas.js';
 
-function jobInfo(keywords: string[]): JobInfo {
+function jobInfo(keywords: (string | { term: string; postingSpelling: string | null })[]): JobInfo {
   return {
     company: 'Acme',
     team: null,
@@ -10,7 +10,11 @@ function jobInfo(keywords: string[]): JobInfo {
     seniority: null,
     location: null,
     requirements: [],
-    keywords: keywords.map((term) => ({ term, category: null })),
+    keywords: keywords.map((entry) =>
+      typeof entry === 'string'
+        ? { term: entry, category: null, postingSpelling: null }
+        : { term: entry.term, category: null, postingSpelling: entry.postingSpelling },
+    ),
   };
 }
 
@@ -142,5 +146,41 @@ describe('keywordCoverage', () => {
     );
 
     expect(entry.verdict).toBe('experience');
+  });
+
+  it('matches a Profile carrying the posting’s own spelling of a term, not just its canonical form', () => {
+    const [entry] = coverage(
+      resume({ skills: ['K8s'] }),
+      jobInfo([{ term: 'Kubernetes', postingSpelling: 'K8s' }]),
+    );
+
+    expect(entry).toEqual({ keyword: 'Kubernetes', verdict: 'skills', evidence: 'K8s' });
+  });
+
+  it('still reports the canonical term, not the posting spelling, when the postingSpelling match is what fired', () => {
+    const [entry] = coverage(
+      resume({ skills: ['K8s'] }),
+      jobInfo([{ term: 'Kubernetes', postingSpelling: 'K8s' }]),
+    );
+
+    expect(entry.keyword).toBe('Kubernetes');
+  });
+
+  it('matches on the canonical term when postingSpelling is null, unaffected by the added lookup', () => {
+    const [entry] = coverage(
+      resume({ skills: ['Kubernetes'] }),
+      jobInfo([{ term: 'Kubernetes', postingSpelling: null }]),
+    );
+
+    expect(entry.verdict).toBe('skills');
+  });
+
+  it('does not let postingSpelling match a longer word that merely starts with it', () => {
+    const [entry] = coverage(
+      resume({ workExperience: [role(['Built services in Google Cloud'])] }),
+      jobInfo([{ term: 'Go language', postingSpelling: 'Go' }]),
+    );
+
+    expect(entry.verdict).toBe('missing');
   });
 });

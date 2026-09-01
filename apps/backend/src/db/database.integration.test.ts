@@ -41,6 +41,10 @@ beforeAll(async () => {
       source text NOT NULL DEFAULT 'autofill',
       stage text NOT NULL DEFAULT 'applied',
       notes jsonb NOT NULL DEFAULT '[]'::jsonb,
+      raw_description text,
+      extraction_version text,
+      requirement_evidence jsonb,
+      bullet_provenance jsonb,
       created_at timestamp with time zone NOT NULL DEFAULT now()
     );
 
@@ -53,7 +57,7 @@ beforeAll(async () => {
        '{}', '{}', '[]', 'applied', '2026-01-01T00:00:00Z'),
       ('00000000-0000-4000-8000-000000000012', 'Acme', 'Engineer II',
        'https://example.com/jobs/1', 'https://example.com/jobs/1',
-       '{}', '{}', '[]', 'interviewing', '2026-02-01T00:00:00Z'),
+       '{}', '{}', '[]', 'onsite', '2026-02-01T00:00:00Z'),
       -- Written before job_key existed: only an exact job_url can find it.
       ('00000000-0000-4000-8000-000000000013', 'Globex', 'Analyst',
        'https://example.com/jobs/legacy?utm_source=old', NULL,
@@ -71,7 +75,7 @@ const newestForJob1 = {
     id: '00000000-0000-4000-8000-000000000012',
     company: 'Acme',
     roleTitle: 'Engineer II',
-    stage: 'interviewing',
+    stage: 'onsite',
     createdAt: '2026-02-01T00:00:00.000Z',
   },
 };
@@ -259,7 +263,7 @@ describe('postgresApplicationStore integration', () => {
     const { id } = await saveApplication(
       newApplication({ jobUrl: 'https://example.com/jobs/resave' }),
     );
-    await updateApplicationStage(id, 'interviewing');
+    await updateApplicationStage(id, 'onsite');
     await addApplicationNote(id, { category: 'technical', text: 'Asked about indexes.' });
 
     await updateApplication(id, {
@@ -273,7 +277,7 @@ describe('postgresApplicationStore integration', () => {
 
     await expect(getApplicationById(id)).resolves.toMatchObject({
       roleTitle: 'Principal Engineer',
-      stage: 'interviewing',
+      stage: 'onsite',
       notes: [expect.objectContaining({ text: 'Asked about indexes.' })],
     });
   });

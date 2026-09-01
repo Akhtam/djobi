@@ -47,9 +47,9 @@ but not to the deployed Worker. One deploy, one URL, no preflights.
    Reuse the lazy `Proxy` pattern already written and documented in `apps/backend/src/db/client.ts`,
    which solves exactly this problem for `DATABASE_URL`.
 2. **PDF rendering needs `nodejs_compat`.** `apps/backend/src/pdf/renderResume.tsx` uses
-   `renderToBuffer` from `@react-pdf/renderer`, which returns a Node `Buffer`. There is no font
-   registration and no `fs` use — the usual blockers — so this is likely fine, but it is the one
-   item requiring a real workerd smoke test rather than assumption.
+   `renderToBuffer` from `@react-pdf/renderer`, which returns a Node `Buffer`, resolves packaged Noto
+   Sans font files at runtime, and parses the result through `unpdf`. This requires a real workerd
+   smoke test rather than assuming Node compatibility is sufficient.
 3. **Hardcoded origins** to replace with build-time config:
    `apps/dashboard/src/lib/dashboardClient.ts`, `apps/extension/src/lib/callBackend.ts`, and the
    host permission in `apps/extension/src/manifest.ts`. The extension is not deployed, but it must
