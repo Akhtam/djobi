@@ -28,6 +28,7 @@ import { RequirementsPanel } from '../components/RequirementsPanel';
 import { RANGES, keywordFrequency, rangeStart, type Range } from '../lib/analytics';
 import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
+import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 
 const RANGE_LABELS: Record<Range, string> = {
   '7d': '7 days',
@@ -89,7 +90,6 @@ export function Analytics({
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
   const [minAppearances, setMinAppearances] = useState<number>(5);
-  const [visibleKeywordCount, setVisibleKeywordCount] = useState(KEYWORD_PAGE_SIZE);
 
   useEffect(() => {
     let current = true;
@@ -109,14 +109,8 @@ export function Analytics({
     };
   }, [getProfile]);
 
-  // A stage, range, Gaps-only or minimum-appearances change collapses the keyword table back to
-  // its first batch — a revealed count belongs to a filtered result set and cannot be allowed to
-  // outlive it, the same rule `listPath` enforces for `?show=`. Keyword selection resets on
-  // stage/range alone: it is the requirements panel's own concern (see `RequirementsPanel`'s
-  // `resetKey`), not this table's.
-  useEffect(() => {
-    setVisibleKeywordCount(KEYWORD_PAGE_SIZE);
-  }, [range, stage, gapsOnly, minAppearances]);
+  // Keyword selection resets on stage/range alone: it is the requirements panel's own concern (see
+  // `RequirementsPanel`'s `resetKey`), not this table's.
   useEffect(() => {
     setSelectedKeyword(null);
   }, [range, stage]);
@@ -161,6 +155,11 @@ export function Analytics({
   const rows = frequency
     .filter((row) => !gapsOnly || coverageByTerm?.get(row.term) === 'missing')
     .filter((row) => row.count >= minAppearances);
+  const {
+    visibleCount: visibleKeywordCount,
+    scrollRef: keywordScrollRef,
+    sentinelRef: keywordSentinelRef,
+  } = useRevealOnScroll(rows.length, KEYWORD_PAGE_SIZE, `${range}|${stage ?? ''}|${gapsOnly}|${minAppearances}`);
   // Sliced before grouping: the ranking is global across categories ("top 25 overall"), not a cap
   // per category, so a category can show fewer than its full count once the cutoff lands mid-group.
   const visibleRows = rows.slice(0, visibleKeywordCount);
@@ -347,7 +346,12 @@ export function Analytics({
                     : 'Try lowering "Min. appearances".'}
               </div>
             ) : (
-              <>
+              <div
+                className="analytics-keywords-scroll"
+                ref={keywordScrollRef}
+                tabIndex={0}
+                aria-label="Keywords by category"
+              >
                 {groups.map(([category, items]) => (
                   <div key={category}>
                     <div className="analytics-category">
@@ -390,18 +394,8 @@ export function Analytics({
                     </ul>
                   </div>
                 ))}
-                {rows.length > visibleKeywordCount ? (
-                  <div className="analytics-panel__foot">
-                    <button
-                      type="button"
-                      className="analytics-link-button"
-                      onClick={() => setVisibleKeywordCount((count) => count + KEYWORD_PAGE_SIZE)}
-                    >
-                      Load more ({rows.length - visibleKeywordCount} remaining)
-                    </button>
-                  </div>
-                ) : null}
-              </>
+                <div ref={keywordSentinelRef} />
+              </div>
             )}
           </section>
 

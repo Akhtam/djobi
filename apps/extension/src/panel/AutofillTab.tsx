@@ -410,8 +410,8 @@ export function AutofillTab({
             </div>
             <p className="hint">
               {jobPageData
-                ? 'Paste a job description or scrape it from this page, review the text, then analyze it for this detected form.'
-                : 'Paste a job description or scrape it from this page. It will be retained if this job opens its application form on another route.'}
+                ? 'Paste a job description or extract it from this page, review the text, then analyze it for this detected form.'
+                : 'Paste a job description or extract it from this page. It will be retained if this job opens its application form on another route.'}
             </p>
             <label className="field-label" htmlFor="job-description">
               Job description
@@ -430,17 +430,17 @@ export function AutofillTab({
               disabled={!jobDescription.canScrape}
             >
               {jobDescription.scrapeStatus.kind === 'loading'
-                ? 'Scraping job description…'
-                : 'Scrape job description'}
+                ? 'Extracting job posting…'
+                : 'Extract job posting'}
             </button>
             {jobDescription.scrapeStatus.kind === 'success' && (
               <p className="scrape-feedback" role="status">
-                Job description scraped. Review or edit it before analyzing.
+                Job posting extracted. Review or edit it before analyzing.
               </p>
             )}
             {jobDescription.scrapeStatus.kind === 'idle' && jobDescription.source === 'scraped' && (
               <p className="scrape-feedback" role="status">
-                Scraped job description retained for this job.
+                Extracted job posting retained for this job.
               </p>
             )}
             {jobDescription.scrapeStatus.kind === 'error' && (

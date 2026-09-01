@@ -72,7 +72,7 @@ describe('AutofillTab', () => {
     await screen.findByRole('button', { name: 'Analyze' });
     expect(screen.getByPlaceholderText(/paste the job description/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Job description')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Scrape job description' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Extract job posting' })).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 
@@ -90,7 +90,7 @@ describe('AutofillTab', () => {
     );
     render(<AutofillHarness readPosting={readPosting} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Extract job posting' }));
 
     expect(await screen.findByDisplayValue(JOB_DESCRIPTION)).toBeInTheDocument();
     expect(screen.getByText(/review or edit it before analyzing/i)).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe('AutofillTab', () => {
     render(<AutofillHarness readPosting={() => scrape.promise} />);
     const textarea = await screen.findByLabelText('Job description');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Scrape job description' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Extract job posting' }));
     fireEvent.change(textarea, { target: { value: 'My manually pasted description' } });
     scrape.resolve({
       status: 'success',
@@ -124,7 +124,7 @@ describe('AutofillTab', () => {
     await stubChrome({ tabUrl: 'https://example.com/jobs/1', profile, jobPageData: null });
     render(<AutofillHarness readPosting={() => Promise.resolve({ status: 'not-found' })} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Extract job posting' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/paste it instead/i);
     fireEvent.change(screen.getByLabelText('Job description'), {
@@ -137,7 +137,7 @@ describe('AutofillTab', () => {
     await stubChrome({ tabUrl: 'https://example.com/jobs/1', profile, jobPageData: null });
     render(<AutofillHarness readPosting={() => Promise.reject(new Error('Chrome API failed'))} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Scrape job description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Extract job posting' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/reload it to reconnect/i);
   });
