@@ -779,7 +779,9 @@ describe('analytics', () => {
 
     expect(await screen.findByText('No keywords match these filters')).toBeInTheDocument();
     // The range/stage controls stay usable — the same rule every other empty state here follows.
-    expect(screen.getByRole('button', { name: 'Increase minimum appearances' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Increase minimum appearances' }),
+    ).toBeInTheDocument();
   });
 
   it('shows a summary strip over the filtered range', async () => {
