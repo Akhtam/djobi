@@ -14,10 +14,14 @@
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { callBackend, callBackendBinary } from './callBackend';
+import { callBackend, callBackendBinary, callBackendUpload } from './callBackend';
 import { httpBackendClient } from './backendClient';
 
-vi.mock('./callBackend', () => ({ callBackend: vi.fn(), callBackendBinary: vi.fn() }));
+vi.mock('./callBackend', () => ({
+  callBackend: vi.fn(),
+  callBackendBinary: vi.fn(),
+  callBackendUpload: vi.fn(),
+}));
 
 const profile: Profile = {
   fullName: 'Ada Lovelace',
@@ -25,11 +29,15 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [],
   maxBulletsPerRole: 6,
   resumePageSize: 'A4',
   showRolePrefix: true,
   education: [],
+  projects: [],
+  certifications: [],
+  awards: [],
   skills: [],
   stories: [],
   screeningAnswers: {},
@@ -60,6 +68,7 @@ function respondWith(body: unknown) {
 beforeEach(() => {
   vi.mocked(callBackend).mockReset().mockResolvedValue(undefined);
   vi.mocked(callBackendBinary).mockReset().mockResolvedValue(new ArrayBuffer(0));
+  vi.mocked(callBackendUpload).mockReset().mockResolvedValue(undefined);
 });
 
 describe('httpBackendClient', () => {
@@ -73,6 +82,22 @@ describe('httpBackendClient', () => {
     await httpBackendClient.saveProfile(profile);
 
     expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), profile);
+  });
+
+  it('uploads the resume through the multipart transport, under the "resume" field', async () => {
+    const file = new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' });
+    const signal = new AbortController().signal;
+
+    await httpBackendClient.extractResume(file, signal);
+
+    expect(callBackendUpload).toHaveBeenCalledWith(
+      '/profile/extract-resume',
+      expect.anything(),
+      expect.any(FormData),
+      signal,
+    );
+    const formData = vi.mocked(callBackendUpload).mock.calls[0][2];
+    expect(formData.get('resume')).toBe(file);
   });
 
   it('renders the resume through the binary transport, not the JSON one', async () => {

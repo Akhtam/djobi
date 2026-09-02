@@ -1,5 +1,5 @@
 import type { RenderResumePdfProfile, TailoredResume } from '@djobi/shared';
-import { extractText, getDocumentProxy } from 'unpdf';
+import { extractPdfText } from './extractPdfText.js';
 
 const MIN_PDF_BYTES = 1_000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -61,14 +61,7 @@ export async function preflightResumePdf(
   }
 
   try {
-    const pdf = await getDocumentProxy(new Uint8Array(pdfBytes), {
-      // Text extraction uses the embedded ToUnicode maps; loading substitute display fonts adds
-      // work and noisy warnings in a headless server without improving this integrity check.
-      disableFontFace: true,
-      useSystemFonts: false,
-      verbosity: 0,
-    });
-    const { text } = await extractText(pdf, { mergePages: true });
+    const text = await extractPdfText(pdfBytes);
     const renderedText = normalized(text);
     let cursor = 0;
 

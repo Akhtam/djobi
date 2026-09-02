@@ -25,7 +25,7 @@
  * coverage report built over it has both verdicts to show rather than a wall of one.
  */
 import { JobInfoSchema } from '@djobi/shared';
-import type { Application, Profile } from '@djobi/shared';
+import type { Application, ExtractedProfile, Profile } from '@djobi/shared';
 
 export const fixtureApplications: Application[] = [
   {
@@ -575,6 +575,7 @@ export const fixtureProfile: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [
     {
       company: 'Northwind',
@@ -594,8 +595,47 @@ export const fixtureProfile: Profile = {
   resumePageSize: 'A4',
   showRolePrefix: true,
   education: [],
+  projects: [],
+  certifications: [],
+  awards: [],
   skills: ['TypeScript', 'React', 'Node.js', 'GraphQL', 'Go', 'SQL'],
   stories: [],
   screeningAnswers: {},
   customAnswers: [],
+};
+
+/**
+ * `extractResume`'s default fixture answer — a plausible draft with a couple of fields the
+ * fixture Profile above doesn't have (a summary, a project), so a test can tell "the extraction
+ * populated this" apart from "the seeded Profile already had it."
+ */
+export const fixtureExtractedProfile: ExtractedProfile = {
+  fullName: 'Jordan Rivera',
+  email: 'jordan.rivera@example.com',
+  phone: '555-0100',
+  location: 'Remote',
+  links: { linkedin: 'https://linkedin.com/in/jordanrivera', portfolio: null, github: null },
+  summary: 'Senior engineer focused on performance and design systems.',
+  workExperience: [
+    {
+      company: 'Northwind',
+      title: 'Senior Engineer',
+      startDate: '2022-01',
+      endDate: null,
+      bullets: ['Led the migration of a 400-component design system to CSS custom properties.'],
+    },
+  ],
+  education: [],
+  skills: ['TypeScript', 'React'],
+  projects: [
+    {
+      name: 'djobi',
+      description: 'AI-tailored job application autofill',
+      bullets: ['Built the resume-extraction pipeline'],
+      link: null,
+      technologies: ['TypeScript'],
+    },
+  ],
+  certifications: [],
+  awards: [],
 };

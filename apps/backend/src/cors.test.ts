@@ -97,3 +97,52 @@ describe('content-type guard on writes', () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * `multipart/form-data` — what `POST /profile/extract-resume` sends — is itself one of the three
+ * CORS "simple" content types the guard above exists to close off, so it needs its own check rather
+ * than inheriting the `application/json` one. `x-djobi-upload` is a non-simple header, so requiring
+ * it forces the same preflight the JSON guard gets for free.
+ */
+describe('multipart guard on the resume-upload route', () => {
+  it('rejects a multipart POST claiming no preflight-forcing header', async () => {
+    const form = new FormData();
+    form.set('resume', new File(['pdf'], 'r.pdf', { type: 'application/pdf' }));
+
+    const res = await app.request('/profile/extract-resume', {
+      method: 'POST',
+      headers: { origin: 'https://not-the-dashboard.example' },
+      body: form,
+    });
+
+    expect(res.status).toBe(415);
+  });
+
+  it('answers the preflight for that header, and the allowlist names it', async () => {
+    const res = await app.request('/profile/extract-resume', {
+      method: 'OPTIONS',
+      headers: {
+        origin: DASHBOARD_ORIGIN,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'x-djobi-upload',
+      },
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-headers')).toContain('x-djobi-upload');
+  });
+
+  it('lets a multipart POST with the header through the guard, past 415', async () => {
+    const form = new FormData();
+    form.set('resume', new File(['pdf'], 'r.pdf', { type: 'application/pdf' }));
+
+    const res = await app.request('/profile/extract-resume', {
+      method: 'POST',
+      headers: { origin: DASHBOARD_ORIGIN, 'x-djobi-upload': '1' },
+      body: form,
+    });
+
+    // Whatever the route decides — this fixture isn't a real PDF — the guard did not short-circuit.
+    expect(res.status).not.toBe(415);
+  });
+});

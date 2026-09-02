@@ -6,6 +6,7 @@
  * named.
  */
 import {
+  applyExtractedProfile,
   EMPTY_PROFILE,
   normalizeProfileDraft,
   optionalText,
@@ -14,6 +15,8 @@ import {
   spliceWorkBullets,
   storyTags,
   withScreeningAnswer,
+  type Award,
+  type Certification,
   type Profile,
 } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
@@ -30,7 +33,47 @@ function isUnauthorized(err: unknown): boolean {
 }
 
 /** The Profile keys holding an editable list of entries. */
-type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
+type ProfileListKey =
+  | 'workExperience'
+  | 'education'
+  | 'projects'
+  | 'certifications'
+  | 'awards'
+  | 'stories'
+  | 'customAnswers';
+
+/**
+ * One row of the combined Certifications & Awards section — `certifications` and `awards` stay two
+ * separate Profile arrays (a certification has no description, an award has no expiry), but the
+ * candidate picks between them per row rather than filling out two separate lists. `index` is the
+ * row's position within its own array (`profile.certifications`/`profile.awards`), not within this
+ * combined view — {@link credentialItems} below is what turns the two arrays into one ordered list.
+ *
+ * Flat rather than a discriminated union of {@link Certification}/{@link Award}: `ListEditor`'s
+ * `update` takes a `Partial<CredentialItem>` patch, and `Partial` of a union only keeps the keys
+ * every member shares — `description` (award-only) would silently disappear from what a patch is
+ * allowed to contain. `description` stays meaningless, not absent, on a certification row.
+ */
+interface CredentialItem {
+  kind: 'certification' | 'award';
+  index: number;
+  name: string;
+  issuer: string;
+  date: string;
+  description?: string;
+}
+
+/** Certifications, then awards, each tagged with where it lives — see {@link CredentialItem}. */
+function credentialItems(profile: Profile): CredentialItem[] {
+  return [
+    ...profile.certifications.map((entry, index) => ({
+      kind: 'certification' as const,
+      index,
+      ...entry,
+    })),
+    ...profile.awards.map((entry, index) => ({ kind: 'award' as const, index, ...entry })),
+  ];
+}
 
 /** The three things every list section does to its list. Bound to one key by {@link listEditor}. */
 interface ListEditor<T> {
@@ -147,12 +190,16 @@ function ListSection<T>({
 
 /** Sections, in the order the quick-nav and the form itself present them. */
 const PANEL_ORDER = [
+  { anchor: 'section-upload', label: 'Upload' },
   { anchor: 'section-contact', label: 'Contact' },
   { anchor: 'section-links', label: 'Links' },
+  { anchor: 'section-summary', label: 'Summary' },
   { anchor: 'section-resume', label: 'Resume' },
   { anchor: 'section-skills', label: 'Skills' },
   { anchor: 'section-work', label: 'Work' },
+  { anchor: 'section-projects', label: 'Projects' },
   { anchor: 'section-education', label: 'Education' },
+  { anchor: 'section-credentials', label: 'Credentials' },
   { anchor: 'section-screening', label: 'Screening' },
   { anchor: 'section-answers', label: 'Answers' },
   { anchor: 'section-stories', label: 'Stories' },
@@ -173,7 +220,18 @@ export function App({ client }: { client: BackendClient }) {
   const [newSkill, setNewSkill] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  // Separate from `status` above: that banner means "the save you just asked for landed or
+  // didn't," and an extraction is neither — nothing has been saved yet, and won't be until the
+  // candidate reviews what got filled in and clicks Save themselves.
+  const [extraction, setExtraction] = useState<{
+    kind: 'notice' | 'error';
+    message: string;
+  } | null>(null);
   const editRevisionRef = useRef(0);
+  // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
+  // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
+  const resumeInputRef = useRef<HTMLInputElement>(null);
   // Set on a 401 from `getProfile` rather than surfaced through `status` — an absent or expired
   // session is "go sign in again," not "the backend is broken," and this is what routes to `Login`
   // below instead of a generic error banner over an unusable empty form.
@@ -267,6 +325,106 @@ export function App({ client }: { client: BackendClient }) {
     question: '',
     answer: '',
   }));
+  const projects = listEditor(profile, setProfile, 'projects', () => ({
+    name: '',
+    description: '',
+    bullets: [],
+    link: null,
+    technologies: null,
+  }));
+  const certifications = listEditor(profile, setProfile, 'certifications', () => ({
+    name: '',
+    issuer: '',
+    date: '',
+  }));
+  const awards = listEditor(profile, setProfile, 'awards', () => ({
+    name: '',
+    issuer: '',
+    date: '',
+  }));
+  const credentials = credentialItems(profile);
+  /**
+   * The combined section's `editor` — `.remove`/`.add` are what `ListSection` itself calls;
+   * `.update` is called directly from the row's own fields, the same way `certifications.update`
+   * would be if this were still its own section. Each dispatches to whichever of the two real
+   * editors above owns the row at `combinedIndex`.
+   */
+  const credentialsEditor: ListEditor<CredentialItem> = {
+    update: (combinedIndex, patch) => {
+      const item = credentials[combinedIndex];
+      if (item.kind === 'certification')
+        certifications.update(item.index, patch as Partial<Certification>);
+      else awards.update(item.index, patch as Partial<Award>);
+    },
+    remove: (combinedIndex) => {
+      const item = credentials[combinedIndex];
+      if (item.kind === 'certification') certifications.remove(item.index);
+      else awards.remove(item.index);
+    },
+    // New rows default to a certification; the picker on the row itself is how the candidate
+    // switches it, immediately if it should have been an award instead.
+    add: () => certifications.add(),
+  };
+  /**
+   * Moves one row between the two arrays. Certification and award share `name`/`issuer`/`date`;
+   * only `description` is award-only, so the conversion carries the shared fields and drops or
+   * gains that one. The row reappears at the end of its new array — there is no shared ordering
+   * field between the two, so "keep the same position" has no answer to give it.
+   */
+  function changeCredentialKind(item: CredentialItem, kind: CredentialItem['kind']) {
+    if (!profile || item.kind === kind) return;
+    const shared = { name: item.name, issuer: item.issuer, date: item.date };
+    // One `setProfile` call, not a remove-then-add pair: each of `listEditor`'s operations closes
+    // over this render's own `profile`, so two separate calls here would each spread that same
+    // stale object and the second would silently undo the first's removal.
+    if (kind === 'award') {
+      setProfile({
+        ...profile,
+        certifications: profile.certifications.filter((_, i) => i !== item.index),
+        awards: [...profile.awards, shared],
+      });
+    } else {
+      setProfile({
+        ...profile,
+        awards: profile.awards.filter((_, i) => i !== item.index),
+        certifications: [...profile.certifications, shared],
+      });
+    }
+  }
+
+  /**
+   * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
+   * own. `setProfile` marks the form `dirty`, so "You have unsaved changes" already tells the
+   * candidate the normal way nothing has been persisted yet; `extraction` here is only the
+   * upload's own success/failure message, not a save confirmation.
+   */
+  async function handleResumeUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Cleared immediately so re-selecting the same file (after fixing nothing and trying again)
+    // still fires a change event.
+    e.target.value = '';
+    if (!file || !profile) return;
+
+    setExtraction(null);
+    setExtracting(true);
+    try {
+      const extracted = await client.extractResume(file);
+      setProfile(applyExtractedProfile(profile, extracted));
+      setExtraction({
+        kind: 'notice',
+        message: 'Resume parsed. Review the pre-filled fields below, then save.',
+      });
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        setUnauthorized(true);
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      setExtraction({ kind: 'error', message: `Couldn't parse this resume: ${message}` });
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -337,6 +495,60 @@ export function App({ client }: { client: BackendClient }) {
         ))}
       </nav>
       <form onSubmit={handleSave}>
+        <fieldset id="section-upload" className="card">
+          <legend>Upload resume</legend>
+          <div className="upload-resume-card">
+            <button
+              type="button"
+              className="upload-resume-card__icon"
+              aria-label={extracting ? 'Parsing resume…' : 'Upload resume'}
+              onClick={() => resumeInputRef.current?.click()}
+              disabled={extracting}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v12" />
+                <path d="M7 8l5-5 5 5" />
+                <path d="M5 21h14" />
+              </svg>
+            </button>
+            <div className="upload-resume-card__text">
+              <p className="upload-resume-card__title">Have a resume already?</p>
+              <p className="upload-resume-card__hint">
+                {extracting
+                  ? 'Parsing…'
+                  : "PDF — we'll pull contact info, work history, and skills automatically."}
+              </p>
+            </div>
+            <input
+              ref={resumeInputRef}
+              type="file"
+              accept="application/pdf"
+              aria-label="Resume PDF"
+              className="visually-hidden"
+              onChange={handleResumeUpload}
+              disabled={extracting}
+            />
+          </div>
+          {extraction && (
+            <p
+              className={`status-pill ${extraction.kind === 'error' ? 'error' : 'saved'}`}
+              role={extraction.kind === 'error' ? 'alert' : 'status'}
+            >
+              {extraction.message}
+            </p>
+          )}
+        </fieldset>
+
         <section id="section-contact" className="card contact-card" aria-labelledby="contact-title">
           <div className="card-heading">
             <div>
@@ -440,6 +652,19 @@ export function App({ client }: { client: BackendClient }) {
                 }
               />
             </div>
+          </div>
+        </fieldset>
+
+        <fieldset id="section-summary" className="card">
+          <legend>Summary</legend>
+          <p className="card-hint">A short intro paragraph, shown near the top of the resume.</p>
+          <div className="field">
+            <label htmlFor="summary">Summary</label>
+            <textarea
+              id="summary"
+              value={profile.summary ?? ''}
+              onChange={(e) => setProfile({ ...profile, summary: optionalText(e.target.value) })}
+            />
           </div>
         </fieldset>
 
@@ -701,6 +926,109 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          id="section-projects"
+          legend="Projects"
+          noun="project"
+          addLabel="Add project"
+          hint="Personal, open-source or freelance work — anything not covered by Work experience above."
+          items={profile.projects}
+          editor={projects}
+        >
+          {(entry, index) => {
+            const n = index + 1;
+            return (
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor={`projName${n}`}>{`Name ${n}`}</label>
+                  <input
+                    id={`projName${n}`}
+                    value={entry.name}
+                    onChange={(e) => projects.update(index, { name: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`projLink${n}`}>{`Link ${n}`}</label>
+                  <input
+                    id={`projLink${n}`}
+                    type="url"
+                    value={entry.link ?? ''}
+                    onChange={(e) => projects.update(index, { link: optionalText(e.target.value) })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label htmlFor={`projDescription${n}`}>{`Description ${n}`}</label>
+                  <textarea
+                    id={`projDescription${n}`}
+                    value={entry.description}
+                    onChange={(e) => projects.update(index, { description: e.target.value })}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label htmlFor={`projTechnologies${n}`}>{`Technologies ${n}`}</label>
+                  <input
+                    id={`projTechnologies${n}`}
+                    placeholder="Comma-separated"
+                    value={(entry.technologies ?? []).join(', ')}
+                    onChange={(e) => {
+                      const technologies = e.target.value
+                        .split(',')
+                        .map((tech) => tech.trim())
+                        .filter(Boolean);
+                      projects.update(index, {
+                        technologies: technologies.length ? technologies : null,
+                      });
+                    }}
+                  />
+                </div>
+
+                <div className="field span-2">
+                  <label>{`Bullets ${n}`}</label>
+                  <div className="bullet-list">
+                    {entry.bullets.map((bullet, bulletIndex) => (
+                      <div key={bulletIndex} className="bullet-row">
+                        <input
+                          aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
+                          value={bullet}
+                          onChange={(e) =>
+                            projects.update(index, {
+                              bullets: entry.bullets.map((b, bi) =>
+                                bi === bulletIndex ? e.target.value : b,
+                              ),
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="btn-remove-bullet"
+                          aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
+                          onClick={() =>
+                            projects.update(index, {
+                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
+                            })
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-add-inline"
+                    onClick={() => projects.update(index, { bullets: [...entry.bullets, ''] })}
+                  >
+                    + Add bullet
+                  </button>
+                </div>
+              </div>
+            );
+          }}
+        </ListSection>
+
+        <ListSection
           id="section-education"
           legend="Education"
           noun="education"
@@ -751,6 +1079,79 @@ export function App({ client }: { client: BackendClient }) {
                     }
                   />
                 </div>
+              </div>
+            );
+          }}
+        </ListSection>
+
+        <ListSection
+          id="section-credentials"
+          legend="Certifications & Awards"
+          noun="certification or award"
+          addLabel="Add certification or award"
+          hint="Pick which each row is — the fields shown adjust to match."
+          items={credentials}
+          editor={credentialsEditor}
+        >
+          {(item, index) => {
+            const n = index + 1;
+            return (
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor={`credKind${n}`}>{`Type ${n}`}</label>
+                  <select
+                    id={`credKind${n}`}
+                    value={item.kind}
+                    onChange={(e) =>
+                      changeCredentialKind(item, e.currentTarget.value as CredentialItem['kind'])
+                    }
+                  >
+                    <option value="certification">Certification</option>
+                    <option value="award">Award</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`credName${n}`}>{`Name ${n}`}</label>
+                  <input
+                    id={`credName${n}`}
+                    value={item.name}
+                    onChange={(e) => credentialsEditor.update(index, { name: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`credIssuer${n}`}>{`Issuer ${n}`}</label>
+                  <input
+                    id={`credIssuer${n}`}
+                    value={item.issuer}
+                    onChange={(e) => credentialsEditor.update(index, { issuer: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor={`credDate${n}`}>{`Date ${n}`}</label>
+                  <input
+                    id={`credDate${n}`}
+                    value={item.date}
+                    onChange={(e) => credentialsEditor.update(index, { date: e.target.value })}
+                  />
+                </div>
+
+                {item.kind === 'award' && (
+                  <div className="field span-2">
+                    <label htmlFor={`credDescription${n}`}>{`Description ${n}`}</label>
+                    <textarea
+                      id={`credDescription${n}`}
+                      value={item.description ?? ''}
+                      onChange={(e) =>
+                        credentialsEditor.update(index, {
+                          description: optionalText(e.target.value) ?? undefined,
+                        })
+                      }
+                    />
+                  </div>
+                )}
               </div>
             );
           }}

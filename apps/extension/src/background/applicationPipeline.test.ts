@@ -159,6 +159,7 @@ function makeDeps(
     // the fake has to satisfy the whole interface, never called from here.
     getProfile: vi.fn().mockResolvedValue(null),
     saveProfile: vi.fn().mockResolvedValue(undefined),
+    extractResume: vi.fn().mockResolvedValue(undefined),
     saveApplication: vi.fn().mockResolvedValue({ id: 'application-1' }),
     updateApplication: vi.fn().mockResolvedValue({ id: 'application-1' }),
     // No past application for this URL by default, so the duplicate guard lets every other test

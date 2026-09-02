@@ -43,6 +43,7 @@ import {
   baseResumeOf,
   DuplicateApplicationSummarySchema,
   ExtractJobRequestSchema,
+  ExtractResumeResponseSchema,
   JobInfoSchema,
   ProfileSchema,
   QuestionAnswerSchema,
@@ -54,6 +55,7 @@ import {
   type ChatMessage,
   type ApplicationWriteResult,
   type DuplicateApplicationSummary,
+  type ExtractedProfile,
   type JobInfo,
   type NewApplicationRequest,
   type Profile,
@@ -63,7 +65,7 @@ import {
   type TailoredResume,
 } from '@djobi/shared';
 import { signIn as authSignIn, signOut as authSignOut } from './authClient';
-import { callBackend, callBackendBinary, HttpError } from './callBackend';
+import { callBackend, callBackendBinary, callBackendUpload, HttpError } from './callBackend';
 
 /**
  * What the Ask tab has to say to ask one turn. `jobInfo` is nullable rather than optional because
@@ -108,6 +110,11 @@ export interface BackendClient {
   getProfile(): Promise<Profile | null>;
   /** Stores the Profile whole and resolves with what was stored. */
   saveProfile(profile: Profile): Promise<Profile>;
+  /**
+   * Parses an uploaded resume PDF into a draft extraction for the candidate to review — never
+   * saved on its own; the options page's existing `saveProfile` above is still the only save path.
+   */
+  extractResume(file: File, signal?: AbortSignal): Promise<ExtractedProfile>;
   saveApplication(payload: NewApplicationRequest): Promise<ApplicationWriteResult>;
   updateApplication(id: string, payload: ApplicationSnapshot): Promise<ApplicationWriteResult>;
   /** Count and newest metadata for Applications saved against this exact job URL. */
@@ -176,6 +183,17 @@ export const httpBackendClient: BackendClient = {
 
   saveProfile: (profile) =>
     callBackend('/profile', ProfileSchema, profile satisfies SaveProfileRequest),
+
+  extractResume: (file, signal) => {
+    const formData = new FormData();
+    formData.set('resume', file);
+    return callBackendUpload(
+      '/profile/extract-resume',
+      ExtractResumeResponseSchema,
+      formData,
+      signal,
+    );
+  },
 
   saveApplication: (payload) =>
     callBackend('/applications?response=compact', ApplicationWriteResultSchema, payload),
@@ -294,6 +312,22 @@ export function createFakeBackendClient(
     ),
     getProfile: guarded('/profile', () => Promise.resolve(null)),
     saveProfile: guarded('/profile', (profile: Profile) => Promise.resolve(profile)),
+    extractResume: guarded('/profile/extract-resume', () =>
+      Promise.resolve({
+        fullName: 'Jane Doe',
+        email: 'jane@example.com',
+        phone: null,
+        location: null,
+        links: { linkedin: null, portfolio: null, github: null },
+        summary: null,
+        workExperience: [],
+        education: [],
+        skills: [],
+        projects: [],
+        certifications: [],
+        awards: [],
+      }),
+    ),
     saveApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
     updateApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
     findApplicationDuplicates: guarded('/applications', () =>

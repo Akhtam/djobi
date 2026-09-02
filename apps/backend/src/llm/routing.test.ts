@@ -8,6 +8,7 @@ describe('LLM routing', () => {
       'tailorResume',
       'answerQuestions',
       'answerChat',
+      'extractResume',
     ]);
   });
 
@@ -16,5 +17,9 @@ describe('LLM routing', () => {
     expect(routeFor('tailorResume')).toMatchObject({ defaultMaxTokens: 2048, effort: 'none' });
     expect(routeFor('answerQuestions').defaultMaxTokens).toBe(1024);
     expect(routeFor('answerChat').defaultMaxTokens).toBe(4096);
+    expect(routeFor('extractResume')).toMatchObject({
+      model: 'google/gemini-3.1-flash-lite',
+      defaultMaxTokens: 4096,
+    });
   });
 });

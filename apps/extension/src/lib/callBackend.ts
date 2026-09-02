@@ -102,3 +102,18 @@ export function callBackendBinary(
 ): Promise<ArrayBuffer> {
   return transport.binary(path, { method: 'POST', body, signal });
 }
+
+/**
+ * Sends `formData` as a multipart upload and resolves with the response decoded through `schema` —
+ * for `POST /profile/extract-resume`, the one route that takes a file. See
+ * `@djobi/http-client`'s `upload()` for the CSRF-guard header this attaches on the extension's
+ * behalf.
+ */
+export function callBackendUpload<Schema extends ZodTypeAny>(
+  path: string,
+  schema: Schema,
+  formData: FormData,
+  signal?: AbortSignal,
+): Promise<ZodTypeOf<Schema>> {
+  return transport.upload(path, schema, formData, { signal });
+}

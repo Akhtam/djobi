@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1374 tests**
-(235 shared / 16 http-client / 256 backend / 689 extension / 178 dashboard), `pnpm test` from the
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1561 tests**
+(268 shared / 25 http-client / 311 backend / 712 extension / 245 dashboard), `pnpm test` from the
 repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -388,7 +388,7 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
 
 ## Planned
 
-### Phase 20 — Upload resume to populate a Profile (planned, not started)
+### Phase 20 — Upload resume to populate a Profile (built; two items still open — see below)
 
 Today the Profile is entered by hand in both the options page and the dashboard's `#/profile`. This
 phase adds an "Upload resume" action to both that parses an uploaded PDF and pre-fills a draft the
@@ -413,7 +413,7 @@ candidate reviews and edits before it's saved — never an auto-save, never a si
   prompt-injection guard `extractJob.ts` already applies, not a new concern this route invents.
 - **Three new `Profile` fields, since a resume routinely carries content the schema has no home for
   today:** `summary: string | null` (freeform intro paragraph); `projects:
-  {name, description, bullets: string[], link: string | null, technologies: string[] | null}[]`
+{name, description, bullets: string[], link: string | null, technologies: string[] | null}[]`
   (mirrors `workExperience`'s bullets shape); `certifications: {name, issuer, date}[]` and
   `awards: {name, issuer, date, description?}[]` as two separate arrays, not one combined list — a
   certification and an award carry different fields (an expiry vs. a description) even though
@@ -461,42 +461,187 @@ Chunks below are ordered by dependency; each is independently testable and, exce
 independently shippable. TDD per this project's process (`mattpocock-skills:tdd`) within each chunk.
 
 **20.1 — Shared schema & contracts** (foundation; no behavior yet, just types both sides compile against)
-- [ ] `packages/shared/src/schemas.ts`: `summary`, `projects`, `certifications`, `awards` on
+
+- [x] `packages/shared/src/schemas.ts`: `summary`, `projects`, `certifications`, `awards` on
       `ProfileSchema` + `EMPTY_PROFILE` defaults; new extraction-result schema (the extractable
       subset — see above). No DB migration — `profiles.data` is jsonb, see above.
-- [ ] `packages/shared/src/profileDraft.ts`: `normalizeProfileDraft` updated for the new fields
-- [ ] `packages/shared/src/wire.ts`: request/response schemas for `POST /profile/extract-resume`,
-      same paired-contract pattern `extractJob`/`tailorResume`/`answerQuestions` already use
-- [ ] Tests: schema validation + `normalizeProfileDraft` unit tests for the new fields
+- [x] `packages/shared/src/profileDraft.ts`: `normalizeProfileDraft` updated for the new fields
+- [x] `packages/shared/src/wire.ts`: `ExtractResumeResponseSchema`, the response half of the
+      paired-contract pattern `extractJob`/`tailorResume`/`answerQuestions` already use — no request
+      schema, since the body is a multipart file upload rather than JSON zod can validate the same
+      way; the field-name/size-cap/content-type checks stay in the route itself (20.3)
+- [x] Tests: schema validation (`ProjectSchema`, `CertificationSchema`, `AwardSchema`, `ProfileSchema`,
+      `ExtractedProfileSchema`, `ExtractResumeResponseSchema`) + `normalizeProfileDraft` unit tests for
+      the new fields
+- [x] Ripple fixed across the workspace: every hand-written `Profile` object literal (dashboard
+      fixtures, extension test fixtures, one backend route test) needed the four new fields —
+      `tsc --noEmit` catches this in extension/dashboard (whose tsconfig includes test files) but
+      **not** in `apps/backend`, whose tsconfig excludes `*.test.ts`; the backend's own
+      `routes/profile.test.ts` only surfaced the gap at `vitest run` time. Suite green at **1510
+      tests** (261 shared / 21 http-client / 293 backend / 702 extension / 233 dashboard);
+      `typecheck`, `build` and `format:check` all clean
 
 **20.2 — Backend extraction logic** (depends on 20.1; pure function, no route/HTTP surface yet)
-- [ ] `apps/backend/src/llm/extractResume.ts` (new): PDF text via `unpdf` + `sanitizeXmlContent` +
-      structured call against the new extraction schema
-- [ ] Tests: fixture PDF text in → structured object out (mocked `structuredCall`), plus a
-      no-extractable-text case and a partial-extraction case (some fields present, rest blank)
-- [ ] Before trusting this chunk done: run extraction against a handful of real, differently-laid-out
-      resumes (columns, tables) to sanity-check quality — the plan's earlier note that `unpdf` is
-      unproven on arbitrary layouts applies here, not later
+
+- [x] `apps/backend/src/llm/extractResume.ts` (new): PDF text via `unpdf` (same call
+      `pdf/preflightResume.ts` makes) + `sanitizeXmlContent` + structured call against
+      `ExtractedProfileSchema`, routed as its own `extractResume` operation in `llm/routing.ts` (same
+      cheap `google/gemini-3.1-flash-lite` tier as `extractJob`, wider 4096-token budget — a resume
+      routinely reports several roles plus projects/certifications/awards in one response). A PDF
+      that fails to parse, or yields only whitespace, throws `NoResumeTextError` rather than an
+      unrelated 500 — deliberately the same outcome for "scanned/image PDF" and "not really a PDF at
+      all," since both have the same remedy (fall back to manual entry)
+- [x] Tests: fixture text in (mocked `unpdf` + `structuredCall`, same fake-provider seam
+      `extractJob.test.ts` uses) → structured object out; sanitization-before-model, no-extractable-
+      text, unparseable-PDF, and partial-extraction cases
+- [ ] **Not done — live check still open:** extraction has not been run against a handful of real,
+      differently-laid-out resumes (columns, tables) with a live `OPENROUTER_API_KEY`. The plan's
+      earlier note that `unpdf` is unproven on arbitrary layouts is still just that — unproven — and
+      this is the step that was supposed to close it before the chunk is trusted
 
 **20.3 — Backend route** (depends on 20.1, 20.2; independently shippable once done — testable via curl/Postman even before any UI exists)
-- [ ] `apps/backend/src/routes/`: `POST /profile/extract-resume` (multipart via
-      `c.req.parseBody()`, explicit 5MB byte-length check feeding the existing
-      `RequestValidationError` convention, draft-only, no `ProfileStore.save`)
-- [ ] Tests: happy path, oversized upload rejected, no-text PDF surfaces a clear error, auth required
-- [ ] Decision to close out before shipping, not a code task: whether the pre-existing absence of
+
+- [x] `apps/backend/src/routes/profile.ts`: `POST /profile/extract-resume` (multipart via
+      `c.req.parseBody()`, `content-length` pre-check plus a `File.size` backstop against the
+      5MB cap, PDF-only content-type check, draft-only — never calls `ProfileStore.save`). A rejected
+      upload (missing field, wrong content-type, oversized, unreadable PDF) is a `RequestValidationError`
+      the same way every JSON route's body rejection is
+- [x] **Found during this chunk, not in the original plan: `app.ts`'s CSRF content-type guard had to
+      widen.** That guard requires `content-type: application/json` on every state-changing request
+      specifically because `application/json` forces a CORS preflight the origin allowlist can
+      refuse — but `multipart/form-data` (what a file upload sends) is itself one of the three CORS
+      "simple" content types, so accepting it here with no further check would have quietly reopened
+      that exact hole for this one route: an unrelated page could trigger a real (billed) extraction
+      call using the dashboard's session cookie, unable to read the response but not needing to.
+      Fixed by requiring a non-simple `x-djobi-upload` header (added to the CORS `allowHeaders`
+      list) on any multipart request, which forces the same preflight `application/json` gets for
+      free. `@djobi/http-client`'s new `upload()` transport method (below) attaches it automatically,
+      so no call site can forget it. Covered in `cors.test.ts` and `routes/profile.test.ts`
+- [x] Tests: happy path, missing file field, non-PDF content-type, oversized upload (both the
+      `content-length` and `File.size` paths — a real multipart body makes both fire together, so
+      that's one case, not two), no-extractable-text PDF, auth required, and the multipart CSRF guard
+      itself (`cors.test.ts`)
+- [ ] **Still open, not a code task:** the decision on whether the pre-existing absence of
       rate/spend limiting on LLM routes needs addressing for this specifically higher-cost route
-      (`rateLimit` in `auth.ts` only covers sign-in/sign-up today)
+      (`rateLimit` in `auth.ts` only covers sign-in/sign-up today) — unchanged from the original plan,
+      not resolved by the CSRF fix above, which stops a _forged_ request but does nothing about a
+      signed-in candidate uploading repeatedly
+- [x] `@djobi/http-client`: new `HttpTransport.upload()` — sends a `FormData` body untouched (never
+      `JSON.stringify`'d), decodes the JSON response through the caller's schema via the same
+      `decodeJson` helper `json()` now shares, and attaches `x-djobi-upload` (see above). `callBackend.ts`
+      wraps it as `callBackendUpload`; `backendClient.ts`'s `extractResume` is its only caller
 
 **20.4 — Extension options UI** (depends on 20.1–20.3; independent of 20.5, can run in parallel with it)
-- [ ] `apps/extension/src/options/App.tsx`: upload entry point, review screen, new `summary`/
-      `projects`/`certifications`/`awards` sections (resume reading order — see above)
-- [ ] Tests: upload → review → edit → save flow; extraction-failure fallback to manual entry
+
+- [x] `apps/extension/src/options/App.tsx`: an "Upload resume" section (file input, PDF only) calls
+      `client.extractResume`, then applies whatever it found straight into the live form via a new
+      shared `applyExtractedProfile` (`packages/shared/src/profileDraft.ts`) — field by field, never a
+      blanket replace: a field the extraction found overwrites the draft, a field it left null/empty
+      (including every array field) leaves the draft exactly as it was, so a resume with no phone
+      number on it can never blank one the candidate already typed. Not saved: `setProfile` marks the
+      form `dirty` the same as any manual edit, and the existing Save button is still the only write
+      path. New `summary` section (after Links), `projects`/`certifications`/`awards` sections (after
+      Education) — resume reading order, per the plan
+- [x] **Deliberate scope cut from the original plan: no separate review screen.** The plan called for
+      "a review screen" distinct from the main form; this reuses the main form itself as the review
+      surface instead — the extraction pre-fills the same editable fields the candidate can already
+      correct, and nothing saves until they click Save profile, which satisfies "review before save"
+      without a second, largely-duplicate set of inputs. This also pre-empts the plan's own flagged
+      risk ("a full review screen in both files pushes each past 1000 lines") rather than hitting it.
+      `apps/dashboard/src/views/Profile.tsx` (20.5) does not have to make the same call, since its
+      form is a separate implementation — worth deciding explicitly there rather than assuming this
+      choice carries over
+- [x] Tests (`App.test.tsx`): upload → pre-filled form → edit → save; a field the candidate already
+      filled in survives an extraction that found nothing for it; extraction failure shows a clear
+      error and leaves the form untouched (manual-entry fallback); a 401 on the upload itself routes
+      to the sign-in view like any other route
+- [x] `backendClient.ts`: `BackendClient.extractResume(file, signal?)`, the `httpBackendClient`
+      adapter (`callBackendUpload`, field name `resume`), and the fake client's default extraction —
+      plus `applicationPipeline.test.ts`'s hand-rolled `BackendClient` fixture, which needed the new
+      method to keep satisfying the widened interface (the same ripple every earlier `BackendClient`
+      addition has caused)
 
 **20.5 — Dashboard UI** (depends on 20.1–20.3; independent of 20.4, can run in parallel with it)
-- [ ] `apps/dashboard/src/views/Profile.tsx`: same, independently implemented
-- [ ] Tests: same coverage as 20.4
-- [ ] Before starting 20.4/20.5: re-check file size on both editors once the new sections land —
-      if either is getting unwieldy, revisit the shared-UI-package call rather than assuming it away
+
+- [x] `apps/dashboard/src/views/Profile.tsx`: same, independently implemented — an Upload section,
+      `summary`/`projects`/`certifications`/`awards` panels (resume reading order), reusing the same
+      `applyExtractedProfile` (`@djobi/shared`) 20.4 introduced rather than a second copy of the
+      merge rule; the markup itself is its own implementation, per the existing pattern this file's
+      own header comment states (shared draft-normalization logic, dashboard-specific chrome). Same
+      "no separate review screen" call as 20.4, made independently here rather than assumed inherited
+- [x] `dashboardClient.ts`: `DashboardClient.extractResume(file)`, the `httpDashboardClient` adapter
+      (`transport.upload`, field name `resume`), and `createFixtureDashboardClient`'s new
+      `FixtureResumeUploadOptions` fourth parameter (`extraction`/`error`, mirroring
+      `FixtureAuthOptions`'s config-bag shape) — plus a new `fixtureExtractedProfile` in `fixtures.ts`
+      and the two hand-rolled `DashboardClient` fixtures (`useApplicationStore.test.ts`,
+      `application-mutations.test.tsx`) that needed the new method to keep satisfying the interface
+- [x] Tests: upload → pre-filled form → edit → save; a field the candidate already filled in
+      survives an extraction that found nothing for it; extraction failure shows a clear error and
+      leaves the form untouched; a 401 on the upload itself redirects to login like any other route
+      (`tests/profile.test.tsx`); `createFixtureDashboardClient`'s new fixture behavior
+      (`lib/dashboardClient.test.ts`); the raw multipart request shape (`lib/httpDashboardClient.test.ts`)
+- [x] **Found during this chunk: an invalid fixture URL silently blocked form submission with no
+      error.** `fixtureExtractedProfile.links.linkedin` was first written as `'linkedin.com/in/…'`
+      (no scheme) — HTML5 `<input type="url">` constraint validation rejects that, and a browser
+      (jsdom included) silently withholds the `submit` event entirely rather than firing it, with no
+      exception and no console output. From the outside this looked exactly like a dead click
+      handler; tracing it took directly instrumenting `handleSave` to notice it was never being
+      called at all. Fixed by using a real absolute URL in the fixture. Worth remembering for any
+      future fixture touching a `type="url"`/`type="email"` field: an invalid value doesn't error,
+      it just makes Save silently do nothing
+- [x] **Mid-chunk design update (both 20.4 and 20.5), from a design reference the user supplied
+      after the rest of this chunk was already built:** the Upload section became a bordered card
+      (icon + "Have a resume already?" + a one-line pitch + an "Upload resume" button), copy fixed to
+      say PDF only rather than "PDF or Word" (matching the phase's actual PDF-only scope), and the
+      icon square is itself a second click target for the same file picker. New shared CSS added to
+      both apps' `App.css` (`.upload-resume-card*`, `.visually-hidden` — the real `<input
+type="file">` is visually hidden and opened by proxy via a `ref`, not the browser's own file
+      picker chrome), token-driven (`--ring`/`--primary`/`--radius-*`) so both apps stay visually one
+      product per `App.css`'s own header comment
+- [x] File size, checked as the plan asked: both editors are now past 1000 lines
+      (`apps/extension/src/options/App.tsx` 1283, `apps/dashboard/src/views/Profile.tsx` 1204).
+      Flagging rather than acting on it — a `packages/ui` extraction is a real refactor with its own
+      risk, and Phase 20 shipping correctly matters more than pre-emptively restructuring two files
+      that still typecheck, build and test cleanly. Worth a dedicated pass before either file grows
+      its next section
+- [x] Suite green at **1553 tests** (268 shared / 25 http-client / 311 backend / 708 extension / 241
+      dashboard); `typecheck`, `build` and `format:check` all clean
+
+**All five chunks (20.1–20.5) are built and tested. Two items from 20.2/20.3 remain open, neither
+a code task:**
+
+- [ ] Live: extraction has not been run against real, differently-laid-out resumes with a live
+      `OPENROUTER_API_KEY` — the plan's earlier note that `unpdf` is unproven on arbitrary layouts
+      is still unproven, not solved. Same shape as Phase 19's own still-open `eval:extraction` item
+- [ ] Decision to close out, not resolved by this phase's own CSRF fix (that closes a forged-request
+      hole; it says nothing about a signed-in candidate's own repeated use): whether the pre-existing
+      absence of rate/spend limiting on LLM routes needs addressing for this specifically higher-cost
+      route (`rateLimit` in `auth.ts` only covers sign-in/sign-up today)
+
+**Post-completion UI changes, both apps, from user feedback after the above landed:**
+
+- **Certifications and Awards became one section, not two**, in both `apps/extension/src/options/App.tsx`
+  and `apps/dashboard/src/views/Profile.tsx`. The schema stayed exactly as designed — two separate
+  arrays, since a certification has no description and an award has no expiry — only the editing
+  surface changed: one combined list (`credentialItems`, a flat per-row `CredentialItem` — not a
+  discriminated union of `Certification`/`Award`, since `Partial` of a union keeps only the keys
+  every member shares and `description` would silently become unpatchable) with a "Type" picker per
+  row that moves the row between the two arrays on change (`changeCredentialKind`), carrying
+  `name`/`issuer`/`date` across and dropping/gaining `description`. A row reappears at the end of
+  its new array on a kind switch — there's no shared ordering field between the two arrays to
+  preserve a position across. One real bug caught before it shipped: the naive version issued two
+  separate `setProfile` calls (remove-then-add) for a kind switch, and the second silently undid the
+  first — both closed over the same pre-update `profile`, so the second call's `...profile` spread
+  never saw the first's change. Fixed to one atomic `setProfile` call per switch.
+- **The Upload section's copy and shape changed twice, both from a design reference the user
+  supplied:** first became a card (icon + "Have a resume already?" + a one-line pitch + an "Upload
+  resume" button), copy fixed to say PDF only rather than "PDF or Word"; then the button was dropped
+  entirely and the icon alone (already a second click target from the first pass) became the sole
+  upload trigger — `aria-label` on the icon button switches between "Upload resume" and "Parsing
+  resume…", and the pitch line itself switches to "Parsing…" while a call is in flight, so removing
+  the text button didn't remove the only in-progress feedback.
+- Suite green at **1561 tests** (268 shared / 25 http-client / 311 backend / 712 extension / 245
+  dashboard); `typecheck`, `build` and `format:check` all clean.
 
 ### Phase 19 — Provenance persistence + a real-posting eval corpus (done)
 

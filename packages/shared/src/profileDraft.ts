@@ -1,4 +1,4 @@
-import type { Profile, WorkExperience } from './schemas.js';
+import type { ExtractedProfile, Profile, WorkExperience } from './schemas.js';
 import type { ScreeningAnswers, ScreeningTopic } from './screeningAnswers.js';
 
 /** Omits a cleared answer instead of storing an answered-but-empty topic. */
@@ -48,6 +48,54 @@ export function spliceWorkBullets(
   };
 }
 
+/**
+ * Copies a resume extraction's fields onto a Profile draft, field by field — never a blanket
+ * replace. A field the extraction found populates the draft; a field it left null or empty (a
+ * section the resume didn't have, or one the model couldn't confidently read) leaves the draft
+ * exactly as it was.
+ *
+ * This is deliberately not a smart merge: there is no attempt to reconcile a field where both the
+ * draft and the extraction have something, and the extraction always wins there. That is what
+ * "review before save" is for (Phase 20 in `PROGRESS.md`) — the candidate sees the result in the
+ * same editable fields as any other Profile edit and corrects anything wrong before saving; this
+ * function only has to decide "did the extraction find something," not "which of two answers is
+ * right." `||` rather than `??` throughout: an extracted `''` is exactly as much "nothing found" as
+ * `null` is, for a field the candidate may already have filled in by hand.
+ */
+export function applyExtractedProfile(profile: Profile, extracted: ExtractedProfile): Profile {
+  return {
+    ...profile,
+    fullName: extracted.fullName || profile.fullName,
+    email: extracted.email || profile.email,
+    phone: extracted.phone || profile.phone,
+    location: extracted.location || profile.location,
+    links: {
+      linkedin: extracted.links.linkedin || profile.links.linkedin,
+      portfolio: extracted.links.portfolio || profile.links.portfolio,
+      github: extracted.links.github || profile.links.github,
+    },
+    summary: extracted.summary || profile.summary,
+    // A resume's own work-experience/education entries carry no tailoring-selection controls
+    // (`ExtractedProfileSchema` uses `ResumeWorkExperienceSchema`, not the full `WorkExperience`) —
+    // every extracted role gets this Profile's defaults, the same ones a freshly added role gets.
+    workExperience: extracted.workExperience.length
+      ? extracted.workExperience.map((role) => ({
+          ...role,
+          maxBullets: null,
+          starredIndices: [],
+          suppressIfEmpty: false,
+        }))
+      : profile.workExperience,
+    education: extracted.education.length ? extracted.education : profile.education,
+    skills: extracted.skills.length ? extracted.skills : profile.skills,
+    projects: extracted.projects.length ? extracted.projects : profile.projects,
+    certifications: extracted.certifications.length
+      ? extracted.certifications
+      : profile.certifications,
+    awards: extracted.awards.length ? extracted.awards : profile.awards,
+  };
+}
+
 /** Normalizes transient form values into the Profile shape persisted by the backend. */
 export function normalizeProfileDraft(profile: Profile, createStoryId: () => string): Profile {
   const idCounts = new Map<string, number>();
@@ -77,6 +125,12 @@ export function normalizeProfileDraft(profile: Profile, createStoryId: () => str
       }
       return normalized;
     }),
+    // No starred-index bookkeeping here, unlike work experience: a project has no starring concept
+    // to remap, so a plain filter is the whole operation.
+    projects: profile.projects.map((project) => ({
+      ...project,
+      bullets: project.bullets.filter((bullet) => bullet.trim()),
+    })),
     stories,
   };
 }

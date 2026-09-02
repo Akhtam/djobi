@@ -314,6 +314,66 @@ describe('createHttpTransport', () => {
     });
   });
 
+  it("uploads a FormData body untouched, marked for the backend's multipart CSRF guard", async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+    const form = new FormData();
+    form.set('resume', new File(['%PDF'], 'resume.pdf', { type: 'application/pdf' }));
+
+    const result = await client.upload('/profile/extract-resume', Schema, form);
+
+    expect(result).toEqual({ id: 'a' });
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.body).toBe(form);
+    expect(calls[0].init?.headers).toMatchObject({ 'x-djobi-upload': '1' });
+    // Never JSON — the browser sets its own multipart boundary once this reaches a real `fetch`, and
+    // stamping `content-type` here would strip it out from under that.
+    expect(
+      (calls[0].init?.headers as Record<string, string> | undefined)?.['content-type'],
+    ).toBeUndefined();
+  });
+
+  it('attaches Authorization and the transport credentials mode to an upload, same as any other call', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({
+      baseUrl: '',
+      fetch: fetchImpl,
+      credentials: 'include',
+      getAuthorization: () => 'the-token',
+    });
+
+    await client.upload('/profile/extract-resume', Schema, new FormData());
+
+    expect(calls[0].init?.credentials).toBe('include');
+    expect(calls[0].init?.headers).toMatchObject({ authorization: 'Bearer the-token' });
+  });
+
+  it('reports a non-2xx on an upload rather than decoding an error page as the schema', async () => {
+    const { fetchImpl } = respondWith(
+      () => new Response('{"error":"No extractable text was found in this PDF."}', { status: 400 }),
+    );
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error = await client
+      .upload('/profile/extract-resume', Schema, new FormData())
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ kind: 'http', status: 400 });
+    expect((error as HttpError).message).toContain('No extractable text was found in this PDF.');
+  });
+
+  it('carries a signal on the upload route too', async () => {
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+    const controller = new AbortController();
+
+    await client.upload('/profile/extract-resume', Schema, new FormData(), {
+      signal: controller.signal,
+    });
+
+    expect(calls[0].init?.signal).toBeDefined();
+  });
+
   it('uses the transport it was given rather than the global fetch', async () => {
     const { fetchImpl } = respondWith(() => new Response('{"id":"a"}'));
     const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });

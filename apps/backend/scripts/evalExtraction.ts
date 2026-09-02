@@ -26,6 +26,7 @@ const SAMPLE_PROFILE: Profile = {
   phone: null,
   location: 'Remote',
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [
     {
       company: 'Northwind',
@@ -63,6 +64,9 @@ const SAMPLE_PROFILE: Profile = {
   showRolePrefix: true,
   education: [],
   skills: ['Go', 'PostgreSQL', 'Kubernetes', 'Redis', 'TypeScript'],
+  projects: [],
+  certifications: [],
+  awards: [],
   stories: [],
   screeningAnswers: {},
   customAnswers: [],

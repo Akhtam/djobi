@@ -26,6 +26,14 @@ export const ROUTES = {
     model: 'anthropic/claude-sonnet-5',
     defaultMaxTokens: 4096,
   },
+  // Parsing a resume into a Profile shape, like `extractJob`, is not the "written judgement" work
+  // reserved for the Claude routes above — routed to the same cheap model. The token budget is
+  // higher than `extractJob`'s because a resume commonly reports several roles' worth of bullets
+  // plus projects/certifications/awards in one response, where a job posting reports one role.
+  extractResume: {
+    model: 'google/gemini-3.1-flash-lite',
+    defaultMaxTokens: 4096,
+  },
 } as const satisfies Record<string, LlmRoute>;
 
 export type LlmOperation = keyof typeof ROUTES;

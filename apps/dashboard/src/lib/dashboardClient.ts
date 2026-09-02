@@ -15,6 +15,8 @@ import { createHttpTransport, HttpError } from '@djobi/http-client';
 import {
   DuplicateApplicationSummarySchema,
   type DuplicateApplicationSummary,
+  type ExtractedProfile,
+  ExtractResumeResponseSchema,
   type ExtractJobRequest,
   type JobInfo,
   JobInfoSchema,
@@ -40,6 +42,7 @@ import {
   UpdateApplicationStageResultSchema,
   type UpdateApplicationStageResult,
 } from '@djobi/shared';
+import { fixtureExtractedProfile } from './fixtures.js';
 
 /**
  * What `GET /profile` answers with. Nullable rather than optional: `null` is the real answer for a
@@ -76,6 +79,11 @@ export interface DashboardClient {
   getProfile(): Promise<Profile | null>;
   /** Persists the full Profile and returns the authoritative saved row. */
   saveProfile(profile: Profile): Promise<Profile>;
+  /**
+   * Parses an uploaded resume PDF into a draft extraction for the candidate to review — never
+   * saved on its own; `saveProfile` above is still the only write path.
+   */
+  extractResume(file: File): Promise<ExtractedProfile>;
   /**
    * Establishes a session — the httpOnly cookie Better Auth's response sets — or rejects with an
    * `HttpError` (401 on bad credentials). Resolves to nothing: the caller doesn't need the user
@@ -177,6 +185,12 @@ export const httpDashboardClient: DashboardClient = {
       body: profile satisfies SaveProfileRequest,
     }),
 
+  extractResume: (file) => {
+    const formData = new FormData();
+    formData.set('resume', file);
+    return transport.upload('/profile/extract-resume', ExtractResumeResponseSchema, formData);
+  },
+
   signIn: async (email, password) => {
     await transport.json('/api/auth/sign-in/email', SignInResultSchema, {
       method: 'POST',
@@ -217,6 +231,19 @@ export interface FixtureAuthOptions {
 }
 
 /**
+ * What `extractResume` resolves or rejects with — a config bag for the same reason
+ * {@link FixtureAuthOptions} is one: a case that cares picks one field, everything else keeps a
+ * sensible default. `error` takes priority when both are given, since a case testing the failure
+ * path has no use for a draft that's never returned.
+ */
+export interface FixtureResumeUploadOptions {
+  /** Defaults to `fixtureExtractedProfile` — a populated sample draft. */
+  extraction?: ExtractedProfile;
+  /** When set, `extractResume` rejects with this message instead of resolving. */
+  error?: string;
+}
+
+/**
  * The fixture adapter: the whole interface over an in-memory copy of `fixtures.ts`.
  *
  * Writes mutate that copy, so a stage change or an added note survives navigating away and back
@@ -236,8 +263,10 @@ export function createFixtureDashboardClient(
   seed: Application[],
   profile: Profile | null = null,
   auth: FixtureAuthOptions = {},
+  resumeUpload: FixtureResumeUploadOptions = {},
 ): DashboardClient {
   const { signedIn = true, email = FIXTURE_EMAIL, password = FIXTURE_PASSWORD } = auth;
+  const { extraction = fixtureExtractedProfile, error: extractionError } = resumeUpload;
   let applications: Application[] = structuredClone(seed);
   let currentProfile: Profile | null = profile;
   // Every other piece of state here (`applications`, `profile`) is scoped to one fixture instance,
@@ -367,6 +396,12 @@ export function createFixtureDashboardClient(
       if (!hasSession) return unauthorized('/profile');
       currentProfile = structuredClone(next);
       return Promise.resolve(structuredClone(currentProfile));
+    },
+
+    extractResume: () => {
+      if (!hasSession) return unauthorized('/profile/extract-resume');
+      if (extractionError) return Promise.reject(new Error(extractionError));
+      return Promise.resolve(structuredClone(extraction));
     },
 
     signIn: (attemptedEmail, attemptedPassword) => {

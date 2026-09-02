@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ProfileSchema } from './schemas.js';
+import { EMPTY_PROFILE, ExtractedProfileSchema, ProfileSchema } from './schemas.js';
 import {
   AnswerChatRequestSchema,
   AnswerChatResponseSchema,
   AnswerQuestionsRequestSchema,
   BackendErrorBodySchema,
   DuplicateApplicationSummarySchema,
+  ExtractResumeResponseSchema,
   SaveProfileRequestSchema,
   TailorResumeRequestSchema,
 } from './wire.js';
@@ -61,6 +62,49 @@ describe('SaveProfileRequestSchema', () => {
 
   it('rejects a body that is not a Profile', () => {
     expect(SaveProfileRequestSchema.safeParse({ fullName: 42 }).success).toBe(false);
+  });
+});
+
+describe('ExtractResumeResponseSchema', () => {
+  // The alias exists so this route's response has a named shape like every other route body in this
+  // file. If it ever stops being `ExtractedProfileSchema`, the extension's review screen is binding
+  // to fields the route no longer sends.
+  it('is the extracted-profile schema', () => {
+    const extracted = ExtractedProfileSchema.parse({
+      fullName: 'Ada Lovelace',
+      email: 'ada@example.com',
+      phone: null,
+      location: null,
+      links: EMPTY_PROFILE.links,
+      summary: null,
+      workExperience: [],
+      education: [],
+      skills: [],
+      projects: [],
+      certifications: [],
+      awards: [],
+    });
+
+    expect(ExtractResumeResponseSchema.parse(extracted)).toEqual(extracted);
+  });
+
+  it('accepts a partial extraction with some fields left blank', () => {
+    const result = ExtractResumeResponseSchema.safeParse({
+      fullName: null,
+      email: null,
+      phone: null,
+      location: null,
+      links: EMPTY_PROFILE.links,
+      summary: null,
+      workExperience: [],
+      education: [],
+      skills: ['TypeScript'],
+      projects: [],
+      certifications: [],
+      awards: [],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

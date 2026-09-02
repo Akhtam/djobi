@@ -1,7 +1,8 @@
+import type { ExtractedProfile } from '@djobi/shared';
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '@djobi/http-client';
 import { createFixtureDashboardClient } from './dashboardClient';
-import { fixtureApplications, fixtureProfile } from './fixtures';
+import { fixtureApplications, fixtureExtractedProfile, fixtureProfile } from './fixtures';
 
 describe('createFixtureDashboardClient', () => {
   it('lists the seed applications', async () => {
@@ -96,6 +97,42 @@ describe('createFixtureDashboardClient', () => {
       latest: { id: existing.id },
     });
   });
+
+  it('defaults extractResume to a populated sample draft', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    await expect(client.extractResume(new File(['x'], 'r.pdf'))).resolves.toEqual(
+      fixtureExtractedProfile,
+    );
+  });
+
+  it('resolves extractResume with the extraction a caller configured', async () => {
+    const extraction: ExtractedProfile = { ...fixtureExtractedProfile, fullName: 'Ada Lovelace' };
+    const client = createFixtureDashboardClient(fixtureApplications, null, {}, { extraction });
+
+    await expect(client.extractResume(new File(['x'], 'r.pdf'))).resolves.toEqual(extraction);
+  });
+
+  it('rejects extractResume with a configured error message', async () => {
+    const client = createFixtureDashboardClient(
+      fixtureApplications,
+      null,
+      {},
+      { error: 'No extractable text was found in this PDF.' },
+    );
+
+    await expect(client.extractResume(new File(['x'], 'r.pdf'))).rejects.toThrow(
+      'No extractable text was found in this PDF.',
+    );
+  });
+
+  it('does not hand extractResume out as a reference callers can mutate', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    const first = await client.extractResume(new File(['x'], 'r.pdf'));
+    first.fullName = 'Mutated';
+
+    const second = await client.extractResume(new File(['x'], 'r.pdf'));
+    expect(second.fullName).not.toBe('Mutated');
+  });
 });
 
 describe('createFixtureDashboardClient, auth', () => {
@@ -115,6 +152,7 @@ describe('createFixtureDashboardClient, auth', () => {
       client.addNote('app-sonar', { category: 'technical', text: 'x' }),
     ).rejects.toBeInstanceOf(HttpError);
     await expect(client.getProfile()).rejects.toBeInstanceOf(HttpError);
+    await expect(client.extractResume(new File(['x'], 'r.pdf'))).rejects.toBeInstanceOf(HttpError);
     await expect(client.extractJob('posting')).rejects.toBeInstanceOf(HttpError);
     await expect(client.findApplicationDuplicates('https://example.com')).rejects.toBeInstanceOf(
       HttpError,

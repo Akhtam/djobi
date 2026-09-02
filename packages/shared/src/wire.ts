@@ -17,6 +17,7 @@
 import { z } from 'zod';
 import {
   ApplicationStageSchema,
+  ExtractedProfileSchema,
   JobInfoSchema,
   NewNoteSchema,
   NoteSchema,
@@ -279,6 +280,20 @@ export type AddApplicationNoteResult = z.infer<typeof AddApplicationNoteResultSc
 export const SaveProfileRequestSchema = ProfileSchema;
 /** Inferred type of {@link SaveProfileRequestSchema}. */
 export type SaveProfileRequest = z.infer<typeof SaveProfileRequestSchema>;
+
+/**
+ * Response of `POST /profile/extract-resume` — the review-only draft the candidate edits before the
+ * existing `POST /profile` save path runs; see `ExtractedProfileSchema`'s own doc comment for what
+ * it can and can't contain.
+ *
+ * No request schema is declared here, unlike every other route body in this file: the request is a
+ * multipart file upload, not JSON, so there is no shape for zod to validate the way `parseBody`
+ * validates a JSON body. The field-name, size-cap and content-type checks belong to the route itself,
+ * reached through `RequestValidationError` the same way every JSON route's body rejection already is.
+ */
+export const ExtractResumeResponseSchema = ExtractedProfileSchema;
+/** Inferred type of {@link ExtractResumeResponseSchema}. */
+export type ExtractResumeResponse = z.infer<typeof ExtractResumeResponseSchema>;
 
 /**
  * One turn in an answer-chat thread, as the panel holds it and the route replays it.

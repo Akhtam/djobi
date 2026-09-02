@@ -93,7 +93,9 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
         ...(process.env.PUBLIC_ORIGINS?.split(',').map((origin) => origin.trim()) ?? []),
       ],
       allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
-      allowHeaders: ['content-type'],
+      // `x-djobi-upload` exists purely to force a preflight — see the content-type middleware below
+      // for why `POST /profile/extract-resume` needs one despite not sending JSON.
+      allowHeaders: ['content-type', 'x-djobi-upload'],
       credentials: true,
     }),
   );
@@ -119,8 +121,21 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
       return next();
     }
 
-    // Split on `;` — a browser may append `charset=utf-8`, which is still JSON.
+    // Split on `;` — a browser may append `charset=utf-8`, which is still JSON, or a multipart
+    // boundary.
     const contentType = (c.req.header('content-type') ?? '').split(';')[0].trim().toLowerCase();
+
+    // `POST /profile/extract-resume` (20.3) sends a file, which cannot be `application/json`. But
+    // `multipart/form-data` is itself one of the three CORS "simple" content types the comment above
+    // names — accepting it here with no further check would quietly reopen the exact hole this
+    // middleware exists to close, just for this one route. `x-djobi-upload` is not a simple header,
+    // so requiring it demands the same preflight `application/json` gets for free: an attacker's
+    // page can set the header, but the browser then withholds the real request until the origin
+    // allowlist above answers the preflight, which an unrelated origin never gets.
+    if (contentType === 'multipart/form-data' && c.req.header('x-djobi-upload')) {
+      return next();
+    }
+
     if (contentType !== 'application/json') {
       const body: BackendErrorBody = {
         error: `${method} requires content-type: application/json`,

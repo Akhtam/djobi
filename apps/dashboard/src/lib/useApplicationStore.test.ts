@@ -44,6 +44,7 @@ function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
       }),
     getProfile: () => Promise.resolve(null),
     saveProfile: (profile) => Promise.resolve(profile),
+    extractResume: () => Promise.reject(new Error('not used in this suite')),
     signIn: () => Promise.resolve(),
     signUp: () => Promise.resolve(),
     signOut: () => Promise.resolve(),

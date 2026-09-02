@@ -141,6 +141,24 @@ export interface HttpTransport {
   ): Promise<ZodTypeOf<Schema>>;
   /** Sends `path` and returns the raw response bytes — for a route that answers with a PDF. */
   binary(path: string, options?: RequestOptions): Promise<ArrayBuffer>;
+  /**
+   * Sends `formData` as a multipart file upload and decodes the JSON response through `schema` —
+   * for `POST /profile/extract-resume`, the one route that takes a file rather than JSON.
+   *
+   * `formData` is sent exactly as given: never `JSON.stringify`'d, and with no `content-type` set
+   * here, so `fetch` supplies its own header carrying the multipart boundary. The backend's own
+   * CSRF guard treats `application/json` as implicitly safe (see `apps/backend/src/app.ts`) because
+   * it forces a CORS preflight the origin allowlist gets to refuse — `multipart/form-data` cannot
+   * get that same protection from its content-type alone, since it is itself one of the three CORS
+   * "simple" types. `x-djobi-upload` is what forces the same preflight for this call; it is added
+   * here, once, rather than at every call site that might otherwise forget it.
+   */
+  upload<Schema extends ZodTypeAny>(
+    path: string,
+    schema: Schema,
+    formData: FormData,
+    options?: { signal?: AbortSignal },
+  ): Promise<ZodTypeOf<Schema>>;
 }
 
 /** The failed expectations, flattened into something a UI can show a person. */
@@ -231,7 +249,9 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
     const init: RequestInit =
       body === undefined
         ? { method }
-        : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+        : body instanceof FormData
+          ? { method, headers: { 'x-djobi-upload': '1' }, body }
+          : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
 
     // `fetch` rejects a GET carrying a body with a `TypeError` — indistinguishable, by the time it
     // reaches the catch below, from nothing listening on the port, so the caller would be told to
@@ -326,38 +346,60 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
     }
   }
 
+  /**
+   * The `json()`/`upload()` decode step: text in, `schema`-checked object out. Shared because an
+   * upload's response is JSON exactly like every other route's — only how the *request* body is
+   * built differs, which `call()`'s own branch on `body instanceof FormData` already covers.
+   */
+  function decodeJson<Schema extends ZodTypeAny>(
+    path: string,
+    method: string,
+    raw: string,
+    schema: Schema,
+  ): ZodTypeOf<Schema> {
+    let parsed: unknown;
+    try {
+      // An empty body decodes as `undefined` and therefore fails the schema, which is the honest
+      // reading: a route that promised JSON and sent nothing did not do what it said.
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      // Previously this threw a raw `SyntaxError` straight past both apps' own error types.
+      throw new HttpError(
+        'invalid-response',
+        path,
+        `${method} ${path} returned a body that is not JSON: ${raw.trim().slice(0, 300)}`,
+      );
+    }
+
+    const decoded = schema.safeParse(parsed);
+    if (!decoded.success) {
+      throw new HttpError(
+        'invalid-response',
+        path,
+        `${method} ${path} returned an unexpected response: ${issuesFrom(decoded.error)}`,
+      );
+    }
+
+    return decoded.data as ZodTypeOf<Schema>;
+  }
+
   return {
     async json(path, schema, requestOptions = {}) {
       const raw = await call(path, requestOptions, (response) => response.text());
-
-      let parsed: unknown;
-      try {
-        // An empty body decodes as `undefined` and therefore fails the schema, which is the honest
-        // reading: a route that promised JSON and sent nothing did not do what it said.
-        parsed = raw ? JSON.parse(raw) : undefined;
-      } catch {
-        // Previously this threw a raw `SyntaxError` straight past both apps' own error types.
-        throw new HttpError(
-          'invalid-response',
-          path,
-          `${resolveMethod(requestOptions)} ${path} returned a body that is not JSON: ${raw.trim().slice(0, 300)}`,
-        );
-      }
-
-      const decoded = schema.safeParse(parsed);
-      if (!decoded.success) {
-        throw new HttpError(
-          'invalid-response',
-          path,
-          `${resolveMethod(requestOptions)} ${path} returned an unexpected response: ${issuesFrom(decoded.error)}`,
-        );
-      }
-
-      return decoded.data as ZodTypeOf<typeof schema>;
+      return decodeJson(path, resolveMethod(requestOptions), raw, schema);
     },
 
     binary(path, requestOptions = {}) {
       return call(path, requestOptions, (response) => response.arrayBuffer());
+    },
+
+    async upload(path, schema, formData, requestOptions = {}) {
+      const raw = await call(
+        path,
+        { method: 'POST', body: formData, signal: requestOptions.signal },
+        (response) => response.text(),
+      );
+      return decodeJson(path, 'POST', raw, schema);
     },
   };
 }

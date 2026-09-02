@@ -79,12 +79,14 @@ export function ApplicationDetail({
           <h1>{companyName}</h1>
           <p className="detail__subtitle">{application.roleTitle}</p>
           <p className="detail__meta">
-            {loggedManually ? 'Logged' : 'Saved'} {formatDate(application.createdAt)}
+            <PostingLink jobUrl={application.jobUrl} company={application.company} />
             {loggedManually && <span className="source-badge">Applied manually</span>}
           </p>
         </div>
         <div className="detail__header-actions">
-          <PostingLink jobUrl={application.jobUrl} company={application.company} />
+          <p className="detail__meta">
+            {loggedManually ? 'Logged' : 'Saved'} {formatDate(application.createdAt)}
+          </p>
           <StageSelect
             stage={application.stage}
             label="Application stage"

@@ -125,6 +125,10 @@ describe('getProfile', () => {
       ...profile,
       resumePageSize: 'A4',
       showRolePrefix: true,
+      summary: null,
+      projects: [],
+      certifications: [],
+      awards: [],
     });
     expect(fetchMock).toHaveBeenCalledWith('/profile', {
       method: 'GET',
@@ -137,6 +141,39 @@ describe('getProfile', () => {
     stubFetch({ jsonBody: null });
 
     await expect(httpDashboardClient.getProfile()).resolves.toBeNull();
+  });
+});
+
+describe('extractResume', () => {
+  it('uploads the resume as multipart, under the "resume" field, and validates the draft', async () => {
+    const draft = {
+      fullName: 'Jordan Rivera',
+      email: null,
+      phone: null,
+      location: null,
+      links: { linkedin: null, portfolio: null, github: null },
+      summary: null,
+      workExperience: [],
+      education: [],
+      skills: [],
+      projects: [],
+      certifications: [],
+      awards: [],
+    };
+    const fetchMock = stubFetch({ jsonBody: draft });
+    const file = new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' });
+
+    await expect(httpDashboardClient.extractResume(file)).resolves.toEqual(draft);
+
+    expect(fetchMock).toHaveBeenCalledWith('/profile/extract-resume', {
+      method: 'POST',
+      headers: { 'x-djobi-upload': '1' },
+      body: expect.any(FormData),
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+    const body = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(body.get('resume')).toBe(file);
   });
 });
 

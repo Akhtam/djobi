@@ -100,6 +100,46 @@ export const StorySchema = z.object({
 export type Story = z.infer<typeof StorySchema>;
 
 /**
+ * One personal, open-source, or freelance project — content a resume routinely carries that has no
+ * home on a `workExperience` entry. `bullets` mirrors `workExperience`'s shape rather than folding
+ * into `description`, so a project reads the same as a role: one line of context, then detail bullets.
+ */
+export const ProjectSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  bullets: z
+    .array(z.string())
+    .describe("Achievement/detail bullet points, in the base profile's own words"),
+  link: z.string().nullable(),
+  technologies: z.array(z.string()).nullable(),
+});
+/** Inferred type of {@link ProjectSchema}. */
+export type Project = z.infer<typeof ProjectSchema>;
+
+/** One professional certification. `date` is whatever date the resume names for it — issued or expiring. */
+export const CertificationSchema = z.object({
+  name: z.string(),
+  issuer: z.string(),
+  date: z.string(),
+});
+/** Inferred type of {@link CertificationSchema}. */
+export type Certification = z.infer<typeof CertificationSchema>;
+
+/**
+ * One award or honor — a separate shape from {@link CertificationSchema} rather than one combined
+ * list, since resumes often bullet the two under one heading but they carry different fields: an
+ * award routinely explains itself with a `description`, a certification has no honest use for one.
+ */
+export const AwardSchema = z.object({
+  name: z.string(),
+  issuer: z.string(),
+  date: z.string(),
+  description: z.string().optional(),
+});
+/** Inferred type of {@link AwardSchema}. */
+export type Award = z.infer<typeof AwardSchema>;
+
+/**
  * The whole base profile: contact info, links, work/education history, skills, and reusable
  * stories. Stored whole as the `profiles.data` jsonb column; each operation receives only the
  * projection it uses, and tailoring/answering treat those projected facts as ground truth.
@@ -114,6 +154,12 @@ export const ProfileSchema = z.object({
     portfolio: z.string().nullable(),
     github: z.string().nullable(),
   }),
+  /**
+   * Freeform intro paragraph. Optional with a `null` default for the same reason
+   * `screeningAnswers`/`customAnswers` below are: a profile saved before this field existed is still
+   * valid, and `profiles.data` is jsonb read back as-is.
+   */
+  summary: z.string().nullable().default(null),
   workExperience: z.array(WorkExperienceSchema),
   maxBulletsPerRole: z
     .number()
@@ -130,6 +176,14 @@ export const ProfileSchema = z.object({
     .default(true)
     .describe('Whether resume role titles are prefixed with "Role:"'),
   education: z.array(EducationSchema),
+  /**
+   * Personal/open-source/freelance projects, certifications and awards — all three optional with an
+   * empty-array default, same reasoning as `summary` above. Placed after `education`, matching where
+   * they read on the resume itself.
+   */
+  projects: z.array(ProjectSchema).default([]),
+  certifications: z.array(CertificationSchema).default([]),
+  awards: z.array(AwardSchema).default([]),
   skills: z.array(z.string()),
   stories: z
     .array(StorySchema)
@@ -171,11 +225,15 @@ export const EMPTY_PROFILE: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [],
   maxBulletsPerRole: 6,
   resumePageSize: 'A4',
   showRolePrefix: true,
   education: [],
+  projects: [],
+  certifications: [],
+  awards: [],
   skills: [],
   stories: [],
   screeningAnswers: {},
@@ -207,6 +265,42 @@ export function parseProfile(value: unknown): Profile {
 
   return parsed.success ? parsed.data : EMPTY_PROFILE;
 }
+
+/**
+ * The Profile fields a resume can honestly supply, as `POST /profile/extract-resume` returns them —
+ * see `apps/backend/src/llm/extractResume.ts`. `stories` (STAR-format), `screeningAnswers` and
+ * `customAnswers` have no home here: no resume contains that content, so leaving them out is the
+ * boundary of what extraction can honestly claim, not a gap. Tailoring-selection controls
+ * (`maxBullets`, `starredIndices`, `suppressIfEmpty`) are Profile-only preferences a resume can't
+ * state either, so `workExperience` here is {@link ResumeWorkExperienceSchema}-shaped — the same
+ * subset {@link TailoredResumeSchema} already uses — rather than the full {@link WorkExperienceSchema}.
+ *
+ * Every field is nullable or empty-array-friendly, never required: extraction may be partial (a
+ * PDF's layout defeats parsing for some section), and "left blank" must mean a null/empty value the
+ * candidate can see and fill in themselves, never an invented one. This is deliberately looser than
+ * {@link ProfileSchema} itself, which requires `fullName`/`email` — this schema produces a draft the
+ * candidate reviews before it can reach the schema that actually enforces those.
+ */
+export const ExtractedProfileSchema = z.object({
+  fullName: z.string().nullable(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+  location: z.string().nullable(),
+  links: z.object({
+    linkedin: z.string().nullable(),
+    portfolio: z.string().nullable(),
+    github: z.string().nullable(),
+  }),
+  summary: z.string().nullable(),
+  workExperience: z.array(ResumeWorkExperienceSchema),
+  education: z.array(EducationSchema),
+  skills: z.array(z.string()),
+  projects: z.array(ProjectSchema),
+  certifications: z.array(CertificationSchema),
+  awards: z.array(AwardSchema),
+});
+/** Inferred type of {@link ExtractedProfileSchema}. */
+export type ExtractedProfile = z.infer<typeof ExtractedProfileSchema>;
 
 /**
  * Whether a posting stated a requirement plainly, under its own heading ("Requirements" versus

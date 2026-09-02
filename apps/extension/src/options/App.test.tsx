@@ -1,7 +1,8 @@
-import type { Profile } from '@djobi/shared';
+import type { ExtractedProfile, Profile } from '@djobi/shared';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
+import { HttpError } from '../lib/callBackend';
 import { App } from './App';
 
 /**
@@ -37,11 +38,15 @@ const emptyProfile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [],
   maxBulletsPerRole: 6,
   resumePageSize: 'A4',
   showRolePrefix: true,
   education: [],
+  projects: [],
+  certifications: [],
+  awards: [],
   skills: [],
   stories: [],
   screeningAnswers: {},
@@ -498,6 +503,102 @@ describe('options App', () => {
     expect(screen.queryByLabelText('School 1')).not.toBeInTheDocument();
   });
 
+  it('adds a certification-or-award row, defaults it to a certification, and saves it', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      fullName: 'Jane Doe',
+      certifications: [],
+      awards: [],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add certification or award' }));
+
+    expect(screen.getByLabelText('Type 1')).toHaveValue('certification');
+    // The award-only field has nothing to attach to on a certification row.
+    expect(screen.queryByLabelText('Description 1')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Name 1'), { target: { value: 'AWS Certified' } });
+    fireEvent.change(screen.getByLabelText('Issuer 1'), { target: { value: 'Amazon' } });
+    fireEvent.change(screen.getByLabelText('Date 1'), { target: { value: '2024' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith({
+      ...loaded,
+      certifications: [{ name: 'AWS Certified', issuer: 'Amazon', date: '2024' }],
+      awards: [],
+    });
+  });
+
+  it('switches a row to Award, exposing the description field, and saves it under awards', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      certifications: [{ name: 'AWS Certified', issuer: 'Amazon', date: '2024' }],
+      awards: [],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.change(screen.getByLabelText('Type 1'), { target: { value: 'award' } });
+
+    expect(screen.getByLabelText('Name 1')).toHaveValue('AWS Certified');
+    fireEvent.change(screen.getByLabelText('Description 1'), {
+      target: { value: 'Top of the cohort' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith({
+      ...loaded,
+      certifications: [],
+      awards: [
+        { name: 'AWS Certified', issuer: 'Amazon', date: '2024', description: 'Top of the cohort' },
+      ],
+    });
+  });
+
+  it('shows existing certifications and awards together, each tagged with its own type', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      certifications: [{ name: 'AWS Certified', issuer: 'Amazon', date: '2024' }],
+      awards: [{ name: 'Hack Day', issuer: 'Acme', date: '2020', description: 'Won first place' }],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    expect(screen.getByLabelText('Type 1')).toHaveValue('certification');
+    expect(screen.getByLabelText('Name 1')).toHaveValue('AWS Certified');
+    expect(screen.getByLabelText('Type 2')).toHaveValue('award');
+    expect(screen.getByLabelText('Name 2')).toHaveValue('Hack Day');
+    expect(screen.getByLabelText('Description 2')).toHaveValue('Won first place');
+  });
+
+  it('removes a certification-or-award row', async () => {
+    const loaded: Profile = {
+      ...emptyProfile,
+      certifications: [{ name: 'AWS Certified', issuer: 'Amazon', date: '2024' }],
+      awards: [],
+    };
+    stubBackend({ get: () => loaded });
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove certification or award 1' }));
+
+    expect(screen.queryByLabelText('Name 1')).not.toBeInTheDocument();
+  });
+
   it('adds a story entry, edits its fields, and saves it', async () => {
     const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', stories: [] };
     stubBackend({ get: () => loaded });
@@ -782,6 +883,125 @@ describe('options App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await screen.findByText('Backend unreachable');
+  });
+});
+
+const blankExtraction: ExtractedProfile = {
+  fullName: null,
+  email: null,
+  phone: null,
+  location: null,
+  links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
+  workExperience: [],
+  education: [],
+  skills: [],
+  projects: [],
+  certifications: [],
+  awards: [],
+};
+
+describe('options App, resume upload', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('uploads a resume, pre-fills the reviewable form from the extraction, and saves the reviewed result', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe', phone: '555-0100' };
+    const extracted: ExtractedProfile = {
+      ...blankExtraction,
+      fullName: 'Jane A. Doe',
+      email: 'jane@example.com',
+      location: 'Remote',
+      summary: 'Senior engineer.',
+      skills: ['TypeScript'],
+    };
+    const extractResume = vi.fn(async () => extracted);
+    const saveProfile = vi.fn(async (profile: Profile) => profile);
+    const client = createFakeBackendClient({
+      getProfile: vi.fn(async () => loaded),
+      saveProfile,
+      extractResume,
+    } as Partial<BackendClient>);
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    const file = new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Resume PDF'), { target: { files: [file] } });
+
+    await screen.findByText('Resume parsed. Review the pre-filled fields below, then save.');
+    expect(extractResume).toHaveBeenCalledWith(file);
+
+    // Fields the extraction found are pre-filled, in the same inputs as any manual edit —
+    expect(screen.getByLabelText('Full name')).toHaveValue('Jane A. Doe');
+    expect(screen.getByLabelText('Email')).toHaveValue('jane@example.com');
+    expect(screen.getByLabelText('Location')).toHaveValue('Remote');
+    expect(screen.getByLabelText('Summary')).toHaveValue('Senior engineer.');
+    expect(screen.getByText('TypeScript')).toBeInTheDocument();
+    // — but a field the extraction found nothing for keeps what the candidate already had.
+    expect(screen.getByLabelText('Phone')).toHaveValue('555-0100');
+    expect(screen.getByText('You have unsaved changes.')).toBeInTheDocument();
+
+    // The candidate reviews and corrects the pre-filled draft before saving, like any other edit.
+    fireEvent.change(screen.getByLabelText('Summary'), {
+      target: { value: 'Senior backend engineer.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Profile saved.');
+
+    expect(saveProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        fullName: 'Jane A. Doe',
+        email: 'jane@example.com',
+        phone: '555-0100',
+        location: 'Remote',
+        summary: 'Senior backend engineer.',
+        skills: ['TypeScript'],
+      }),
+    );
+  });
+
+  it('reports a clear error and leaves the form untouched, falling back to manual entry', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe' };
+    const extractResume = vi.fn(async () => {
+      throw new Error('No extractable text was found in this PDF.');
+    });
+    const client = createFakeBackendClient({
+      getProfile: vi.fn(async () => loaded),
+      extractResume,
+    } as Partial<BackendClient>);
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    const file = new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Resume PDF'), { target: { files: [file] } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Couldn't parse this resume: No extractable text was found in this PDF.",
+    );
+    expect(screen.getByLabelText('Full name')).toHaveValue('Jane Doe');
+    expect(screen.queryByText('You have unsaved changes.')).not.toBeInTheDocument();
+  });
+
+  it('shows the sign-in view when the upload itself hits a 401, same as any other route', async () => {
+    const loaded: Profile = { ...emptyProfile, fullName: 'Jane Doe' };
+    const extractResume = vi.fn(async () => {
+      throw new HttpError('http', '/profile/extract-resume', 'Authentication required', 401);
+    });
+    const client = createFakeBackendClient({
+      getProfile: vi.fn(async () => loaded),
+      extractResume,
+    } as Partial<BackendClient>);
+
+    render(<App client={client} />);
+    await screen.findByLabelText('Full name');
+
+    const file = new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Resume PDF'), { target: { files: [file] } });
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 });
 

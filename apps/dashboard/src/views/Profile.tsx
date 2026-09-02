@@ -11,9 +11,17 @@
  * extension's own `unauthorized`-state-and-`<Login>` one, since the dashboard already redirects to
  * `#/login` centrally in `App.tsx`.
  */
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { HttpError } from '@djobi/http-client';
 import {
+  applyExtractedProfile,
   EMPTY_PROFILE,
   failureMessage,
   normalizeProfileDraft,
@@ -23,6 +31,9 @@ import {
   spliceWorkBullets,
   storyTags,
   withScreeningAnswer,
+  type Award,
+  type Certification,
+  type ExtractedProfile,
   type Profile,
 } from '@djobi/shared';
 
@@ -31,7 +42,40 @@ function isUnauthorized(error: unknown): boolean {
 }
 
 /** The Profile keys holding an editable list of entries. */
-type ProfileListKey = 'workExperience' | 'education' | 'stories' | 'customAnswers';
+type ProfileListKey =
+  | 'workExperience'
+  | 'education'
+  | 'projects'
+  | 'certifications'
+  | 'awards'
+  | 'stories'
+  | 'customAnswers';
+
+/**
+ * One row of the combined Certifications & Awards section — see the identical type in the
+ * extension's options page (`apps/extension/src/options/App.tsx`) for why it's flat rather than a
+ * discriminated union of {@link Certification}/{@link Award}.
+ */
+interface CredentialItem {
+  kind: 'certification' | 'award';
+  index: number;
+  name: string;
+  issuer: string;
+  date: string;
+  description?: string;
+}
+
+/** Certifications, then awards, each tagged with where it lives — see {@link CredentialItem}. */
+function credentialItems(profile: Profile): CredentialItem[] {
+  return [
+    ...profile.certifications.map((entry, index) => ({
+      kind: 'certification' as const,
+      index,
+      ...entry,
+    })),
+    ...profile.awards.map((entry, index) => ({ kind: 'award' as const, index, ...entry })),
+  ];
+}
 
 /** The three things every list section does to its list. Bound to one key by {@link listEditor}. */
 interface ListEditor<T> {
@@ -124,18 +168,24 @@ function ListSection<T>({
   );
 }
 
-/** Sections, in the order the quick-nav and the form itself present them. */
+/** The page's two tabs — everything resume-shaped, versus everything asked at application time. */
+type ProfileTab = 'profile' | 'prep';
+
+/** Sections, in the order the quick-nav and the form itself present them, tagged by owning tab. */
 const PANEL_ORDER = [
-  { anchor: 'section-contact', label: 'Contact' },
-  { anchor: 'section-links', label: 'Links' },
-  { anchor: 'section-resume', label: 'Resume' },
-  { anchor: 'section-skills', label: 'Skills' },
-  { anchor: 'section-work', label: 'Work' },
-  { anchor: 'section-education', label: 'Education' },
-  { anchor: 'section-screening', label: 'Screening' },
-  { anchor: 'section-answers', label: 'Answers' },
-  { anchor: 'section-stories', label: 'Stories' },
-] as const;
+  { anchor: 'section-contact', label: 'Contact', tab: 'profile' },
+  { anchor: 'section-links', label: 'Links', tab: 'profile' },
+  { anchor: 'section-summary', label: 'Summary', tab: 'profile' },
+  { anchor: 'section-resume', label: 'Resume', tab: 'profile' },
+  { anchor: 'section-skills', label: 'Skills', tab: 'profile' },
+  { anchor: 'section-work', label: 'Work', tab: 'profile' },
+  { anchor: 'section-projects', label: 'Projects', tab: 'profile' },
+  { anchor: 'section-education', label: 'Education', tab: 'profile' },
+  { anchor: 'section-credentials', label: 'Credentials', tab: 'profile' },
+  { anchor: 'section-screening', label: 'Screening', tab: 'prep' },
+  { anchor: 'section-answers', label: 'Answers', tab: 'prep' },
+  { anchor: 'section-stories', label: 'Stories', tab: 'prep' },
+] as const satisfies readonly { anchor: string; label: string; tab: ProfileTab }[];
 
 /**
  * Scrolls to a section by id without touching `location.hash` — a plain `<a href="#section-x">`
@@ -149,19 +199,33 @@ function scrollToSection(id: string) {
 export function Profile({
   getProfile,
   saveProfile,
+  extractResume,
   onUnauthorized,
 }: {
   getProfile: () => Promise<Profile | null>;
   saveProfile: (profile: Profile) => Promise<Profile>;
+  extractResume: (file: File) => Promise<ExtractedProfile>;
   onUnauthorized: () => void;
 }) {
   const [profile, setProfileState] = useState<Profile | null>(null);
+  const [activeTab, setActiveTab] = useState<ProfileTab>('profile');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  // Separate from `status` above: that means "the save you just asked for landed or didn't," and
+  // an extraction is neither — nothing is saved until the candidate reviews the pre-filled fields
+  // and clicks Save themselves.
+  const [extraction, setExtraction] = useState<{
+    kind: 'notice' | 'error';
+    message: string;
+  } | null>(null);
   const editRevisionRef = useRef(0);
+  // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
+  // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
+  const resumeInputRef = useRef<HTMLInputElement>(null);
 
   function setProfile(next: Profile) {
     ++editRevisionRef.current;
@@ -225,6 +289,96 @@ export function Profile({
     question: '',
     answer: '',
   }));
+  const projects = listEditor(profile, setProfile, 'projects', () => ({
+    name: '',
+    description: '',
+    bullets: [],
+    link: null,
+    technologies: null,
+  }));
+  const certifications = listEditor(profile, setProfile, 'certifications', () => ({
+    name: '',
+    issuer: '',
+    date: '',
+  }));
+  const awards = listEditor(profile, setProfile, 'awards', () => ({
+    name: '',
+    issuer: '',
+    date: '',
+  }));
+  const credentials = credentialItems(profile);
+  /**
+   * The combined section's `editor` — see the identical one in the extension's options page for
+   * why `.update` dispatches to whichever of the two real editors above owns the row.
+   */
+  const credentialsEditor: ListEditor<CredentialItem> = {
+    update: (combinedIndex, patch) => {
+      const item = credentials[combinedIndex];
+      if (item.kind === 'certification') {
+        certifications.update(item.index, patch as Partial<Certification>);
+      } else {
+        awards.update(item.index, patch as Partial<Award>);
+      }
+    },
+    remove: (combinedIndex) => {
+      const item = credentials[combinedIndex];
+      if (item.kind === 'certification') certifications.remove(item.index);
+      else awards.remove(item.index);
+    },
+    add: () => certifications.add(),
+  };
+  /** Moves one row between the two arrays — see the identical helper in the extension's options page. */
+  function changeCredentialKind(item: CredentialItem, kind: CredentialItem['kind']) {
+    if (!profile || item.kind === kind) return;
+    const shared = { name: item.name, issuer: item.issuer, date: item.date };
+    if (kind === 'award') {
+      setProfile({
+        ...profile,
+        certifications: profile.certifications.filter((_, i) => i !== item.index),
+        awards: [...profile.awards, shared],
+      });
+    } else {
+      setProfile({
+        ...profile,
+        awards: profile.awards.filter((_, i) => i !== item.index),
+        certifications: [...profile.certifications, shared],
+      });
+    }
+  }
+
+  /**
+   * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
+   * own. `setProfile` marks the form `dirty`, so "You have unsaved changes" already says nothing
+   * has been persisted yet; `extraction` here is only the upload's own success/failure message.
+   */
+  async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Cleared immediately so re-selecting the same file still fires a change event.
+    event.target.value = '';
+    if (!file || !profile) return;
+
+    setExtraction(null);
+    setExtracting(true);
+    try {
+      const extracted = await extractResume(file);
+      setProfile(applyExtractedProfile(profile, extracted));
+      setExtraction({
+        kind: 'notice',
+        message: 'Resume parsed. Review the pre-filled fields below, then save.',
+      });
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        onUnauthorized();
+        return;
+      }
+      setExtraction({
+        kind: 'error',
+        message: `Couldn't parse this resume: ${failureMessage(error)}`,
+      });
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -273,20 +427,100 @@ export function Profile({
         </p>
       ) : null}
 
-      <nav className="profile-quicknav" aria-label="Profile sections">
-        {PANEL_ORDER.map((panel) => (
+      <section className="detail__panel">
+        <PanelHead id="section-upload" legend="Upload resume" />
+        <div className="detail__panel-body">
+          <div className="upload-resume-card">
+            <button
+              type="button"
+              className="upload-resume-card__icon"
+              aria-label={extracting ? 'Parsing resume…' : 'Upload resume'}
+              onClick={() => resumeInputRef.current?.click()}
+              disabled={extracting}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v12" />
+                <path d="M7 8l5-5 5 5" />
+                <path d="M5 21h14" />
+              </svg>
+            </button>
+            <div className="upload-resume-card__text">
+              <p className="upload-resume-card__title">Have a resume already?</p>
+              <p className="upload-resume-card__hint">
+                {extracting
+                  ? 'Parsing…'
+                  : "PDF — we'll pull contact info, work history, and skills automatically."}
+              </p>
+            </div>
+            <input
+              ref={resumeInputRef}
+              type="file"
+              accept="application/pdf"
+              aria-label="Resume PDF"
+              className="visually-hidden"
+              onChange={handleResumeUpload}
+              disabled={extracting}
+            />
+          </div>
+          {extraction ? (
+            <p
+              className={`profile-status profile-status--${extraction.kind === 'error' ? 'error' : 'saved'}`}
+              role={extraction.kind === 'error' ? 'alert' : 'status'}
+            >
+              {extraction.message}
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      <div className="profile-nav-sticky">
+        <div className="profile-tabbar" role="tablist" aria-label="Profile tabs">
           <button
-            key={panel.anchor}
             type="button"
-            className="profile-quicknav__link"
-            onClick={() => scrollToSection(panel.anchor)}
+            role="tab"
+            aria-selected={activeTab === 'profile'}
+            className={`profile-tab${activeTab === 'profile' ? ' profile-tab--active' : ''}`}
+            onClick={() => setActiveTab('profile')}
           >
-            {panel.label}
+            Profile
           </button>
-        ))}
-      </nav>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'prep'}
+            className={`profile-tab${activeTab === 'prep' ? ' profile-tab--active' : ''}`}
+            onClick={() => setActiveTab('prep')}
+          >
+            Screening and Stories
+          </button>
+        </div>
+        <nav className="profile-quicknav" aria-label="Profile sections">
+          {PANEL_ORDER.filter((panel) => panel.tab === activeTab).map((panel) => (
+            <button
+              key={panel.anchor}
+              type="button"
+              className="profile-quicknav__link"
+              onClick={() => scrollToSection(panel.anchor)}
+            >
+              {panel.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       <form onSubmit={handleSave}>
+        {activeTab === 'profile' && (
+          <>
         <section className="detail__panel">
           <PanelHead id="section-contact" legend="Contact details" />
           <div className="detail__panel-body">
@@ -385,6 +619,23 @@ export function Profile({
                 />
               </label>
             </div>
+          </div>
+        </section>
+
+        <section className="detail__panel">
+          <PanelHead
+            id="section-summary"
+            legend="Summary"
+            hint="A short intro paragraph, shown near the top of the resume."
+          />
+          <div className="detail__panel-body">
+            <label className="profile-field profile-field--span-2">
+              Summary
+              <textarea
+                value={profile.summary ?? ''}
+                onChange={(e) => setProfile({ ...profile, summary: optionalText(e.target.value) })}
+              />
+            </label>
           </div>
         </section>
 
@@ -635,6 +886,105 @@ export function Profile({
         </ListSection>
 
         <ListSection
+          id="section-projects"
+          legend="Projects"
+          noun="project"
+          addLabel="Add project"
+          hint="Personal, open-source or freelance work — anything not covered by Work experience above."
+          items={profile.projects}
+          editor={projects}
+        >
+          {(entry, index) => {
+            const n = index + 1;
+            return (
+              <div className="profile-field-grid">
+                <label className="profile-field">
+                  {`Name ${n}`}
+                  <input
+                    className="search"
+                    value={entry.name}
+                    onChange={(e) => projects.update(index, { name: e.target.value })}
+                  />
+                </label>
+                <label className="profile-field">
+                  {`Link ${n}`}
+                  <input
+                    className="search"
+                    type="url"
+                    value={entry.link ?? ''}
+                    onChange={(e) => projects.update(index, { link: optionalText(e.target.value) })}
+                  />
+                </label>
+                <label className="profile-field profile-field--span-2">
+                  {`Description ${n}`}
+                  <textarea
+                    value={entry.description}
+                    onChange={(e) => projects.update(index, { description: e.target.value })}
+                  />
+                </label>
+                <label className="profile-field profile-field--span-2">
+                  {`Technologies ${n}`}
+                  <input
+                    className="search"
+                    placeholder="Comma-separated"
+                    value={(entry.technologies ?? []).join(', ')}
+                    onChange={(e) => {
+                      const technologies = e.target.value
+                        .split(',')
+                        .map((tech) => tech.trim())
+                        .filter(Boolean);
+                      projects.update(index, {
+                        technologies: technologies.length ? technologies : null,
+                      });
+                    }}
+                  />
+                </label>
+                <div className="profile-field profile-field--span-2">
+                  {`Bullets ${n}`}
+                  <div className="profile-bullets">
+                    {entry.bullets.map((bullet, bulletIndex) => (
+                      <div key={bulletIndex} className="profile-bullet-row">
+                        <input
+                          className="search"
+                          aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
+                          value={bullet}
+                          onChange={(e) =>
+                            projects.update(index, {
+                              bullets: entry.bullets.map((b, bi) =>
+                                bi === bulletIndex ? e.target.value : b,
+                              ),
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="button profile-remove"
+                          aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
+                          onClick={() =>
+                            projects.update(index, {
+                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
+                            })
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => projects.update(index, { bullets: [...entry.bullets, ''] })}
+                  >
+                    + Add bullet
+                  </button>
+                </div>
+              </div>
+            );
+          }}
+        </ListSection>
+
+        <ListSection
           id="section-education"
           legend="Education"
           noun="education"
@@ -687,6 +1037,78 @@ export function Profile({
           }}
         </ListSection>
 
+        <ListSection
+          id="section-credentials"
+          legend="Certifications & Awards"
+          noun="certification or award"
+          addLabel="Add certification or award"
+          hint="Pick which each row is — the fields shown adjust to match."
+          items={credentials}
+          editor={credentialsEditor}
+        >
+          {(item, index) => {
+            const n = index + 1;
+            return (
+              <div className="profile-field-grid">
+                <label className="profile-field">
+                  {`Type ${n}`}
+                  <select
+                    className="search"
+                    value={item.kind}
+                    onChange={(e) =>
+                      changeCredentialKind(item, e.currentTarget.value as CredentialItem['kind'])
+                    }
+                  >
+                    <option value="certification">Certification</option>
+                    <option value="award">Award</option>
+                  </select>
+                </label>
+                <label className="profile-field">
+                  {`Name ${n}`}
+                  <input
+                    className="search"
+                    value={item.name}
+                    onChange={(e) => credentialsEditor.update(index, { name: e.target.value })}
+                  />
+                </label>
+                <label className="profile-field">
+                  {`Issuer ${n}`}
+                  <input
+                    className="search"
+                    value={item.issuer}
+                    onChange={(e) => credentialsEditor.update(index, { issuer: e.target.value })}
+                  />
+                </label>
+                <label className="profile-field">
+                  {`Date ${n}`}
+                  <input
+                    className="search"
+                    value={item.date}
+                    onChange={(e) => credentialsEditor.update(index, { date: e.target.value })}
+                  />
+                </label>
+                {item.kind === 'award' && (
+                  <label className="profile-field profile-field--span-2">
+                    {`Description ${n}`}
+                    <textarea
+                      value={item.description ?? ''}
+                      onChange={(e) =>
+                        credentialsEditor.update(index, {
+                          description: optionalText(e.target.value) ?? undefined,
+                        })
+                      }
+                    />
+                  </label>
+                )}
+              </div>
+            );
+          }}
+        </ListSection>
+          </>
+        )}
+
+        {activeTab === 'prep' && (
+          <>
         <section className="detail__panel">
           <PanelHead
             id="section-screening"
@@ -822,6 +1244,8 @@ export function Profile({
             );
           }}
         </ListSection>
+          </>
+        )}
 
         <div className="profile-footer">
           <div>

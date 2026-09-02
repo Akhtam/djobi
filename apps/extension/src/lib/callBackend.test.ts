@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationWriteResultSchema, DuplicateApplicationSummarySchema } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { fakeSessionStorage } from './fakeSessionStorage';
-import { callBackend, callBackendBinary } from './callBackend';
+import { callBackend, callBackendBinary, callBackendUpload } from './callBackend';
 
 /**
  * A real schema, standing in for whichever route a case is about. The error cases below reject
@@ -235,6 +235,51 @@ describe('callBackendBinary', () => {
       status: 400,
       path: '/render-resume-pdf',
       message: expect.stringContaining('profile is required'),
+    });
+  });
+});
+
+describe('callBackendUpload', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('chrome', { storage: fakeSessionStorage() });
+  });
+
+  it("sends the FormData body untouched, marked for the backend's multipart CSRF guard, and resolves with the parsed response", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ id: 'application-1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const formData = new FormData();
+    formData.set('resume', new File(['%PDF-1.4'], 'resume.pdf', { type: 'application/pdf' }));
+
+    const result = await callBackendUpload('/profile/extract-resume', Result, formData);
+
+    expect(result).toEqual({ id: 'application-1' });
+    expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/profile/extract-resume`, {
+      method: 'POST',
+      headers: { 'x-djobi-upload': '1' },
+      body: formData,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("rejects with the backend's own message on a rejected upload, the same shape as callBackend", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'No extractable text was found in this PDF.' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await expect(
+      callBackendUpload('/profile/extract-resume', Result, new FormData()),
+    ).rejects.toMatchObject({
+      kind: 'http',
+      status: 400,
+      message: expect.stringContaining('No extractable text was found in this PDF.'),
     });
   });
 });

@@ -27,6 +27,7 @@ const profile: Profile = {
   phone: null,
   location: null,
   links: { linkedin: null, portfolio: null, github: null },
+  summary: null,
   workExperience: [
     {
       company: 'Northwind',
@@ -43,6 +44,9 @@ const profile: Profile = {
   resumePageSize: 'A4',
   showRolePrefix: true,
   education: [],
+  projects: [],
+  certifications: [],
+  awards: [],
   skills: ['TypeScript', 'Postgres'],
   stories: [],
   screeningAnswers: {},

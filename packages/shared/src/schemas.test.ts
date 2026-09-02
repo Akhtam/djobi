@@ -3,16 +3,20 @@ import {
   ApplicationSchema,
   ApplicationSnapshotSchema,
   ApplicationStageSchema,
+  AwardSchema,
   baseResumeOf,
+  CertificationSchema,
   EducationSchema,
   EMPTY_PROFILE,
   EXTRACTION_VERSION,
+  ExtractedProfileSchema,
   parseProfile,
   JobInfoSchema,
   NewApplicationSchema,
   NewNoteSchema,
   NoteSchema,
   ProfileSchema,
+  ProjectSchema,
   QuestionAnswerSchema,
   StorySchema,
   TailoredResumeSchema,
@@ -42,6 +46,27 @@ const validEducation = {
   degree: 'B.S.',
   field: 'Computer Science',
   graduationYear: '2018',
+};
+
+const validProject = {
+  name: 'djobi',
+  description: 'AI-tailored job application autofill extension',
+  bullets: ['Built a resume-tailoring pipeline against a shared Zod schema'],
+  link: 'https://github.com/jane/djobi',
+  technologies: ['TypeScript', 'Hono'],
+};
+
+const validCertification = {
+  name: 'AWS Certified Solutions Architect',
+  issuer: 'Amazon Web Services',
+  date: '2023-06',
+};
+
+const validAward = {
+  name: 'Hackathon Winner',
+  issuer: 'Acme Corp',
+  date: '2022-11',
+  description: 'Best use of AI among 40 teams',
 };
 
 const validProfile = {
@@ -164,6 +189,50 @@ describe('EducationSchema', () => {
   });
 });
 
+describe('ProjectSchema', () => {
+  it('accepts a valid project', () => {
+    expect(ProjectSchema.safeParse(validProject).success).toBe(true);
+  });
+
+  it('accepts null link/technologies', () => {
+    expect(
+      ProjectSchema.safeParse({ ...validProject, link: null, technologies: null }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a project missing bullets', () => {
+    const { bullets: _bullets, ...withoutBullets } = validProject;
+    expect(ProjectSchema.safeParse(withoutBullets).success).toBe(false);
+  });
+});
+
+describe('CertificationSchema', () => {
+  it('accepts a valid certification', () => {
+    expect(CertificationSchema.safeParse(validCertification).success).toBe(true);
+  });
+
+  it('rejects a certification missing issuer', () => {
+    const { issuer: _issuer, ...withoutIssuer } = validCertification;
+    expect(CertificationSchema.safeParse(withoutIssuer).success).toBe(false);
+  });
+});
+
+describe('AwardSchema', () => {
+  it('accepts a valid award with a description', () => {
+    expect(AwardSchema.safeParse(validAward).success).toBe(true);
+  });
+
+  it('accepts an award with no description', () => {
+    const { description: _description, ...withoutDescription } = validAward;
+    expect(AwardSchema.safeParse(withoutDescription).success).toBe(true);
+  });
+
+  it('rejects an award missing date', () => {
+    const { date: _date, ...withoutDate } = validAward;
+    expect(AwardSchema.safeParse(withoutDate).success).toBe(false);
+  });
+});
+
 describe('StorySchema', () => {
   it('accepts a valid STAR story', () => {
     expect(StorySchema.safeParse(validStory).success).toBe(true);
@@ -206,6 +275,30 @@ describe('ProfileSchema', () => {
     });
   });
 
+  it('upgrades a profile stored before resume-upload fields existed, filling all four defaults', () => {
+    const result = ProfileSchema.safeParse(validProfile);
+
+    expect(result.success && result.data.summary).toBeNull();
+    expect(result.success && result.data.projects).toEqual([]);
+    expect(result.success && result.data.certifications).toEqual([]);
+    expect(result.success && result.data.awards).toEqual([]);
+  });
+
+  it('accepts a profile with summary/projects/certifications/awards populated', () => {
+    const result = ProfileSchema.safeParse({
+      ...validProfile,
+      summary: 'Backend engineer focused on reliability.',
+      projects: [validProject],
+      certifications: [validCertification],
+      awards: [validAward],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.projects).toEqual([validProject]);
+    expect(result.success && result.data.certifications).toEqual([validCertification]);
+    expect(result.success && result.data.awards).toEqual([validAward]);
+  });
+
   it('rejects a profile missing fullName', () => {
     const { fullName: _fullName, ...withoutName } = validProfile;
     expect(ProfileSchema.safeParse(withoutName).success).toBe(false);
@@ -231,6 +324,10 @@ describe('parseProfile', () => {
       maxBulletsPerRole: _maxBullets,
       resumePageSize: _pageSize,
       showRolePrefix: _rolePrefix,
+      summary: _summary,
+      projects: _projects,
+      certifications: _certifications,
+      awards: _awards,
       ...stored
     } = EMPTY_PROFILE;
 
@@ -243,6 +340,10 @@ describe('parseProfile', () => {
       maxBulletsPerRole: 6,
       resumePageSize: 'A4',
       showRolePrefix: true,
+      summary: null,
+      projects: [],
+      certifications: [],
+      awards: [],
     });
   });
 
@@ -372,6 +473,63 @@ describe('TailoredResumeSchema', () => {
   it('rejects a tailored resume missing workExperience', () => {
     const { workExperience: _workExperience, ...withoutExperience } = validTailoredResume;
     expect(TailoredResumeSchema.safeParse(withoutExperience).success).toBe(false);
+  });
+});
+
+describe('ExtractedProfileSchema', () => {
+  const fullExtraction = {
+    fullName: 'Jane Doe',
+    email: 'jane@example.com',
+    phone: '+1-555-0100',
+    location: 'Remote',
+    links: { linkedin: 'https://linkedin.com/in/janedoe', portfolio: null, github: null },
+    summary: 'Backend engineer focused on reliability.',
+    workExperience: [validWorkExperience],
+    education: [validEducation],
+    skills: ['TypeScript', 'PostgreSQL'],
+    projects: [validProject],
+    certifications: [validCertification],
+    awards: [validAward],
+  };
+
+  it('accepts a fully populated extraction', () => {
+    expect(ExtractedProfileSchema.safeParse(fullExtraction).success).toBe(true);
+  });
+
+  it('accepts an all-blank extraction — a PDF the model could confidently read nothing from', () => {
+    const blank = {
+      fullName: null,
+      email: null,
+      phone: null,
+      location: null,
+      links: { linkedin: null, portfolio: null, github: null },
+      summary: null,
+      workExperience: [],
+      education: [],
+      skills: [],
+      projects: [],
+      certifications: [],
+      awards: [],
+    };
+
+    expect(ExtractedProfileSchema.safeParse(blank).success).toBe(true);
+  });
+
+  it('strips tailoring-selection controls no resume can honestly state, rather than keeping them', () => {
+    const result = ExtractedProfileSchema.safeParse({
+      ...fullExtraction,
+      workExperience: [{ ...validWorkExperience, maxBullets: null, starredIndices: [] }],
+    });
+
+    // Extra keys are simply stripped by zod's object parsing, not rejected — this asserts the
+    // stripped shape rather than a validation failure, since that's the actual behavior at stake:
+    // tailoring controls a resume can't honestly state don't leak into a Profile via extraction.
+    expect(result.success && 'maxBullets' in result.data.workExperience[0]).toBe(false);
+  });
+
+  it('rejects a missing workExperience array', () => {
+    const { workExperience: _workExperience, ...withoutExperience } = fullExtraction;
+    expect(ExtractedProfileSchema.safeParse(withoutExperience).success).toBe(false);
   });
 });
 

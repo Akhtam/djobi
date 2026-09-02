@@ -354,6 +354,73 @@ form {
   color: var(--text-muted);
 }
 
+/* The visible entry point for resume upload — an icon, a two-line pitch, and a button that
+   proxies a click onto the visually-hidden real `<input type="file">` beside it. */
+.upload-resume-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.upload-resume-card__icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--ring);
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.upload-resume-card__icon:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ring) 70%, var(--primary) 30%);
+}
+
+.upload-resume-card__icon:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.upload-resume-card__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-resume-card__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.upload-resume-card__hint {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Keeps the real file input in the accessibility tree and interactable — unlike `display: none`
+   or the `hidden` attribute, which would also drop it from the tab order and from what a
+   screen reader or `userEvent.upload` can reach. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .hint {
   margin: 8px 0 18px;
   max-width: 680px;

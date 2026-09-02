@@ -225,6 +225,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
             <Profile
               getProfile={client.getProfile}
               saveProfile={client.saveProfile}
+              extractResume={client.extractResume}
               onUnauthorized={handleUnauthorized}
             />
           ) : loading ? (
