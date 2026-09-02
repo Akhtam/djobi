@@ -139,13 +139,27 @@ body {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  margin-left: auto;
   width: 30px;
   height: 30px;
   padding: 6px;
   border-color: var(--border);
   background: var(--surface);
   color: var(--text-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* `.btn-secondary` is `width: 100%` everywhere else it's used (a full-width action inside a
+   vertical state/panel body) — wrong here, where it sits beside the theme toggle in a row. */
+.header-actions .btn-secondary {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 
 .theme-toggle:hover {

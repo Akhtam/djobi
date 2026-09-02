@@ -122,7 +122,7 @@ export const verification = pgTable(
 export const profiles = pgTable('profiles', {
   userId: uuid('user_id')
     .primaryKey()
-    .references(() => users.id),
+    .references(() => users.id, { onDelete: 'cascade' }),
   data: jsonb('data').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -144,7 +144,7 @@ export const applications = pgTable(
      */
     userId: uuid('user_id')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'cascade' }),
     company: text('company').notNull(),
     roleTitle: text('role_title').notNull(),
     jobUrl: text('job_url').notNull(),

@@ -6,6 +6,8 @@
  * by hand, cast included. The cast is unavoidable — `Object.fromEntries` widens the key back to
  * `string` — so it is worth having exactly once.
  */
+import type { ReactNode } from 'react';
+
 export function countByOption<Item, T extends string>(
   options: readonly T[],
   items: readonly Item[],
@@ -32,6 +34,7 @@ export function FilterPills<T extends string>({
   allCount,
   groupLabel,
   counts,
+  renderIcon,
 }: {
   options: readonly T[];
   labels: Record<T, string>;
@@ -43,6 +46,8 @@ export function FilterPills<T extends string>({
   groupLabel: string;
   /** Optional per-option counts, rendered alongside the label. */
   counts?: Record<T, number>;
+  /** Optional decorative icon rendered before each option's label. */
+  renderIcon?: (value: T | null) => ReactNode;
 }) {
   return (
     <div className="filter-pills" role="group" aria-label={groupLabel}>
@@ -52,6 +57,7 @@ export function FilterPills<T extends string>({
         aria-pressed={selected === null}
         onClick={() => onSelect(null)}
       >
+        {renderIcon?.(null)}
         {allLabel}
         {allCount !== undefined ? <span className="filter-pill__count">{allCount}</span> : null}
       </button>
@@ -63,6 +69,7 @@ export function FilterPills<T extends string>({
           aria-pressed={selected === option}
           onClick={() => onSelect(option)}
         >
+          {renderIcon?.(option)}
           {labels[option]}
           {counts ? <span className="filter-pill__count">{counts[option]}</span> : null}
         </button>

@@ -191,31 +191,35 @@ export function Analytics({
       <div className="analytics-controls">
         <div className="analytics-control-group">
           <span className="analytics-control-label">Saved in the last</span>
-          <div className="filter-pills" role="group" aria-label="Date range">
-            {RANGES.map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={`filter-pill ${range === option ? 'is-selected' : ''}`}
-                aria-pressed={range === option}
-                onClick={() => onFiltersChange(option, stage)}
-              >
-                {RANGE_LABELS[option]}
-              </button>
-            ))}
+          <div className="analytics-segmented-filter segmented-filter">
+            <div className="filter-pills" role="group" aria-label="Date range">
+              {RANGES.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={`filter-pill ${range === option ? 'is-selected' : ''}`}
+                  aria-pressed={range === option}
+                  onClick={() => onFiltersChange(option, stage)}
+                >
+                  {RANGE_LABELS[option]}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="analytics-control-group">
           <span className="analytics-control-label">Stage</span>
-          <FilterPills
-            options={STAGE_FILTERS}
-            labels={STAGE_LABELS}
-            selected={stage}
-            onSelect={(next) => onFiltersChange(range, next)}
-            groupLabel="Filter by stage"
-            counts={stageCounts}
-          />
+          <div className="analytics-segmented-filter segmented-filter">
+            <FilterPills
+              options={STAGE_FILTERS}
+              labels={STAGE_LABELS}
+              selected={stage}
+              onSelect={(next) => onFiltersChange(range, next)}
+              groupLabel="Filter by stage"
+              counts={stageCounts}
+            />
+          </div>
         </div>
 
         <div className="analytics-toggle-row">

@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Keeps `ci.yml`'s pinned action SHAs current — without this, pinning to a commit (rather than a
+  # mutable tag) would mean those SHAs go stale forever with nothing to notice a new release.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+
+  # One entry at the workspace root: Dependabot reads `pnpm-workspace.yaml` from here and covers
+  # every package under it (`apps/*`, `packages/*`), so this does not need one entry per package.
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      dependencies:
+        patterns:
+          - '*'

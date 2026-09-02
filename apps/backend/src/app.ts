@@ -83,7 +83,15 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
   app.use(
     '*',
     cors({
-      origin: ['http://localhost:5174', 'http://127.0.0.1:5174'],
+      // `PUBLIC_ORIGINS` (comma-separated) appends real deployed origins to the local-dev pair
+      // rather than replacing them — the same env var `auth.ts`'s `trustedOrigins` reads, so the two
+      // allowlists (this one for the browser's CORS check, that one for Better Auth's own origin
+      // check) can't drift out of sync on a real deploy.
+      origin: [
+        'http://localhost:5174',
+        'http://127.0.0.1:5174',
+        ...(process.env.PUBLIC_ORIGINS?.split(',').map((origin) => origin.trim()) ?? []),
+      ],
       allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
       allowHeaders: ['content-type'],
       credentials: true,

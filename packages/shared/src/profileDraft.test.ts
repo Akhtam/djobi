@@ -1,4 +1,3 @@
-import { EMPTY_PROFILE, type Profile } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
   normalizeProfileDraft,
@@ -6,7 +5,8 @@ import {
   spliceWorkBullets,
   storyTags,
   withScreeningAnswer,
-} from './profileDraft';
+} from './profileDraft.js';
+import { EMPTY_PROFILE, type Profile } from './schemas.js';
 
 const story = {
   title: '',

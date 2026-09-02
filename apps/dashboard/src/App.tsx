@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
+import { AccountMenu } from './components/AccountMenu';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
 import { useApplicationStore } from './lib/useApplicationStore';
@@ -17,6 +18,8 @@ import { ApplicationDetail } from './views/ApplicationDetail';
 import { ApplicationsList } from './views/ApplicationsList';
 import { LandingPage } from './views/LandingPage';
 import { Login } from './views/Login';
+import { Profile } from './views/Profile';
+import { SignUp } from './views/SignUp';
 
 /**
  * Whether the current URL asks for the dashboard rather than the landing page — a dashboard hash
@@ -86,7 +89,10 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     `replaceRoute` to itself.
   */
   useEffect(() => {
-    if (unauthorized && route.name !== 'login') {
+    // `signup` is excluded the same way `login` is: a fresh visitor on either page has no session
+    // yet, so the store's own load attempt 401s immediately — without this, that 401 would bounce
+    // them straight off `#/signup` to `#/login` before they could see the form.
+    if (unauthorized && route.name !== 'login' && route.name !== 'signup') {
       replaceRoute(loginPath(window.location.hash));
     }
   }, [unauthorized, route.name, replaceRoute]);
@@ -95,6 +101,24 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     await client.signIn(email, password);
     reload();
     replaceRoute(route.name === 'login' && route.from ? route.from : '#/');
+  }
+
+  async function handleSignUp(email: string, password: string, name: string) {
+    await client.signUp(email, password, name);
+    reload();
+    replaceRoute('#/');
+  }
+
+  /*
+    `reportUnauthorized` (not a direct `replaceRoute`) does double duty: it's the same flag the
+    store sets on a real 401, and the effect above already turns that into the `#/login` redirect —
+    one path for "session is gone" regardless of who noticed first. `client.signOut()` is
+    fire-and-forget-ish (awaited, but its failure doesn't block leaving): the local session is over
+    either way once the user asked to leave, cookie-clearing response or not.
+  */
+  async function handleSignOut() {
+    await client.signOut();
+    reportUnauthorized();
   }
 
   const handleUnauthorized = useCallback(() => {
@@ -170,6 +194,14 @@ function DashboardApp({ client }: { client: DashboardClient }) {
             </a>
           </nav>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          {/*
+            Hidden on `login`/`signup`: those routes render before a session exists (a fresh
+            visitor's own load 401s immediately, same reasoning as the redirect effect above), so
+            an account menu there would act on a session that isn't there yet.
+          */}
+          {route.name !== 'login' && route.name !== 'signup' ? (
+            <AccountMenu client={client} onSignOut={() => void handleSignOut()} />
+          ) : null}
         </div>
       </header>
 
@@ -187,6 +219,14 @@ function DashboardApp({ client }: { client: DashboardClient }) {
         <main>
           {route.name === 'login' ? (
             <Login onSignIn={handleSignIn} />
+          ) : route.name === 'signup' ? (
+            <SignUp onSignUp={handleSignUp} />
+          ) : route.name === 'profile' ? (
+            <Profile
+              getProfile={client.getProfile}
+              saveProfile={client.saveProfile}
+              onUnauthorized={handleUnauthorized}
+            />
           ) : loading ? (
             <p className="empty-state">Loading applications…</p>
           ) : loadError ? (

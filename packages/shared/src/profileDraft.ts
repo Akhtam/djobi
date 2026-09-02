@@ -1,4 +1,5 @@
-import type { Profile, ScreeningAnswers, ScreeningTopic, WorkExperience } from '@djobi/shared';
+import type { Profile, WorkExperience } from './schemas.js';
+import type { ScreeningAnswers, ScreeningTopic } from './screeningAnswers.js';
 
 /** Omits a cleared answer instead of storing an answered-but-empty topic. */
 export function withScreeningAnswer(

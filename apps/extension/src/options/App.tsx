@@ -5,7 +5,17 @@
  * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
  * named.
  */
-import { EMPTY_PROFILE, parseProfile, SCREENING_TOPICS, type Profile } from '@djobi/shared';
+import {
+  EMPTY_PROFILE,
+  normalizeProfileDraft,
+  optionalText,
+  parseProfile,
+  SCREENING_TOPICS,
+  spliceWorkBullets,
+  storyTags,
+  withScreeningAnswer,
+  type Profile,
+} from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
@@ -13,13 +23,6 @@ import type { BackendClient } from '../lib/backendClient';
 import { HttpError } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { Login } from './Login';
-import {
-  normalizeProfileDraft,
-  optionalText,
-  spliceWorkBullets,
-  storyTags,
-  withScreeningAnswer,
-} from './profileDraft';
 
 /** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
 function isUnauthorized(err: unknown): boolean {
@@ -188,6 +191,16 @@ export function App({ client }: { client: BackendClient }) {
     setReloadToken((token) => token + 1);
   }
 
+  /*
+    `setUnauthorized(true)` directly, not another `reloadToken` bump: bumping would re-run the fetch
+    effect and let its own 401 discover the session is gone, but the session is already known gone
+    here — the whole point of asking to sign out — so there's nothing to round-trip for.
+  */
+  async function handleSignOut() {
+    await client.signOut();
+    setUnauthorized(true);
+  }
+
   if (unauthorized) {
     return <Login onSignIn={handleSignIn} />;
   }
@@ -270,7 +283,12 @@ export function App({ client }: { client: BackendClient }) {
             <p className="subtitle">Profile</p>
           </div>
         </div>
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        <div className="header-actions">
+          <button type="button" className="btn-secondary" onClick={handleSignOut}>
+            Sign out
+          </button>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
       </header>
       <section className="profile-intro" aria-labelledby="profile-title">
         <div>

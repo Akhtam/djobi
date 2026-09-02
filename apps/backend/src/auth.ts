@@ -56,10 +56,14 @@ function createAuth() {
     // unpinned dev build gets a fresh random id every reload, which no static allowlist entry could
     // ever match. Without this the extension's sign-in gets a 403 `Invalid origin` before it ever
     // reaches Better Auth's own credential check.
+    // `PUBLIC_ORIGINS` (comma-separated) appends real deployed origins to the local-dev list rather
+    // than replacing it, so a production dashboard domain has somewhere to be configured without
+    // breaking `pnpm dev`. Unset in dev, where the two localhost origins below are all that's needed.
     trustedOrigins: [
       'http://localhost:5174',
       'http://127.0.0.1:5174',
       'chrome-extension://fgfmcenbbggfhbddflgfoehjahnbimkg',
+      ...(process.env.PUBLIC_ORIGINS?.split(',').map((origin) => origin.trim()) ?? []),
     ],
     // Better Auth's own default id is a random base62 string, which a `uuid` column rejects outright
     // — every table it owns (`users`, `session`, `account`, `verification`) is `uuid` in
@@ -68,26 +72,63 @@ function createAuth() {
       database: {
         generateId: 'uuid',
       },
-      // `vite.config.ts`'s dev-server `proxy` makes the dashboard same-origin with this backend (see
-      // `dashboardClient.ts`'s `transport` comment), so the session cookie is same-site and Better
-      // Auth's own default (`SameSite=Lax`) is sent back on every `fetch` without an override.
-      // `Secure` is left off deliberately: `localhost`/`127.0.0.1` are secure contexts in Chrome and
-      // Firefox even over plain `http`, but Safari refuses to store a `Secure` cookie on an `http://`
-      // origin at all — sign-in would 200 and the very next request would 401, the exact symptom the
-      // proxy was added to fix. Nothing here forces TLS locally, so this stays correct with none.
+      // `vite.config.ts`'s dev-server `proxy` makes the dashboard same-origin with this backend in
+      // local dev, so `SameSite=Lax` (Better Auth's own default) is sent back on every `fetch`
+      // without an override there. In production the dashboard and this backend are deliberately
+      // different origins (`PUBLIC_ORIGINS`), which makes every dashboard `fetch` call a cross-site
+      // subresource request — a `Lax` cookie is withheld from those by the browser, so every
+      // authenticated request would 401 right after sign-in. `sameSite: 'none'` is required for that
+      // topology and is safe only paired with `Secure`, which is also gated on `NODE_ENV ===
+      // 'production'` below (browsers reject `SameSite=None` without `Secure`).
+      // `Secure` is left off deliberately in dev: `localhost`/`127.0.0.1` are secure contexts in
+      // Chrome and Firefox even over plain `http`, but Safari refuses to store a `Secure` cookie on an
+      // `http://` origin at all — sign-in would 200 and the very next request would 401, the exact
+      // symptom the proxy was added to fix. Nothing here forces TLS locally, so this stays correct
+      // with none. `secure: true` only once actually deployed — a real public origin serves this
+      // backend over TLS, and a cookie without `Secure` on that origin would still work but travel in
+      // the clear. `NODE_ENV` (not `PUBLIC_ORIGINS`) gates this because it must stay off for `pnpm
+      // test`/local dev over plain `http://` regardless of what env vars happen to be set.
       defaultCookieAttributes: {
-        sameSite: 'lax',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: process.env.NODE_ENV === 'production',
       },
     },
     user: {
       modelName: 'users',
     },
+    // Better Auth's own limiter — no extra dependency needed, and `enabled` is left on Better Auth's
+    // own default (on outside test/dev, i.e. effectively `NODE_ENV === 'production'`) rather than
+    // forced on here: this backend's own test suite calls `/sign-up/email` and `/sign-in/email`
+    // several times in quick succession against one shared in-memory auth instance, which a
+    // universally-enabled limiter would start rejecting with 429s that have nothing to do with the
+    // behavior under test. Sign-in/sign-up/change-password already get a tighter built-in budget than
+    // the general default below once enabled (10s window, 3 requests — see Better Auth's
+    // `getDefaultSpecialRules`), which is exactly the credential-stuffing/spam-account protection
+    // this needed; not overridden with `customRules` here, since a looser custom rule on those paths
+    // would replace that stricter default rather than add to it. The default store is in-memory,
+    // which is fine for one backend process and would need a shared store (Redis, or Better Auth's
+    // database-backed option) the moment this runs as more than one instance — flagged, not solved
+    // here.
+    rateLimit: {
+      window: 60,
+      max: 100,
+    },
+    // No explicit policy before this was silently "whatever Better Auth defaults to." Stated here so
+    // it's a reviewed decision: a week-long session with a daily rolling renewal on activity.
+    session: {
+      expiresIn: 60 * 60 * 24 * 7,
+      updateAge: 60 * 60 * 24,
+    },
     emailAndPassword: {
       enabled: true,
-      // No email delivery provider wired up yet — a personal-scale tool starting with exactly one
-      // account doesn't need one to be useful. Revisit once signup is public
-      // (`docs/multi-tenant-auth.md` Phase F already lists the pieces public launch needs).
+      // No email delivery provider wired up yet — public signup accepts an unverified address today.
+      // Revisit once a provider (Resend/SES/etc.) is chosen; flipping this on with none configured
+      // breaks sign-up outright rather than securing it.
       requireEmailVerification: false,
+      // Pinned rather than left to Better Auth's own default so a future Better Auth upgrade can't
+      // silently loosen it. Mirrored client-side by `SignUpRequestSchema` (`@djobi/shared`) so a
+      // too-short password is rejected before the round trip, not just here.
+      minPasswordLength: 8,
     },
     socialProviders: {
       google: {

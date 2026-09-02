@@ -66,6 +66,28 @@ export const SignOutResultSchema = z.object({ success: z.boolean() });
 /** Inferred type of {@link SignOutResultSchema}. */
 export type SignOutResult = z.infer<typeof SignOutResultSchema>;
 
+/**
+ * Body of `POST /api/auth/sign-up/email` — Better Auth's own route, named here for the same reason
+ * {@link SignInRequestSchema} is. `password.min(8)` mirrors `auth.ts`'s `emailAndPassword.
+ * minPasswordLength` so a too-short password is rejected client-side before the round trip, not
+ * just server-side — the two are pinned to the same number rather than one deriving from the other,
+ * since nothing here can import a backend module.
+ */
+export const SignUpRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  name: z.string().min(1),
+});
+/** Inferred type of {@link SignUpRequestSchema}. */
+export type SignUpRequest = z.infer<typeof SignUpRequestSchema>;
+
+/** The fields of Better Auth's sign-up response this app actually reads — see {@link SignInResultSchema}. */
+export const SignUpResultSchema = z.object({
+  user: z.object({ id: z.string(), email: z.string() }),
+});
+/** Inferred type of {@link SignUpResultSchema}. */
+export type SignUpResult = z.infer<typeof SignUpResultSchema>;
+
 /** A question as detected on the page, before it's known who will answer it. */
 export const PendingQuestionSchema = z.object({
   fieldId: z.string(),

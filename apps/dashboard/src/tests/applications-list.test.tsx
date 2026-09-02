@@ -51,6 +51,14 @@ describe('applications list', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows an icon for every stage filter', async () => {
+    renderDashboard();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    const filters = screen.getByRole('group', { name: 'Filter by stage' });
+    expect(filters.querySelectorAll('.filter-pill__icon')).toHaveLength(6);
+  });
+
   it('shows both kinds of rejection under the one Rejected pill', async () => {
     // There is no ATS-only pill by design. The kind still shows on each row's stage badge.
     const { user } = renderDashboard();
@@ -158,8 +166,10 @@ describe('applications list', () => {
 
     expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE);
     expect(screen.queryByRole('link', { name: `Engineer ${PAGE_SIZE}` })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Load 5 more' })).toBeInTheDocument();
-    expect(screen.getByText(`Showing ${PAGE_SIZE} of ${PAGE_SIZE + 5}`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
+    expect(
+      screen.getByText(`Showing ${PAGE_SIZE} of ${PAGE_SIZE + 5} applications`),
+    ).toBeInTheDocument();
   });
 
   it('keeps what is already on screen when more is loaded', async () => {
@@ -168,7 +178,7 @@ describe('applications list', () => {
     });
     await screen.findByRole('link', { name: 'Engineer 0' });
 
-    await user.click(screen.getByRole('button', { name: 'Load 5 more' }));
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
 
     // The point of Load more over paging: the first batch does not go anywhere.
     expect(screen.getByRole('link', { name: 'Engineer 0' })).toBeInTheDocument();
@@ -190,7 +200,7 @@ describe('applications list', () => {
     });
     await screen.findByRole('link', { name: 'Engineer 0' });
 
-    await user.click(screen.getByRole('button', { name: `Load ${PAGE_SIZE} more` }));
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
     await user.click(screen.getByRole('link', { name: `Engineer ${PAGE_SIZE}` }));
     await user.click(await screen.findByRole('link', { name: '← Applications' }));
 
@@ -223,7 +233,7 @@ describe('applications list', () => {
     });
     await screen.findByRole('link', { name: 'Engineer 0' });
 
-    await user.click(screen.getByRole('button', { name: `Load ${PAGE_SIZE} more` }));
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
     await user.type(screen.getByRole('searchbox', { name: 'Search company or role' }), 'engineer');
 
     expect(screen.getAllByRole('link', { name: /^Engineer/ })).toHaveLength(PAGE_SIZE);

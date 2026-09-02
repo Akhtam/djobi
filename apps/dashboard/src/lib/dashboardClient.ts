@@ -30,9 +30,12 @@ import {
   type Note,
   type Profile,
   ProfileSchema,
+  type SaveProfileRequest,
   type SignInRequest,
   SignInResultSchema,
   SignOutResultSchema,
+  type SignUpRequest,
+  SignUpResultSchema,
   type UpdateApplicationStageRequest,
   UpdateApplicationStageResultSchema,
   type UpdateApplicationStageResult,
@@ -71,12 +74,20 @@ export interface DashboardClient {
    * coverage report, so the list and detail views must not start paying for it.
    */
   getProfile(): Promise<Profile | null>;
+  /** Persists the full Profile and returns the authoritative saved row. */
+  saveProfile(profile: Profile): Promise<Profile>;
   /**
    * Establishes a session — the httpOnly cookie Better Auth's response sets — or rejects with an
    * `HttpError` (401 on bad credentials). Resolves to nothing: the caller doesn't need the user
    * record back, only whether it can now make authenticated requests.
    */
   signIn(email: string, password: string): Promise<void>;
+  /**
+   * Creates a new account and establishes a session for it in the same call — Better Auth's
+   * `/sign-up/email` sets the same session cookie `/sign-in/email` does, so a fresh sign-up lands
+   * the candidate straight in the dashboard rather than requiring a second sign-in.
+   */
+  signUp(email: string, password: string, name: string): Promise<void>;
   /** Ends the session. */
   signOut(): Promise<void>;
 }
@@ -85,7 +96,7 @@ export interface DashboardClient {
  * The backend's real origin — used only to name it in {@link transport}'s `unreachableMessage`, not
  * as the transport's `baseUrl`. See that constant for why the two are no longer the same value.
  */
-const BACKEND_ORIGIN = 'http://127.0.0.1:5391';
+const BACKEND_ORIGIN = import.meta.env.VITE_BACKEND_ORIGIN ?? 'http://127.0.0.1:5391';
 
 /**
  * The protocol — deadline, status-before-parse, error-body extraction, schema validation — comes
@@ -160,10 +171,23 @@ export const httpDashboardClient: DashboardClient = {
 
   getProfile: () => transport.json('/profile', MaybeProfileSchema),
 
+  saveProfile: (profile) =>
+    transport.json('/profile', ProfileSchema, {
+      method: 'POST',
+      body: profile satisfies SaveProfileRequest,
+    }),
+
   signIn: async (email, password) => {
     await transport.json('/api/auth/sign-in/email', SignInResultSchema, {
       method: 'POST',
       body: { email, password } satisfies SignInRequest,
+    });
+  },
+
+  signUp: async (email, password, name) => {
+    await transport.json('/api/auth/sign-up/email', SignUpResultSchema, {
+      method: 'POST',
+      body: { email, password, name } satisfies SignUpRequest,
     });
   },
 
@@ -215,11 +239,17 @@ export function createFixtureDashboardClient(
 ): DashboardClient {
   const { signedIn = true, email = FIXTURE_EMAIL, password = FIXTURE_PASSWORD } = auth;
   let applications: Application[] = structuredClone(seed);
+  let currentProfile: Profile | null = profile;
   // Every other piece of state here (`applications`, `profile`) is scoped to one fixture instance,
   // matching one browser holding one cookie — the same reason it is a closure variable rather than
   // module-level: two tests must not be able to see each other's session any more than two browsers
   // sharing a fixture would share each other's applications.
   let hasSession = signedIn;
+  // The one account this fixture will accept a sign-up for, so a test can drive the whole sign-up
+  // flow without a second `FixtureAuthOptions` shape — signing up simply reassigns `email`/`password`
+  // to whatever the form submitted, exactly as a real account creation would.
+  let currentEmail = email;
+  let currentPassword = password;
 
   /**
    * `requireAuth()`'s own answer, reproduced here: `app.ts` puts every route this client calls
@@ -330,11 +360,17 @@ export function createFixtureDashboardClient(
 
     getProfile: () => {
       if (!hasSession) return unauthorized('/profile');
-      return Promise.resolve(profile ? structuredClone(profile) : null);
+      return Promise.resolve(currentProfile ? structuredClone(currentProfile) : null);
+    },
+
+    saveProfile: (next) => {
+      if (!hasSession) return unauthorized('/profile');
+      currentProfile = structuredClone(next);
+      return Promise.resolve(structuredClone(currentProfile));
     },
 
     signIn: (attemptedEmail, attemptedPassword) => {
-      if (attemptedEmail === email && attemptedPassword === password) {
+      if (attemptedEmail === currentEmail && attemptedPassword === currentPassword) {
         hasSession = true;
         return Promise.resolve();
       }
@@ -346,6 +382,13 @@ export function createFixtureDashboardClient(
           401,
         ),
       );
+    },
+
+    signUp: (newEmail, newPassword) => {
+      currentEmail = newEmail;
+      currentPassword = newPassword;
+      hasSession = true;
+      return Promise.resolve();
     },
 
     signOut: () => {

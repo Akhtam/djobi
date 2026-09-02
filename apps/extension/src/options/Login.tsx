@@ -2,7 +2,8 @@
  * The sign-in view for the options page — `docs/multi-tenant-auth.md` Phase D.
  *
  * Email/password only, the same reasoning `apps/dashboard`'s `Login` gives: Better Auth is
- * configured for it and there is exactly one account today. No sign-up form here either.
+ * configured for it. No sign-up form here — an account is created via the dashboard's public
+ * sign-up flow (`docs/multi-tenant-auth.md`), not from the extension.
  */
 import { useState, type FormEvent } from 'react';
 import icon48 from '../assets/icons/icon48.png';

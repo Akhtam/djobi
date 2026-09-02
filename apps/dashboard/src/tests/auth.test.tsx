@@ -50,4 +50,41 @@ describe('auth', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
     expect(window.location.hash).toBe('#/login?from=%23%2F');
   });
+
+  it('links from #/login to #/signup and back', async () => {
+    const { user } = renderDashboard({ client: signedOutClient(), hash: '#/login' });
+    await screen.findByRole('heading', { name: 'Sign in' });
+
+    await user.click(screen.getByRole('link', { name: 'Create one' }));
+    expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: 'Sign in' }));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  it('creates an account and lands signed in on the applications list', async () => {
+    const { user } = renderDashboard({ client: signedOutClient(), hash: '#/signup' });
+    await screen.findByRole('heading', { name: 'Create an account' });
+
+    await user.type(screen.getByLabelText('Name'), 'Jane Doe');
+    await user.type(screen.getByLabelText('Email'), 'newperson@example.com');
+    await user.type(screen.getByLabelText('Password'), 'a robust new password');
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(window.location.hash).toBe('#/'));
+    expect(await screen.findByText(fixtureApplications[0].roleTitle)).toBeInTheDocument();
+  });
+
+  it('rejects a too-short password before submitting', async () => {
+    const { user } = renderDashboard({ client: signedOutClient(), hash: '#/signup' });
+    await screen.findByRole('heading', { name: 'Create an account' });
+
+    await user.type(screen.getByLabelText('Name'), 'Jane Doe');
+    await user.type(screen.getByLabelText('Email'), 'newperson@example.com');
+    await user.type(screen.getByLabelText('Password'), 'short1');
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/signup');
+  });
 });

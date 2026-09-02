@@ -12,6 +12,7 @@ import type { Application, ApplicationStage, NewApplicationRequest } from '@djob
 import { countByOption, FilterPills } from '../components/FilterPills';
 import { PostingLink } from '../components/PostingLink';
 import { StageSelect } from '../components/StageSelect';
+import { stageFilterIcon } from '../components/StageFilterIcon';
 import { formatDate } from '../lib/format';
 import type { DashboardClient } from '../lib/dashboardClient';
 import { IN_PROGRESS_STAGES, STAGE_FILTERS, STAGE_LABELS, stageFilterOf } from '../lib/stages';
@@ -144,7 +145,7 @@ export function ApplicationsList({
             onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
           />
         </label>
-        <div className="list-stage-filters">
+        <div className="list-stage-filters segmented-filter">
           <FilterPills
             options={STAGE_FILTERS}
             labels={STAGE_LABELS}
@@ -153,6 +154,7 @@ export function ApplicationsList({
             groupLabel="Filter by stage"
             counts={counts}
             allCount={searchMatches.length}
+            renderIcon={stageFilterIcon}
           />
         </div>
       </div>
@@ -234,24 +236,15 @@ export function ApplicationsList({
 
       {remaining > 0 && (
         <div className="load-more">
-          {/*
-            The count is on the button itself, not in separate helper text: it is the answer to
-            "is it worth pressing", and a number that lives next to the label cannot drift from it.
-          */}
           <button
             type="button"
             className="button load-more__button"
             onClick={() => onShowMore(visibleNow.length + PAGE_SIZE)}
           >
-            Load {Math.min(remaining, PAGE_SIZE)} more
+            Load more
           </button>
-          {/*
-            Announced politely so a screen reader hears the list grow. `aria-live` on a region that
-            already exists at first render, rather than one that appears with the first press —
-            a live region inserted at the same moment as its content is not reliably announced.
-          */}
           <p className="load-more__status" role="status">
-            Showing {visibleNow.length} of {visible.length}
+            Showing {visibleNow.length} of {visible.length} applications
           </p>
         </div>
       )}

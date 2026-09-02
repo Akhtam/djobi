@@ -183,7 +183,9 @@ describe('failures', () => {
         updateStage: () => Promise.reject(new Error('unused')),
         addNote: () => Promise.reject(new Error('unused')),
         getProfile: () => Promise.reject(new Error('unused')),
+        saveProfile: () => Promise.reject(new Error('unused')),
         signIn: () => Promise.reject(new Error('unused')),
+        signUp: () => Promise.reject(new Error('unused')),
         signOut: () => Promise.reject(new Error('unused')),
       },
     });

@@ -1,11 +1,18 @@
 # Multi-tenant authentication — design and roadmap
 
-> **Status: Phases A–D complete (2026-09-01), email/password only.** Ownership, Better Auth session
-> verification, dashboard login, and extension login are all implemented and tested — see the
-> checklists below. Google/GitHub OAuth (part of the original Phase B and D plans) is deferred until
-> a provider is actually registered; only email/password works today, for one real account. Phases E–F
-> (cost control, pre-public hardening) are not started. ADR 0001 (single Cloudflare Worker) is
-> explicitly _not_ assumed here.
+> **Status (2026-09-01): this is a public product, not a single-tenant tool.** Phases A–D
+> (ownership, Better Auth session verification, dashboard login, extension login) are complete.
+> Phase C now also covers public sign-up: `#/signup` in the dashboard, backed by the same
+> `/api/auth/sign-up/email` route that used to be reachable only by hand. Google/GitHub OAuth (part
+> of the original Phase B and D plans) is still deferred until a provider is actually registered —
+> only email/password works today. Most of Phase F (rate limiting, configurable CORS/trusted
+> origins, a `Secure` session cookie in production, configurable backend origins for both clients)
+> is done; account deletion and a privacy policy are not, though the schema now supports the former
+> cleanly (cascade deletes, see Phase A below). **Phase E (LLM cost control) is intentionally
+> unsettled** — see that section: this product is meant to fund model calls the way any subscription
+> SaaS funds its own infrastructure, but the concrete mechanism (BYOK vs. quotas vs. billing-gated
+> access) is a decision for a later session, not resolved here. ADR 0001 (single Cloudflare Worker)
+> is explicitly _not_ assumed here.
 >
 > The file/module names below were corrected on the 2026-09-01 pass — the repo has moved since this
 > was written (Phases 12–19 landed in between) and a few names in the original plan no longer exist.
@@ -131,8 +138,15 @@ Two workable answers:
   server-side before the call. Better onboarding, real money at risk, and quota accounting is its own
   small system.
 
-Settle this before Phase B. It changes whether `llm/client.ts` is refactored and whether the options
-page grows a key field.
+**Deliberately unsettled as of 2026-09-01.** Earlier revisions of this doc said "settle this before
+Phase B" — Phase B has since shipped without it, and signup is now public regardless. The intent
+going forward is a subscription-funded product, the same shape as any SaaS: the operator pays
+OpenRouter and users pay the operator, rather than each user supplying their own key. That still
+leaves real open questions this doc does not answer — how billing gates access, whether there's a
+free tier and what its ceiling is, whether quotas exist even for paying users — and none of them are
+implemented. Until one of them is, every signed-up user still draws on the one shared
+`OPENROUTER_API_KEY` with no ceiling at all. Treat this exactly as seriously as the original
+wording did: it is not hardening to do later, it is an open bill with no upper bound today.
 
 ## Phases
 
@@ -204,6 +218,16 @@ both now fixed: the pending `0009`/`0010` migrations had never been applied to t
 silently drops as a third-party cookie on the cross-origin dashboard↔backend calls — fixed by a
 same-origin Vite dev proxy (`apps/dashboard/vite.config.ts`) rather than a cookie-attribute patch.
 
+**Sign-up (2026-09-01):** the dashboard grew a real `#/signup` view (`views/SignUp.tsx`), linked
+from `#/login` and back. It posts straight to `/api/auth/sign-up/email` — the same route the
+one-off bootstrap sign-up used by hand — through a new `DashboardClient.signUp`
+(`lib/dashboardClient.ts`), and lands the caller signed in immediately, the same as `signIn` does,
+since Better Auth's sign-up response sets the same session cookie. Client-side validation goes
+through a new `SignUpRequestSchema` (`@djobi/shared`), pinned to the same `minPasswordLength: 8` as
+`auth.ts`'s `emailAndPassword` config, so a too-short password is rejected before the round trip.
+The extension gets no sign-up form — it remains a companion to an account created on the public
+dashboard, not a second place to create one.
+
 ### Phase D — Extension login — done except OAuth
 
 **Scoped down from the original OAuth/PKCE plan below to email/password**, matching Phase B/C: neither
@@ -235,20 +259,40 @@ OAuth items below are kept as the documented follow-up once a provider is regist
 
 ### Phase E — Cost control
 
-- [ ] Whichever of BYOK or quotas was settled above
-- [ ] If BYOK: `llm/client.ts` becomes a per-request client; encrypt keys at rest; never return a
-      stored key to any client, not even masked to its owner
-- [ ] If quotas: server-side counting enforced before the model call, not after
+**Not started; genuinely open, not just unimplemented.** See "The thing that will bite you" above —
+this is a real gate, not a checklist to defer indefinitely.
+
+- [ ] Decide the concrete mechanism: subscription/billing gate, BYOK, per-user quotas, or some
+      combination (e.g. a free-tier quota plus a paid tier with a higher one)
+- [ ] Whatever is decided, enforced server-side before the model call, not after
+- [ ] If BYOK is part of the answer: `llm/client.ts` becomes a per-request client; encrypt keys at
+      rest; never return a stored key to any client, not even masked to its owner
 
 ### Phase F — Before it is public
 
-- [ ] Rate limiting on the auth routes and the three model routes
-- [ ] CORS allowlist moves from the hardcoded localhost pair to real configured origins
-- [ ] The hardcoded `BACKEND_ORIGIN` in `callBackend.ts`, `dashboardClient.ts` and the manifest host
-      permission becomes build-time config
-- [ ] Account deletion that actually deletes — profile, applications, notes
+- [x] Rate limiting on the auth routes — Better Auth's own limiter, configured in `auth.ts`
+      (`rateLimit`), with sign-in/sign-up already getting its own tighter built-in budget (10s
+      window, 3 requests) than the general default. **Not yet done for the three model routes** —
+      those still have no per-request ceiling of their own, separate from Phase E's billing question
+- [x] CORS allowlist moves from the hardcoded localhost pair to real configured origins —
+      `PUBLIC_ORIGINS` (comma-separated) extends both `app.ts`'s CORS `origin` list and `auth.ts`'s
+      `trustedOrigins`, appended to (not replacing) the local-dev pair
+- [x] Session cookie gets `secure: true` once `NODE_ENV === 'production'` (`auth.ts`) — off for
+      local `http://` dev, on for a real deploy over TLS
+- [x] The hardcoded `BACKEND_ORIGIN` in `dashboardClient.ts` and `EXTENSION_BACKEND_ORIGIN` in
+      `extensionConfig.ts` both read `VITE_BACKEND_ORIGIN` at build time now (documented in each
+      app's `.env.example`), falling back to the same localhost default so nothing changes locally
+- [ ] Account deletion that actually deletes — profile, applications, notes. The schema now supports
+      this cleanly (`profiles`/`applications` FKs gained `ON DELETE cascade` in migration `0011`, so
+      deleting a `users` row cascades instead of hitting a raw FK violation), but no route or UI
+      exists yet
 - [ ] A privacy policy, given what the Profile stores. Required by the Chrome Web Store for an
       extension handling personal data, and true regardless
+- [ ] CI-automated migrations — nothing runs `db:migrate` on deploy today; `pnpm db:migrate` is still
+      a manual step, and this has already caused a real incident once (see Phase C's postmortem
+      above)
+- [ ] Email verification and password reset — `requireEmailVerification` stays `false`; no
+      email-sending provider (Resend/SES/etc.) exists in the repo yet to build either on
 
 ## Not doing
 

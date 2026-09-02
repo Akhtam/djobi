@@ -10,6 +10,8 @@
  * - `bulletProvenance.ts` — which Profile sentence each Tailored Resume bullet most likely came from.
  * - `jobKey.ts` — the URL identity of a job posting, shared by draft scoping and the Duplicate Guard.
  * - `screeningAnswers.ts` / `preparedAnswers.ts` — the facts a Profile answers without a model.
+ * - `profileDraft.ts` — normalizing a Profile edited as a form (dashboard and extension both edit
+ *   one) into the shape persisted by the backend.
  */
 /**
  * The zod builder and type vocabulary, re-exported so consumers compose the shared schemas without
@@ -32,3 +34,4 @@ export * from './jobKey.js';
 export * from './screeningAnswers.js';
 export * from './preparedAnswers.js';
 export * from './failureMessage.js';
+export * from './profileDraft.js';

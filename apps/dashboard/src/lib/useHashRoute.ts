@@ -66,7 +66,12 @@ export type AnalyticsRoute = { name: 'analytics'; range: Range; stage: StageFilt
  * directly, or a fresh document that redirected before any other route had rendered.
  */
 export type LoginRoute = { name: 'login'; from: string | null };
-export type Route = ListRoute | DetailRoute | AnalyticsRoute | LoginRoute;
+/** The sign-up view. No `from`: a fresh account has nowhere to return to but the list. */
+export type SignUpRoute = { name: 'signup' };
+/** The account-profile editor — the same Profile the extension edits, reachable from the header. */
+export type ProfileRoute = { name: 'profile' };
+export type Route =
+  ListRoute | DetailRoute | AnalyticsRoute | LoginRoute | SignUpRoute | ProfileRoute;
 
 /** A valid {@link Range}, or `null` for anything else — the same shape `stageFilterOf` answers in. */
 function rangeOf(value: string | null): Range | null {
@@ -109,6 +114,14 @@ export function parseHash(hash: string): Route {
 
   if (path === '#/login') {
     return { name: 'login', from: params.get('from') };
+  }
+
+  if (path === '#/signup') {
+    return { name: 'signup' };
+  }
+
+  if (path === '#/profile') {
+    return { name: 'profile' };
   }
 
   if (path === '#/analytics') {
@@ -174,6 +187,16 @@ export function loginPath(from?: string | null): string {
   if (!from) return '#/login';
   const params = new URLSearchParams({ from });
   return `#/login?${params.toString()}`;
+}
+
+/** The path to the sign-up view. */
+export function signUpPath(): string {
+  return '#/signup';
+}
+
+/** The path to the account-profile editor. */
+export function profilePath(): string {
+  return '#/profile';
 }
 
 export interface HashRoute {

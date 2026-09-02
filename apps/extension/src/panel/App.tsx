@@ -86,6 +86,16 @@ export function App({ client }: { client: BackendClient }) {
       });
   }
 
+  /*
+    Reruns `loadProfile()` rather than setting some dedicated "signed out" state: its 401 branch
+    already exists (`profileError`, pointing at "Open profile settings" — the one surface with a
+    real Login gate), so ending the session here needs no new state, just the same path a session
+    that merely expired already takes.
+  */
+  function handleSignOut() {
+    void client.signOut().then(loadProfile);
+  }
+
   useEffect(() => {
     loadProfile();
     return () => {
@@ -122,7 +132,14 @@ export function App({ client }: { client: BackendClient }) {
             {pill.label}
           </span>
         )}
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        <div className="header-actions">
+          {profile && (
+            <button type="button" className="btn-secondary" onClick={handleSignOut}>
+              Sign out
+            </button>
+          )}
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
       </header>
 
       {bootstrap === 'loading' && (

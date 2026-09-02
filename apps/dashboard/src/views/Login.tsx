@@ -1,12 +1,13 @@
 /**
  * The sign-in view — `#/login`, `docs/multi-tenant-auth.md` Phase C.
  *
- * Email/password only: Better Auth is configured for it (`apps/backend/src/auth.ts`), and there is
- * exactly one real account today. No sign-up form here on purpose — creating accounts is an
- * operator action, not something this view needs to offer.
+ * Email/password only: Better Auth is configured for it (`apps/backend/src/auth.ts`), and neither
+ * Google nor GitHub has real credentials registered yet. `SignUp.tsx` (`#/signup`) is the
+ * counterpart — signup is public now, not an operator-only action.
  */
 import { useState, type FormEvent } from 'react';
 import { failureMessage } from '@djobi/shared';
+import { signUpPath } from '../lib/useHashRoute';
 
 export function Login({
   onSignIn,
@@ -72,6 +73,10 @@ export function Login({
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
+
+      <p className="login-alt">
+        Don’t have an account? <a href={signUpPath()}>Create one</a>
+      </p>
     </div>
   );
 }
