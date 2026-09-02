@@ -6,6 +6,7 @@ import {
   type PipelineStatus,
   type RunStep,
   isBusy,
+  panelEditsOf,
   STEP_STATUS,
 } from '../lib/run';
 import { getPipelineRun, subscribePipelineRun } from '../lib/tabStore/pipelineRun';
@@ -113,17 +114,6 @@ export interface PipelineRunHandle {
   ) => void;
 }
 
-/** The subset this hook is allowed to write — see the ownership note on {@link PipelineRunHandle}. */
-function editsOf(
-  run: PipelineRunState,
-): Pick<PipelineRunState, 'answers' | 'jobDescription' | 'tailoredResume'> {
-  return {
-    answers: run.answers,
-    jobDescription: run.jobDescription,
-    tailoredResume: run.tailoredResume,
-  };
-}
-
 /**
  * Whether a storage event is the background answering for the step an optimistic status was raised
  * for — which is when that status has served its purpose and should stand down.
@@ -219,7 +209,7 @@ export function usePipelineRun(
     void getPipelineRun(tabId).then((stored) => {
       // A scope change or newer storage event must not let this older snapshot replace live state.
       if (!current || revision !== revisionRef.current) return;
-      if (stored) lastSyncedEditsRef.current = JSON.stringify(editsOf(stored));
+      if (stored) lastSyncedEditsRef.current = JSON.stringify(panelEditsOf(stored));
       setRun(stored);
     });
 
@@ -237,7 +227,7 @@ export function usePipelineRun(
 
     return subscribePipelineRun(tabId, ({ current: incoming, progressMoved, pageStateMoved }) => {
       ++revisionRef.current;
-      const incomingEdits = incoming ? JSON.stringify(editsOf(incoming)) : null;
+      const incomingEdits = incoming ? JSON.stringify(panelEditsOf(incoming)) : null;
       const pendingEdits = pendingEditsRef.current;
       // The oldest send this echo could be answering. Oldest rather than any, because an undo can
       // repeat an earlier value verbatim and the queue drains in the order it was filled.
@@ -255,7 +245,7 @@ export function usePipelineRun(
           pendingEdits.length > 0 &&
           !caughtUp
         ) {
-          return { ...incoming, ...editsOf(currentRun) };
+          return { ...incoming, ...panelEditsOf(currentRun) };
         }
         return incoming;
       });
@@ -289,12 +279,12 @@ export function usePipelineRun(
       const merged = { ...run, ...edits };
       setRun(merged);
 
-      // `editsOf(merged)` — not `edits` directly — so this always carries the same shape an incoming
-      // echo's `editsOf(incoming)` will, tailoredResume included even when this particular call didn't
-      // touch it. Serializing `edits` as sent would drop tailoredResume from that comparison whenever
-      // an answers-only edit omitted it, and the echo for the *next* resume edit would then never be
-      // recognized as this hook's own — leaving it "pending" forever.
-      const serialized = JSON.stringify(editsOf(merged));
+      // `panelEditsOf(merged)` — not `edits` directly — so this always carries the same shape an
+      // incoming echo's `panelEditsOf(incoming)` will, tailoredResume included even when this
+      // particular call didn't touch it. Serializing `edits` as sent would drop tailoredResume from
+      // that comparison whenever an answers-only edit omitted it, and the echo for the *next* resume
+      // edit would then never be recognized as this hook's own — leaving it "pending" forever.
+      const serialized = JSON.stringify(panelEditsOf(merged));
       // An undo can equal the last server echo while a different local edit is still pending. It
       // must still be sent, otherwise that older pending edit eventually wins on the server.
       if (

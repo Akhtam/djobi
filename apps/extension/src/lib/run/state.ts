@@ -130,3 +130,33 @@ export type AnalyzedRun = PipelineRunState & {
 export function asAnalyzedRun(run: PipelineRunState | null): AnalyzedRun | null {
   return run?.jobInfo && run.tailoredResume ? (run as AnalyzedRun) : null;
 }
+
+/**
+ * The run fields a candidate edits directly — everything else is the background's to checkpoint.
+ *
+ * The single fact `lib/tabStore/record.ts` and `panel/usePipelineRun.ts` each need in order to tell
+ * a candidate's own edit apart from the background's progress. Stated once, here, because the two
+ * sides restating it independently is exactly how `tailoredResume` ended up panel-writable per one
+ * list and background-owned per the other — a mid-fill resume edit read as background progress and
+ * stood the optimistic "Filling…" status down early, silently, since nothing forced the two lists to
+ * agree.
+ */
+export const PANEL_EDITABLE_FIELDS = ['answers', 'jobDescription', 'tailoredResume'] as const;
+type PanelEditableField = (typeof PANEL_EDITABLE_FIELDS)[number];
+
+/** The panel's own edits — the subset of a run `panel/usePipelineRun.ts` may write directly. */
+export function panelEditsOf(run: PipelineRunState): Pick<PipelineRunState, PanelEditableField> {
+  const entries = PANEL_EDITABLE_FIELDS.map((field) => [field, run[field]]);
+  // Safe: entries is exactly PANEL_EDITABLE_FIELDS paired with that field's own value off `run`.
+  return Object.fromEntries(entries) as Pick<PipelineRunState, PanelEditableField>;
+}
+
+/** The run fields the background checkpoints, for `lib/tabStore/record.ts`'s movement classifier. */
+export function backgroundProgressOf(
+  run: PipelineRunState,
+): Omit<PipelineRunState, PanelEditableField> {
+  const panelFields: readonly string[] = PANEL_EDITABLE_FIELDS;
+  const entries = Object.entries(run).filter(([field]) => !panelFields.includes(field));
+  // Safe: entries is exactly `Object.entries(run)` minus the panel fields filtered above.
+  return Object.fromEntries(entries) as Omit<PipelineRunState, PanelEditableField>;
+}

@@ -221,6 +221,23 @@ describe('tabStore', () => {
       unsubscribe();
     });
 
+    it('does not classify a tailoredResume-only patch as background progress', async () => {
+      // tailoredResume is panel-writable (see lib/run/state.ts's PANEL_EDITABLE_FIELDS) — a
+      // candidate editing the resume mid-fill must not read as the background's own progress and
+      // stand `panel/usePipelineRun.ts`'s optimistic status down.
+      stubChrome();
+      await setPipelineRun(1, run);
+      const changes: PipelineRunChange[] = [];
+      const unsubscribe = subscribePipelineRun(1, (change) => changes.push(change));
+
+      await patchPipelineRun(1, run.runId, {
+        tailoredResume: { skills: ['Rust'], workExperience: [] },
+      });
+
+      expect(changes).toEqual([expect.objectContaining({ progressMoved: false })]);
+      unsubscribe();
+    });
+
     it('recovers operations abandoned by an earlier service-worker instance without touching idle runs', async () => {
       stubChrome();
       await setPipelineRun(1, { ...run, status: 'analyzing', jobInfo: null, tailoredResume: null });

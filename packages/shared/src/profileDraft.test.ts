@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyExtractedProfile,
+  changeCredentialKind,
   normalizeProfileDraft,
   optionalText,
   spliceWorkBullets,
@@ -289,5 +290,58 @@ describe('applyExtractedProfile', () => {
     applyExtractedProfile(profile, extracted);
 
     expect(profile.fullName).toBe('Jane Doe');
+  });
+});
+
+describe('changeCredentialKind', () => {
+  it('moves a certification to awards, dropping the fields awards do not have', () => {
+    const profile: Profile = {
+      ...EMPTY_PROFILE,
+      certifications: [{ name: 'AWS SA', issuer: 'Amazon', date: '2023' }],
+      awards: [{ name: 'Hack Day', issuer: 'Acme', date: '2020', description: 'Won first place' }],
+    };
+
+    const next = changeCredentialKind(profile, 0, 'certification', 'award', {
+      name: 'AWS SA',
+      issuer: 'Amazon',
+      date: '2023',
+    });
+
+    expect(next.certifications).toEqual([]);
+    expect(next.awards).toEqual([
+      { name: 'Hack Day', issuer: 'Acme', date: '2020', description: 'Won first place' },
+      { name: 'AWS SA', issuer: 'Amazon', date: '2023' },
+    ]);
+  });
+
+  it('moves an award to certifications, dropping its description', () => {
+    const profile: Profile = {
+      ...EMPTY_PROFILE,
+      awards: [{ name: 'Hack Day', issuer: 'Acme', date: '2020', description: 'Won first place' }],
+    };
+
+    const next = changeCredentialKind(profile, 0, 'award', 'certification', {
+      name: 'Hack Day',
+      issuer: 'Acme',
+      date: '2020',
+    });
+
+    expect(next.awards).toEqual([]);
+    expect(next.certifications).toEqual([{ name: 'Hack Day', issuer: 'Acme', date: '2020' }]);
+  });
+
+  it('is a no-op when the row is already the target kind', () => {
+    const profile: Profile = {
+      ...EMPTY_PROFILE,
+      certifications: [{ name: 'AWS SA', issuer: 'Amazon', date: '2023' }],
+    };
+
+    const next = changeCredentialKind(profile, 0, 'certification', 'certification', {
+      name: 'AWS SA',
+      issuer: 'Amazon',
+      date: '2023',
+    });
+
+    expect(next).toBe(profile);
   });
 });

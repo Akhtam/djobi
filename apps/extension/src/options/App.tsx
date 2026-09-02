@@ -7,6 +7,7 @@
  */
 import {
   applyExtractedProfile,
+  changeCredentialKind,
   EMPTY_PROFILE,
   normalizeProfileDraft,
   optionalText,
@@ -365,31 +366,16 @@ export function App({ client }: { client: BackendClient }) {
     // switches it, immediately if it should have been an award instead.
     add: () => certifications.add(),
   };
-  /**
-   * Moves one row between the two arrays. Certification and award share `name`/`issuer`/`date`;
-   * only `description` is award-only, so the conversion carries the shared fields and drops or
-   * gains that one. The row reappears at the end of its new array — there is no shared ordering
-   * field between the two, so "keep the same position" has no answer to give it.
-   */
-  function changeCredentialKind(item: CredentialItem, kind: CredentialItem['kind']) {
-    if (!profile || item.kind === kind) return;
-    const shared = { name: item.name, issuer: item.issuer, date: item.date };
-    // One `setProfile` call, not a remove-then-add pair: each of `listEditor`'s operations closes
-    // over this render's own `profile`, so two separate calls here would each spread that same
-    // stale object and the second would silently undo the first's removal.
-    if (kind === 'award') {
-      setProfile({
-        ...profile,
-        certifications: profile.certifications.filter((_, i) => i !== item.index),
-        awards: [...profile.awards, shared],
-      });
-    } else {
-      setProfile({
-        ...profile,
-        awards: profile.awards.filter((_, i) => i !== item.index),
-        certifications: [...profile.certifications, shared],
-      });
-    }
+  /** Applies {@link changeCredentialKind} to the current draft; a no-op before one is loaded. */
+  function handleCredentialKindChange(item: CredentialItem, kind: CredentialItem['kind']) {
+    if (!profile) return;
+    setProfile(
+      changeCredentialKind(profile, item.index, item.kind, kind, {
+        name: item.name,
+        issuer: item.issuer,
+        date: item.date,
+      }),
+    );
   }
 
   /**
@@ -1103,7 +1089,10 @@ export function App({ client }: { client: BackendClient }) {
                     id={`credKind${n}`}
                     value={item.kind}
                     onChange={(e) =>
-                      changeCredentialKind(item, e.currentTarget.value as CredentialItem['kind'])
+                      handleCredentialKindChange(
+                        item,
+                        e.currentTarget.value as CredentialItem['kind'],
+                      )
                     }
                   >
                     <option value="certification">Certification</option>

@@ -1,5 +1,35 @@
-import type { ExtractedProfile, Profile, WorkExperience } from './schemas.js';
+import type { Certification, ExtractedProfile, Profile, WorkExperience } from './schemas.js';
 import type { ScreeningAnswers, ScreeningTopic } from './screeningAnswers.js';
+
+export type CredentialKind = 'certification' | 'award';
+
+/**
+ * Moves one row between a Profile's `certifications` and `awards` arrays. The two share
+ * `name`/`issuer`/`date`; only `description` is award-only, so a conversion carries the three
+ * shared fields and drops or gains that one. The row reappears at the end of its new array —
+ * there is no shared ordering field between the two for "keep the same position" to answer.
+ */
+export function changeCredentialKind(
+  profile: Profile,
+  index: number,
+  from: CredentialKind,
+  to: CredentialKind,
+  shared: Pick<Certification, 'name' | 'issuer' | 'date'>,
+): Profile {
+  if (from === to) return profile;
+  if (to === 'award') {
+    return {
+      ...profile,
+      certifications: profile.certifications.filter((_, i) => i !== index),
+      awards: [...profile.awards, shared],
+    };
+  }
+  return {
+    ...profile,
+    awards: profile.awards.filter((_, i) => i !== index),
+    certifications: [...profile.certifications, shared],
+  };
+}
 
 /** Omits a cleared answer instead of storing an answered-but-empty topic. */
 export function withScreeningAnswer(

@@ -48,7 +48,10 @@ export {
 
 export {
   asAnalyzedRun,
+  backgroundProgressOf,
   isRunFailureKind,
+  panelEditsOf,
+  PANEL_EDITABLE_FIELDS,
   RUN_FAILURE_KINDS,
   type AnalyzedRun,
   type DuplicateApplication,

@@ -27,6 +27,7 @@ import type { KeywordCoverage } from '@djobi/shared';
 import type { JobPageData } from '../messages';
 import type { JobContext } from '../jobContext';
 import {
+  backgroundProgressOf,
   hasFilled,
   isRunFailureKind,
   type FillOutcome,
@@ -204,11 +205,9 @@ function pageStateOf(state: TabState | undefined): object {
   return { frames: state?.frames ?? {}, jobContext: state?.jobContext ?? null };
 }
 
-/** The run fields written by the background, excluding the panel's persisted review edits. */
+/** The run fields written by the background — `lib/run/state.ts`'s split, applied to a possibly-absent run. */
 function progressOf(run: PipelineRunState | null | undefined): object | null {
-  if (!run) return null;
-  const { answers: _answers, jobDescription: _jobDescription, ...progress } = run;
-  return progress;
+  return run ? backgroundProgressOf(run) : null;
 }
 
 export interface RunRecordChange {

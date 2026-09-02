@@ -225,6 +225,40 @@ describe('usePipelineRun', () => {
     expect(result.current.status).toBe('filled');
   });
 
+  it('keeps a standing optimistic status while a tailoredResume edit echoes back through the store', async () => {
+    // tailoredResume is editable while filling (see lib/run/status.ts's FACTS table) — a candidate
+    // tweaking a bullet in ResumeReview mid-fill must not stand the fill's own optimism down either.
+    const { writeFromBackground } = stubChrome();
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await settleInitialRead();
+
+    act(() => result.current.beginCommand('fill'));
+    act(() =>
+      result.current.edit({
+        answers: run.answers,
+        jobDescription: run.jobDescription,
+        tailoredResume: { skills: ['Rust'], workExperience: [] },
+      }),
+    );
+    await waitFor(() => expect(result.current.run?.tailoredResume?.skills).toEqual(['Rust']));
+
+    expect(result.current.status).toBe('filling');
+
+    // The background's own answer still stands it down.
+    await act(() =>
+      writeFromBackground(1, {
+        ...run,
+        status: 'filled',
+        tailoredResume: { skills: ['Rust'], workExperience: [] },
+        fillOutcome: 'complete',
+        filledFieldCount: 2,
+      }),
+    );
+
+    expect(result.current.status).toBe('filled');
+  });
+
   it('keeps a standing optimistic status when an earlier keystroke echoes while a newer one is pending', async () => {
     // `edit` fires per keystroke, so two of them inside one storage round-trip leave the first's
     // echo arriving while the second is still outstanding. Recognized against the newest send

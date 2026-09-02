@@ -521,729 +521,745 @@ export function Profile({
       <form onSubmit={handleSave}>
         {activeTab === 'profile' && (
           <>
-        <section className="detail__panel">
-          <PanelHead id="section-contact" legend="Contact details" />
-          <div className="detail__panel-body">
-            <div className="profile-field-grid">
-              <label className="profile-field">
-                Full name
-                <input
-                  className="search"
-                  autoComplete="name"
-                  value={profile.fullName}
-                  onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
-                />
-              </label>
-              <label className="profile-field">
-                Email
-                <input
-                  className="search"
-                  type="email"
-                  autoComplete="email"
-                  value={profile.email}
-                  onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                />
-              </label>
-              <label className="profile-field">
-                Phone
-                <input
-                  className="search"
-                  type="tel"
-                  autoComplete="tel"
-                  value={profile.phone ?? ''}
-                  onChange={(e) => setProfile({ ...profile, phone: optionalText(e.target.value) })}
-                />
-              </label>
-              <label className="profile-field">
-                Location
-                <input
-                  className="search"
-                  autoComplete="address-level2"
-                  value={profile.location ?? ''}
-                  onChange={(e) =>
-                    setProfile({ ...profile, location: optionalText(e.target.value) })
-                  }
-                />
-              </label>
-            </div>
-          </div>
-        </section>
+            <section className="detail__panel">
+              <PanelHead id="section-contact" legend="Contact details" />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  <label className="profile-field">
+                    Full name
+                    <input
+                      className="search"
+                      autoComplete="name"
+                      value={profile.fullName}
+                      onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
+                    />
+                  </label>
+                  <label className="profile-field">
+                    Email
+                    <input
+                      className="search"
+                      type="email"
+                      autoComplete="email"
+                      value={profile.email}
+                      onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                    />
+                  </label>
+                  <label className="profile-field">
+                    Phone
+                    <input
+                      className="search"
+                      type="tel"
+                      autoComplete="tel"
+                      value={profile.phone ?? ''}
+                      onChange={(e) =>
+                        setProfile({ ...profile, phone: optionalText(e.target.value) })
+                      }
+                    />
+                  </label>
+                  <label className="profile-field">
+                    Location
+                    <input
+                      className="search"
+                      autoComplete="address-level2"
+                      value={profile.location ?? ''}
+                      onChange={(e) =>
+                        setProfile({ ...profile, location: optionalText(e.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+            </section>
 
-        <section className="detail__panel">
-          <PanelHead id="section-links" legend="Links" />
-          <div className="detail__panel-body">
-            <div className="profile-field-grid">
-              <label className="profile-field">
-                LinkedIn
-                <input
-                  className="search"
-                  type="url"
-                  autoComplete="url"
-                  value={profile.links.linkedin ?? ''}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      links: { ...profile.links, linkedin: optionalText(e.target.value) },
-                    })
-                  }
-                />
-              </label>
-              <label className="profile-field">
-                Portfolio
-                <input
-                  className="search"
-                  type="url"
-                  autoComplete="url"
-                  value={profile.links.portfolio ?? ''}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      links: { ...profile.links, portfolio: optionalText(e.target.value) },
-                    })
-                  }
-                />
-              </label>
-              <label className="profile-field profile-field--span-2">
-                GitHub
-                <input
-                  className="search"
-                  type="url"
-                  autoComplete="url"
-                  value={profile.links.github ?? ''}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      links: { ...profile.links, github: optionalText(e.target.value) },
-                    })
-                  }
-                />
-              </label>
-            </div>
-          </div>
-        </section>
+            <section className="detail__panel">
+              <PanelHead id="section-links" legend="Links" />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  <label className="profile-field">
+                    LinkedIn
+                    <input
+                      className="search"
+                      type="url"
+                      autoComplete="url"
+                      value={profile.links.linkedin ?? ''}
+                      onChange={(e) =>
+                        setProfile({
+                          ...profile,
+                          links: { ...profile.links, linkedin: optionalText(e.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="profile-field">
+                    Portfolio
+                    <input
+                      className="search"
+                      type="url"
+                      autoComplete="url"
+                      value={profile.links.portfolio ?? ''}
+                      onChange={(e) =>
+                        setProfile({
+                          ...profile,
+                          links: { ...profile.links, portfolio: optionalText(e.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="profile-field profile-field--span-2">
+                    GitHub
+                    <input
+                      className="search"
+                      type="url"
+                      autoComplete="url"
+                      value={profile.links.github ?? ''}
+                      onChange={(e) =>
+                        setProfile({
+                          ...profile,
+                          links: { ...profile.links, github: optionalText(e.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+            </section>
 
-        <section className="detail__panel">
-          <PanelHead
-            id="section-summary"
-            legend="Summary"
-            hint="A short intro paragraph, shown near the top of the resume."
-          />
-          <div className="detail__panel-body">
-            <label className="profile-field profile-field--span-2">
-              Summary
-              <textarea
-                value={profile.summary ?? ''}
-                onChange={(e) => setProfile({ ...profile, summary: optionalText(e.target.value) })}
+            <section className="detail__panel">
+              <PanelHead
+                id="section-summary"
+                legend="Summary"
+                hint="A short intro paragraph, shown near the top of the resume."
               />
-            </label>
-          </div>
-        </section>
+              <div className="detail__panel-body">
+                <label className="profile-field profile-field--span-2">
+                  Summary
+                  <textarea
+                    value={profile.summary ?? ''}
+                    onChange={(e) =>
+                      setProfile({ ...profile, summary: optionalText(e.target.value) })
+                    }
+                  />
+                </label>
+              </div>
+            </section>
 
-        <section className="detail__panel">
-          <PanelHead
-            id="section-resume"
-            legend="Resume PDF"
-            hint="Formatting used for both resume previews and attachments."
-          />
-          <div className="detail__panel-body">
-            <div className="profile-field-grid">
-              <label className="profile-field">
-                Page size
-                <select
-                  className="search"
-                  value={profile.resumePageSize}
-                  onChange={(event) =>
-                    setProfile({
-                      ...profile,
-                      resumePageSize: event.currentTarget.value as Profile['resumePageSize'],
-                    })
-                  }
-                >
-                  <option value="A4">A4</option>
-                  <option value="LETTER">Letter</option>
-                </select>
-              </label>
-              <label className="profile-checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={profile.showRolePrefix}
-                  onChange={(event) =>
-                    setProfile({ ...profile, showRolePrefix: event.currentTarget.checked })
-                  }
-                />
-                Prefix titles with “Role:”
-              </label>
-            </div>
-          </div>
-        </section>
+            <section className="detail__panel">
+              <PanelHead
+                id="section-resume"
+                legend="Resume PDF"
+                hint="Formatting used for both resume previews and attachments."
+              />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  <label className="profile-field">
+                    Page size
+                    <select
+                      className="search"
+                      value={profile.resumePageSize}
+                      onChange={(event) =>
+                        setProfile({
+                          ...profile,
+                          resumePageSize: event.currentTarget.value as Profile['resumePageSize'],
+                        })
+                      }
+                    >
+                      <option value="A4">A4</option>
+                      <option value="LETTER">Letter</option>
+                    </select>
+                  </label>
+                  <label className="profile-checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={profile.showRolePrefix}
+                      onChange={(event) =>
+                        setProfile({ ...profile, showRolePrefix: event.currentTarget.checked })
+                      }
+                    />
+                    Prefix titles with “Role:”
+                  </label>
+                </div>
+              </div>
+            </section>
 
-        <section className="detail__panel">
-          <PanelHead id="section-skills" legend="Skills" />
-          <div className="detail__panel-body">
-            <ul className="profile-skills">
-              {profile.skills.map((skill) => (
-                <li key={skill} className="profile-skill-chip">
-                  {skill}
+            <section className="detail__panel">
+              <PanelHead id="section-skills" legend="Skills" />
+              <div className="detail__panel-body">
+                <ul className="profile-skills">
+                  {profile.skills.map((skill) => (
+                    <li key={skill} className="profile-skill-chip">
+                      {skill}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${skill}`}
+                        onClick={() =>
+                          setProfile({
+                            ...profile,
+                            skills: profile.skills.filter((s) => s !== skill),
+                          })
+                        }
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="profile-skill-add">
+                  <label className="profile-field">
+                    New skill
+                    <input
+                      className="search"
+                      value={newSkill}
+                      onChange={(e) => setNewSkill(e.target.value)}
+                    />
+                  </label>
                   <button
                     type="button"
-                    aria-label={`Remove ${skill}`}
-                    onClick={() =>
-                      setProfile({ ...profile, skills: profile.skills.filter((s) => s !== skill) })
-                    }
+                    className="button"
+                    onClick={() => {
+                      if (!newSkill) return;
+                      setProfile({ ...profile, skills: [...profile.skills, newSkill] });
+                      setNewSkill('');
+                    }}
                   >
-                    ×
+                    Add skill
                   </button>
-                </li>
-              ))}
-            </ul>
-            <div className="profile-skill-add">
-              <label className="profile-field">
-                New skill
-                <input
-                  className="search"
-                  value={newSkill}
-                  onChange={(e) => setNewSkill(e.target.value)}
-                />
-              </label>
-              <button
-                type="button"
-                className="button"
-                onClick={() => {
-                  if (!newSkill) return;
-                  setProfile({ ...profile, skills: [...profile.skills, newSkill] });
-                  setNewSkill('');
-                }}
-              >
-                Add skill
-              </button>
-            </div>
-          </div>
-        </section>
+                </div>
+              </div>
+            </section>
 
-        <ListSection
-          id="section-work"
-          legend="Work experience"
-          noun="work experience"
-          addLabel="Add work experience"
-          hint="Keep the full bullet bank for each role. Star must-keep evidence; tailoring selects the rest up to the cap."
-          items={profile.workExperience}
-          editor={work}
-          controls={
-            <label className="profile-field profile-field--cap">
-              Default bullets per role
-              <input
-                className="search"
-                type="number"
-                min="0"
-                step="1"
-                value={profile.maxBulletsPerRole}
-                onChange={(event) => {
-                  const value = event.currentTarget.valueAsNumber;
-                  if (Number.isInteger(value) && value >= 0) {
-                    setProfile({ ...profile, maxBulletsPerRole: value });
-                  }
-                }}
-              />
-            </label>
-          }
-          summary={(entry) => {
-            const identity =
-              entry.title || entry.company
-                ? `${entry.title || 'Role'}${entry.company ? ` at ${entry.company}` : ''}`
-                : null;
-            const starred = entry.starredIndices.length;
-            return identity
-              ? `${identity} — ${entry.bullets.length} ${entry.bullets.length === 1 ? 'bullet' : 'bullets'} · ${starred} starred`
-              : null;
-          }}
-        >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="profile-field-grid">
-                <label className="profile-field">
-                  {`Company ${n}`}
-                  <input
-                    className="search"
-                    value={entry.company}
-                    onChange={(e) => work.update(index, { company: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Title ${n}`}
-                  <input
-                    className="search"
-                    value={entry.title}
-                    onChange={(e) => work.update(index, { title: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Start date ${n}`}
-                  <input
-                    className="search"
-                    value={entry.startDate}
-                    onChange={(e) => work.update(index, { startDate: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`End date ${n}`}
-                  <input
-                    className="search"
-                    value={entry.endDate ?? ''}
-                    onChange={(e) => work.update(index, { endDate: optionalText(e.target.value) })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Bullet cap ${n}`}
+            <ListSection
+              id="section-work"
+              legend="Work experience"
+              noun="work experience"
+              addLabel="Add work experience"
+              hint="Keep the full bullet bank for each role. Star must-keep evidence; tailoring selects the rest up to the cap."
+              items={profile.workExperience}
+              editor={work}
+              controls={
+                <label className="profile-field profile-field--cap">
+                  Default bullets per role
                   <input
                     className="search"
                     type="number"
                     min="0"
                     step="1"
-                    placeholder={`Inherit ${profile.maxBulletsPerRole}`}
-                    value={entry.maxBullets ?? ''}
+                    value={profile.maxBulletsPerRole}
                     onChange={(event) => {
-                      const raw = event.currentTarget.value;
                       const value = event.currentTarget.valueAsNumber;
-                      if (!raw) work.update(index, { maxBullets: null });
-                      else if (Number.isInteger(value) && value >= 0) {
-                        work.update(index, { maxBullets: value });
+                      if (Number.isInteger(value) && value >= 0) {
+                        setProfile({ ...profile, maxBulletsPerRole: value });
                       }
                     }}
                   />
                 </label>
-                <label className="profile-checkbox-field">
-                  <input
-                    type="checkbox"
-                    checked={entry.suppressIfEmpty}
-                    onChange={(event) =>
-                      work.update(index, { suppressIfEmpty: event.currentTarget.checked })
-                    }
-                  />
-                  {`Hide role ${n} entirely if tailoring selects no bullets for it`}
-                </label>
-                <div className="profile-field profile-field--span-2">
-                  {`Bullets ${n}`}
-                  <div className="profile-bullets">
-                    {entry.bullets.map((bullet, bulletIndex) => (
-                      <div key={bulletIndex} className="profile-bullet-row">
-                        <button
-                          type="button"
-                          className="profile-star"
-                          aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
-                          aria-pressed={entry.starredIndices.includes(bulletIndex)}
-                          onClick={() => {
-                            const isStarred = entry.starredIndices.includes(bulletIndex);
-                            work.update(index, {
-                              starredIndices: isStarred
-                                ? entry.starredIndices.filter((star) => star !== bulletIndex)
-                                : [...entry.starredIndices, bulletIndex].sort((a, b) => a - b),
-                            });
-                          }}
-                        >
-                          <span aria-hidden="true">
-                            {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}
-                          </span>
-                        </button>
-                        <input
-                          className="search"
-                          aria-label={`Bullet ${n}.${bulletIndex + 1}`}
-                          value={bullet}
+              }
+              summary={(entry) => {
+                const identity =
+                  entry.title || entry.company
+                    ? `${entry.title || 'Role'}${entry.company ? ` at ${entry.company}` : ''}`
+                    : null;
+                const starred = entry.starredIndices.length;
+                return identity
+                  ? `${identity} — ${entry.bullets.length} ${entry.bullets.length === 1 ? 'bullet' : 'bullets'} · ${starred} starred`
+                  : null;
+              }}
+            >
+              {(entry, index) => {
+                const n = index + 1;
+                return (
+                  <div className="profile-field-grid">
+                    <label className="profile-field">
+                      {`Company ${n}`}
+                      <input
+                        className="search"
+                        value={entry.company}
+                        onChange={(e) => work.update(index, { company: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Title ${n}`}
+                      <input
+                        className="search"
+                        value={entry.title}
+                        onChange={(e) => work.update(index, { title: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Start date ${n}`}
+                      <input
+                        className="search"
+                        value={entry.startDate}
+                        onChange={(e) => work.update(index, { startDate: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`End date ${n}`}
+                      <input
+                        className="search"
+                        value={entry.endDate ?? ''}
+                        onChange={(e) =>
+                          work.update(index, { endDate: optionalText(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Bullet cap ${n}`}
+                      <input
+                        className="search"
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder={`Inherit ${profile.maxBulletsPerRole}`}
+                        value={entry.maxBullets ?? ''}
+                        onChange={(event) => {
+                          const raw = event.currentTarget.value;
+                          const value = event.currentTarget.valueAsNumber;
+                          if (!raw) work.update(index, { maxBullets: null });
+                          else if (Number.isInteger(value) && value >= 0) {
+                            work.update(index, { maxBullets: value });
+                          }
+                        }}
+                      />
+                    </label>
+                    <label className="profile-checkbox-field">
+                      <input
+                        type="checkbox"
+                        checked={entry.suppressIfEmpty}
+                        onChange={(event) =>
+                          work.update(index, { suppressIfEmpty: event.currentTarget.checked })
+                        }
+                      />
+                      {`Hide role ${n} entirely if tailoring selects no bullets for it`}
+                    </label>
+                    <div className="profile-field profile-field--span-2">
+                      {`Bullets ${n}`}
+                      <div className="profile-bullets">
+                        {entry.bullets.map((bullet, bulletIndex) => (
+                          <div key={bulletIndex} className="profile-bullet-row">
+                            <button
+                              type="button"
+                              className="profile-star"
+                              aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
+                              aria-pressed={entry.starredIndices.includes(bulletIndex)}
+                              onClick={() => {
+                                const isStarred = entry.starredIndices.includes(bulletIndex);
+                                work.update(index, {
+                                  starredIndices: isStarred
+                                    ? entry.starredIndices.filter((star) => star !== bulletIndex)
+                                    : [...entry.starredIndices, bulletIndex].sort((a, b) => a - b),
+                                });
+                              }}
+                            >
+                              <span aria-hidden="true">
+                                {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}
+                              </span>
+                            </button>
+                            <input
+                              className="search"
+                              aria-label={`Bullet ${n}.${bulletIndex + 1}`}
+                              value={bullet}
+                              onChange={(e) =>
+                                work.update(index, {
+                                  bullets: entry.bullets.map((b, bi) =>
+                                    bi === bulletIndex ? e.target.value : b,
+                                  ),
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="button profile-remove"
+                              aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
+                              onClick={() =>
+                                work.update(index, spliceWorkBullets(entry, bulletIndex, 1))
+                              }
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() =>
+                          work.update(index, spliceWorkBullets(entry, entry.bullets.length, 0, ''))
+                        }
+                      >
+                        + Add bullet
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            </ListSection>
+
+            <ListSection
+              id="section-projects"
+              legend="Projects"
+              noun="project"
+              addLabel="Add project"
+              hint="Personal, open-source or freelance work — anything not covered by Work experience above."
+              items={profile.projects}
+              editor={projects}
+            >
+              {(entry, index) => {
+                const n = index + 1;
+                return (
+                  <div className="profile-field-grid">
+                    <label className="profile-field">
+                      {`Name ${n}`}
+                      <input
+                        className="search"
+                        value={entry.name}
+                        onChange={(e) => projects.update(index, { name: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Link ${n}`}
+                      <input
+                        className="search"
+                        type="url"
+                        value={entry.link ?? ''}
+                        onChange={(e) =>
+                          projects.update(index, { link: optionalText(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Description ${n}`}
+                      <textarea
+                        value={entry.description}
+                        onChange={(e) => projects.update(index, { description: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Technologies ${n}`}
+                      <input
+                        className="search"
+                        placeholder="Comma-separated"
+                        value={(entry.technologies ?? []).join(', ')}
+                        onChange={(e) => {
+                          const technologies = e.target.value
+                            .split(',')
+                            .map((tech) => tech.trim())
+                            .filter(Boolean);
+                          projects.update(index, {
+                            technologies: technologies.length ? technologies : null,
+                          });
+                        }}
+                      />
+                    </label>
+                    <div className="profile-field profile-field--span-2">
+                      {`Bullets ${n}`}
+                      <div className="profile-bullets">
+                        {entry.bullets.map((bullet, bulletIndex) => (
+                          <div key={bulletIndex} className="profile-bullet-row">
+                            <input
+                              className="search"
+                              aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
+                              value={bullet}
+                              onChange={(e) =>
+                                projects.update(index, {
+                                  bullets: entry.bullets.map((b, bi) =>
+                                    bi === bulletIndex ? e.target.value : b,
+                                  ),
+                                })
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="button profile-remove"
+                              aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
+                              onClick={() =>
+                                projects.update(index, {
+                                  bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
+                                })
+                              }
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => projects.update(index, { bullets: [...entry.bullets, ''] })}
+                      >
+                        + Add bullet
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            </ListSection>
+
+            <ListSection
+              id="section-education"
+              legend="Education"
+              noun="education"
+              addLabel="Add education"
+              items={profile.education}
+              editor={education}
+            >
+              {(entry, index) => {
+                const n = index + 1;
+                return (
+                  <div className="profile-field-grid">
+                    <label className="profile-field">
+                      {`School ${n}`}
+                      <input
+                        className="search"
+                        value={entry.school}
+                        onChange={(e) => education.update(index, { school: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Degree ${n}`}
+                      <input
+                        className="search"
+                        value={entry.degree}
+                        onChange={(e) => education.update(index, { degree: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Field ${n}`}
+                      <input
+                        className="search"
+                        value={entry.field ?? ''}
+                        onChange={(e) =>
+                          education.update(index, { field: optionalText(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Graduation year ${n}`}
+                      <input
+                        className="search"
+                        value={entry.graduationYear ?? ''}
+                        onChange={(e) =>
+                          education.update(index, { graduationYear: optionalText(e.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                );
+              }}
+            </ListSection>
+
+            <ListSection
+              id="section-credentials"
+              legend="Certifications & Awards"
+              noun="certification or award"
+              addLabel="Add certification or award"
+              hint="Pick which each row is — the fields shown adjust to match."
+              items={credentials}
+              editor={credentialsEditor}
+            >
+              {(item, index) => {
+                const n = index + 1;
+                return (
+                  <div className="profile-field-grid">
+                    <label className="profile-field">
+                      {`Type ${n}`}
+                      <select
+                        className="search"
+                        value={item.kind}
+                        onChange={(e) =>
+                          changeCredentialKind(
+                            item,
+                            e.currentTarget.value as CredentialItem['kind'],
+                          )
+                        }
+                      >
+                        <option value="certification">Certification</option>
+                        <option value="award">Award</option>
+                      </select>
+                    </label>
+                    <label className="profile-field">
+                      {`Name ${n}`}
+                      <input
+                        className="search"
+                        value={item.name}
+                        onChange={(e) => credentialsEditor.update(index, { name: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Issuer ${n}`}
+                      <input
+                        className="search"
+                        value={item.issuer}
+                        onChange={(e) =>
+                          credentialsEditor.update(index, { issuer: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Date ${n}`}
+                      <input
+                        className="search"
+                        value={item.date}
+                        onChange={(e) => credentialsEditor.update(index, { date: e.target.value })}
+                      />
+                    </label>
+                    {item.kind === 'award' && (
+                      <label className="profile-field profile-field--span-2">
+                        {`Description ${n}`}
+                        <textarea
+                          value={item.description ?? ''}
                           onChange={(e) =>
-                            work.update(index, {
-                              bullets: entry.bullets.map((b, bi) =>
-                                bi === bulletIndex ? e.target.value : b,
-                              ),
+                            credentialsEditor.update(index, {
+                              description: optionalText(e.target.value) ?? undefined,
                             })
                           }
                         />
-                        <button
-                          type="button"
-                          className="button profile-remove"
-                          aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
-                          onClick={() =>
-                            work.update(index, spliceWorkBullets(entry, bulletIndex, 1))
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
+                      </label>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() =>
-                      work.update(index, spliceWorkBullets(entry, entry.bullets.length, 0, ''))
-                    }
-                  >
-                    + Add bullet
-                  </button>
-                </div>
-              </div>
-            );
-          }}
-        </ListSection>
-
-        <ListSection
-          id="section-projects"
-          legend="Projects"
-          noun="project"
-          addLabel="Add project"
-          hint="Personal, open-source or freelance work — anything not covered by Work experience above."
-          items={profile.projects}
-          editor={projects}
-        >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="profile-field-grid">
-                <label className="profile-field">
-                  {`Name ${n}`}
-                  <input
-                    className="search"
-                    value={entry.name}
-                    onChange={(e) => projects.update(index, { name: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Link ${n}`}
-                  <input
-                    className="search"
-                    type="url"
-                    value={entry.link ?? ''}
-                    onChange={(e) => projects.update(index, { link: optionalText(e.target.value) })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Description ${n}`}
-                  <textarea
-                    value={entry.description}
-                    onChange={(e) => projects.update(index, { description: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Technologies ${n}`}
-                  <input
-                    className="search"
-                    placeholder="Comma-separated"
-                    value={(entry.technologies ?? []).join(', ')}
-                    onChange={(e) => {
-                      const technologies = e.target.value
-                        .split(',')
-                        .map((tech) => tech.trim())
-                        .filter(Boolean);
-                      projects.update(index, {
-                        technologies: technologies.length ? technologies : null,
-                      });
-                    }}
-                  />
-                </label>
-                <div className="profile-field profile-field--span-2">
-                  {`Bullets ${n}`}
-                  <div className="profile-bullets">
-                    {entry.bullets.map((bullet, bulletIndex) => (
-                      <div key={bulletIndex} className="profile-bullet-row">
-                        <input
-                          className="search"
-                          aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
-                          value={bullet}
-                          onChange={(e) =>
-                            projects.update(index, {
-                              bullets: entry.bullets.map((b, bi) =>
-                                bi === bulletIndex ? e.target.value : b,
-                              ),
-                            })
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="button profile-remove"
-                          aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
-                          onClick={() =>
-                            projects.update(index, {
-                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
-                            })
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => projects.update(index, { bullets: [...entry.bullets, ''] })}
-                  >
-                    + Add bullet
-                  </button>
-                </div>
-              </div>
-            );
-          }}
-        </ListSection>
-
-        <ListSection
-          id="section-education"
-          legend="Education"
-          noun="education"
-          addLabel="Add education"
-          items={profile.education}
-          editor={education}
-        >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="profile-field-grid">
-                <label className="profile-field">
-                  {`School ${n}`}
-                  <input
-                    className="search"
-                    value={entry.school}
-                    onChange={(e) => education.update(index, { school: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Degree ${n}`}
-                  <input
-                    className="search"
-                    value={entry.degree}
-                    onChange={(e) => education.update(index, { degree: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Field ${n}`}
-                  <input
-                    className="search"
-                    value={entry.field ?? ''}
-                    onChange={(e) =>
-                      education.update(index, { field: optionalText(e.target.value) })
-                    }
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Graduation year ${n}`}
-                  <input
-                    className="search"
-                    value={entry.graduationYear ?? ''}
-                    onChange={(e) =>
-                      education.update(index, { graduationYear: optionalText(e.target.value) })
-                    }
-                  />
-                </label>
-              </div>
-            );
-          }}
-        </ListSection>
-
-        <ListSection
-          id="section-credentials"
-          legend="Certifications & Awards"
-          noun="certification or award"
-          addLabel="Add certification or award"
-          hint="Pick which each row is — the fields shown adjust to match."
-          items={credentials}
-          editor={credentialsEditor}
-        >
-          {(item, index) => {
-            const n = index + 1;
-            return (
-              <div className="profile-field-grid">
-                <label className="profile-field">
-                  {`Type ${n}`}
-                  <select
-                    className="search"
-                    value={item.kind}
-                    onChange={(e) =>
-                      changeCredentialKind(item, e.currentTarget.value as CredentialItem['kind'])
-                    }
-                  >
-                    <option value="certification">Certification</option>
-                    <option value="award">Award</option>
-                  </select>
-                </label>
-                <label className="profile-field">
-                  {`Name ${n}`}
-                  <input
-                    className="search"
-                    value={item.name}
-                    onChange={(e) => credentialsEditor.update(index, { name: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Issuer ${n}`}
-                  <input
-                    className="search"
-                    value={item.issuer}
-                    onChange={(e) => credentialsEditor.update(index, { issuer: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Date ${n}`}
-                  <input
-                    className="search"
-                    value={item.date}
-                    onChange={(e) => credentialsEditor.update(index, { date: e.target.value })}
-                  />
-                </label>
-                {item.kind === 'award' && (
-                  <label className="profile-field profile-field--span-2">
-                    {`Description ${n}`}
-                    <textarea
-                      value={item.description ?? ''}
-                      onChange={(e) =>
-                        credentialsEditor.update(index, {
-                          description: optionalText(e.target.value) ?? undefined,
-                        })
-                      }
-                    />
-                  </label>
-                )}
-              </div>
-            );
-          }}
-        </ListSection>
+                );
+              }}
+            </ListSection>
           </>
         )}
 
         {activeTab === 'prep' && (
           <>
-        <section className="detail__panel">
-          <PanelHead
-            id="section-screening"
-            legend="Screening answers"
-            hint="The questions almost every application asks. Anything answered here is filled in directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as usual."
-          />
-          <div className="detail__panel-body">
-            <div className="profile-field-grid">
-              {SCREENING_TOPICS.map((entry) => (
-                <label className="profile-field" key={entry.topic}>
-                  {entry.label}
-                  <input
-                    className="search"
-                    list={`${entry.topic}-suggestions`}
-                    value={profile.screeningAnswers[entry.topic] ?? ''}
-                    onChange={(e) =>
-                      setProfile({
-                        ...profile,
-                        screeningAnswers: withScreeningAnswer(
-                          profile.screeningAnswers,
-                          entry.topic,
-                          e.target.value,
-                        ),
-                      })
-                    }
-                  />
-                  <datalist id={`${entry.topic}-suggestions`}>
-                    {entry.suggestions.map((suggestion) => (
-                      <option key={suggestion} value={suggestion} />
-                    ))}
-                  </datalist>
-                </label>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <ListSection
-          id="section-answers"
-          legend="Other prepared answers"
-          noun="prepared answer"
-          addLabel="Add prepared answer"
-          hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
-          items={profile.customAnswers}
-          editor={customAnswers}
-        >
-          {(entry, index) => (
-            <div className="profile-field-grid">
-              <label className="profile-field">
-                Question
-                <input
-                  className="search"
-                  value={entry.question}
-                  onChange={(e) => customAnswers.update(index, { question: e.target.value })}
-                />
-              </label>
-              <label className="profile-field">
-                Answer
-                <textarea
-                  value={entry.answer}
-                  onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
-                />
-              </label>
-            </div>
-          )}
-        </ListSection>
-
-        <ListSection
-          id="section-stories"
-          legend="Stories"
-          noun="story"
-          addLabel="Add story"
-          items={profile.stories}
-          editor={stories}
-        >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="profile-field-grid">
-                <label className="profile-field">
-                  {`Story id ${n}`}
-                  <input
-                    className="search"
-                    value={entry.id}
-                    onChange={(e) => stories.update(index, { id: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field">
-                  {`Story title ${n}`}
-                  <input
-                    className="search"
-                    value={entry.title}
-                    onChange={(e) => stories.update(index, { title: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Story tags ${n}`}
-                  <input
-                    className="search"
-                    value={entry.tags.join(', ')}
-                    onChange={(e) => stories.update(index, { tags: storyTags(e.target.value) })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Situation ${n}`}
-                  <textarea
-                    value={entry.situation}
-                    onChange={(e) => stories.update(index, { situation: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Task ${n}`}
-                  <textarea
-                    value={entry.task}
-                    onChange={(e) => stories.update(index, { task: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Action ${n}`}
-                  <textarea
-                    value={entry.action}
-                    onChange={(e) => stories.update(index, { action: e.target.value })}
-                  />
-                </label>
-                <label className="profile-field profile-field--span-2">
-                  {`Result ${n}`}
-                  <textarea
-                    value={entry.result}
-                    onChange={(e) => stories.update(index, { result: e.target.value })}
-                  />
-                </label>
+            <section className="detail__panel">
+              <PanelHead
+                id="section-screening"
+                legend="Screening answers"
+                hint="The questions almost every application asks. Anything answered here is filled in directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as usual."
+              />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  {SCREENING_TOPICS.map((entry) => (
+                    <label className="profile-field" key={entry.topic}>
+                      {entry.label}
+                      <input
+                        className="search"
+                        list={`${entry.topic}-suggestions`}
+                        value={profile.screeningAnswers[entry.topic] ?? ''}
+                        onChange={(e) =>
+                          setProfile({
+                            ...profile,
+                            screeningAnswers: withScreeningAnswer(
+                              profile.screeningAnswers,
+                              entry.topic,
+                              e.target.value,
+                            ),
+                          })
+                        }
+                      />
+                      <datalist id={`${entry.topic}-suggestions`}>
+                        {entry.suggestions.map((suggestion) => (
+                          <option key={suggestion} value={suggestion} />
+                        ))}
+                      </datalist>
+                    </label>
+                  ))}
+                </div>
               </div>
-            );
-          }}
-        </ListSection>
+            </section>
+
+            <ListSection
+              id="section-answers"
+              legend="Other prepared answers"
+              noun="prepared answer"
+              addLabel="Add prepared answer"
+              hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
+              items={profile.customAnswers}
+              editor={customAnswers}
+            >
+              {(entry, index) => (
+                <div className="profile-field-grid">
+                  <label className="profile-field">
+                    Question
+                    <input
+                      className="search"
+                      value={entry.question}
+                      onChange={(e) => customAnswers.update(index, { question: e.target.value })}
+                    />
+                  </label>
+                  <label className="profile-field">
+                    Answer
+                    <textarea
+                      value={entry.answer}
+                      onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
+                    />
+                  </label>
+                </div>
+              )}
+            </ListSection>
+
+            <ListSection
+              id="section-stories"
+              legend="Stories"
+              noun="story"
+              addLabel="Add story"
+              items={profile.stories}
+              editor={stories}
+            >
+              {(entry, index) => {
+                const n = index + 1;
+                return (
+                  <div className="profile-field-grid">
+                    <label className="profile-field">
+                      {`Story id ${n}`}
+                      <input
+                        className="search"
+                        value={entry.id}
+                        onChange={(e) => stories.update(index, { id: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field">
+                      {`Story title ${n}`}
+                      <input
+                        className="search"
+                        value={entry.title}
+                        onChange={(e) => stories.update(index, { title: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Story tags ${n}`}
+                      <input
+                        className="search"
+                        value={entry.tags.join(', ')}
+                        onChange={(e) => stories.update(index, { tags: storyTags(e.target.value) })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Situation ${n}`}
+                      <textarea
+                        value={entry.situation}
+                        onChange={(e) => stories.update(index, { situation: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Task ${n}`}
+                      <textarea
+                        value={entry.task}
+                        onChange={(e) => stories.update(index, { task: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Action ${n}`}
+                      <textarea
+                        value={entry.action}
+                        onChange={(e) => stories.update(index, { action: e.target.value })}
+                      />
+                    </label>
+                    <label className="profile-field profile-field--span-2">
+                      {`Result ${n}`}
+                      <textarea
+                        value={entry.result}
+                        onChange={(e) => stories.update(index, { result: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                );
+              }}
+            </ListSection>
           </>
         )}
 
