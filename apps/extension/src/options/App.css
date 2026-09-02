@@ -272,6 +272,38 @@ form {
   white-space: nowrap;
 }
 
+.section-quicknav {
+  position: sticky;
+  /* Sits right under `.page-header`, which is also sticky at `top: 0` — without this offset the
+     two would stack at the same position instead of one below the other. */
+  top: 73px;
+  z-index: 9;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0;
+  margin-bottom: 20px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.section-quicknav-link {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.section-quicknav-link:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -279,6 +311,9 @@ form {
   box-shadow: var(--shadow-md);
   padding: 24px 28px 28px;
   margin: 0;
+  /* Room for the sticky page header plus the sticky quick-nav row sitting right under it, so
+     scrolling a section into view doesn't land its top underneath either. */
+  scroll-margin-top: 132px;
 }
 
 .card > legend {

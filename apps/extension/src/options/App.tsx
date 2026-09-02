@@ -76,6 +76,7 @@ function listEditor<K extends ProfileListKey>(
  * is how the tests address a specific entry.
  */
 function ListSection<T>({
+  id,
   legend,
   noun,
   addLabel,
@@ -86,6 +87,7 @@ function ListSection<T>({
   summary,
   children,
 }: {
+  id: string;
   legend: string;
   noun: string;
   addLabel: string;
@@ -97,7 +99,7 @@ function ListSection<T>({
   children: (entry: T, index: number) => React.ReactNode;
 }) {
   return (
-    <fieldset className="card">
+    <fieldset id={id} className="card">
       <legend>{legend}</legend>
       <div className="section-meta">
         {hint ? <p className="hint">{hint}</p> : <span />}
@@ -141,6 +143,27 @@ function ListSection<T>({
       </button>
     </fieldset>
   );
+}
+
+/** Sections, in the order the quick-nav and the form itself present them. */
+const PANEL_ORDER = [
+  { anchor: 'section-contact', label: 'Contact' },
+  { anchor: 'section-links', label: 'Links' },
+  { anchor: 'section-resume', label: 'Resume' },
+  { anchor: 'section-skills', label: 'Skills' },
+  { anchor: 'section-work', label: 'Work' },
+  { anchor: 'section-education', label: 'Education' },
+  { anchor: 'section-screening', label: 'Screening' },
+  { anchor: 'section-answers', label: 'Answers' },
+  { anchor: 'section-stories', label: 'Stories' },
+] as const;
+
+/**
+ * Scrolls to a section by id without touching `location.hash` — this page has no router to
+ * confuse, but a plain in-page click shouldn't add a history entry either.
+ */
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 export function App({ client }: { client: BackendClient }) {
@@ -301,8 +324,20 @@ export function App({ client }: { client: BackendClient }) {
         </div>
         <span className="profile-intro-badge">One profile, every application</span>
       </section>
+      <nav className="section-quicknav" aria-label="Profile sections">
+        {PANEL_ORDER.map((panel) => (
+          <button
+            key={panel.anchor}
+            type="button"
+            className="section-quicknav-link"
+            onClick={() => scrollToSection(panel.anchor)}
+          >
+            {panel.label}
+          </button>
+        ))}
+      </nav>
       <form onSubmit={handleSave}>
-        <section className="card contact-card" aria-labelledby="contact-title">
+        <section id="section-contact" className="card contact-card" aria-labelledby="contact-title">
           <div className="card-heading">
             <div>
               <p className="eyebrow">Essentials</p>
@@ -355,7 +390,7 @@ export function App({ client }: { client: BackendClient }) {
           </div>
         </section>
 
-        <fieldset className="card">
+        <fieldset id="section-links" className="card">
           <legend>Links</legend>
           <div className="field-grid">
             <div className="field">
@@ -408,7 +443,7 @@ export function App({ client }: { client: BackendClient }) {
           </div>
         </fieldset>
 
-        <fieldset className="card">
+        <fieldset id="section-resume" className="card">
           <legend>Resume PDF</legend>
           <p className="card-hint">Formatting used for both resume previews and attachments.</p>
           <div className="field-grid">
@@ -442,7 +477,7 @@ export function App({ client }: { client: BackendClient }) {
           </div>
         </fieldset>
 
-        <fieldset className="card">
+        <fieldset id="section-skills" className="card">
           <legend>Skills</legend>
           <ul className="skills">
             {profile.skills.map((skill) => (
@@ -483,6 +518,7 @@ export function App({ client }: { client: BackendClient }) {
         </fieldset>
 
         <ListSection
+          id="section-work"
           legend="Work experience"
           noun="work experience"
           addLabel="Add work experience"
@@ -665,6 +701,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          id="section-education"
           legend="Education"
           noun="education"
           addLabel="Add education"
@@ -721,7 +758,7 @@ export function App({ client }: { client: BackendClient }) {
 
         {/* Facts, not prose. Anything answered here is filled straight from the profile and never
             reaches the answer-drafting model — see `@djobi/shared`'s `screeningAnswers.ts`. */}
-        <fieldset className="card screening-card">
+        <fieldset id="section-screening" className="card screening-card">
           <legend>Screening answers</legend>
           <p className="hint">
             The questions almost every application asks. Anything you answer here is filled in
@@ -758,6 +795,7 @@ export function App({ client }: { client: BackendClient }) {
         </fieldset>
 
         <ListSection
+          id="section-answers"
           legend="Other prepared answers"
           noun="prepared answer"
           addLabel="Add prepared answer"
@@ -788,6 +826,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          id="section-stories"
           legend="Stories"
           noun="story"
           addLabel="Add story"
