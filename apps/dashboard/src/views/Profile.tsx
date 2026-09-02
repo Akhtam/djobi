@@ -59,8 +59,19 @@ function listEditor<K extends ProfileListKey>(
   };
 }
 
+/** A panel's head — anchored by `id` for the quick-nav to scroll to, always expanded. */
+function PanelHead({ id, legend, hint }: { id: string; legend: string; hint?: string }) {
+  return (
+    <div id={id} className="detail__panel-head">
+      <h2>{legend}</h2>
+      {hint ? <p className="profile-hint">{hint}</p> : null}
+    </div>
+  );
+}
+
 /** The chrome around one editable list: the panel, its hint, a numbered removable entry, and Add. */
 function ListSection<T>({
+  id,
   legend,
   noun,
   addLabel,
@@ -71,6 +82,7 @@ function ListSection<T>({
   summary,
   children,
 }: {
+  id: string;
   legend: string;
   noun: string;
   addLabel: string;
@@ -83,10 +95,7 @@ function ListSection<T>({
 }) {
   return (
     <section className="detail__panel">
-      <div className="detail__panel-head">
-        <h2>{legend}</h2>
-        {hint ? <p className="profile-hint">{hint}</p> : null}
-      </div>
+      <PanelHead id={id} legend={legend} hint={hint} />
       <div className="detail__panel-body">
         {controls}
         {items.length === 0 && <p className="profile-empty">No {noun} added yet.</p>}
@@ -113,6 +122,28 @@ function ListSection<T>({
       </div>
     </section>
   );
+}
+
+/** Sections, in the order the quick-nav and the form itself present them. */
+const PANEL_ORDER = [
+  { anchor: 'section-contact', label: 'Contact' },
+  { anchor: 'section-links', label: 'Links' },
+  { anchor: 'section-resume', label: 'Resume' },
+  { anchor: 'section-skills', label: 'Skills' },
+  { anchor: 'section-work', label: 'Work' },
+  { anchor: 'section-education', label: 'Education' },
+  { anchor: 'section-screening', label: 'Screening' },
+  { anchor: 'section-answers', label: 'Answers' },
+  { anchor: 'section-stories', label: 'Stories' },
+] as const;
+
+/**
+ * Scrolls to a section by id without touching `location.hash` — a plain `<a href="#section-x">`
+ * would fire `hashchange`, and `useHashRoute` (`App.tsx`) treats any hash it doesn't recognise as
+ * the applications list, bouncing the user off the profile page entirely.
+ */
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 export function Profile({
@@ -242,11 +273,22 @@ export function Profile({
         </p>
       ) : null}
 
+      <nav className="profile-quicknav" aria-label="Profile sections">
+        {PANEL_ORDER.map((panel) => (
+          <button
+            key={panel.anchor}
+            type="button"
+            className="profile-quicknav__link"
+            onClick={() => scrollToSection(panel.anchor)}
+          >
+            {panel.label}
+          </button>
+        ))}
+      </nav>
+
       <form onSubmit={handleSave}>
         <section className="detail__panel">
-          <div className="detail__panel-head">
-            <h2>Contact details</h2>
-          </div>
+          <PanelHead id="section-contact" legend="Contact details" />
           <div className="detail__panel-body">
             <div className="profile-field-grid">
               <label className="profile-field">
@@ -294,9 +336,7 @@ export function Profile({
         </section>
 
         <section className="detail__panel">
-          <div className="detail__panel-head">
-            <h2>Links</h2>
-          </div>
+          <PanelHead id="section-links" legend="Links" />
           <div className="detail__panel-body">
             <div className="profile-field-grid">
               <label className="profile-field">
@@ -349,12 +389,11 @@ export function Profile({
         </section>
 
         <section className="detail__panel">
-          <div className="detail__panel-head">
-            <h2>Resume PDF</h2>
-            <p className="profile-hint">
-              Formatting used for both resume previews and attachments.
-            </p>
-          </div>
+          <PanelHead
+            id="section-resume"
+            legend="Resume PDF"
+            hint="Formatting used for both resume previews and attachments."
+          />
           <div className="detail__panel-body">
             <div className="profile-field-grid">
               <label className="profile-field">
@@ -388,9 +427,7 @@ export function Profile({
         </section>
 
         <section className="detail__panel">
-          <div className="detail__panel-head">
-            <h2>Skills</h2>
-          </div>
+          <PanelHead id="section-skills" legend="Skills" />
           <div className="detail__panel-body">
             <ul className="profile-skills">
               {profile.skills.map((skill) => (
@@ -433,6 +470,7 @@ export function Profile({
         </section>
 
         <ListSection
+          id="section-work"
           legend="Work experience"
           noun="work experience"
           addLabel="Add work experience"
@@ -597,6 +635,7 @@ export function Profile({
         </ListSection>
 
         <ListSection
+          id="section-education"
           legend="Education"
           noun="education"
           addLabel="Add education"
@@ -649,14 +688,11 @@ export function Profile({
         </ListSection>
 
         <section className="detail__panel">
-          <div className="detail__panel-head">
-            <h2>Screening answers</h2>
-            <p className="profile-hint">
-              The questions almost every application asks. Anything answered here is filled in
-              directly — the AI is never asked to guess it. Leave a row blank to let it be drafted
-              as usual.
-            </p>
-          </div>
+          <PanelHead
+            id="section-screening"
+            legend="Screening answers"
+            hint="The questions almost every application asks. Anything answered here is filled in directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as usual."
+          />
           <div className="detail__panel-body">
             <div className="profile-field-grid">
               {SCREENING_TOPICS.map((entry) => (
@@ -689,6 +725,7 @@ export function Profile({
         </section>
 
         <ListSection
+          id="section-answers"
           legend="Other prepared answers"
           noun="prepared answer"
           addLabel="Add prepared answer"
@@ -718,6 +755,7 @@ export function Profile({
         </ListSection>
 
         <ListSection
+          id="section-stories"
           legend="Stories"
           noun="story"
           addLabel="Add story"

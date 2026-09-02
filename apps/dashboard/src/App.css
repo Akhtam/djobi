@@ -1416,6 +1416,9 @@ h3 {
 .detail__panel-head {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
+  /* Room for the sticky page header (64px) plus the sticky quick-nav row sitting under it, so
+     scrolling a panel into view doesn't land its head underneath either. */
+  scroll-margin-top: 130px;
 }
 
 .detail__panel-head h2 {
@@ -2439,6 +2442,36 @@ h3 {
 
 /* ── Profile view ───────────────────────────────────────────────────────── */
 
+.profile-quicknav {
+  position: sticky;
+  top: 64px;
+  z-index: 15;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+
+.profile-quicknav__link {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.profile-quicknav__link:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
 .profile-hint {
   margin: 4px 0 0;
   color: var(--text-muted);
@@ -2536,8 +2569,8 @@ h3 {
 }
 
 .profile-skill-chip button:hover {
-  background: var(--border);
-  color: var(--text);
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .profile-skill-add {
@@ -2613,11 +2646,17 @@ h3 {
 }
 
 .profile-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-top: 8px;
+  padding: 16px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
 }
 
 .profile-status {
