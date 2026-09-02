@@ -388,6 +388,116 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
 
 ## Planned
 
+### Phase 20 — Upload resume to populate a Profile (planned, not started)
+
+Today the Profile is entered by hand in both the options page and the dashboard's `#/profile`. This
+phase adds an "Upload resume" action to both that parses an uploaded PDF and pre-fills a draft the
+candidate reviews and edits before it's saved — never an auto-save, never a silent overwrite.
+
+- **PDF only, v1.** DOCX is common too but adds a new dependency (`mammoth` or similar) for no
+  proven need yet; `unpdf` is already a backend dependency, reused here to extract text from the
+  uploaded PDF. Its only current use (`pdf/preflightResume.ts`) is verifying the app's own
+  well-formed, self-generated PDFs via flat-text `mergePages: true` extraction — it has never had to
+  cope with an arbitrary real-world resume's layout (columns, tables, scanned/image-based pages), so
+  extraction quality here is unproven, not a solved problem the plan can assume; budget time to
+  eyeball extraction against a handful of real resumes before trusting it. 5MB upload cap, rejected
+  with a clear error above that — Hono's multipart parser has no built-in size limit, so this needs
+  an explicit byte-length check before/during parsing, and that rejection should go through the same
+  `RequestValidationError` → 400 convention `requestBody.ts` already gives every JSON route.
+- **Extraction reuses the existing structured-LLM-call seam**, not a new pattern: extracted PDF text
+  goes through `llm/structuredCall.ts` (same seam as `extractJob`/`tailorResume`/`answerQuestions`/
+  `answerChat`) against a new zod schema for the extractable subset of a Profile, and the object is
+  re-validated against that schema before it's returned — same guarantee `structuredCall.ts` already
+  gives every other route. Like `extractJob`, the extracted PDF text is untrusted, attacker-authored
+  input and must go through `sanitizeXmlContent()` before it reaches the model — the same
+  prompt-injection guard `extractJob.ts` already applies, not a new concern this route invents.
+- **Three new `Profile` fields, since a resume routinely carries content the schema has no home for
+  today:** `summary: string | null` (freeform intro paragraph); `projects:
+  {name, description, bullets: string[], link: string | null, technologies: string[] | null}[]`
+  (mirrors `workExperience`'s bullets shape); `certifications: {name, issuer, date}[]` and
+  `awards: {name, issuer, date, description?}[]` as two separate arrays, not one combined list — a
+  certification and an award carry different fields (an expiry vs. a description) even though
+  resumes often bullet them under one heading. Needs `EMPTY_PROFILE` defaults and a
+  `normalizeProfileDraft` update, the same as any new Profile field. **No DB migration**: the
+  `profiles` table stores the whole `Profile` as one `jsonb('data')` column
+  (`apps/backend/src/db/schema.ts`), so new fields land there automatically, same as every other
+  Profile field — do not add columns for these.
+- **Extraction populates `fullName`, `email`, `phone`, `location`, `links`, `workExperience`,
+  `education`, `skills`, `summary`, `projects`, `certifications`, `awards` — and nothing else.**
+  `stories` (STAR-format), `screeningAnswers` and `customAnswers` stay manual-only; no resume
+  contains that content, so leaving them out of the extraction schema is not a gap, it's the
+  boundary of what a resume can honestly supply.
+- **Review-before-save, not merge-on-upload.** A resume is often stale or wrong on specifics (an old
+  phone number, a rounded date), and the candidate may already have hand-entered data worth keeping.
+  The endpoint returns a draft only; the candidate sees it in a review screen and edits it like any
+  other profile field before the existing `POST /profile` save path runs. No new save path, no
+  automatic merge/overwrite logic to get subtly wrong.
+- **The uploaded file itself is never persisted.** No file storage exists anywhere in this codebase
+  today (no S3, no multer/busboy, no `apps/*` upload route) — this phase doesn't introduce any. The
+  PDF is parsed in-memory on the backend for one extraction call and discarded.
+- **New backend endpoint, `POST /profile/extract-resume`** (multipart, via Hono's built-in
+  `c.req.parseBody()`): extract text → structured LLM call → return the draft. Deliberately does not
+  call `ProfileStore.save` — extraction and saving stay two separate concerns, the same separation
+  Save Step already keeps from Fill Step in the extension pipeline.
+- **Entry point added to both editors, not one.** `apps/dashboard/src/views/Profile.tsx` (848 lines)
+  already independently re-implements the same `Profile`-editing surface
+  `apps/extension/src/options/App.tsx` (933 lines) does (sharing `normalizeProfileDraft`/schema logic
+  via `packages/shared`, but its own markup — no `packages/ui` exists). The review-screen markup is
+  duplicated in both apps rather than factoring out a new shared UI package now, matching that
+  existing pattern; introducing shared UI is a bigger refactor than this feature justifies. That said,
+  4 new sections plus a full review screen in both files pushes each past 1000 lines — close enough
+  to the threshold where a shared-UI extraction would pay for itself that this is a call worth
+  confirming rather than assuming; flag it before starting the UI work if either file is getting
+  unwieldy.
+- **New sections in both editors, in resume reading order:** `summary` near the top (just after
+  contact/links), `projects` and `certifications`/`awards` after `education`.
+- **Extraction failure is not a dead end.** A PDF with no extractable text (scanned/image-based,
+  corrupt) surfaces an error and the candidate falls back to manual entry. A partial extraction still
+  opens the review screen with whatever fields were found; anything the model couldn't confidently
+  extract is left blank rather than guessed — same non-fabrication discipline every other LLM route in
+  this codebase already holds to.
+
+Chunks below are ordered by dependency; each is independently testable and, except where noted,
+independently shippable. TDD per this project's process (`mattpocock-skills:tdd`) within each chunk.
+
+**20.1 — Shared schema & contracts** (foundation; no behavior yet, just types both sides compile against)
+- [ ] `packages/shared/src/schemas.ts`: `summary`, `projects`, `certifications`, `awards` on
+      `ProfileSchema` + `EMPTY_PROFILE` defaults; new extraction-result schema (the extractable
+      subset — see above). No DB migration — `profiles.data` is jsonb, see above.
+- [ ] `packages/shared/src/profileDraft.ts`: `normalizeProfileDraft` updated for the new fields
+- [ ] `packages/shared/src/wire.ts`: request/response schemas for `POST /profile/extract-resume`,
+      same paired-contract pattern `extractJob`/`tailorResume`/`answerQuestions` already use
+- [ ] Tests: schema validation + `normalizeProfileDraft` unit tests for the new fields
+
+**20.2 — Backend extraction logic** (depends on 20.1; pure function, no route/HTTP surface yet)
+- [ ] `apps/backend/src/llm/extractResume.ts` (new): PDF text via `unpdf` + `sanitizeXmlContent` +
+      structured call against the new extraction schema
+- [ ] Tests: fixture PDF text in → structured object out (mocked `structuredCall`), plus a
+      no-extractable-text case and a partial-extraction case (some fields present, rest blank)
+- [ ] Before trusting this chunk done: run extraction against a handful of real, differently-laid-out
+      resumes (columns, tables) to sanity-check quality — the plan's earlier note that `unpdf` is
+      unproven on arbitrary layouts applies here, not later
+
+**20.3 — Backend route** (depends on 20.1, 20.2; independently shippable once done — testable via curl/Postman even before any UI exists)
+- [ ] `apps/backend/src/routes/`: `POST /profile/extract-resume` (multipart via
+      `c.req.parseBody()`, explicit 5MB byte-length check feeding the existing
+      `RequestValidationError` convention, draft-only, no `ProfileStore.save`)
+- [ ] Tests: happy path, oversized upload rejected, no-text PDF surfaces a clear error, auth required
+- [ ] Decision to close out before shipping, not a code task: whether the pre-existing absence of
+      rate/spend limiting on LLM routes needs addressing for this specifically higher-cost route
+      (`rateLimit` in `auth.ts` only covers sign-in/sign-up today)
+
+**20.4 — Extension options UI** (depends on 20.1–20.3; independent of 20.5, can run in parallel with it)
+- [ ] `apps/extension/src/options/App.tsx`: upload entry point, review screen, new `summary`/
+      `projects`/`certifications`/`awards` sections (resume reading order — see above)
+- [ ] Tests: upload → review → edit → save flow; extraction-failure fallback to manual entry
+
+**20.5 — Dashboard UI** (depends on 20.1–20.3; independent of 20.4, can run in parallel with it)
+- [ ] `apps/dashboard/src/views/Profile.tsx`: same, independently implemented
+- [ ] Tests: same coverage as 20.4
+- [ ] Before starting 20.4/20.5: re-check file size on both editors once the new sections land —
+      if either is getting unwieldy, revisit the shared-UI-package call rather than assuming it away
+
 ### Phase 19 — Provenance persistence + a real-posting eval corpus (done)
 
 The last of the seven audit improvements (item 7) plus the audit's closing recommended step: store
