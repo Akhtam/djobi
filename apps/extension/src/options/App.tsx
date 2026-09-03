@@ -6,20 +6,29 @@
  * named.
  */
 import {
-  applyExtractedProfile,
-  changeCredentialKind,
   EMPTY_PROFILE,
-  normalizeProfileDraft,
-  optionalText,
   parseProfile,
   SCREENING_TOPICS,
-  spliceWorkBullets,
-  storyTags,
-  withScreeningAnswer,
   type Award,
   type Certification,
   type Profile,
 } from '@djobi/shared';
+import {
+  applyExtractedProfile,
+  changeCredentialKind,
+  credentialItems,
+  listEditor,
+  normalizeProfileDraft,
+  optionalText,
+  parseBulletCap,
+  spliceWorkBullets,
+  storyTags,
+  toggleStarredBullet,
+  useProfileDraft,
+  withScreeningAnswer,
+  type CredentialItem,
+  type ListEditor,
+} from '@djobi/profile-editor';
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
@@ -31,84 +40,6 @@ import { Login } from './Login';
 /** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
 function isUnauthorized(err: unknown): boolean {
   return err instanceof HttpError && err.kind === 'http' && err.status === 401;
-}
-
-/** The Profile keys holding an editable list of entries. */
-type ProfileListKey =
-  | 'workExperience'
-  | 'education'
-  | 'projects'
-  | 'certifications'
-  | 'awards'
-  | 'stories'
-  | 'customAnswers';
-
-/**
- * One row of the combined Certifications & Awards section — `certifications` and `awards` stay two
- * separate Profile arrays (a certification has no description, an award has no expiry), but the
- * candidate picks between them per row rather than filling out two separate lists. `index` is the
- * row's position within its own array (`profile.certifications`/`profile.awards`), not within this
- * combined view — {@link credentialItems} below is what turns the two arrays into one ordered list.
- *
- * Flat rather than a discriminated union of {@link Certification}/{@link Award}: `ListEditor`'s
- * `update` takes a `Partial<CredentialItem>` patch, and `Partial` of a union only keeps the keys
- * every member shares — `description` (award-only) would silently disappear from what a patch is
- * allowed to contain. `description` stays meaningless, not absent, on a certification row.
- */
-interface CredentialItem {
-  kind: 'certification' | 'award';
-  index: number;
-  name: string;
-  issuer: string;
-  date: string;
-  description?: string;
-}
-
-/** Certifications, then awards, each tagged with where it lives — see {@link CredentialItem}. */
-function credentialItems(profile: Profile): CredentialItem[] {
-  return [
-    ...profile.certifications.map((entry, index) => ({
-      kind: 'certification' as const,
-      index,
-      ...entry,
-    })),
-    ...profile.awards.map((entry, index) => ({ kind: 'award' as const, index, ...entry })),
-  ];
-}
-
-/** The three things every list section does to its list. Bound to one key by {@link listEditor}. */
-interface ListEditor<T> {
-  /** Merges `patch` into entry `index`, leaving the others alone. */
-  update: (index: number, patch: Partial<T>) => void;
-  remove: (index: number) => void;
-  add: () => void;
-}
-
-/**
- * The list operations for one Profile key.
- *
- * The four list sections used to write these inline, once per editable field — around twenty copies
- * of `setProfile({ ...profile, xs: profile.xs.map((x, i) => i === index ? { ...x, k: v } : x) })`,
- * one of them nested three levels deep for a work-experience bullet. They are the same three
- * operations every time, and spelling them out at each input meant the shape of a Profile update
- * was restated at every input rather than being stated once.
- */
-function listEditor<K extends ProfileListKey>(
-  profile: Profile,
-  setProfile: (profile: Profile) => void,
-  key: K,
-  blank: () => Profile[K][number],
-): ListEditor<Profile[K][number]> {
-  const list = profile[key] as Profile[K][number][];
-
-  const write = (next: Profile[K][number][]) => setProfile({ ...profile, [key]: next });
-
-  return {
-    update: (index, patch) =>
-      write(list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry))),
-    remove: (index) => write(list.filter((_, i) => i !== index)),
-    add: () => write([...list, blank()]),
-  };
 }
 
 /**
@@ -216,10 +147,11 @@ function scrollToSection(id: string) {
 
 export function App({ client }: { client: BackendClient }) {
   const { theme, toggleTheme } = useThemePreference();
-  const [profile, setProfileState] = useState<Profile | null>(null);
+  const draft = useProfileDraft();
+  const profile = draft.profile;
+  const dirty = draft.dirty;
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
-  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   // Separate from `status` above: that banner means "the save you just asked for landed or
@@ -229,7 +161,6 @@ export function App({ client }: { client: BackendClient }) {
     kind: 'notice' | 'error';
     message: string;
   } | null>(null);
-  const editRevisionRef = useRef(0);
   // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
   // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
   const resumeInputRef = useRef<HTMLInputElement>(null);
@@ -242,9 +173,7 @@ export function App({ client }: { client: BackendClient }) {
   const [reloadToken, setReloadToken] = useState(0);
 
   function setProfile(next: Profile) {
-    ++editRevisionRef.current;
-    setProfileState(next);
-    setDirty(true);
+    draft.setProfile(next);
     if (status?.kind === 'saved') setStatus(null);
   }
 
@@ -255,17 +184,21 @@ export function App({ client }: { client: BackendClient }) {
       // profile saved before a field existed can't crash the form that binds to that key.
       .then((loaded) => {
         setUnauthorized(false);
-        setProfileState(parseProfile(loaded));
+        draft.load(parseProfile(loaded));
       })
       .catch((error: unknown) => {
         if (isUnauthorized(error)) {
           setUnauthorized(true);
           return;
         }
-        setProfileState(EMPTY_PROFILE);
+        draft.load(EMPTY_PROFILE);
         const message = error instanceof Error ? error.message : String(error);
         setStatus({ kind: 'error', message: `Failed to load profile: ${message}` });
       });
+    // `draft` is a fresh object every render (its own state setters are stable, but the object
+    // wrapping them isn't) — depending on it would re-run this on every render. `client`/
+    // `reloadToken` are this effect's real inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, reloadToken]);
 
   async function handleSignIn(email: string, password: string) {
@@ -417,16 +350,15 @@ export function App({ client }: { client: BackendClient }) {
     if (!profile) return;
     setStatus(null);
     setSaving(true);
-    const savedRevision = editRevisionRef.current;
+    const savedRevision = draft.captureRevision();
     const toSave = normalizeProfileDraft(profile, () => crypto.randomUUID());
     client
       .saveProfile(toSave)
       .then((saved) => {
         // The form remains editable while saving. Do not replace newer edits with the snapshot
         // returned for an older request.
-        if (savedRevision !== editRevisionRef.current) return;
-        setProfileState(parseProfile(saved));
-        setDirty(false);
+        if (draft.isStale(savedRevision)) return;
+        draft.load(parseProfile(saved));
         setStatus({ kind: 'saved', message: 'Profile saved.' });
       })
       .catch((error: unknown) => {
@@ -825,12 +757,11 @@ export function App({ client }: { client: BackendClient }) {
                     placeholder={`Inherit ${profile.maxBulletsPerRole}`}
                     value={entry.maxBullets ?? ''}
                     onChange={(event) => {
-                      const raw = event.currentTarget.value;
-                      const value = event.currentTarget.valueAsNumber;
-                      if (!raw) work.update(index, { maxBullets: null });
-                      else if (Number.isInteger(value) && value >= 0) {
-                        work.update(index, { maxBullets: value });
-                      }
+                      const cap = parseBulletCap(
+                        event.currentTarget.value,
+                        event.currentTarget.valueAsNumber,
+                      );
+                      if (cap !== undefined) work.update(index, { maxBullets: cap });
                     }}
                   />
                 </div>
@@ -859,14 +790,9 @@ export function App({ client }: { client: BackendClient }) {
                           className="btn-star"
                           aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
                           aria-pressed={entry.starredIndices.includes(bulletIndex)}
-                          onClick={() => {
-                            const isStarred = entry.starredIndices.includes(bulletIndex);
-                            work.update(index, {
-                              starredIndices: isStarred
-                                ? entry.starredIndices.filter((star) => star !== bulletIndex)
-                                : [...entry.starredIndices, bulletIndex].sort((a, b) => a - b),
-                            });
-                          }}
+                          onClick={() =>
+                            work.update(index, toggleStarredBullet(entry, bulletIndex))
+                          }
                         >
                           <span aria-hidden="true">
                             {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}

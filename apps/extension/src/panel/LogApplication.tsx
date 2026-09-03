@@ -13,16 +13,14 @@
  * `baseResumeOf`). No tailoring, no answers — the candidate wrote those themselves.
  */
 import {
-  baseResumeOf,
-  bulletProvenance,
   failureMessage,
-  requirementEvidence,
+  findDuplicate,
+  manualApplicationPayload,
   type JobInfo,
   type Profile,
 } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
-import { findDuplicate } from '../lib/duplicateGuard';
 import { formatAppliedDate } from '../lib/format';
 import type { DuplicateApplication } from '../lib/run';
 
@@ -117,9 +115,10 @@ export function LogApplication({
       // serializing them would put a database round-trip behind a model call for no reason.
       //
       // Sharing a `Promise.all` with the extraction is only safe because the guard resolves rather
-      // than rejects — see `lib/duplicateGuard.ts`. Calling the lookup directly here, as this did,
-      // meant a backend hiccup on a *warning* rejected the pair and reported an extraction failure
-      // for an extraction that had succeeded, discarding the model call it had just paid for.
+      // than rejects — see `@djobi/shared`'s `duplicateGuard.ts`. Calling the lookup directly here,
+      // as this did, meant a backend hiccup on a *warning* rejected the pair and reported an
+      // extraction failure for an extraction that had succeeded, discarding the model call it had
+      // just paid for.
       const [jobInfo, duplicate] = await Promise.all([
         client.extractJob(jobDescription),
         findDuplicate(client, jobUrl.trim()),
@@ -140,24 +139,15 @@ export function LogApplication({
     // put its old `kind` back and the screen would never leave `extracted`.
     setState({ ...reviewed, kind: 'saving' });
     try {
-      // No tailoring happened on this path, so the resume is the whole Profile bullet bank
-      // unfiltered — `baseResumeOf` — and provenance is computed against that same object, the way
-      // `background/applicationPipeline.ts`'s Save Step does for an autofill run.
-      const manualResume = baseResumeOf(profile);
-      await client.saveApplication({
-        company: company.trim(),
-        roleTitle: roleTitle.trim(),
-        jobUrl: jobUrl.trim(),
-        // The edited company/role are what the row is keyed by, so they win over the extraction
-        // inside the stored snapshot too — otherwise a correction would only half apply.
-        jobInfo: { ...jobInfo, company: company.trim(), roleTitle: roleTitle.trim() },
-        tailoredResume: manualResume,
-        answers: [],
-        source: 'manual',
-        rawDescription: jobDescription.trim(),
-        requirementEvidence: requirementEvidence(manualResume, jobInfo, profile),
-        bulletProvenance: bulletProvenance(manualResume, profile),
-      });
+      await client.saveApplication(
+        manualApplicationPayload(profile, {
+          jobUrl,
+          jobDescription,
+          jobInfo,
+          company,
+          roleTitle,
+        }),
+      );
       setState({ kind: 'saved', company: company.trim(), roleTitle: roleTitle.trim() });
     } catch (error) {
       setState({ ...reviewed, kind: 'save-error', message: failureMessage(error) });

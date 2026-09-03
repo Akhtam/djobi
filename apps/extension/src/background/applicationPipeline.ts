@@ -15,10 +15,9 @@
  * the store.
  */
 import {
-  bulletProvenance,
-  EXTRACTION_VERSION,
+  autofillApplicationPayload,
+  findDuplicate,
   keywordCoverage,
-  requirementEvidence,
   resumeFileName,
   splitPreparedQuestions,
 } from '@djobi/shared';
@@ -29,6 +28,7 @@ import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
 import { answersFor, STEP_STATUS } from '../lib/run';
 import type { JobPageData } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
+import type { DetectedFrameRef } from '../lib/tabStore/detectedPage';
 import {
   type AnalyzedRun,
   type DuplicateApplication,
@@ -36,22 +36,42 @@ import {
   type PipelineRunState,
   asAnalyzedRun,
 } from '../lib/run';
-import { findDuplicate } from '../lib/duplicateGuard';
 import { withRunClaim, type RunClaim } from './runClaim';
+
+/**
+ * The tab's Detected Fields, as the pipeline needs to read them — the two calls into
+ * `background/detectedFields.ts` that are genuinely I/O (a `chrome.storage.session` read, and a
+ * wait on an in-flight oracle enrichment) rather than the pure merge {@link mergeRescan} does.
+ * `mergeRescan` stays a plain import for that reason: substituting it buys nothing a fake couldn't
+ * get for free by calling the real thing.
+ */
+export interface DetectedFieldsPort {
+  snapshotForRun(tabId: number): Promise<JobPageData>;
+  frameForFill(tabId: number): Promise<DetectedFrameRef | null>;
+}
 
 /**
  * Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole.
  *
- * Two collaborators, not the seven loose methods this used to be. Four of those were one-line
+ * Three collaborators, not the seven loose methods this used to be. Four of those were one-line
  * wrappers over `callBackend`, so the interface grew a method for every backend route the pipeline
  * touched while hiding nothing, and every test had to supply all seven to exercise any one of them.
- * The two things that genuinely vary here are *which backend* and *which page*, so those are the
- * two names.
+ * The three things that genuinely vary here are *which backend*, *which page*, and *which tab's
+ * detection* — so those are the three names. `detection` was added after `fillStep`/`runAnalysis`
+ * were found reaching straight past this interface into `background/detectedFields.ts`'s module
+ * singleton, which made the claim above untrue for exactly those two calls.
  */
 export interface PipelineDeps {
   backend: BackendClient;
   page: PageClient;
+  detection: DetectedFieldsPort;
 }
+
+/**
+ * The production adapter: the local backend, the tab's own content script, and the tab's real
+ * Detected Fields.
+ */
+export const productionDetection: DetectedFieldsPort = { snapshotForRun, frameForFill };
 
 /**
  * The production adapter: the local backend, and the tab's own content script.
@@ -63,6 +83,7 @@ export interface PipelineDeps {
 export const productionDeps: PipelineDeps = {
   backend: httpBackendClient,
   page: chromePageClient,
+  detection: productionDetection,
 };
 
 type AnalysisResult = Pick<
@@ -179,7 +200,7 @@ async function fillStep(
   // Address the frame that reported the form. If navigation destroyed that frame, retry only this
   // read-only scan as a broadcast and use broadcast addressing for the single fill attempt below.
   // Retrying fill itself would be unsafe: clicks and uploads are not idempotent.
-  let frameId = (await frameForFill(tabId))?.frameId;
+  let frameId = (await deps.detection.frameForFill(tabId))?.frameId;
   let scanned = await deps.page.scan(tabId, frameId);
   if (frameId !== undefined && scanned === null) {
     frameId = undefined;
@@ -337,21 +358,7 @@ export async function runSaveApplication(
       // here rather than threaded from Analysis, since the Profile a save should be judged against
       // is the one that exists *now*, not the one tailoring ran against.
       const profile = await deps.backend.getProfile().catch(() => null);
-
-      const payload = {
-        company: run.jobInfo.company,
-        roleTitle: run.jobInfo.roleTitle,
-        jobUrl: run.tabUrl ?? '',
-        jobInfo: run.jobInfo,
-        tailoredResume: run.tailoredResume,
-        answers: run.answers,
-        rawDescription: run.analyzedJobDescription,
-        extractionVersion: EXTRACTION_VERSION,
-        requirementEvidence: profile
-          ? requirementEvidence(run.tailoredResume, run.jobInfo, profile)
-          : null,
-        bulletProvenance: profile ? bulletProvenance(run.tailoredResume, profile) : null,
-      };
+      const payload = autofillApplicationPayload(run, profile);
 
       const application = run.applicationId
         ? await deps.backend.updateApplication(run.applicationId, payload)
@@ -419,7 +426,7 @@ export async function runAnalysis(
       // `background/detectedFields.ts`.
       const [jobPageData, duplicateOf]: [JobPageData, DuplicateApplication | null] =
         await Promise.all([
-          snapshotForRun(tabId),
+          deps.detection.snapshotForRun(tabId),
           force ? Promise.resolve(null) : findDuplicate(deps.backend, tabUrl, claim.signal),
         ]);
 

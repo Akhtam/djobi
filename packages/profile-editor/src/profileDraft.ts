@@ -1,5 +1,11 @@
-import type { Certification, ExtractedProfile, Profile, WorkExperience } from './schemas.js';
-import type { ScreeningAnswers, ScreeningTopic } from './screeningAnswers.js';
+import type {
+  Certification,
+  ExtractedProfile,
+  Profile,
+  ScreeningAnswers,
+  ScreeningTopic,
+  WorkExperience,
+} from '@djobi/shared';
 
 export type CredentialKind = 'certification' | 'award';
 

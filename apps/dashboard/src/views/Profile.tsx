@@ -2,14 +2,16 @@
  * The account-profile editor — `#/profile`, reachable from the header's account menu.
  *
  * The same Profile the extension's options page edits (`apps/extension/src/options/App.tsx`), and
- * deliberately built the same way: the list-editing helpers (`listEditor`, `ListSection`) and the
- * draft-normalization helpers they call into (`normalizeProfileDraft`, `spliceWorkBullets`, …) are
- * shared with that page via `@djobi/shared`'s `profileDraft.ts` rather than re-implemented here, so
- * "star a bullet" or "drop a blank story id" behaves identically in both places. Only the chrome
- * around the form — the panel/card shell, the save affordance, how a 401 is reported — is
- * dashboard-specific, matching `Analytics.tsx`'s `onUnauthorized` convention rather than the
- * extension's own `unauthorized`-state-and-`<Login>` one, since the dashboard already redirects to
- * `#/login` centrally in `App.tsx`.
+ * deliberately built the same way: the draft itself (`useProfileDraft`), the list-editing helpers
+ * (`listEditor`) and the draft-normalization helpers they call into (`normalizeProfileDraft`,
+ * `spliceWorkBullets`, …) are shared with that page via `@djobi/profile-editor` rather than
+ * re-implemented here, so "star a bullet" or "drop a blank story id" behaves identically in both
+ * places. `ListSection` stays local to each app on purpose — the two render genuinely different
+ * chrome (this one a card-styled panel with `PanelHead`, the options page a `<fieldset>`) for the
+ * same list-editing behavior. Only the chrome around the form — the panel/card shell, the save
+ * affordance, how a 401 is reported — is dashboard-specific, matching `Analytics.tsx`'s
+ * `onUnauthorized` convention rather than the extension's own `unauthorized`-state-and-`<Login>`
+ * one, since the dashboard already redirects to `#/login` centrally in `App.tsx`.
  */
 import {
   useEffect,
@@ -21,86 +23,34 @@ import {
 } from 'react';
 import { HttpError } from '@djobi/http-client';
 import {
-  applyExtractedProfile,
   EMPTY_PROFILE,
   failureMessage,
-  normalizeProfileDraft,
-  optionalText,
   parseProfile,
   SCREENING_TOPICS,
-  spliceWorkBullets,
-  storyTags,
-  withScreeningAnswer,
   type Award,
   type Certification,
   type ExtractedProfile,
   type Profile,
 } from '@djobi/shared';
+import {
+  applyExtractedProfile,
+  changeCredentialKind,
+  credentialItems,
+  listEditor,
+  normalizeProfileDraft,
+  optionalText,
+  parseBulletCap,
+  spliceWorkBullets,
+  storyTags,
+  toggleStarredBullet,
+  useProfileDraft,
+  withScreeningAnswer,
+  type CredentialItem,
+  type ListEditor,
+} from '@djobi/profile-editor';
 
 function isUnauthorized(error: unknown): boolean {
   return error instanceof HttpError && error.kind === 'http' && error.status === 401;
-}
-
-/** The Profile keys holding an editable list of entries. */
-type ProfileListKey =
-  | 'workExperience'
-  | 'education'
-  | 'projects'
-  | 'certifications'
-  | 'awards'
-  | 'stories'
-  | 'customAnswers';
-
-/**
- * One row of the combined Certifications & Awards section — see the identical type in the
- * extension's options page (`apps/extension/src/options/App.tsx`) for why it's flat rather than a
- * discriminated union of {@link Certification}/{@link Award}.
- */
-interface CredentialItem {
-  kind: 'certification' | 'award';
-  index: number;
-  name: string;
-  issuer: string;
-  date: string;
-  description?: string;
-}
-
-/** Certifications, then awards, each tagged with where it lives — see {@link CredentialItem}. */
-function credentialItems(profile: Profile): CredentialItem[] {
-  return [
-    ...profile.certifications.map((entry, index) => ({
-      kind: 'certification' as const,
-      index,
-      ...entry,
-    })),
-    ...profile.awards.map((entry, index) => ({ kind: 'award' as const, index, ...entry })),
-  ];
-}
-
-/** The three things every list section does to its list. Bound to one key by {@link listEditor}. */
-interface ListEditor<T> {
-  update: (index: number, patch: Partial<T>) => void;
-  remove: (index: number) => void;
-  add: () => void;
-}
-
-/** The list operations for one Profile key — see the identical helper in the extension's options page. */
-function listEditor<K extends ProfileListKey>(
-  profile: Profile,
-  setProfile: (profile: Profile) => void,
-  key: K,
-  blank: () => Profile[K][number],
-): ListEditor<Profile[K][number]> {
-  const list = profile[key] as Profile[K][number][];
-
-  const write = (next: Profile[K][number][]) => setProfile({ ...profile, [key]: next });
-
-  return {
-    update: (index, patch) =>
-      write(list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry))),
-    remove: (index) => write(list.filter((_, i) => i !== index)),
-    add: () => write([...list, blank()]),
-  };
 }
 
 /** A panel's head — anchored by `id` for the quick-nav to scroll to, always expanded. */
@@ -207,12 +157,13 @@ export function Profile({
   extractResume: (file: File) => Promise<ExtractedProfile>;
   onUnauthorized: () => void;
 }) {
-  const [profile, setProfileState] = useState<Profile | null>(null);
+  const draft = useProfileDraft();
+  const profile = draft.profile;
+  const dirty = draft.dirty;
   const [activeTab, setActiveTab] = useState<ProfileTab>('profile');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
-  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   // Separate from `status` above: that means "the save you just asked for landed or didn't," and
@@ -222,15 +173,12 @@ export function Profile({
     kind: 'notice' | 'error';
     message: string;
   } | null>(null);
-  const editRevisionRef = useRef(0);
   // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
   // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
   function setProfile(next: Profile) {
-    ++editRevisionRef.current;
-    setProfileState(next);
-    setDirty(true);
+    draft.setProfile(next);
     if (status?.kind === 'saved') setStatus(null);
   }
 
@@ -239,7 +187,7 @@ export function Profile({
     getProfile().then(
       (loaded) => {
         if (!current) return;
-        setProfileState(parseProfile(loaded));
+        draft.load(parseProfile(loaded));
       },
       (error: unknown) => {
         if (!current) return;
@@ -247,13 +195,16 @@ export function Profile({
           onUnauthorized();
           return;
         }
-        setProfileState(EMPTY_PROFILE);
+        draft.load(EMPTY_PROFILE);
         setLoadError(failureMessage(error));
       },
     );
     return () => {
       current = false;
     };
+    // `draft` is a fresh object every render — depending on it would re-run this on every render.
+    // `getProfile`/`onUnauthorized` are this effect's real inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getProfile, onUnauthorized]);
 
   if (!profile) {
@@ -327,23 +278,16 @@ export function Profile({
     },
     add: () => certifications.add(),
   };
-  /** Moves one row between the two arrays — see the identical helper in the extension's options page. */
-  function changeCredentialKind(item: CredentialItem, kind: CredentialItem['kind']) {
-    if (!profile || item.kind === kind) return;
-    const shared = { name: item.name, issuer: item.issuer, date: item.date };
-    if (kind === 'award') {
-      setProfile({
-        ...profile,
-        certifications: profile.certifications.filter((_, i) => i !== item.index),
-        awards: [...profile.awards, shared],
-      });
-    } else {
-      setProfile({
-        ...profile,
-        awards: profile.awards.filter((_, i) => i !== item.index),
-        certifications: [...profile.certifications, shared],
-      });
-    }
+  /** Applies {@link changeCredentialKind} to the current draft; a no-op before one is loaded. */
+  function handleCredentialKindChange(item: CredentialItem, kind: CredentialItem['kind']) {
+    if (!profile) return;
+    setProfile(
+      changeCredentialKind(profile, item.index, item.kind, kind, {
+        name: item.name,
+        issuer: item.issuer,
+        date: item.date,
+      }),
+    );
   }
 
   /**
@@ -385,14 +329,13 @@ export function Profile({
     if (!profile) return;
     setStatus(null);
     setSaving(true);
-    const savedRevision = editRevisionRef.current;
+    const savedRevision = draft.captureRevision();
     const toSave = normalizeProfileDraft(profile, () => crypto.randomUUID());
     saveProfile(toSave)
       .then((saved) => {
         // The form remains editable while saving — do not replace newer edits with an older response.
-        if (savedRevision !== editRevisionRef.current) return;
-        setProfileState(parseProfile(saved));
-        setDirty(false);
+        if (draft.isStale(savedRevision)) return;
+        draft.load(parseProfile(saved));
         setStatus({ kind: 'saved', message: 'Profile saved.' });
       })
       .catch((error: unknown) => {
@@ -812,12 +755,11 @@ export function Profile({
                         placeholder={`Inherit ${profile.maxBulletsPerRole}`}
                         value={entry.maxBullets ?? ''}
                         onChange={(event) => {
-                          const raw = event.currentTarget.value;
-                          const value = event.currentTarget.valueAsNumber;
-                          if (!raw) work.update(index, { maxBullets: null });
-                          else if (Number.isInteger(value) && value >= 0) {
-                            work.update(index, { maxBullets: value });
-                          }
+                          const cap = parseBulletCap(
+                            event.currentTarget.value,
+                            event.currentTarget.valueAsNumber,
+                          );
+                          if (cap !== undefined) work.update(index, { maxBullets: cap });
                         }}
                       />
                     </label>
@@ -841,14 +783,9 @@ export function Profile({
                               className="profile-star"
                               aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
                               aria-pressed={entry.starredIndices.includes(bulletIndex)}
-                              onClick={() => {
-                                const isStarred = entry.starredIndices.includes(bulletIndex);
-                                work.update(index, {
-                                  starredIndices: isStarred
-                                    ? entry.starredIndices.filter((star) => star !== bulletIndex)
-                                    : [...entry.starredIndices, bulletIndex].sort((a, b) => a - b),
-                                });
-                              }}
+                              onClick={() =>
+                                work.update(index, toggleStarredBullet(entry, bulletIndex))
+                              }
                             >
                               <span aria-hidden="true">
                                 {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}
@@ -1067,7 +1004,7 @@ export function Profile({
                         className="search"
                         value={item.kind}
                         onChange={(e) =>
-                          changeCredentialKind(
+                          handleCredentialKindChange(
                             item,
                             e.currentTarget.value as CredentialItem['kind'],
                           )

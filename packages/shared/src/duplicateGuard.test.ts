@@ -1,6 +1,6 @@
-import type { DuplicateApplicationSummary } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { duplicateApplicationOf, findDuplicate } from './duplicateGuard';
+import { duplicateApplicationOf, findDuplicate } from './duplicateGuard.js';
+import type { DuplicateApplicationSummary } from './wire.js';
 
 const summary: DuplicateApplicationSummary = {
   count: 2,
@@ -46,5 +46,21 @@ describe('findDuplicate', () => {
     await expect(
       findDuplicate(backend, 'https://acme.example/jobs/1', controller.signal),
     ).rejects.toBe(failure);
+  });
+
+  it("accepts a lookup with no signal parameter — the dashboard client's shape", async () => {
+    // `DashboardClient.findApplicationDuplicates` takes only `jobUrl`, unlike the extension's
+    // `BackendClient`. A `DuplicateLookup` typed for an optional second parameter still accepts it:
+    // TypeScript allows a function of fewer parameters where one of more is expected.
+    const backend = { findApplicationDuplicates: vi.fn().mockResolvedValue(summary) };
+
+    await expect(findDuplicate(backend, 'https://acme.example/jobs/1')).resolves.toEqual({
+      ...summary.latest,
+      count: 2,
+    });
+    expect(backend.findApplicationDuplicates).toHaveBeenCalledWith(
+      'https://acme.example/jobs/1',
+      undefined,
+    );
   });
 });

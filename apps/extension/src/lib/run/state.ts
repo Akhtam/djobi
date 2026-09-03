@@ -7,8 +7,8 @@
  * importing the other's storage.
  */
 import type {
-  ApplicationStage,
   DetectedField,
+  DuplicateApplication,
   JobInfo,
   KeywordCoverage,
   QuestionAnswer,
@@ -47,28 +47,10 @@ export interface PipelineFailure {
   kind: RunFailureKind;
 }
 
-/**
- * What the candidate already has on file for this job posting, when the duplicate guard stopped a
- * run.
- *
- * A flattened summary rather than the whole `Application`: the panel needs five fields to explain
- * itself, and storing the full record would put a tailored resume and every answer into
- * `chrome.storage.session` for a run that deliberately did no work.
- */
-export interface DuplicateApplication {
-  id: string;
-  company: string;
-  roleTitle: string;
-  /**
-   * Where that past application got to. Shown because it changes what the notice means: an
-   * `onsite` row is a live process, a `rejected` one from a year ago may be worth retrying.
-   */
-  stage: ApplicationStage;
-  /** The *most recent* save for this posting — the lookup returns matches newest-first. */
-  createdAt: string;
-  /** How many saved applications share this posting. Greater than one means repeated applications. */
-  count: number;
-}
+// `DuplicateApplication` is `@djobi/shared`'s now — re-exported below so nothing importing it from
+// `../lib/run` has to know it moved. It's shape a run just happens to carry, not something specific
+// to this run-state module.
+export type { DuplicateApplication };
 
 export interface PipelineRunState {
   /** Identifies this attempt so async work cannot update a newer run for the same tab. */

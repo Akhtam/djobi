@@ -286,6 +286,9 @@ importers:
       '@djobi/http-client':
         specifier: workspace:*
         version: link:../../packages/http-client
+      '@djobi/profile-editor':
+        specifier: workspace:*
+        version: link:../../packages/profile-editor
       '@djobi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -332,6 +335,9 @@ importers:
       '@djobi/http-client':
         specifier: workspace:*
         version: link:../../packages/http-client
+      '@djobi/profile-editor':
+        specifier: workspace:*
+        version: link:../../packages/profile-editor
       '@djobi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -385,6 +391,34 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(jsdom@30.0.1(@noble/hashes@2.4.0))(lightningcss@1.33.0)
+
+  packages/profile-editor:
+    dependencies:
+      '@djobi/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+      jsdom:
+        specifier: ^30.0.1
+        version: 30.0.1(@noble/hashes@2.4.0)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -4588,7 +4622,7 @@ snapshots:
   '@types/pg@8.23.1':
     dependencies:
       '@types/node': 22.20.1
-      pg-protocol: 1.15.0
+      pg-protocol: 1.16.0
       pg-types: 2.2.0
 
   '@types/prop-types@15.7.15': {}

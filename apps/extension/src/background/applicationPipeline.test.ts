@@ -17,7 +17,14 @@ import type { BackendClient } from '../lib/backendClient';
 import { HttpError } from '../lib/callBackend';
 import type { FillPageCommand, PageClient } from '../lib/pageClient';
 import { recordReport } from './detectedFields';
-import { runAnalysis, runFill, runSaveApplication, type PipelineDeps } from './applicationPipeline';
+import {
+  productionDetection,
+  runAnalysis,
+  runFill,
+  runSaveApplication,
+  type DetectedFieldsPort,
+  type PipelineDeps,
+} from './applicationPipeline';
 import { jobInfo, profile, tailoredResume } from '../lib/testFixtures';
 
 /**
@@ -146,8 +153,8 @@ function cancellable<T>(value: T) {
  * not, because the Save Step is deliberately not cancellable (`background/runClaim.ts`).
  */
 function makeDeps(
-  overrides: Partial<BackendClient> & Partial<PageClient> = {},
-): PipelineDeps & { backend: BackendClient; page: PageClient } {
+  overrides: Partial<BackendClient> & Partial<PageClient> & Partial<DetectedFieldsPort> = {},
+): PipelineDeps & { backend: BackendClient; page: PageClient; detection: DetectedFieldsPort } {
   const backend: BackendClient = {
     extractJob: vi.fn(cancellable(jobInfo)),
     tailorResume: vi.fn(cancellable(tailoredResume)),
@@ -182,13 +189,19 @@ function makeDeps(
     // `null` explicitly.
     scan: vi.fn().mockResolvedValue({ fields: [] }),
   };
+  // The real adapter by default — a test that seeds fields via `reportDetectedPage` needs the real
+  // read behind it, and this suite has several that address a specific frame or wait on enrichment
+  // through the full pipeline rather than through `detectedFields.test.ts`'s own focused suite. A
+  // test that wants no storage interaction at all overrides one or both methods explicitly.
+  const detection: DetectedFieldsPort = { ...productionDetection };
 
   for (const [key, value] of Object.entries(overrides)) {
     if (key in backend) Object.assign(backend, { [key]: value });
-    else Object.assign(page, { [key]: value });
+    else if (key in page) Object.assign(page, { [key]: value });
+    else Object.assign(detection, { [key]: value });
   }
 
-  return { backend, page };
+  return { backend, page, detection };
 }
 
 /** Detects `fields` on `tabId` and analyzes it, leaving a run in `review` ready for the Fill Step. */

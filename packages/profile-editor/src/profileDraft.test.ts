@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { EMPTY_PROFILE, type ExtractedProfile, type Profile } from '@djobi/shared';
 import {
   applyExtractedProfile,
   changeCredentialKind,
@@ -8,7 +9,6 @@ import {
   storyTags,
   withScreeningAnswer,
 } from './profileDraft.js';
-import { EMPTY_PROFILE, type ExtractedProfile, type Profile } from './schemas.js';
 
 const blankExtraction: ExtractedProfile = {
   fullName: null,

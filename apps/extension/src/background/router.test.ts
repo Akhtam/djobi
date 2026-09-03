@@ -17,7 +17,11 @@ const {
   mockRunAnalysis: vi.fn(),
   mockRunFill: vi.fn(),
   mockRunSaveApplication: vi.fn(),
-  productionDeps: { backend: 'production-backend', page: 'production-page' },
+  productionDeps: {
+    backend: 'production-backend',
+    page: 'production-page',
+    detection: 'production-detection',
+  },
 }));
 
 vi.mock('./apiDetectors', () => ({ enrichWithApiOracle: mockEnrichWithApiOracle }));

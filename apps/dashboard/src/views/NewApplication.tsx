@@ -5,12 +5,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { HttpError } from '@djobi/http-client';
 import {
-  baseResumeOf,
-  bulletProvenance,
   failureMessage,
-  requirementEvidence,
+  findDuplicate,
+  manualApplicationPayload,
   type Application,
-  type DuplicateApplicationSummary,
+  type DuplicateApplication,
   type JobInfo,
   type NewApplicationRequest,
   type Profile,
@@ -20,7 +19,7 @@ import { formatDate } from '../lib/format';
 
 interface Review {
   jobInfo: JobInfo;
-  duplicate: DuplicateApplicationSummary | null;
+  duplicate: DuplicateApplication | null;
 }
 
 type ProfileState =
@@ -116,12 +115,13 @@ export function NewApplication({
     setExtracting(true);
     setError(null);
     try {
+      // Sharing a `Promise.all` with the extraction is only safe because `findDuplicate` resolves
+      // rather than rejects (see `@djobi/shared`'s `duplicateGuard.ts`) — an inline `.catch` here
+      // used to re-throw on a 401, which rejected the pair and discarded a successful, already-paid
+      // extraction over a failure in an advisory check that was never supposed to block anything.
       const [jobInfo, duplicate] = await Promise.all([
         client.extractJob(jobDescription.trim()),
-        client.findApplicationDuplicates(jobUrl.trim()).catch((duplicateError: unknown) => {
-          if (isUnauthorized(duplicateError)) throw duplicateError;
-          return null;
-        }),
+        findDuplicate(client, jobUrl.trim()),
       ]);
       setCompany(jobInfo.company);
       setRoleTitle(jobInfo.roleTitle);
@@ -141,25 +141,13 @@ export function NewApplication({
     }
 
     setSaving(true);
-    const profile = profileState.profile;
-    const manualResume = baseResumeOf(profile);
-    const jobInfo = {
-      ...review.jobInfo,
-      company: company.trim(),
-      roleTitle: roleTitle.trim(),
-    };
-    const payload: NewApplicationRequest = {
-      company: company.trim(),
-      roleTitle: roleTitle.trim(),
-      jobUrl: jobUrl.trim(),
-      jobInfo,
-      tailoredResume: manualResume,
-      answers: [],
-      source: 'manual',
-      rawDescription: jobDescription.trim(),
-      requirementEvidence: requirementEvidence(manualResume, jobInfo, profile),
-      bulletProvenance: bulletProvenance(manualResume, profile),
-    };
+    const payload: NewApplicationRequest = manualApplicationPayload(profileState.profile, {
+      jobUrl,
+      jobDescription,
+      jobInfo: review.jobInfo,
+      company,
+      roleTitle,
+    });
     const created = await onCreate(payload);
     setSaving(false);
     if (created) onSaved();
@@ -234,12 +222,12 @@ export function NewApplication({
               </button>
             </div>
 
-            {review.duplicate?.latest ? (
+            {review.duplicate ? (
               <div className="new-application__duplicate" role="alert">
                 <strong>Already in your dashboard</strong>
                 <span>
                   Logged {review.duplicate.count} {review.duplicate.count === 1 ? 'time' : 'times'},
-                  most recently {formatDate(review.duplicate.latest.createdAt)}.
+                  most recently {formatDate(review.duplicate.createdAt)}.
                 </span>
               </div>
             ) : null}
@@ -280,7 +268,7 @@ export function NewApplication({
             >
               {saving
                 ? 'Logging application…'
-                : review.duplicate?.latest
+                : review.duplicate
                   ? 'Log it anyway'
                   : 'Log application'}
             </button>

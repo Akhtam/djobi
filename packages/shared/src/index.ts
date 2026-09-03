@@ -10,8 +10,12 @@
  * - `bulletProvenance.ts` — which Profile sentence each Tailored Resume bullet most likely came from.
  * - `jobKey.ts` — the URL identity of a job posting, shared by draft scoping and the Duplicate Guard.
  * - `screeningAnswers.ts` / `preparedAnswers.ts` — the facts a Profile answers without a model.
- * - `profileDraft.ts` — normalizing a Profile edited as a form (dashboard and extension both edit
- *   one) into the shape persisted by the backend.
+ * - `duplicateGuard.ts` — what the candidate already has on file for a posting, failing open.
+ * - `applicationPayload.ts` — assembling a saved Application's payload, manual and autofill alike.
+ *
+ * Normalizing a Profile edited as a form (dashboard and extension both edit one) into the shape
+ * persisted by the backend lives in `@djobi/profile-editor` instead — Profile-editing logic used by
+ * nothing but the two frontends that edit one, not a wire contract the backend needs to agree on.
  */
 /**
  * The zod builder and type vocabulary, re-exported so consumers compose the shared schemas without
@@ -34,4 +38,5 @@ export * from './jobKey.js';
 export * from './screeningAnswers.js';
 export * from './preparedAnswers.js';
 export * from './failureMessage.js';
-export * from './profileDraft.js';
+export * from './duplicateGuard.js';
+export * from './applicationPayload.js';

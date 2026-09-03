@@ -18,7 +18,7 @@ import type {
 } from '@djobi/shared';
 import { fireEvent, screen } from '@testing-library/react';
 import { vi } from 'vitest';
-import { type PipelineDeps } from '../background/applicationPipeline';
+import { productionDetection, type PipelineDeps } from '../background/applicationPipeline';
 import { handleTypedMessage } from '../background/router';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { fakeChrome } from '../lib/fakeChrome';
@@ -214,6 +214,12 @@ export async function stubChrome(options: StubOptions) {
       // these tests leave the live page unreachable and let it fall back to the run's own detection.
       scan: () => Promise.resolve(null),
     },
+    // The real adapter, reading through `fakeChrome`'s own `chrome.storage.session` — not a second
+    // re-implementation of it. Detection is exactly what this harness already relies on: a fill
+    // reads the run's own stored snapshot when the live page can't be reached (see `page.scan`
+    // above), and that snapshot has to come from the same store `START_ANALYSIS`/`START_FILL`
+    // checkpoint into.
+    detection: productionDetection,
   };
 
   // One fake Chrome, driven through `lib/fakeChrome.ts`. What is specific to the panel is only the
