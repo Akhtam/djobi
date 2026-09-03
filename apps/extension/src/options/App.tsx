@@ -7,6 +7,7 @@
  */
 import {
   EMPTY_PROFILE,
+  failureMessage,
   parseProfile,
   SCREENING_TOPICS,
   type Award,
@@ -18,7 +19,6 @@ import {
   changeCredentialKind,
   credentialItems,
   listEditor,
-  normalizeProfileDraft,
   optionalText,
   parseBulletCap,
   spliceWorkBullets,
@@ -153,7 +153,6 @@ export function App({ client }: { client: BackendClient }) {
   const dirty = draft.dirty;
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
-  const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   // Separate from `status` above: that banner means "the save you just asked for landed or
   // didn't," and an extraction is neither — nothing has been saved yet, and won't be until the
@@ -199,8 +198,7 @@ export function App({ client }: { client: BackendClient }) {
           return;
         }
         draft.load(EMPTY_PROFILE);
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus({ kind: 'error', message: `Failed to load profile: ${message}` });
+        setStatus({ kind: 'error', message: `Failed to load profile: ${failureMessage(error)}` });
       }
     }
 
@@ -351,38 +349,33 @@ export function App({ client }: { client: BackendClient }) {
         setUnauthorized(true);
         return;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      setExtraction({ kind: 'error', message: `Couldn't parse this resume: ${message}` });
+      setExtraction({
+        kind: 'error',
+        message: `Couldn't parse this resume: ${failureMessage(error)}`,
+      });
     } finally {
       setExtracting(false);
     }
   }
 
-  function handleSave(e: React.FormEvent) {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!profile) return;
     setStatus(null);
-    setSaving(true);
-    const savedRevision = draft.captureRevision();
-    const toSave = normalizeProfileDraft(profile, () => crypto.randomUUID());
-    client
-      .saveProfile(toSave)
-      .then((saved) => {
-        // The form remains editable while saving. Do not replace newer edits with the snapshot
-        // returned for an older request.
-        if (draft.isStale(savedRevision)) return;
-        draft.load(parseProfile(saved));
-        setStatus({ kind: 'saved', message: 'Profile saved.' });
-      })
-      .catch((error: unknown) => {
-        if (isUnauthorized(error)) {
-          setUnauthorized(true);
-          return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus({ kind: 'error', message });
-      })
-      .finally(() => setSaving(false));
+    // `draft.save` owns the whole protocol — normalize, persist, drop a response a later edit has
+    // superseded, load what came back. What's left here is what only this page can answer: how a
+    // 401 is reported, and the wording of the result.
+    const outcome = await draft.save((toSave) => client.saveProfile(toSave));
+    if (outcome.kind === 'stale') return;
+    if (outcome.kind === 'error') {
+      if (isUnauthorized(outcome.error)) {
+        setUnauthorized(true);
+        return;
+      }
+      setStatus({ kind: 'error', message: failureMessage(outcome.error) });
+      return;
+    }
+    setStatus({ kind: 'saved', message: 'Profile saved.' });
   }
 
   return (
@@ -1252,8 +1245,8 @@ export function App({ client }: { client: BackendClient }) {
               </p>
             )}
           </div>
-          <button type="submit" className="btn-primary" disabled={saving}>
-            {saving ? 'Saving…' : 'Save profile'}
+          <button type="submit" className="btn-primary" disabled={draft.saving}>
+            {draft.saving ? 'Saving…' : 'Save profile'}
           </button>
         </div>
       </form>

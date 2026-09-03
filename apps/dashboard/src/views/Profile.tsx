@@ -3,10 +3,10 @@
  *
  * The same Profile the extension's options page edits (`apps/extension/src/options/App.tsx`), and
  * deliberately built the same way: the draft itself (`useProfileDraft`), the list-editing helpers
- * (`listEditor`) and the draft-normalization helpers they call into (`normalizeProfileDraft`,
- * `spliceWorkBullets`, …) are shared with that page via `@djobi/profile-editor` rather than
- * re-implemented here, so "star a bullet" or "drop a blank story id" behaves identically in both
- * places. `ListSection` stays local to each app on purpose — the two render genuinely different
+ * (`listEditor`) and the bullet helpers they call into (`spliceWorkBullets`, …) are shared with
+ * that page via `@djobi/profile-editor` rather than re-implemented here, so "star a bullet" or
+ * "drop a blank story id" behaves identically in both places — as does saving itself, which is
+ * `draft.save`'s protocol rather than a sequence this view repeats. `ListSection` stays local to each app on purpose — the two render genuinely different
  * chrome (this one a card-styled panel with `PanelHead`, the options page a `<fieldset>`) for the
  * same list-editing behavior. Only the chrome around the form — the panel/card shell, the save
  * affordance, how a 401 is reported — is dashboard-specific, matching `Analytics.tsx`'s
@@ -37,7 +37,6 @@ import {
   changeCredentialKind,
   credentialItems,
   listEditor,
-  normalizeProfileDraft,
   optionalText,
   parseBulletCap,
   spliceWorkBullets,
@@ -164,7 +163,6 @@ export function Profile({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
-  const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   // Separate from `status` above: that means "the save you just asked for landed or didn't," and
   // an extraction is neither — nothing is saved until the candidate reviews the pre-filled fields
@@ -324,28 +322,24 @@ export function Profile({
     }
   }
 
-  function handleSave(event: FormEvent) {
+  async function handleSave(event: FormEvent) {
     event.preventDefault();
     if (!profile) return;
     setStatus(null);
-    setSaving(true);
-    const savedRevision = draft.captureRevision();
-    const toSave = normalizeProfileDraft(profile, () => crypto.randomUUID());
-    saveProfile(toSave)
-      .then((saved) => {
-        // The form remains editable while saving — do not replace newer edits with an older response.
-        if (draft.isStale(savedRevision)) return;
-        draft.load(parseProfile(saved));
-        setStatus({ kind: 'saved', message: 'Profile saved.' });
-      })
-      .catch((error: unknown) => {
-        if (isUnauthorized(error)) {
-          onUnauthorized();
-          return;
-        }
-        setStatus({ kind: 'error', message: failureMessage(error) });
-      })
-      .finally(() => setSaving(false));
+    // `draft.save` owns the whole protocol — normalize, persist, drop a response a later edit has
+    // superseded, load what came back. What's left here is what only this view can answer: how a
+    // 401 is reported, and the wording of the result.
+    const outcome = await draft.save(saveProfile);
+    if (outcome.kind === 'stale') return;
+    if (outcome.kind === 'error') {
+      if (isUnauthorized(outcome.error)) {
+        onUnauthorized();
+        return;
+      }
+      setStatus({ kind: 'error', message: failureMessage(outcome.error) });
+      return;
+    }
+    setStatus({ kind: 'saved', message: 'Profile saved.' });
   }
 
   return (
@@ -1215,8 +1209,8 @@ export function Profile({
               </p>
             )}
           </div>
-          <button type="submit" className="button button--primary" disabled={saving}>
-            {saving ? 'Saving…' : 'Save profile'}
+          <button type="submit" className="button button--primary" disabled={draft.saving}>
+            {draft.saving ? 'Saving…' : 'Save profile'}
           </button>
         </div>
       </form>

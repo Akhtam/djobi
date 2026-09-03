@@ -14,22 +14,22 @@
  * message with the optimistic status it raises and the failure that stands that status down, and
  * the pairing is exactly what this module kept getting to restate. What is left here is the tab's
  * own: whether a command is *eligible* — which the buttons' `disabled` and the review guards say —
- * the resume preview's lifecycle, and the words for every Run Notice.
+ * and the resume preview's lifecycle. The words for a Run Notice are `RunNoticeView.tsx`'s.
  */
 import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
 import { autofillSource } from '../lib/fieldDisposition';
-import { formatAppliedDate, formatStage } from '../lib/format';
 import type { JobPageData } from '../lib/messages';
 import { pipelineCommands } from './pipelineCommands';
 import type { PostingReadOutcome } from '../lib/postingReader';
 import { answersFor, canEditRun, canFill, canSave, hasFilled, hasUnsavedFill } from '../lib/run';
-import type { RunFailureKind, RunNotice, RunNoticeAction, RunStep } from '../lib/run';
+import type { RunNoticeAction } from '../lib/run';
 import { CoverageReport } from './CoverageReport';
 import { getDetectedPage, subscribeDetectedPage } from '../lib/tabStore/detectedPage';
 import { type PipelineStatus } from '../lib/run';
 import { ResumeReview } from './ResumeReview';
+import { RunNoticeView } from './RunNoticeView';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
@@ -40,35 +40,6 @@ import { useResumePreview } from './useResumePreview';
  * here: they are the shell's, and this module is only mounted once a Profile exists.
  */
 type AutofillStatus = 'ready' | PipelineStatus;
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled run notice: ${JSON.stringify(value)}`);
-}
-
-function failureReason(kind: RunFailureKind, step: RunStep): string {
-  switch (kind) {
-    case 'temporary':
-      if (step === 'fill') {
-        return 'The form may have been partially filled. Check the application page before trying again.';
-      }
-      if (step === 'save') {
-        return 'The save may have completed. Check the Dashboard before trying again.';
-      }
-      return 'This service is temporarily unavailable. Try again.';
-    case 'backend-unreachable':
-      return 'Djobi could not reach its backend. Check that it is running, then try again.';
-    case 'invalid-page':
-      return 'This page returned data the extension could not use. Reload the page before trying again.';
-    case 'invalid-model-output':
-      return 'The model returned an unusable result. Try again.';
-    case 'unauthorized':
-      return 'You have been signed out. Sign in again from the extension options, then retry.';
-    case 'cancelled':
-      return 'This attempt was cancelled.';
-    case 'unknown':
-      return 'An unexpected error occurred. Try again.';
-  }
-}
 
 export function AutofillTab({
   client,
@@ -238,165 +209,18 @@ export function AutofillTab({
     commands.save();
   }
 
-  /** The three retries and the duplicate override, named by `reviewOf` and bound here. */
-  function runNoticeAction(action: RunNoticeAction): () => void {
+  /** The three retries and the duplicate override, named by `reviewOf` and performed here. */
+  function runNoticeAction(action: RunNoticeAction): void {
     switch (action) {
       case 'analyze-anyway':
-        return () => handleAnalyze(true);
+        return handleAnalyze(true);
       case 'retry-analysis':
-        return () => handleAnalyze();
+        return handleAnalyze();
       case 'retry-fill':
-        return handleFill;
+        return handleFill();
       case 'retry-save':
-        return handleSaveApplication;
+        return handleSaveApplication();
     }
-  }
-
-  /**
-   * The words for one Run Notice.
-   *
-   * `reviewOf` says which situation the run is in; this says the sentence, because the wording is a
-   * product judgement — "reload the page" versus "fill it in by hand" sends the candidate after two
-   * different problems — and it belongs next to the JSX a person reads. The `switch` is exhaustive
-   * over `RunNotice['kind']`, so a notice added there fails to compile until it has copy here.
-   */
-  function renderNotice(notice: RunNotice) {
-    switch (notice.kind) {
-      case 'duplicate':
-        return (
-          <div className="state" role="status" key={notice.kind}>
-            <span className="state-icon">📮</span>
-            <p>
-              {notice.duplicate.count > 1
-                ? `You've already applied to this job ${notice.duplicate.count} times, most recently on ${formatAppliedDate(notice.duplicate.createdAt)}.`
-                : `You already applied to this job on ${formatAppliedDate(notice.duplicate.createdAt)}.`}
-            </p>
-            <p className="failure-detail">
-              {notice.duplicate.roleTitle} at {notice.duplicate.company} ·{' '}
-              {formatStage(notice.duplicate.stage)}
-            </p>
-            <button type="button" className="btn-primary" onClick={runNoticeAction(notice.action)}>
-              Analyze and apply anyway
-            </button>
-          </div>
-        );
-
-      case 'analyze-failed':
-        return (
-          <div className="state error" role="alert" key={notice.kind}>
-            <span className="state-icon error">⚠️</span>
-            <p>Something went wrong analyzing this job posting.</p>
-            <p>{failureReason(notice.reason, 'analysis')}</p>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={runNoticeAction(notice.action)}
-            >
-              Try again
-            </button>
-          </div>
-        );
-
-      case 'fill-unverified':
-        return (
-          <div className="state error" role="alert" key={notice.kind}>
-            <span className="state-icon error">⚠️</span>
-            <p>
-              The fill could not be verified because this page did not answer. Check the form before
-              submitting or saving, and reload the page before trying again if fields are still
-              empty.
-            </p>
-          </div>
-        );
-
-      case 'no-fields-detected':
-        return (
-          <div className="state error" role="alert" key={notice.kind}>
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Nothing was filled — no form fields were found on this page, including in a fresh scan
-              taken just now. You'll need to fill the form yourself before saving this application.
-              If the form is visibly there, reload the page and try again: this extension can't
-              reach a page that was already open when it was last reloaded.
-            </p>
-          </div>
-        );
-
-      // The other zero-filled outcome, and a different problem: the form was read fine and then
-      // kept none of what was written into it. Reloading is not the advice here — the list of
-      // fields to fill by hand is.
-      case 'nothing-filled':
-        return (
-          <div className="state error" role="alert" key={notice.kind}>
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Nothing was filled — this page's form was found ({notice.detectedFieldCount} field
-              {notice.detectedFieldCount === 1 ? '' : 's'}), but it kept none of the values written
-              into it. You'll need to fill it in yourself before saving this application.
-            </p>
-          </div>
-        );
-
-      case 'fill-complete':
-        return (
-          <div className="state success compact" role="status" key={notice.kind}>
-            <span className="state-icon success">✅</span>
-            <p>
-              Filled {notice.filledFieldCount} field{notice.filledFieldCount === 1 ? '' : 's'}. Save
-              the application when you're ready.
-            </p>
-          </div>
-        );
-
-      case 'fill-incomplete':
-        return (
-          <div className="state error" role="alert" key={notice.kind}>
-            <span className="state-icon error">⚠️</span>
-            <p>
-              Filled, but {notice.unresolvedRequiredFields.length} required field
-              {notice.unresolvedRequiredFields.length === 1 ? '' : 's'} didn't take a value — fill{' '}
-              {notice.unresolvedRequiredFields.length === 1 ? 'it' : 'them'} in by hand before
-              submitting:
-            </p>
-            <ul className="unresolved-fields">
-              {notice.unresolvedRequiredFields.map((field) => (
-                <li key={field.id}>{field.label || field.category}</li>
-              ))}
-            </ul>
-          </div>
-        );
-
-      case 'saved':
-        return (
-          <div className="state success compact" role="status" key={notice.kind}>
-            <span className="state-icon success">✅</span>
-            <p>Application saved.</p>
-          </div>
-        );
-
-      case 'fill-failed':
-      case 'save-failed':
-        return (
-          <div className="inline-error" role="alert" key={notice.kind}>
-            <div className="inline-error-body">
-              <p>
-                {notice.kind === 'fill-failed'
-                  ? 'Something went wrong filling the form.'
-                  : 'Something went wrong saving the application.'}
-              </p>
-              <p>{failureReason(notice.reason, notice.kind === 'fill-failed' ? 'fill' : 'save')}</p>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={runNoticeAction(notice.action)}
-            >
-              Try again
-            </button>
-          </div>
-        );
-    }
-    return assertNever(notice);
   }
 
   return (
@@ -475,7 +299,9 @@ export function AutofillTab({
         {/* Everything this run has to say about how it went, in `reviewOf`'s order. Above the review
             and not below it: the review is long, and a result the user has to scroll past it to
             find is a result they won't see. */}
-        {outcomeNotices.map(renderNotice)}
+        {outcomeNotices.map((notice) => (
+          <RunNoticeView key={notice.kind} notice={notice} onAction={runNoticeAction} />
+        ))}
 
         {canReview && jobInfo && tailoredResume && jobPageData && (
           <div className="review">
@@ -619,7 +445,9 @@ export function AutofillTab({
             )}
 
             {/* This step failed — retry it from beside the answers it would have you re-fill. */}
-            {inlineNotices.map(renderNotice)}
+            {inlineNotices.map((notice) => (
+              <RunNoticeView key={notice.kind} notice={notice} onAction={runNoticeAction} />
+            ))}
           </div>
         )}
       </div>

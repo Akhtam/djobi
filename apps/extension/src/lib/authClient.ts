@@ -45,7 +45,16 @@ export async function signIn(email: string, password: string): Promise<void> {
       .json()
       .then((body: unknown) => (body as { error?: string })?.error)
       .catch(() => undefined);
-    throw new Error(reason ?? `Sign-in failed (${response.status}).`);
+    // An `HttpError`, not a plain `Error`, for the same reason every call through
+    // `callBackend.ts` raises one: `kind`/`status` are what a caller classifies a 401 by, and
+    // `createFakeBackendClient`'s own `signIn` already rejects in this shape. A bare `Error` here
+    // made the fake adapter a shape production never delivered.
+    throw new HttpError(
+      'http',
+      '/api/auth/sign-in/email',
+      reason ?? `Sign-in failed (${response.status}).`,
+      response.status,
+    );
   }
 
   // Validated for the same reason every other backend response is: a shape Better Auth stops
@@ -55,7 +64,13 @@ export async function signIn(email: string, password: string): Promise<void> {
 
   const token = response.headers.get('set-auth-token');
   if (!token) {
-    throw new Error('Sign-in succeeded but the backend did not return a session token.');
+    // `invalid-response`, not `http`: the call itself succeeded and the backend broke its own
+    // contract, which is the same thing a response failing its schema parse means elsewhere.
+    throw new HttpError(
+      'invalid-response',
+      '/api/auth/sign-in/email',
+      'Sign-in succeeded but the backend did not return a session token.',
+    );
   }
   await setAuthToken(token);
   // Best-effort: a dashboard tab reaching `EXTENSION_BACKEND_ORIGIN` picks up this same session

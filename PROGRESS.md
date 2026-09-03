@@ -14,9 +14,9 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1579 tests**
-(271 shared / 25 http-client / 311 backend / 727 extension / 245 dashboard), `pnpm test` from the
-repo root. A green run prints nothing: every
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1621 tests**
+(271 shared / 25 http-client / 30 profile-editor / 311 backend / 739 extension / 245 dashboard),
+`pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
 `format:check`, `typecheck`, `build` and `test` on Linux for every PR and every push to `main`.

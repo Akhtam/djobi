@@ -1,3 +1,4 @@
+import { HttpError } from '@djobi/http-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { fakeCookies } from './fakeCookies';
@@ -57,6 +58,27 @@ describe('signIn', () => {
     await expect(signIn('jane@example.com', 'correct horse battery staple')).rejects.toThrow(
       /did not return a session token/,
     );
+  });
+
+  it('rejects a bad credential as an HttpError carrying the status, like every other backend call', async () => {
+    // The fake client in `backendClient.ts` rejects with an `HttpError`, and `pipelineFailure.ts`
+    // classifies a 401 by `kind`/`status`. A plain `Error` here would make the fake a shape
+    // production never delivers — the seam's two adapters have to agree.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Invalid email or password' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const rejection = await signIn('jane@example.com', 'wrong').catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(HttpError);
+    expect(rejection).toMatchObject({
+      kind: 'http',
+      status: 401,
+      message: 'Invalid email or password',
+    });
   });
 
   it('also writes the token into the shared session cookie, for a dashboard tab to pick up', async () => {
