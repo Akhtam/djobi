@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+import { fakeCookies } from './fakeCookies';
 import { fakeSessionStorage } from './fakeSessionStorage';
 import { getAuthToken, setAuthToken } from './authToken';
-import { signIn, signOut } from './authClient';
+import { adoptSharedSession, signIn, signOut } from './authClient';
+
+let cookies: ReturnType<typeof fakeCookies>;
 
 beforeEach(() => {
-  vi.stubGlobal('chrome', { storage: fakeSessionStorage() });
+  cookies = fakeCookies();
+  vi.stubGlobal('chrome', { storage: fakeSessionStorage(), cookies });
   vi.stubGlobal('fetch', vi.fn());
 });
 
@@ -54,6 +58,21 @@ describe('signIn', () => {
       /did not return a session token/,
     );
   });
+
+  it('also writes the token into the shared session cookie, for a dashboard tab to pick up', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ user: { id: 'user-1', email: 'jane@example.com' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'set-auth-token': 'the-token' },
+      }),
+    );
+
+    await signIn('jane@example.com', 'correct horse battery staple');
+
+    expect(cookies.set).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'better-auth.session_token', value: 'the-token' }),
+    );
+  });
 });
 
 describe('signOut', () => {
@@ -87,5 +106,37 @@ describe('signOut', () => {
     await signOut();
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('also clears the shared session cookie, so a dashboard tab stops looking authenticated', async () => {
+    cookies.store.set('better-auth.session_token', {
+      name: 'better-auth.session_token',
+      value: 'the-token',
+    } as chrome.cookies.Cookie);
+    await setAuthToken('the-token');
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), { status: 200 }),
+    );
+
+    await signOut();
+
+    expect(cookies.store.has('better-auth.session_token')).toBe(false);
+  });
+});
+
+describe('adoptSharedSession', () => {
+  it('adopts the dashboard’s session cookie as this extension’s own bearer token', async () => {
+    cookies.store.set('better-auth.session_token', {
+      name: 'better-auth.session_token',
+      value: 'dashboard-token',
+    } as chrome.cookies.Cookie);
+
+    await expect(adoptSharedSession()).resolves.toBe(true);
+    await expect(getAuthToken()).resolves.toBe('dashboard-token');
+  });
+
+  it('resolves false and stores nothing when there is no shared session to adopt', async () => {
+    await expect(adoptSharedSession()).resolves.toBe(false);
+    await expect(getAuthToken()).resolves.toBeUndefined();
   });
 });

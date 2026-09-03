@@ -12,6 +12,13 @@
  * `manifest.ts` grants the configured backend origin to the whole extension, not just the worker.
  * Adding one back would put a second message protocol on `background/service-worker.ts`'s single
  * `onMessage` listener and give the codebase two origins and two error types where one of each does.
+ *
+ * The "adopt a shared dashboard session and retry once on a 401" policy does *not* live here, even
+ * though every route below sits behind `requireAuth` — it lives at the `BackendClient` boundary in
+ * `backendClient.ts` instead. This transport is real-HTTP-only; the fake `BackendClient` the panel
+ * and options tests render against never reaches it, so a retry wired in here would be invisible in
+ * every test and to any future non-HTTP adapter. `backendClient.ts` wraps the interface both the
+ * real and fake clients implement, so it is the one place the policy reaches every caller.
  */
 import { createHttpTransport } from '@djobi/http-client';
 import type { ZodTypeAny, ZodTypeOf } from '@djobi/shared';

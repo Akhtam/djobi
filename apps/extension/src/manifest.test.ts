@@ -65,4 +65,8 @@ describe('manifest', () => {
   it('grants webNavigation only for enumerating frames when scraping an embedded posting', () => {
     expect(manifest.permissions).toContain('webNavigation');
   });
+
+  it('grants cookies, for reading/writing the dashboard’s shared session', () => {
+    expect(manifest.permissions).toContain('cookies');
+  });
 });

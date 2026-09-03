@@ -8,8 +8,9 @@ server, a persisted history of past applications, and a web dashboard for tracki
 ## Architecture
 
 - `packages/shared` — zod schemas shared by every app (`Profile`, `JobInfo`, `TailoredResume`, etc.)
-- `apps/backend` — local Hono server: LLM calls (Anthropic), Postgres persistence (Neon + Drizzle),
-  resume PDF rendering. Runs on `127.0.0.1:5391`.
+- `apps/backend` — local Hono server: LLM calls (multi-provider via OpenRouter), auth (Better Auth —
+  email/password, Google), Postgres persistence (Neon + Drizzle), resume PDF rendering. Runs on
+  `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
   an options page (profile setup), and a side panel with **Autofill** (scrape or paste/review/fill),
@@ -25,7 +26,7 @@ server, a persisted history of past applications, and a web dashboard for tracki
 - Node.js 26 (`.nvmrc`; the root `engines` field requires >= 22) and `pnpm` 11 (see `devEngines` in
   `package.json`, which downloads a matching version on demand)
 - A [Neon](https://neon.tech) Postgres database (or any Postgres connection string)
-- An Anthropic API key
+- An [OpenRouter](https://openrouter.ai) API key
 - Google Chrome (to load the extension)
 
 ## 1. Install dependencies
@@ -46,10 +47,15 @@ Edit `apps/backend/.env`:
 DATABASE_URL=postgres://user:password@your-neon-host/djobi?sslmode=require
 OPENROUTER_API_KEY=sk-or-v1-...
 PORT=5391
+BETTER_AUTH_SECRET=
 ```
 
-Those three are the only environment variables the backend reads, and `PORT` is the only optional
-one (it defaults to 5391).
+`DATABASE_URL`, `OPENROUTER_API_KEY` and `BETTER_AUTH_SECRET` are required — the backend throws at
+startup if `BETTER_AUTH_SECRET` is unset (generate one with `openssl rand -base64 32`). `PORT`
+defaults to 5391. The rest of `apps/backend/.env.example` (`BETTER_AUTH_URL`, `PUBLIC_ORIGINS`,
+`NODE_ENV`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) is optional and only needed for a real
+deploy or Google sign-in — see `docs/multi-tenant-auth.md`. Email/password sign-in works with none
+of them set.
 
 Everything else about the local wiring is deliberately hardcoded rather than configurable:
 
@@ -98,17 +104,39 @@ Then in Chrome:
    `pnpm --filter extension dev` for `@crxjs/vite-plugin`'s watch/HMR mode, then click the reload
    icon on the extension card in `chrome://extensions`
 
-## 5. Set up your profile
+## 5. Create an account
 
-With the backend running and the extension loaded:
+With the backend running:
 
-1. Right-click the djobi icon → **Options**
-2. Fill in your contact info, links, work experience, education, skills, and stories
-3. Also fill in the **prepared answers** — work authorization, sponsorship and the rest. These are
+```bash
+pnpm dev:dashboard
+```
+
+Open `http://localhost:5174`, go to **Create an account**, and sign up with an email and password
+(8+ characters). This is the only sign-up surface — the extension has none; it's a companion to an
+account created here. Google sign-in is also wired but needs `GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET` configured (see step 2), so email/password is the default path.
+
+## 6. Sign in to the extension
+
+Right-click the djobi icon → **Options**, and sign in with the same email/password. The extension
+and dashboard share one Better Auth session — signing in on either surface, or opening the other
+while already signed in on one, authenticates both (`apps/extension/src/lib/sharedSessionCookie.ts`).
+
+## 7. Set up your profile
+
+Still on the options page:
+
+1. Fill in your contact info, links, work experience, education, skills, and stories
+2. Also fill in the **prepared answers** — work authorization, sponsorship and the rest. These are
    answered from your profile verbatim and never sent to a model to guess at
-4. Save — this is stored server-side and used to seed every tailored resume/answer
+3. Save — this is stored server-side and used to seed every tailored resume/answer
 
-## 6. Use it
+Already have a resume? The options page's **Upload resume** action parses an uploaded PDF and
+pre-fills the form for you to review and edit before saving — it never auto-saves or overwrites a
+field you've already filled in with nothing.
+
+## 8. Use it
 
 Navigate to the application form for a job you want to apply to, and click the djobi icon to open
 the side panel:
@@ -149,17 +177,12 @@ opened cold it offers a copy button.
 The panel and options page share a light/dark theme, toggled from the icon in either header and
 persisted in `chrome.storage.local`.
 
-## 7. Browse past applications
+## 9. Browse past applications
 
-```bash
-pnpm dev:dashboard
-```
-
-Serves the dashboard on `http://localhost:5174`. With the backend running, it lists every saved
-application (filter by stage, search by title or company) and opens each one to edit its stage,
-append notes, and review the saved job info, tailored resume and drafted answers. Notes are
-append-only. The backend's CORS allowlist covers the dashboard's dev origins only — see
-`apps/backend/README.md`.
+Back at `http://localhost:5174` (started in step 5), signed in, it lists every saved application
+(filter by stage, search by title or company) and opens each one to edit its stage, append notes,
+and review the saved job info, tailored resume and drafted answers. Notes are append-only. The
+backend's CORS allowlist covers the dashboard's dev origins only — see `apps/backend/README.md`.
 
 ## Tests
 

@@ -51,13 +51,29 @@ All schemas, in the order data flows through the app:
   derived from `NoteSchema` rather than hand-written so the two can't drift.
 - **`ApplicationSchema` / `NewApplicationSchema` / `ApplicationSnapshotSchema`** — one persisted
   Application, in three shapes for the three things that touch it:
-  - `Application` is the whole record, `stage` and `notes` included.
+  - `Application` is the whole record, `stage` and `notes` included, plus four nullable Phase 19
+    fields: `rawDescription` (the posting text `extractJob` analyzed), `extractionVersion` (a
+    compatibility marker, `.default(EXTRACTION_VERSION)` on `NewApplicationSchema` so every write
+    is stamped automatically), `requirementEvidence` and `bulletProvenance` (see those modules
+    below).
   - `NewApplication` is it minus `id`/`createdAt` (the server assigns those), with `stage`
     defaulting to `'applied'` and `notes` to `[]` — the extension's Save Step posts neither. It's
     what `POST /applications` validates.
   - `ApplicationSnapshot` is `NewApplication` minus `source`/`stage`/`notes`, and is what `PATCH
 /applications/:id` validates. Provenance and interview tracking belong to the persisted record, not
-    to the autofill run, so a re-save must never overwrite them.
+    to the autofill run, so a re-save must never overwrite them — though a re-save _does_ recompute
+    and resend `rawDescription`/`requirementEvidence`/`bulletProvenance`, since those describe the
+    reviewed snapshot itself.
+- **`summary` / `projects[]` / `certifications[]` / `awards[]` on `ProfileSchema`** (Phase 20) — the
+  resume content a hand-entered Profile had no home for. `certifications`/`awards` stay two separate
+  arrays (a certification has no description, an award has no expiry) even though both editors merge
+  them into one UI list. `ExtractedProfileSchema` is the extractable subset of these plus the
+  original Profile fields; `ExtractResumeResponseSchema` (`wire.ts`) is its response wrapper for
+  `POST /profile/extract-resume`.
+- **`SignInRequestSchema`/`SignInResultSchema`, `SignUpRequestSchema`/`SignUpResultSchema`,
+  `SignOutResultSchema`** — the auth wire contracts both clients validate against
+  (`docs/multi-tenant-auth.md`). `SignUpRequestSchema` pins `minPasswordLength: 8`, matching
+  `auth.ts`'s own Better Auth config.
 
 `EMPTY_PROFILE` and `parseProfile` live here too, beside the schema whose defaults they mirror.
 `parseProfile` completes a stored Profile against `EMPTY_PROFILE` — including a nested merge of
@@ -192,6 +208,47 @@ the whole reason it isn't two private helpers.
 
 `resumeFileName(fullName)` — the filename the generated Tailored Resume is attached under.
 
+### `src/keywordCoverage.ts` / `src/requirementEvidence.ts`
+
+**Keyword Coverage** and **Requirement-to-Evidence Matching** — two deterministic, no-model-call
+checks of what a Tailored Resume actually evidences of a posting, run after tailoring rather than
+fed back into it. `keywordCoverage.ts` checks `JobInfo.keywords` whole-word against the resume;
+`requirementEvidence.ts` does the same for each stated qualification in `JobInfo.requirements`, with
+a richer verdict (evidenced / evidenced-as-bare-skill / dropped-from-this-resume / uncertain / not
+evidenced). Both are reports, deliberately never corrections: `reconcileResume` already forces every
+tailored skill and bullet through the authoritative Profile, so neither module can add anything to a
+resume — only say what's already there. `Application.requirementEvidence` persists the latter's
+result as a snapshot at save time.
+
+### `src/bulletProvenance.ts`
+
+Pairs a Tailored Resume's bullets back to the Profile sentence each most likely came from, for the
+panel's "Originally: …" line and the persisted `Application.bulletProvenance` audit trail. Necessarily
+best-effort: `TailoredResume` carries plain strings on the wire, so a verbatim match (a starred
+bullet, or one `bulletTruthfulness.ts` reverted) is exact, and anything else is the closest word
+overlap among that role's Profile bullets.
+
+### `src/duplicateGuard.ts`
+
+`DuplicateApplicationSummary`'s shape (in `wire.ts`) plus the flattened summary the Duplicate Guard's
+callers actually need — five fields, not a whole `Application`, so a check that deliberately did no
+analysis work doesn't carry a tailored resume and every answer along for the ride.
+
+### `src/applicationPayload.ts`
+
+Assembles a saved Application's payload — the fields common to every write path except `source`.
+`manualApplicationPayload` (Log tab / dashboard "Log an application") and
+`autofillApplicationPayload` (the Application Pipeline's Save Step) replace what used to be built by
+hand at three call sites, two of them byte-identical, each independently having to remember that
+`requirementEvidence`/`bulletProvenance` are computed against the _stored_ resume, not the whole
+Profile.
+
+### `src/failureMessage.ts`
+
+`failureMessage(value)` — turns an unknown rejection value into a stable diagnostic string. Small and
+shared because "what do we log/show when a promise rejects with something that isn't an `Error`" was
+answered slightly differently at each call site before this.
+
 ### `src/index.ts`
 
 Barrel — re-exports all of the above. Import from `@djobi/shared`, not `@djobi/shared/src/schemas`.
@@ -201,8 +258,9 @@ Barrel — re-exports all of the above. Import from `@djobi/shared`, not `@djobi
 One `describe` per schema in `schemas.test.ts`; each covers a valid parse, a missing required field,
 and any schema-specific edge case worth pinning (nullable fields accepting `null`, an embedded
 invalid `Story` failing the parent `Profile`, every `FieldCategory` value being accepted).
-`detectedField`, `jobKey`, `labelMatching`, `preparedAnswers`, `resumeFileName` and `wire` have
-their own test files.
+`applicationPayload`, `bulletProvenance`, `detectedField`, `duplicateGuard`, `failureMessage`,
+`jobKey`, `keywordCoverage`, `labelMatching`, `preparedAnswers`, `requirementEvidence`,
+`resumeFileName` and `wire` have their own test files.
 
 **`screeningAnswers.ts` is the only module here with no test file** — so `matchScreeningTopic`'s
 order-dependent matching, where "authorized to work without sponsorship?" has to resolve to work

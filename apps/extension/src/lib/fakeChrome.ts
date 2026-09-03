@@ -45,6 +45,12 @@ export interface FakeChrome {
   navigate: (tabId: number, url: string) => void;
   /** Fires `chrome.tabs.onRemoved` — the tab being closed, which invalidates its stored state. */
   closeTab: (tabId: number) => void;
+  /**
+   * Seeds a cookie `chrome.cookies.get` answers for `name` — `sharedSessionCookie.ts`'s only
+   * dependency, so a test driving the dashboard-adopts-into-extension path sets one of these
+   * rather than reaching around this fake to stub `chrome.cookies` itself.
+   */
+  setCookie: (name: string, value: string | null) => void;
 }
 
 /**
@@ -62,6 +68,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
   if (active) tabsById.set(active.id, { id: active.id, url: active.url ?? undefined });
 
   const storage = options.storage ?? fakeSessionStorage();
+  const cookies = new Map<string, string>();
   const openOptionsPage = vi.fn();
   const sendMessage = vi.fn(
     (message: Record<string, unknown>, callback: (response: unknown) => void) => {
@@ -109,12 +116,33 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
       getPlatformInfo: () => Promise.resolve({ os: 'mac', arch: 'arm64', nacl_arch: 'arm64' }),
     },
     storage,
+    // One name, no domain/path matching — every caller (`sharedSessionCookie.ts`) reads and writes
+    // exactly one cookie, by name, against a single origin. Set/remove resolve the same shapes the
+    // real `chrome.cookies` promises do, since `sharedSessionCookie.ts` only reads `.value`.
+    cookies: {
+      get: vi.fn(async (details: { name: string }) => {
+        const value = cookies.get(details.name);
+        return value === undefined ? null : { value };
+      }),
+      set: vi.fn(async (details: { name?: string; value?: string }) => {
+        cookies.set(details.name ?? '', details.value ?? '');
+        return { name: details.name ?? '', value: details.value ?? '' };
+      }),
+      remove: vi.fn(async (details: { name: string; url: string }) => {
+        cookies.delete(details.name);
+        return details;
+      }),
+    },
   });
 
   return {
     sendMessage,
     openOptionsPage,
     storage,
+    setCookie: (name, value) => {
+      if (value === null) cookies.delete(name);
+      else cookies.set(name, value);
+    },
     knowTab: (id, url) => tabsById.set(id, { id, url: url ?? undefined }),
     // Iterate a copy, as `fakeSessionStorage` does: a listener that removes itself mid-dispatch
     // would otherwise make the next one be skipped.

@@ -32,6 +32,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
+import { withSharedSessionRetry } from '../lib/authClient';
 import type { BackendClient } from '../lib/backendClient';
 import { HttpError } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
@@ -178,15 +179,21 @@ export function App({ client }: { client: BackendClient }) {
   }
 
   useEffect(() => {
-    client
-      .getProfile()
-      // `parseProfile` completes a stored profile against the empty one and validates it, so a
-      // profile saved before a field existed can't crash the form that binds to that key.
-      .then((loaded) => {
+    let current = true;
+
+    async function load() {
+      try {
+        // `parseProfile` completes a stored profile against the empty one and validates it, so a
+        // profile saved before a field existed can't crash the form that binds to that key.
+        // `withSharedSessionRetry` gives this its one shot at recovery — the dashboard may
+        // already have a session (`authClient.ts`'s `adoptSharedSession`) — before a 401 here
+        // means there really is nothing to sign in with.
+        const loaded = await withSharedSessionRetry(() => client.getProfile());
+        if (!current) return;
         setUnauthorized(false);
         draft.load(parseProfile(loaded));
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
+        if (!current) return;
         if (isUnauthorized(error)) {
           setUnauthorized(true);
           return;
@@ -194,7 +201,13 @@ export function App({ client }: { client: BackendClient }) {
         draft.load(EMPTY_PROFILE);
         const message = error instanceof Error ? error.message : String(error);
         setStatus({ kind: 'error', message: `Failed to load profile: ${message}` });
-      });
+      }
+    }
+
+    void load();
+    return () => {
+      current = false;
+    };
     // `draft` is a fresh object every render (its own state setters are stable, but the object
     // wrapping them isn't) — depending on it would re-run this on every render. `client`/
     // `reloadToken` are this effect's real inputs.

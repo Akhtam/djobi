@@ -8,6 +8,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpError } from '../lib/callBackend';
 import { App } from './App';
 import {
   JOB_DESCRIPTION,
@@ -56,6 +57,42 @@ describe('panel App', () => {
     // Two asks, not two requests: the retry is the shell asking the client again, which is the
     // only fact this module owns.
     expect(panelClient().getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('adopts a session found in the dashboard’s shared cookie instead of asking to sign in', async () => {
+    // No local bearer token, but the dashboard already has one — `chrome.cookies.get` is this
+    // extension's only way to see it (`sharedSessionCookie.ts`). The first `getProfile` 401s the
+    // way a genuinely signed-out extension would; the second (after adoption) succeeds.
+    const { setCookie } = await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      profileFailures: [
+        new HttpError('http', '/profile', '/profile failed (401): Authentication required', 401),
+        null,
+      ],
+    });
+    setCookie('better-auth.session_token', 'dashboard-session-token');
+
+    render(<App client={panelClient()} />);
+
+    expect(await screen.findByRole('button', { name: 'Analyze' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(panelClient().getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('still shows the profile error when there is no local session and no shared one to adopt', async () => {
+    await stubChrome({
+      tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+      profile,
+      profileFailures: [
+        new HttpError('http', '/profile', '/profile failed (401): Authentication required', 401),
+      ],
+    });
+
+    render(<App client={panelClient()} />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn't load your profile/i);
   });
 
   it('offers no tabs until a profile exists', async () => {

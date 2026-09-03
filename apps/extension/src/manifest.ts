@@ -64,5 +64,16 @@ export default defineManifest({
   ],
   // `activeTab` is temporary and is revoked on navigation; `tabs` keeps `Tab.url` available while
   // the side panel follows an application through an ATS flow.
-  permissions: ['storage', 'scripting', 'activeTab', 'sidePanel', 'tabs', 'webNavigation'],
+  // `cookies` is `lib/sharedSessionCookie.ts`'s: reading/writing the dashboard's Better Auth
+  // session cookie so a sign-in on either surface authenticates the other. It only reaches
+  // `host_permissions`-granted origins, `EXTENSION_BACKEND_ORIGIN` among them.
+  permissions: [
+    'storage',
+    'scripting',
+    'activeTab',
+    'sidePanel',
+    'tabs',
+    'webNavigation',
+    'cookies',
+  ],
 });

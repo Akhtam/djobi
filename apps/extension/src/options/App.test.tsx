@@ -1,8 +1,9 @@
 import type { ExtractedProfile, Profile } from '@djobi/shared';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
 import { HttpError } from '../lib/callBackend';
+import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import { App } from './App';
 
 /**
@@ -30,6 +31,24 @@ function fakeBackend(handlers: {
     getProfile,
     saveProfile,
   } as Partial<BackendClient>);
+}
+
+/**
+ * `chrome.storage`, both areas: `session` (the real bearer token — `adoptSharedSession` writes
+ * through here) and a minimal `local` (`useThemePreference`, which every page reads on mount
+ * regardless of what a given test is about). One `onChanged` registry, as real Chrome has, from
+ * `fakeSessionStorage` — theme's own listener add/remove no-ops against it harmlessly.
+ */
+function minimalLocalStorage() {
+  const { session, onChanged } = fakeSessionStorage();
+  return {
+    session,
+    onChanged,
+    local: {
+      get: () => Promise.resolve({}),
+      set: () => Promise.resolve(),
+    },
+  };
 }
 
 const emptyProfile: Profile = {
@@ -1006,6 +1025,15 @@ describe('options App, resume upload', () => {
 });
 
 describe('options App, auth', () => {
+  // Unmounts (running effect cleanups, which read `chrome`) before unstubbing it — the global
+  // `afterEach` in `vitest.setup.ts` also calls `cleanup()`, but by then this describe's own
+  // `afterEach` has already run and `chrome` would be gone, which is exactly the
+  // "chrome is not defined" `useThemePreference` cleanup crash this ordering avoids.
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
   it('shows the sign-in view on a 401 rather than an unusable empty form', async () => {
     render(<App client={createFakeBackendClient({}, { signedIn: false })} />);
 
@@ -1042,5 +1070,53 @@ describe('options App, auth', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
+  });
+
+  it('adopts a session found in the dashboard’s shared cookie instead of showing sign-in', async () => {
+    // No local bearer token, but the dashboard already has one — `chrome.cookies.get` is this
+    // extension's only way to see it (`sharedSessionCookie.ts`). The first `getProfile` 401s the
+    // way a genuinely signed-out extension would; the second (after adoption) succeeds, standing in
+    // for "the adopted token is now attached and the backend accepts it."
+    let calls = 0;
+    const client = fakeBackend({
+      get: () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new HttpError(
+            'http',
+            '/profile',
+            '/profile failed (401): Authentication required',
+            401,
+          );
+        }
+        return { ...emptyProfile, fullName: 'Jane Doe' };
+      },
+      save: (profile) => profile,
+    });
+    vi.stubGlobal('chrome', {
+      cookies: {
+        get: vi.fn(async () => ({ value: 'dashboard-session-token' }) as chrome.cookies.Cookie),
+      },
+      // `useThemePreference` (rendered by every page) reads `storage.local` on mount regardless of
+      // what this test cares about — minimal enough that it resolves instead of crashing.
+      storage: minimalLocalStorage(),
+    });
+
+    render(<App client={client} />);
+
+    await waitFor(() => expect(screen.getByLabelText('Full name')).toHaveValue('Jane Doe'));
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('still shows sign-in when there is no local session and no shared one to adopt', async () => {
+    vi.stubGlobal('chrome', {
+      cookies: { get: vi.fn(async () => null) },
+      storage: minimalLocalStorage(),
+    });
+
+    render(<App client={createFakeBackendClient({}, { signedIn: false })} />);
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 });

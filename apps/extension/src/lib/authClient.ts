@@ -14,9 +14,15 @@
  * page would hit — the same reason every other route in `backendClient.ts` needs no CORS allowlist
  * entry on the backend either.
  */
+import { HttpError } from '@djobi/http-client';
 import { SignInRequestSchema, SignInResultSchema, SignOutResultSchema } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { clearAuthToken, getAuthToken, setAuthToken } from './authToken';
+import {
+  clearSharedSessionToken,
+  getSharedSessionToken,
+  setSharedSessionToken,
+} from './sharedSessionCookie';
 
 /**
  * Signs in and stores the bearer token `set-auth-token` carries, or throws with the backend's own
@@ -52,6 +58,10 @@ export async function signIn(email: string, password: string): Promise<void> {
     throw new Error('Sign-in succeeded but the backend did not return a session token.');
   }
   await setAuthToken(token);
+  // Best-effort: a dashboard tab reaching `EXTENSION_BACKEND_ORIGIN` picks up this same session
+  // through its own cookie-carrying requests once this lands — see `sharedSessionCookie.ts`. This
+  // extension's own session is `setAuthToken` above regardless of whether this succeeds.
+  await setSharedSessionToken(token).catch(() => undefined);
 }
 
 /**
@@ -81,4 +91,49 @@ export async function signOut(): Promise<void> {
     }
   }
   await clearAuthToken();
+  // Best-effort, same reasoning as the token clear above: a candidate signing out here shouldn't
+  // leave a dashboard tab holding a cookie for the session the request just invalidated.
+  await clearSharedSessionToken().catch(() => undefined);
+}
+
+/**
+ * Adopts a session already established elsewhere — the dashboard, most often — by copying its
+ * session cookie into this extension's own bearer token. Resolves `true` if there was one to
+ * adopt, `false` otherwise — including when `chrome.cookies` itself rejects (e.g. a host
+ * permission that doesn't yet cover this origin) — since callers treat "nothing to adopt" and "the
+ * cookie lookup failed" identically: fall through to whatever a real 401 already means. Adopting is
+ * optimistic, the same way a token already in `chrome.storage.session` is trusted until a real call
+ * 401s, so a caller still has to retry whatever it was doing and treat a further 401 as "not
+ * actually signed in anywhere," not assume this call proves it.
+ */
+export async function adoptSharedSession(): Promise<boolean> {
+  try {
+    const token = await getSharedSessionToken();
+    if (!token) return false;
+    await setAuthToken(token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
+}
+
+/**
+ * Runs `attempt` once, and again after {@link adoptSharedSession} if the first call fails with the
+ * backend's 401 — the one retry policy `panel/App.tsx` and `options/App.tsx` each used to carry
+ * their own copy of around their bootstrap `getProfile`. A second 401 after adopting means there
+ * was truly nothing to adopt, or it was no good either, so it is rethrown for the caller to treat
+ * as an expired/absent session.
+ */
+export async function withSharedSessionRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!isUnauthorized(error) || !(await adoptSharedSession())) throw error;
+    return attempt();
+  }
 }

@@ -24,6 +24,7 @@ import type { Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
+import { withSharedSessionRetry } from '../lib/authClient';
 import type { BackendClient } from '../lib/backendClient';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { AskTab, type AskSeed } from './AskTab';
@@ -72,18 +73,22 @@ export function App({ client }: { client: BackendClient }) {
     const requestToken = ++profileRequestRef.current;
     setProfileLoaded(false);
     setProfileError(false);
-    void client
-      .getProfile()
-      .then((loadedProfile) => {
+
+    void (async () => {
+      try {
+        // `withSharedSessionRetry` gives this its one shot at recovery — the dashboard may
+        // already have a session (`authClient.ts`'s `adoptSharedSession`) — before a 401 here
+        // means there really is nothing to sign in with.
+        const loadedProfile = await withSharedSessionRetry(() => client.getProfile());
         if (requestToken !== profileRequestRef.current) return;
         setProfile(loadedProfile);
         setProfileLoaded(true);
-      })
-      .catch(() => {
+      } catch {
         if (requestToken !== profileRequestRef.current) return;
         setProfileError(true);
         setProfileLoaded(true);
-      });
+      }
+    })();
   }
 
   /*

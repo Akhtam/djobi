@@ -87,7 +87,7 @@ export interface StubOptions {
   tabId?: number;
   profile: Profile | null;
   /** Fail successive profile loads; `null` resolves with `profile`. The last entry repeats. */
-  profileFailures?: (string | null)[];
+  profileFailures?: (string | Error | null)[];
   jobPageData?: { fields: DetectedField[] } | null;
   /** Share one `chrome.storage.session` across multiple `stubChrome`/`render` calls — simulates
    *  the panel closing and reopening (unmount + fresh `render`), both of which see the same
@@ -166,7 +166,9 @@ export async function stubChrome(options: StubOptions) {
   const client: BackendClient = createFakeBackendClient({
     getProfile: vi.fn(() => {
       const failure = nth(options.profileFailures, profileCallIndex++);
-      return failure ? Promise.reject(new Error(failure)) : Promise.resolve(options.profile);
+      return failure
+        ? Promise.reject(typeof failure === 'string' ? new Error(failure) : failure)
+        : Promise.resolve(options.profile);
     }),
     answerChat: () => Promise.resolve(options.chatReply ?? { reply: 'Here you go.' }),
     ...(options.renderResumePdf ? { renderResumePdf: options.renderResumePdf } : {}),
@@ -271,6 +273,7 @@ export async function stubChrome(options: StubOptions) {
     knowTab: chrome.knowTab,
     sessionStorage: chrome.storage,
     resolveFill: releaseFill,
+    setCookie: chrome.setCookie,
   };
 }
 

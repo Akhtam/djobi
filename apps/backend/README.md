@@ -1,17 +1,19 @@
 # backend
 
-The local Hono server that does the LLM and database work for djobi: extracting structured Job Info
-from a pasted Job Description, tailoring a resume to it, drafting answers to freeform application
-questions, holding a chat about one of those answers, rendering the resume PDF, and persisting
-profiles and applications. Runs on your machine
-(`127.0.0.1:5391`); the only cloud dependencies are the Neon Postgres database and the Anthropic API.
+The local Hono server that does the LLM, auth, and database work for djobi: extracting structured
+Job Info from a pasted Job Description, tailoring a resume to it, drafting answers to freeform
+application questions, holding a chat about one of those answers, extracting a draft Profile from an
+uploaded resume PDF, rendering the resume PDF, authenticating both clients (Better Auth), and
+persisting users, profiles and applications. Runs on your machine (`127.0.0.1:5391`); the only cloud
+dependencies are the Neon Postgres database and the OpenRouter API (plus Google, if Google sign-in is
+configured). See `docs/multi-tenant-auth.md` for the auth design.
 
 Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**, **Profile**,
 **Application**) are defined in the repo-root `CONTEXT.md`.
 
 ## `src/app.ts` / `src/index.ts`
 
-`app.ts` builds and returns the Hono app with all four route modules mounted, and installs an
+`app.ts` builds and returns the Hono app with every route module mounted, and installs an
 `onError` handler that renders every uncaught failure as a `BackendErrorBody` (from
 `@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack trace or a bare non-JSON
 body to the extension. `structuredCall.ts` handles its one retryable case locally, logs the safe
@@ -22,9 +24,17 @@ It also installs `hono/cors` for `apps/dashboard`, which runs on its own dev ser
 a different origin. That `app.use` sits **above** every `app.route` for the same reason the logger
 below can't: Hono composes in registration order, so middleware registered after the routes never
 runs for a request a route answers. The allowed origin is an explicit list, not `*` — this server
-holds an Anthropic key and a live database connection, and any page in the browser can reach
+holds an OpenRouter key and a live database connection, and any page in the browser can reach
 `127.0.0.1`. `src/cors.test.ts` covers both of those, deliberately asserting against a real route
 rather than an unknown path, since a broken registration still answers a 404 correctly.
+
+**Auth (`src/auth.ts` / `src/authMiddleware.ts`).** Better Auth (email/password, Google) is mounted
+at `/api/auth/*` — exempt from the guard below, since signing in has to work while unauthenticated.
+Every route below that is behind `requireAuth`, registered after CORS and the content-type guard:
+it accepts either an `httpOnly` session cookie (the dashboard) or an `Authorization: Bearer` token
+(the extension), and sets `c.get('userId')` for every handler to scope its reads/writes on — an
+unauthenticated request never reaches a route, and never spends this backend's OpenRouter budget.
+See `docs/multi-tenant-auth.md`.
 
 Behind the allowlist sits a second `app.use`: every state-changing method (`POST`, `PATCH`, `PUT`,
 `DELETE`) must declare `content-type: application/json`, or the request is refused with a **415**
@@ -134,25 +144,42 @@ Each route validates its body with zod and delegates. Route tests cover the succ
 cases relevant to that route; not every suite asserts the same 200 / 400 / 500 triple. A 415 never
 reaches a route: the content-type guard in `app.ts` answers a state-changing request with the wrong
 `content-type` before any route runs, so route tests always send `content-type: application/json`.
+Every route below requires a session — `c.get('userId')`, set by `authMiddleware.ts` — except
+`/api/auth/*` itself.
 
 Operation-specific transport bodies and aliases live in `@djobi/shared`'s `wire.ts`, so the backend
 and extension use the same contracts instead of private route schemas. Domain write shapes such as
 `NewApplication` and `ApplicationSnapshot` remain in `schemas.ts`. See that package's README for why.
 
-| Route                           | Body                            | Delegates to                |
-| ------------------------------- | ------------------------------- | --------------------------- |
-| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`            |
-| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`          |
-| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`       |
-| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`            |
-| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`          |
-| `GET`/`POST /profile`           | `Profile`                       | `db/profileRepository`      |
-| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationsRepository` |
-| `GET /applications/:id`         | —                               | `db/applicationsRepository` |
-| `POST /applications`            | `NewApplication`                | `db/applicationsRepository` |
-| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationsRepository` |
-| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationsRepository` |
-| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationsRepository` |
+The four model-only routes below share one file, `routes/llm.ts` — each is a one-line
+`post(path, schema, operation)` registration rather than its own module; see that file's own header
+comment for why. `routes/profile.ts`, `routes/applications.ts` and `routes/render-resume-pdf.ts` each
+hold a REST resource's or a render cache's worth of actual logic, so they stay their own modules.
+
+| Route                           | Body                            | Delegates to            |
+| ------------------------------- | ------------------------------- | ----------------------- |
+| `* /api/auth/*`                 | Better Auth's own               | `auth.ts` (Better Auth) |
+| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`        |
+| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`      |
+| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`   |
+| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`        |
+| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`      |
+| `GET`/`POST /profile`           | `Profile`                       | `db/profileStore`       |
+| `POST /profile/extract-resume`  | multipart, field `resume` (PDF) | `llm/extractResume`     |
+| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationStore`   |
+| `GET /applications/:id`         | —                               | `db/applicationStore`   |
+| `POST /applications`            | `NewApplication`                | `db/applicationStore`   |
+| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationStore`   |
+| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationStore`   |
+| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationStore`   |
+
+`POST /profile/extract-resume` parses an uploaded resume PDF into a draft `Profile` extraction for
+the candidate to review — it never calls `ProfileStore.save`, the same separation the extension
+pipeline keeps between its Fill and Save steps. It's also the one route with its own CSRF wrinkle:
+`multipart/form-data` is itself a CORS "simple" content type, so it can't rely on the
+`application/json`-only guard above; it instead requires a non-simple `x-djobi-upload` header
+(`@djobi/http-client`'s `upload()` attaches it automatically), which forces the same preflight.
+See Phase 20 in `PROGRESS.md`.
 
 Application routes negotiate their response with the explicit `response=compact` query parameter.
 Without it, they retain the legacy contracts: `GET /applications?jobUrl=...` returns
@@ -192,18 +219,26 @@ render promise, so Preview and Fill reuse completed or in-flight work without an
 
 ### `schema.ts`
 
-Two tables:
+Six tables:
 
-- **`profiles`** — one fixed-id singleton row with `updatedAt` and a `data` jsonb column holding the
-  entire `Profile`. A fixed primary key makes saves one atomic `INSERT ... ON CONFLICT DO UPDATE`
-  statement. No migration is needed when the Profile shape changes — `data` accepts the whole blob.
-- **`applications`** — one row per saved autofill run or manually logged application.
-  `company`/`roleTitle`/`jobUrl`/`jobKey` are plain columns
-  (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and `answers` are
-  jsonb snapshots of what was generated for that specific application, so past applications stay
-  readable even if `Profile` or the tailoring prompt changes later. `stage`
+- **`users`** — one row per account. Better Auth's own table (`auth.ts`'s `user.modelName: 'users'`
+  points it here rather than letting it generate a second one), widened in place from the
+  ownership-only table Phase A of `docs/multi-tenant-auth.md` first created.
+- **`session`** / **`account`** / **`verification`** — Better Auth's own tables, owned outright by
+  it; nothing else in this backend references them directly.
+- **`profiles`** — keyed by `userId` (the primary key, not a separate `id`) with `updatedAt` and a
+  `data` jsonb column holding the entire `Profile`. One profile per user is a schema guarantee this
+  way, and a fixed key per user makes a save one atomic `INSERT ... ON CONFLICT DO UPDATE` statement.
+  No migration is needed when the `Profile` shape changes — `data` accepts the whole blob.
+- **`applications`** — one row per saved autofill run or manually logged application, owned by
+  `userId` (`NOT NULL`, cascade-deletes with its user). `company`/`roleTitle`/`jobUrl`/`jobKey` are
+  plain columns (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and
+  `answers` are jsonb snapshots of what was generated for that specific application, so past
+  applications stay readable even if `Profile` or the tailoring prompt changes later. `stage`
   (`applied` → `phone_screen` → `onsite` → `offer` → `rejected`) tracks how far it got. `notes` is a
-  jsonb array appended to over the life of the application, never overwritten.
+  jsonb array appended to over the life of the application, never overwritten. `rawDescription`,
+  `extractionVersion`, `requirementEvidence` and `bulletProvenance` (all nullable) are the posting
+  text an application was analyzed against and the matching provenance derived from it.
 
   A `status` column (`draft`/`submitted`) sat beside `stage` until migration `0002`. Nothing ever
   wrote `submitted`, so the column held no information and was removed. Its removal does not prove
@@ -212,12 +247,18 @@ Two tables:
 
 ### `client.ts`
 
-The Drizzle client used by every repository. Reads `DATABASE_URL` from the environment and throws
+The Drizzle client used by every store. Reads `DATABASE_URL` from the environment and throws
 immediately if it's unset — fails fast rather than on the first query. Uses
 `@neondatabase/serverless` + `drizzle-orm/neon-http`, Neon's low-latency HTTP driver (a plain `pg`
 connection also works if the backend ever needs multi-statement transactions within one request).
 
-### `profileRepository.ts` / `applicationsRepository.ts`
+### `profileStore.ts` / `postgresProfileStore.ts` / `applicationStore.ts` / `postgresApplicationStore.ts`
+
+Each pair is an interface (`ProfileStore`/`ApplicationStore`) plus its Postgres implementation — the
+seam that lets `routes/profile.ts`/`routes/applications.ts` and their tests run against an in-memory
+adapter with no database. Both interfaces take a `userId` on every method and scope every query on
+it (`docs/multi-tenant-auth.md`, Phase A) — a different user's row is a 404 the store never returns,
+not a 403 that would confirm the id is real.
 
 Both parse jsonb-backed data rather than casting it: a row written before a schema field existed can
 come back without it, and a cast would make the compiler vouch for fields that are `undefined` at
@@ -225,32 +266,44 @@ runtime. Parsing applies only defaults explicitly declared by the schema. Profil
 fill the defaulted prepared-answer fields, but application reads use `ApplicationSchema`, whose
 persisted fields are required; an older or malformed application is not silently upgraded.
 
-`applicationsRepository` also holds the reads and writes the extension's later steps need. The
+`postgresApplicationStore` also holds the reads and writes the extension's later steps need. The
 Duplicate Guard gets only a count and newest-row metadata from one projected query. Create and
 snapshot-update routes return only the id; Stage updates return id + Stage; Note appends return id +
 the generated Note. Full rows are reserved for list and detail reads that consume their snapshots.
 The duplicate lookup matches `job_key` — `jobUrl` reduced to a posting identity by `jobKeyForUrl`
 in `@djobi/shared`, derived on write and never accepted from a client — backed by
-`(job_key, created_at DESC)`. It keeps an exact `job_url` clause beside it for rows written before
-that column existed, so an unkeyed row is still found exactly as well as it was before. Matching the
-raw URL alone missed a posting revisited through an ad link (`?gh_src=`, `?utm_source=`) or from the
-`/apply` screen, which cost a full re-analysis every time.
+`(user_id, job_key, created_at DESC)`. It keeps an exact `job_url` clause beside it for rows written
+before that column existed, so an unkeyed row is still found exactly as well as it was before.
+Matching the raw URL alone missed a posting revisited through an ad link (`?gh_src=`, `?utm_source=`)
+or from the `/apply` screen, which cost a full re-analysis every time.
 
-`applicationsRepository` is deliberately stricter for a single row than for a list. `getApplicationById`
+`postgresApplicationStore` is deliberately stricter for a single row than for a list. `byId`
 throws if the row won't parse, because returning `null` would claim the application doesn't exist —
 a different and untrue thing. The list functions skip an unreadable row with a warning instead, so
 one bad row from an older build doesn't hide the entire history behind it.
 
+`bootstrapUser.ts`'s `BOOTSTRAP_USER_ID` is the one pre-multi-tenant user migration `0009` created
+and assigned every existing row to. No route reads it any more — it's kept only because
+`testApp.ts` and the store-level tests need a concrete, real-looking id to seed and assert against.
+
 ### `migrations/`
 
-`drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both tables;
+`drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both original tables;
 `0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
 `0002_outstanding_black_tom.sql` drops `applications.status`; `0003_abandoned_sir_ram.sql` adds the
 Application source; `0004_shocking_wind_dancer.sql` consolidates the Profile to its fixed singleton
 id and removes the random id default; `0005_curved_jackal.sql` adds the Duplicate Guard index;
 `0006_damp_princess_powerful.sql` adds `applications.job_key` and its index. `0006` backfills
 nothing — the key is derived by `jobKeyForUrl`, which needs a URL parser, so existing rows keep a
-`NULL` key and go on matching by exact `job_url`.
+`NULL` key and go on matching by exact `job_url`. `0007_spooky_black_knight.sql` adds a plain
+`created_at` index; `0008_numerous_doorman.sql` adds the four Phase 19 provenance columns
+(`raw_description`, `extraction_version`, `requirement_evidence`, `bulletProvenance`).
+`0009_eminent_thunderbolt.sql` is Phase A of `docs/multi-tenant-auth.md`: creates `users`, inserts
+the bootstrap row, renames `profiles.id` to `profiles.user_id`, backfills and constrains
+`applications.user_id`, and rebuilds every application index with a `user_id` prefix.
+`0010_parched_selene.sql` is Phase B: creates Better Auth's own `account`/`session`/`verification`
+tables. `0011_steep_callisto.sql` adds `ON DELETE cascade` to both `user_id` foreign keys, so
+deleting a user cascades instead of hitting a raw FK violation (Phase F's account-deletion prep).
 
 ## `drizzle.config.ts`
 
@@ -260,17 +313,20 @@ since drizzle-kit runs outside the app's own env loading.
 
 ## `src/llm/` — the model calls
 
-### `client.ts`
+### `client.ts` / `routing.ts`
 
-The OpenRouter provider instance (credentials from `OPENROUTER_API_KEY`), plus `MODELS` — the map
-from _operation_ to pinned model slug that is the whole of the routing policy.
+`client.ts` is just the shared OpenRouter provider instance (credentials from
+`OPENROUTER_API_KEY`) — one key and one meter for every model, whoever serves it. The routing policy
+itself lives in `routing.ts`'s `ROUTES`, the map from _operation_ to model slug, token budget and
+optional reasoning effort.
 
-| Operation         | Model                          | Why                                                                                                                         |
-| ----------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `extractJob`      | `google/gemini-3.1-flash-lite` | Highest call volume, and the serial gate the rest of Analysis waits behind. Transcription from text already in front of it. |
-| `tailorResume`    | `anthropic/claude-sonnet-5`    | The one call where nuance is the product.                                                                                   |
-| `answerQuestions` | `anthropic/claude-sonnet-5`    | Freeform prose grounded in Stories — the same judgement as tailoring.                                                       |
-| `answerChat`      | `anthropic/claude-sonnet-5`    | The same drafting task, in a conversation.                                                                                  |
+| Operation         | Model                          | Why                                                                                                                                                                                                                                   |
+| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extractJob`      | `google/gemini-3.1-flash-lite` | Highest call volume, and the serial gate the rest of Analysis waits behind. Transcription from text already in front of it.                                                                                                           |
+| `tailorResume`    | `anthropic/claude-sonnet-5`    | The one call where nuance is the product. `effort: 'none'`.                                                                                                                                                                           |
+| `answerQuestions` | `anthropic/claude-sonnet-5`    | Freeform prose grounded in Stories — the same judgement as tailoring.                                                                                                                                                                 |
+| `answerChat`      | `anthropic/claude-sonnet-5`    | The same drafting task, in a conversation.                                                                                                                                                                                            |
+| `extractResume`   | `google/gemini-3.1-flash-lite` | Parsing a resume PDF into a Profile shape, like `extractJob` — not the written-judgement work reserved for the Claude routes. Wider 4096-token budget: one resume commonly reports several roles plus projects/certifications/awards. |
 
 A tier split across one vendor's models (`MODEL`/`FAST_MODEL`) stopped meaning anything once the
 models come from several. Anthropic is still reachable — OpenRouter serves it — so putting a call
@@ -350,7 +406,10 @@ Takes the Profile's skills/work experience plus `JobInfo`, and returns a validat
 `TailoredResume`. Skills are copied from the Profile unchanged and are not part of the model output.
 Sonnet 5 runs with reasoning disabled and returns only work-experience source indices plus rewritten
 bullet text; post-processing resolves company/title/date metadata from the Profile. Missing,
-duplicate, or invalid pointers conservatively fall back to the source role.
+duplicate, or invalid pointers conservatively fall back to the source role. `bulletTruthfulness.ts`
+is the last check a kept, rewritten bullet passes through: a deterministic, no-model-call check that
+a rewrite's numbers and proper-noun-like terms already appear in the source bullet it rewrote; a
+rewrite that invents one reverts to the source text verbatim rather than being rejected or re-asked.
 
 ### `answerQuestions.ts`
 
@@ -392,6 +451,18 @@ The wire schema also requires the thread to alternate and end with the candidate
 user turn is folded into the scaffold rather than sent after it — the Messages API refuses two user
 turns in a row — so a malformed thread is a 400 here, not an opaque provider 500.
 
+### `extractResume.ts`
+
+Parses an uploaded resume PDF (`routes/profile.ts`'s `POST /profile/extract-resume`) into a draft
+`Profile` extraction. Text comes from `unpdf` (the same call `pdf/preflightResume.ts` makes),
+goes through `sanitizeXmlContent` since it's untrusted candidate-authored input, then the same
+`structuredCall.ts` seam as every other route. Populates `fullName`, `email`, `phone`, `location`,
+`links`, `workExperience`, `education`, `skills`, `summary`, `projects`, `certifications`, `awards`
+only — `stories`, `screeningAnswers` and `customAnswers` stay manual-only, since no resume honestly
+supplies them. A PDF that fails to parse, or yields only whitespace, throws `NoResumeTextError`
+rather than an unrelated 500 — the same outcome for "scanned/image PDF" and "not really a PDF at
+all," since both have the same remedy (fall back to manual entry). See Phase 20 in `PROGRESS.md`.
+
 ## `src/pdf/renderResume.tsx`
 
 A single `@react-pdf/renderer` template. Contact info and education come from the
@@ -419,16 +490,17 @@ shared spy, plus helpers to build a generation and to read the request back. It 
 provider contract is not guessable — token counts are grouped rather than flat and a finish reason
 is an object — so a plausible hand-rolled response is read as a generation that used no tokens and
 stopped for no reason, and a logging assertion then passes for the wrong reason. It fakes the
-_provider_, not `callStructured`: schema conversion, validation, the retry and the failure
-classification are the behaviour under test, which is what lets the other five assert on real
-prompts. Its copy of `MODELS` is deliberate — importing the real one would be a cycle, since this
-module _is_ the mock for `client.js` — and the tests that pin a route are what catch a drift.
+_provider_ (`client.js`), not `callStructured` or the routing policy: schema conversion, validation,
+the retry and the failure classification are the behaviour under test, which is what lets the other
+five assert on real prompts. `routing.ts`'s `ROUTES` lives outside this fake entirely now that
+`client.ts` no longer names the model map itself, so there's no copy to drift.
 
 `renderResume.test.ts` uses no mocking — there's no network involved — and reads the rendered text
 back out with `unpdf`, so a layout regression can actually fail a test.
 
 `db/database.integration.test.ts` uses PGlite's PostgreSQL engine to execute the optimized window
-query and migrations `0004`–`0006`, including duplicate, empty-table, and index cases.
+query and migrations `0004`–`0006` and `0009` (the user-ownership migration), including duplicate,
+empty-table, and index cases.
 
 ## `vitest.config.ts`
 
@@ -436,8 +508,10 @@ Same minimal Node-environment config as `packages/shared`.
 
 ## `.env.example`
 
-Template for the real `.env` (gitignored): `DATABASE_URL` (Neon connection string),
-`OPENROUTER_API_KEY`, `PORT`.
+Template for the real `.env` (gitignored). Required: `DATABASE_URL` (Neon connection string),
+`OPENROUTER_API_KEY`, `BETTER_AUTH_SECRET` (the backend throws at first auth-route use if unset).
+Optional: `PORT` (defaults to 5391), `BETTER_AUTH_URL`, `PUBLIC_ORIGINS`, `NODE_ENV`, and
+`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google sign-in — see `docs/multi-tenant-auth.md`.
 
 The package has its own `tsconfig.json` and builds JSX with the automatic `react-jsx` runtime. Run
 `pnpm --filter backend build` to compile it, `pnpm --filter backend test` for this package's tests,

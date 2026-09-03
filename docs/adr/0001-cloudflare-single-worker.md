@@ -2,6 +2,13 @@
 
 Date: 2026-08-20
 
+**Status: Superseded (as of 2026-09-03).** No `wrangler`/Cloudflare config exists in the repo, and
+the backend's actual production build is a plain-Node server (`pnpm --filter backend build` emits
+`dist/`, started via `node dist/index.js` — see `apps/backend/README.md` and `PROGRESS.md`'s
+`apps/backend` entry), not a Worker. `docs/multi-tenant-auth.md` now states outright that this ADR
+"is explicitly _not_ assumed" by the live multi-tenant/auth design. The body below is kept as a
+historical record of the original decision, not current architecture.
+
 ## Status
 
 Accepted — decided, not yet implemented.

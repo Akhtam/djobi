@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1561 tests**
-(268 shared / 25 http-client / 311 backend / 712 extension / 245 dashboard), `pnpm test` from the
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1579 tests**
+(271 shared / 25 http-client / 311 backend / 727 extension / 245 dashboard), `pnpm test` from the
 repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -1444,23 +1444,26 @@ Decisions:
       implicit caching, since prompt order is load-bearing in `answerQuestions`
 - Build test-first, same as the rest
 
-### Multi-tenant authentication (proposed, not started)
+### Multi-tenant authentication (done except social login and cost control)
 
-Turn djobi from a single-user local tool into something more than one person can sign into. Decisions
-and the phase-by-phase plan are in `docs/multi-tenant-auth.md`; the shape of it:
+Turned djobi from a single-user local tool into a public product more than one person can sign into.
+Decisions and the phase-by-phase log are in `docs/multi-tenant-auth.md`; the shape of what shipped:
 
-- **Ownership in the data model comes first, with auth second.** Nothing in the database has an owner
-  today — `profiles` is a hardcoded singleton and `applications` has no owner column — so the large
-  mechanical change is adding one everywhere and scoping every query. Done while there is still
-  exactly one tenant, that work is reviewable and a mistake cannot leak anything.
-- **The mechanism is an OAuth-first auth library self-hosted against the existing Postgres**, so
-  ownership stays a foreign key rather than a claim in someone else's token. MV3 can't hold a client
-  secret, so the extension authenticates through `chrome.identity.launchWebAuthFlow` with PKCE.
-- **The Duplicate Guard indexes must become user-scoped, and that is a correctness rule.** Unscoped,
-  one user's saved application stops another user's analysis and tells them they already applied to a
-  job they have never seen.
-- **One server-side `ANTHROPIC_API_KEY` funds every signup.** Either users bring their own key or
-  there are hard per-user quotas. This gates going public and is not a later hardening task.
+- **Ownership in the data model landed first, with auth second.** `profiles` re-keyed to `user_id` as
+  its primary key, `applications` gained a `user_id` column, and both indexes gained a `user_id`
+  prefix — done while there was still exactly one tenant, so the scoping was reviewable and a mistake
+  could not leak anything.
+- **The mechanism is Better Auth, self-hosted against the existing Postgres**, so ownership stays a
+  foreign key rather than a claim in someone else's token. Email/password is what actually works
+  today; Google/GitHub OAuth (and the `chrome.identity.launchWebAuthFlow` + PKCE flow the extension
+  would need for it) is deferred until a provider is registered — Better Auth's `bearer()` plugin
+  already returns a session token on any successful sign-in, credential-based included, so the
+  extension didn't need OAuth to get a working bearer token.
+- **The Duplicate Guard indexes are user-scoped, as a correctness rule, not a performance one.**
+  Unscoped, one user's saved application would stop another user's analysis and tell them they
+  already applied to a job they have never seen.
+- **One server-side `OPENROUTER_API_KEY` funds every signup — genuinely unresolved, not hardening to
+  defer.** Neither BYOK nor per-user quotas is built; see `docs/multi-tenant-auth.md`'s Phase E.
 
 ### Phase 10 — A deep bullet bank, starred bullets, and a per-role cap (implemented; live verification pending)
 

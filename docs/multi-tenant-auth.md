@@ -257,6 +257,25 @@ OAuth items below are kept as the documented follow-up once a provider is regist
       `checkpointFailure` like any other `HttpError` before this phase (`background/runClaim.ts`'s
       generic catch), so this needed only the new failure kind above, not new checkpointing logic
 
+**Shared session (2026-09-03), added after the fact — not itemized above when this phase was
+written:** the extension and dashboard now sync sessions through `chrome.cookies`, so signing in on
+either surface authenticates the other. `apps/extension/src/lib/sharedSessionCookie.ts` reads/writes
+the dashboard's Better Auth session cookie directly on `EXTENSION_BACKEND_ORIGIN` — the one thing an
+extension can do with an `httpOnly` cookie that a page's own script can't — because the cookie's
+value and the `set-auth-token` bearer token above are byte-identical (verified by round-tripping a
+copied cookie value as `Authorization: Bearer`). `authClient.ts`'s `adoptSharedSession` copies a
+found cookie into this extension's own bearer token, and `withSharedSessionRetry` wraps the panel's
+and options app's profile-load calls so a 401 gets one retry after adopting before it's treated as a
+real sign-out. This knowingly puts a second write path on the dashboard's cookie (previously only
+Better Auth's own `Set-Cookie` wrote it) and a second, disk-persisted copy of the token alongside its
+`chrome.storage.session` one — accepted because both surfaces already trust the same backend and the
+same session value, not because the risk is zero. **Known gap:** `setSharedSessionToken`'s
+`secure`/`sameSite` are derived from `EXTENSION_BACKEND_ORIGIN`'s URL scheme, independently of this
+phase's own `NODE_ENV`-gated `defaultCookieAttributes` above (Phase F); the two happen to agree in
+both real configurations today (dev: http/non-production, deployed: https/production) but nothing
+enforces that they must, which needs revisiting if a deployed backend is ever https without
+`NODE_ENV=production` set.
+
 ### Phase E — Cost control
 
 **Not started; genuinely open, not just unimplemented.** See "The thing that will bite you" above —
