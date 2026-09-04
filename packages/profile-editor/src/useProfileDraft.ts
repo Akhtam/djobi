@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { parseProfile, type Profile } from '@djobi/shared';
-import { normalizeProfileDraft } from './profileDraft.js';
+import { parseProfile, type ExtractedProfile, type Profile } from '@djobi/shared';
+import { applyExtractedProfile, normalizeProfileDraft } from './profileDraft.js';
 
 /**
  * What a completed {@link ProfileDraft.save} did, for the caller to render.
@@ -11,6 +11,15 @@ import { normalizeProfileDraft } from './profileDraft.js';
  */
 export type ProfileSaveOutcome =
   { kind: 'saved' } | { kind: 'stale' } | { kind: 'error'; error: unknown };
+
+/**
+ * What a completed {@link ProfileDraft.applyResume} did.
+ *
+ * `error` is unclassified for the same reason {@link ProfileSaveOutcome}'s is — a 401 here means
+ * the same thing it means on a save, and the two editors answer one differently.
+ */
+export type ProfileExtractOutcome =
+  { kind: 'parsed' } | { kind: 'stale' } | { kind: 'error'; error: unknown };
 
 /**
  * The editable Profile draft: what a candidate is looking at before it's saved, and the save
@@ -29,6 +38,8 @@ export interface ProfileDraft {
   dirty: boolean;
   /** True while a {@link save} is in flight — the form stays editable throughout. */
   saving: boolean;
+  /** True while an {@link applyResume} is parsing — the form stays editable throughout. */
+  extracting: boolean;
   /** Applies a candidate's edit: updates the draft and marks it dirty. */
   setProfile(next: Profile): void;
   /**
@@ -46,12 +57,28 @@ export interface ProfileDraft {
    * there is no draft to save.
    */
   save(persist: (profile: Profile) => Promise<Profile>): Promise<ProfileSaveOutcome>;
+  /**
+   * Hands `file` to `extract` and applies whatever the extraction found onto the draft, field by
+   * field, marking it dirty. Nothing is persisted — {@link save} is still the only write path, and
+   * "You have unsaved changes" is what tells the candidate so.
+   *
+   * The draft it applies onto is the one current *when the parse returns*, not when it started: a
+   * resume takes seconds to parse and the form stays editable throughout, so applying onto the
+   * pre-parse snapshot would silently discard anything typed while waiting.
+   *
+   * Calling this before the first {@link load} does nothing and reports `{ kind: 'stale' }`.
+   */
+  applyResume(
+    file: File,
+    extract: (file: File) => Promise<ExtractedProfile>,
+  ): Promise<ProfileExtractOutcome>;
 }
 
 export function useProfileDraft(): ProfileDraft {
   const [profile, setProfileState] = useState<Profile | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   // Refs, not state: both are read inside `save` after an `await`, where a stale closure over a
   // state value would still show things as of when the handler was created, not the latest edit.
   // `.current` always answers with the truth as of the read.
@@ -59,6 +86,9 @@ export function useProfileDraft(): ProfileDraft {
   const profileRef = useRef<Profile | null>(null);
 
   function setProfile(next: Profile) {
+    // A no-op edit (e.g. adding a blank skill) returns the same reference rather than a copy —
+    // skip the dirty/revision bump so the form doesn't claim unsaved changes for nothing.
+    if (next === profileRef.current) return;
     ++revisionRef.current;
     profileRef.current = next;
     setProfileState(next);
@@ -95,5 +125,27 @@ export function useProfileDraft(): ProfileDraft {
     }
   }
 
-  return { profile, dirty, saving, setProfile, load, save };
+  async function applyResume(
+    file: File,
+    extract: (file: File) => Promise<ExtractedProfile>,
+  ): Promise<ProfileExtractOutcome> {
+    if (!profileRef.current) return { kind: 'stale' };
+
+    setExtracting(true);
+    try {
+      const extracted = await extract(file);
+      // Re-read rather than closing over the value checked above: the form stayed editable while
+      // the resume was parsing, and `.current` is the only reading that includes those edits.
+      const current = profileRef.current;
+      if (!current) return { kind: 'stale' };
+      setProfile(applyExtractedProfile(current, extracted));
+      return { kind: 'parsed' };
+    } catch (error: unknown) {
+      return { kind: 'error', error };
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  return { profile, dirty, saving, extracting, setProfile, load, save, applyResume };
 }

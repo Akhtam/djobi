@@ -3,7 +3,6 @@
  * then save a manual Application with the candidate's base profile resume.
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { HttpError } from '@djobi/http-client';
 import {
   failureMessage,
   findDuplicate,
@@ -13,24 +12,14 @@ import {
   type DuplicateApplication,
   type JobInfo,
   type NewApplicationRequest,
-  type Profile,
 } from '@djobi/shared';
 import type { DashboardClient } from '../lib/dashboardClient';
+import { isUnauthorized, useRemoteProfile } from '../lib/dashboardSession';
 import { formatDate } from '../lib/format';
 
 interface Review {
   jobInfo: JobInfo;
   duplicate: DuplicateApplication | null;
-}
-
-type ProfileState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; profile: Profile }
-  | { kind: 'none' }
-  | { kind: 'error'; message: string };
-
-function isUnauthorized(error: unknown): boolean {
-  return error instanceof HttpError && error.kind === 'http' && error.status === 401;
 }
 
 export function NewApplication({
@@ -46,7 +35,6 @@ export function NewApplication({
   onClose: () => void;
   onUnauthorized: () => void;
 }) {
-  const [profileState, setProfileState] = useState<ProfileState>({ kind: 'loading' });
   const [jobUrl, setJobUrl] = useState('');
   const [jobDescription, setJobDescription] = useState('');
   const [company, setCompany] = useState('');
@@ -84,22 +72,7 @@ export function NewApplication({
     };
   }, [onClose, saving]);
 
-  useEffect(() => {
-    let current = true;
-    client.getProfile().then(
-      (profile) => {
-        if (current) setProfileState(profile ? { kind: 'ready', profile } : { kind: 'none' });
-      },
-      (profileError: unknown) => {
-        if (!current) return;
-        if (isUnauthorized(profileError)) onUnauthorized();
-        else setProfileState({ kind: 'error', message: failureMessage(profileError) });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [client, onUnauthorized]);
+  const profileState = useRemoteProfile(client.getProfile, onUnauthorized);
 
   async function handleExtract(event: FormEvent) {
     event.preventDefault();
@@ -192,7 +165,7 @@ export function NewApplication({
               this application.
             </p>
           </div>
-        ) : profileState.kind === 'error' ? (
+        ) : profileState.kind === 'unreachable' ? (
           <div className="new-application__state new-application__state--error" role="alert">
             <strong>Couldn’t load your profile</strong>
             <p>{profileState.message}</p>

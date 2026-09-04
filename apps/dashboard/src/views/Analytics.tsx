@@ -14,9 +14,7 @@
  * and the switch-styled Gaps only toggle are all specified there, down to the token values.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { HttpError } from '@djobi/http-client';
 import {
-  failureMessage,
   type Application,
   type CoverageVerdict,
   type KeywordCategory,
@@ -34,6 +32,7 @@ import {
   type Range,
   type ResponseRate,
 } from '../lib/analytics';
+import { useRemoteProfile } from '../lib/dashboardSession';
 import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
@@ -47,13 +46,6 @@ const RANGE_LABELS: Record<Range, string> = {
 
 /** Top-of-table cutoff for the keyword bar list; `Load more` grows it by the same amount. */
 const KEYWORD_PAGE_SIZE = 25;
-
-/** `getProfile`'s three real outcomes, plus the transient `loading` this view adds around them. */
-type ProfileState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; profile: Profile }
-  | { kind: 'none' }
-  | { kind: 'unreachable'; message: string };
 
 const COVERAGE_LABELS: Record<Exclude<CoverageVerdict, 'profile-experience'>, string> = {
   skills: 'In skills',
@@ -93,10 +85,6 @@ function rateTitle(rate: ResponseRate): string {
     : `${resolved}${pending}`;
 }
 
-function isUnauthorized(error: unknown): boolean {
-  return error instanceof HttpError && error.kind === 'http' && error.status === 401;
-}
-
 export function Analytics({
   applications,
   range,
@@ -117,29 +105,11 @@ export function Analytics({
   // mid-session. The cost is a dashboard left open past midnight keeps yesterday's boundary until
   // reload — the stability this is for.
   const [today] = useState(() => new Date());
-  const [profileState, setProfileState] = useState<ProfileState>({ kind: 'loading' });
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
   const [minAppearances, setMinAppearances] = useState<number>(5);
 
-  useEffect(() => {
-    let current = true;
-    setProfileState({ kind: 'loading' });
-    getProfile().then(
-      (profile) => {
-        if (!current) return;
-        setProfileState(profile ? { kind: 'ready', profile } : { kind: 'none' });
-      },
-      (error: unknown) => {
-        if (!current) return;
-        if (isUnauthorized(error)) onUnauthorized();
-        else setProfileState({ kind: 'unreachable', message: failureMessage(error) });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [getProfile, onUnauthorized]);
+  const profileState = useRemoteProfile(getProfile, onUnauthorized);
 
   // Keyword selection resets on stage/range alone: it is the requirements panel's own concern (see
   // `RequirementsPanel`'s `resetKey`), not this table's.

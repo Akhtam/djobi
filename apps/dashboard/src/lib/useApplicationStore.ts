@@ -13,7 +13,6 @@
  * {@link Mutation} for why the revert is per-record and why it reports whether the write landed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HttpError } from '@djobi/http-client';
 import {
   failureMessage,
   type Application,
@@ -21,6 +20,7 @@ import {
   type NewApplicationRequest,
   type NewNote,
 } from '@djobi/shared';
+import { isUnauthorized } from './dashboardSession';
 import type { DashboardClient } from './dashboardClient';
 
 export interface ApplicationStore {
@@ -82,11 +82,6 @@ interface Mutation<Result> {
   reconcile(application: Application, result: Result): Application;
   /** Undoes `apply`, given the record as it was before it. Must not restore unrelated fields. */
   rollback(application: Application, previous: Application): Application;
-}
-
-/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
 }
 
 export function useApplicationStore(client: DashboardClient): ApplicationStore {

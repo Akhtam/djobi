@@ -10,19 +10,20 @@ import {
   failureMessage,
   parseProfile,
   SCREENING_TOPICS,
-  type Award,
-  type Certification,
   type Profile,
 } from '@djobi/shared';
 import {
-  applyExtractedProfile,
-  changeCredentialKind,
-  credentialItems,
-  listEditor,
+  addSkill,
+  commaList,
+  optionalList,
   optionalText,
   parseBulletCap,
+  profileListEditors,
+  PROFILE_SECTIONS,
+  removeSkill,
+  scrollToSection,
+  spliceProjectBullets,
   spliceWorkBullets,
-  storyTags,
   toggleStarredBullet,
   useProfileDraft,
   withScreeningAnswer,
@@ -121,39 +122,14 @@ function ListSection<T>({
   );
 }
 
-/** Sections, in the order the quick-nav and the form itself present them. */
-const PANEL_ORDER = [
-  { anchor: 'section-upload', label: 'Upload' },
-  { anchor: 'section-contact', label: 'Contact' },
-  { anchor: 'section-links', label: 'Links' },
-  { anchor: 'section-summary', label: 'Summary' },
-  { anchor: 'section-resume', label: 'Resume' },
-  { anchor: 'section-skills', label: 'Skills' },
-  { anchor: 'section-work', label: 'Work' },
-  { anchor: 'section-projects', label: 'Projects' },
-  { anchor: 'section-education', label: 'Education' },
-  { anchor: 'section-credentials', label: 'Credentials' },
-  { anchor: 'section-screening', label: 'Screening' },
-  { anchor: 'section-answers', label: 'Answers' },
-  { anchor: 'section-stories', label: 'Stories' },
-] as const;
-
-/**
- * Scrolls to a section by id without touching `location.hash` — this page has no router to
- * confuse, but a plain in-page click shouldn't add a history entry either.
- */
-function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
 export function App({ client }: { client: BackendClient }) {
   const { theme, toggleTheme } = useThemePreference();
   const draft = useProfileDraft();
   const profile = draft.profile;
   const dirty = draft.dirty;
+  const extracting = draft.extracting;
   const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
   const [newSkill, setNewSkill] = useState('');
-  const [extracting, setExtracting] = useState(false);
   // Separate from `status` above: that banner means "the save you just asked for landed or
   // didn't," and an extraction is neither — nothing has been saved yet, and won't be until the
   // candidate reviews what got filled in and clicks Save themselves.
@@ -239,88 +215,10 @@ export function App({ client }: { client: BackendClient }) {
     );
   }
 
-  const work = listEditor(profile, setProfile, 'workExperience', () => ({
-    company: '',
-    title: '',
-    startDate: '',
-    endDate: null,
-    bullets: [],
-    maxBullets: null,
-    starredIndices: [],
-    suppressIfEmpty: false,
-  }));
-  const education = listEditor(profile, setProfile, 'education', () => ({
-    school: '',
-    degree: '',
-    field: null,
-    graduationYear: null,
-  }));
-  const stories = listEditor(profile, setProfile, 'stories', () => ({
-    // Answer provenance stores Story ids, so every new entry needs a stable unique value even when
-    // the candidate leaves the editable id field alone.
-    id: crypto.randomUUID(),
-    title: '',
-    tags: [],
-    situation: '',
-    task: '',
-    action: '',
-    result: '',
-  }));
-  const customAnswers = listEditor(profile, setProfile, 'customAnswers', () => ({
-    question: '',
-    answer: '',
-  }));
-  const projects = listEditor(profile, setProfile, 'projects', () => ({
-    name: '',
-    description: '',
-    bullets: [],
-    link: null,
-    technologies: null,
-  }));
-  const certifications = listEditor(profile, setProfile, 'certifications', () => ({
-    name: '',
-    issuer: '',
-    date: '',
-  }));
-  const awards = listEditor(profile, setProfile, 'awards', () => ({
-    name: '',
-    issuer: '',
-    date: '',
-  }));
-  const credentials = credentialItems(profile);
-  /**
-   * The combined section's `editor` — `.remove`/`.add` are what `ListSection` itself calls;
-   * `.update` is called directly from the row's own fields, the same way `certifications.update`
-   * would be if this were still its own section. Each dispatches to whichever of the two real
-   * editors above owns the row at `combinedIndex`.
-   */
-  const credentialsEditor: ListEditor<CredentialItem> = {
-    update: (combinedIndex, patch) => {
-      const item = credentials[combinedIndex];
-      if (item.kind === 'certification')
-        certifications.update(item.index, patch as Partial<Certification>);
-      else awards.update(item.index, patch as Partial<Award>);
-    },
-    remove: (combinedIndex) => {
-      const item = credentials[combinedIndex];
-      if (item.kind === 'certification') certifications.remove(item.index);
-      else awards.remove(item.index);
-    },
-    // New rows default to a certification; the picker on the row itself is how the candidate
-    // switches it, immediately if it should have been an award instead.
-    add: () => certifications.add(),
-  };
-  /** Applies {@link changeCredentialKind} to the current draft; a no-op before one is loaded. */
-  function handleCredentialKindChange(item: CredentialItem, kind: CredentialItem['kind']) {
-    if (!profile) return;
-    setProfile(
-      changeCredentialKind(profile, item.index, item.kind, kind, {
-        name: item.name,
-        issuer: item.issuer,
-        date: item.date,
-      }),
-    );
-  }
+  const { work, education, stories, customAnswers, projects, credentials } = profileListEditors(
+    profile,
+    setProfile,
+  );
 
   /**
    * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
@@ -333,29 +231,32 @@ export function App({ client }: { client: BackendClient }) {
     // Cleared immediately so re-selecting the same file (after fixing nothing and trying again)
     // still fires a change event.
     e.target.value = '';
-    if (!file || !profile) return;
+    if (!file) return;
 
     setExtraction(null);
-    setExtracting(true);
-    try {
-      const extracted = await client.extractResume(file);
-      setProfile(applyExtractedProfile(profile, extracted));
-      setExtraction({
-        kind: 'notice',
-        message: 'Resume parsed. Review the pre-filled fields below, then save.',
-      });
-    } catch (error) {
-      if (isUnauthorized(error)) {
+    // `draft.applyResume` owns the protocol — parse, apply field by field onto the draft as it
+    // stands when the parse returns, mark it dirty. What's left here is what only this page can
+    // answer: how a 401 is reported, and the wording of the result.
+    const outcome = await draft.applyResume(file, (upload) => client.extractResume(upload));
+    if (outcome.kind === 'stale') return;
+    if (outcome.kind === 'error') {
+      if (isUnauthorized(outcome.error)) {
         setUnauthorized(true);
         return;
       }
       setExtraction({
         kind: 'error',
-        message: `Couldn't parse this resume: ${failureMessage(error)}`,
+        message: `Couldn't parse this resume: ${failureMessage(outcome.error)}`,
       });
-    } finally {
-      setExtracting(false);
+      return;
     }
+    // A parse is an edit, and `applyResume` writes through the draft rather than the `setProfile`
+    // wrapper below, so the stale "Profile saved." banner is cleared here instead.
+    if (status?.kind === 'saved') setStatus(null);
+    setExtraction({
+      kind: 'notice',
+      message: 'Resume parsed. Review the pre-filled fields below, then save.',
+    });
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -407,7 +308,7 @@ export function App({ client }: { client: BackendClient }) {
         <span className="profile-intro-badge">One profile, every application</span>
       </section>
       <nav className="section-quicknav" aria-label="Profile sections">
-        {PANEL_ORDER.map((panel) => (
+        {PROFILE_SECTIONS.map((panel) => (
           <button
             key={panel.anchor}
             type="button"
@@ -635,12 +536,7 @@ export function App({ client }: { client: BackendClient }) {
                 <button
                   type="button"
                   aria-label={`Remove ${skill}`}
-                  onClick={() =>
-                    setProfile({
-                      ...profile,
-                      skills: profile.skills.filter((s) => s !== skill),
-                    })
-                  }
+                  onClick={() => setProfile(removeSkill(profile, skill))}
                 >
                   ×
                 </button>
@@ -656,8 +552,7 @@ export function App({ client }: { client: BackendClient }) {
               type="button"
               className="btn-secondary"
               onClick={() => {
-                if (!newSkill) return;
-                setProfile({ ...profile, skills: [...profile.skills, newSkill] });
+                setProfile(addSkill(profile, newSkill));
                 setNewSkill('');
               }}
             >
@@ -808,11 +703,10 @@ export function App({ client }: { client: BackendClient }) {
                           aria-label={`Bullet ${n}.${bulletIndex + 1}`}
                           value={bullet}
                           onChange={(e) =>
-                            work.update(index, {
-                              bullets: entry.bullets.map((b, bi) =>
-                                bi === bulletIndex ? e.target.value : b,
-                              ),
-                            })
+                            work.update(
+                              index,
+                              spliceWorkBullets(entry, bulletIndex, 1, e.target.value),
+                            )
                           }
                         />
                         <button
@@ -890,15 +784,9 @@ export function App({ client }: { client: BackendClient }) {
                     id={`projTechnologies${n}`}
                     placeholder="Comma-separated"
                     value={(entry.technologies ?? []).join(', ')}
-                    onChange={(e) => {
-                      const technologies = e.target.value
-                        .split(',')
-                        .map((tech) => tech.trim())
-                        .filter(Boolean);
-                      projects.update(index, {
-                        technologies: technologies.length ? technologies : null,
-                      });
-                    }}
+                    onChange={(e) =>
+                      projects.update(index, { technologies: optionalList(e.target.value) })
+                    }
                   />
                 </div>
 
@@ -911,11 +799,10 @@ export function App({ client }: { client: BackendClient }) {
                           aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
                           value={bullet}
                           onChange={(e) =>
-                            projects.update(index, {
-                              bullets: entry.bullets.map((b, bi) =>
-                                bi === bulletIndex ? e.target.value : b,
-                              ),
-                            })
+                            projects.update(
+                              index,
+                              spliceProjectBullets(entry, bulletIndex, 1, e.target.value),
+                            )
                           }
                         />
                         <button
@@ -923,9 +810,7 @@ export function App({ client }: { client: BackendClient }) {
                           className="btn-remove-bullet"
                           aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
                           onClick={() =>
-                            projects.update(index, {
-                              bullets: entry.bullets.filter((_, bi) => bi !== bulletIndex),
-                            })
+                            projects.update(index, spliceProjectBullets(entry, bulletIndex, 1))
                           }
                         >
                           ×
@@ -936,7 +821,12 @@ export function App({ client }: { client: BackendClient }) {
                   <button
                     type="button"
                     className="btn-add-inline"
-                    onClick={() => projects.update(index, { bullets: [...entry.bullets, ''] })}
+                    onClick={() =>
+                      projects.update(
+                        index,
+                        spliceProjectBullets(entry, entry.bullets.length, 0, ''),
+                      )
+                    }
                   >
                     + Add bullet
                   </button>
@@ -1008,8 +898,8 @@ export function App({ client }: { client: BackendClient }) {
           noun="certification or award"
           addLabel="Add certification or award"
           hint="Pick which each row is — the fields shown adjust to match."
-          items={credentials}
-          editor={credentialsEditor}
+          items={credentials.items}
+          editor={credentials.editor}
         >
           {(item, index) => {
             const n = index + 1;
@@ -1021,10 +911,7 @@ export function App({ client }: { client: BackendClient }) {
                     id={`credKind${n}`}
                     value={item.kind}
                     onChange={(e) =>
-                      handleCredentialKindChange(
-                        item,
-                        e.currentTarget.value as CredentialItem['kind'],
-                      )
+                      credentials.changeKind(item, e.currentTarget.value as CredentialItem['kind'])
                     }
                   >
                     <option value="certification">Certification</option>
@@ -1037,7 +924,7 @@ export function App({ client }: { client: BackendClient }) {
                   <input
                     id={`credName${n}`}
                     value={item.name}
-                    onChange={(e) => credentialsEditor.update(index, { name: e.target.value })}
+                    onChange={(e) => credentials.editor.update(index, { name: e.target.value })}
                   />
                 </div>
 
@@ -1046,7 +933,7 @@ export function App({ client }: { client: BackendClient }) {
                   <input
                     id={`credIssuer${n}`}
                     value={item.issuer}
-                    onChange={(e) => credentialsEditor.update(index, { issuer: e.target.value })}
+                    onChange={(e) => credentials.editor.update(index, { issuer: e.target.value })}
                   />
                 </div>
 
@@ -1055,7 +942,7 @@ export function App({ client }: { client: BackendClient }) {
                   <input
                     id={`credDate${n}`}
                     value={item.date}
-                    onChange={(e) => credentialsEditor.update(index, { date: e.target.value })}
+                    onChange={(e) => credentials.editor.update(index, { date: e.target.value })}
                   />
                 </div>
 
@@ -1066,7 +953,7 @@ export function App({ client }: { client: BackendClient }) {
                       id={`credDescription${n}`}
                       value={item.description ?? ''}
                       onChange={(e) =>
-                        credentialsEditor.update(index, {
+                        credentials.editor.update(index, {
                           description: optionalText(e.target.value) ?? undefined,
                         })
                       }
@@ -1184,7 +1071,7 @@ export function App({ client }: { client: BackendClient }) {
                     value={entry.tags.join(', ')}
                     onChange={(e) =>
                       stories.update(index, {
-                        tags: storyTags(e.target.value),
+                        tags: commaList(e.target.value),
                       })
                     }
                   />

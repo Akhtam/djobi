@@ -2,6 +2,7 @@ import type {
   Certification,
   ExtractedProfile,
   Profile,
+  Project,
   ScreeningAnswers,
   ScreeningTopic,
   WorkExperience,
@@ -55,11 +56,69 @@ export function optionalText(value: string): string | null {
   return value.trim() ? value : null;
 }
 
-export function storyTags(value: string): string[] {
+/**
+ * The list behind a comma-separated text input — a Story's tags, a project's technologies.
+ *
+ * One rule, not one per field. This was `storyTags`, and the identical three operations sat inline
+ * beside it in both editors for a project's technologies, so "trim the spaces, drop the empties"
+ * had two definitions that could drift.
+ */
+export function commaList(value: string): string[] {
   return value
     .split(',')
-    .map((tag) => tag.trim())
+    .map((item) => item.trim())
     .filter(Boolean);
+}
+
+/**
+ * {@link commaList} for a field the Profile stores as `null` when empty rather than as `[]` — a
+ * project's `technologies`. The distinction is the schema's, not the input's: the field itself
+ * cannot tell "no technologies" from "none entered yet."
+ */
+export function optionalList(value: string): string[] | null {
+  const items = commaList(value);
+  return items.length ? items : null;
+}
+
+/**
+ * {@link spliceWorkBullets} for a project's bullets: the same splice with no starred-index
+ * bookkeeping, because a project has no starring concept to remap.
+ *
+ * Both editors wrote the edit, remove and add cases out separately — a `map`, a `filter` and a
+ * spread — six inline copies of three operations that are one call each to this.
+ */
+export function spliceProjectBullets(
+  project: Project,
+  index: number,
+  deleteCount: number,
+  ...inserted: string[]
+): Project {
+  return {
+    ...project,
+    bullets: [
+      ...project.bullets.slice(0, index),
+      ...inserted,
+      ...project.bullets.slice(index + deleteCount),
+    ],
+  };
+}
+
+/**
+ * Appends a skill.
+ *
+ * Neither trims nor deduplicates: the chip list is keyed by the string itself, and quietly altering
+ * or dropping what the candidate typed is worse than showing it back to them exactly as entered. An
+ * empty entry is the one thing refused, because the add button is reachable with the field
+ * untouched.
+ */
+export function addSkill(profile: Profile, skill: string): Profile {
+  if (!skill) return profile;
+  return { ...profile, skills: [...profile.skills, skill] };
+}
+
+/** Removes every chip equal to `skill` — the list is keyed by value, so equal strings are one chip. */
+export function removeSkill(profile: Profile, skill: string): Profile {
+  return { ...profile, skills: profile.skills.filter((entry) => entry !== skill) };
 }
 
 /** Applies one bullet-list splice and keeps source-index stars attached to the same bullets. */

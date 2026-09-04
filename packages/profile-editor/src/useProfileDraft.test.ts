@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { EMPTY_PROFILE, type Profile } from '@djobi/shared';
+import { EMPTY_PROFILE, type ExtractedProfile, type Profile } from '@djobi/shared';
 import { useProfileDraft } from './useProfileDraft.js';
 
 describe('useProfileDraft', () => {
@@ -141,5 +141,118 @@ describe('useProfileDraft save', () => {
     });
 
     expect(result.current.saving).toBe(false);
+  });
+});
+
+describe('useProfileDraft.applyResume', () => {
+  const extraction: ExtractedProfile = {
+    fullName: 'Jane Doe',
+    email: 'jane@example.com',
+    phone: null,
+    location: null,
+    links: { linkedin: null, portfolio: null, github: null },
+    summary: null,
+    workExperience: [],
+    education: [],
+    skills: ['TypeScript'],
+    projects: [],
+    certifications: [],
+    awards: [],
+  };
+
+  it('applies what the extraction found and marks the draft dirty', async () => {
+    const { result } = renderHook(() => useProfileDraft());
+    act(() => result.current.load(EMPTY_PROFILE));
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.applyResume(new File([], 'cv.pdf'), () =>
+        Promise.resolve(extraction),
+      );
+    });
+
+    expect(outcome).toEqual({ kind: 'parsed' });
+    expect(result.current.profile?.fullName).toBe('Jane Doe');
+    expect(result.current.profile?.skills).toEqual(['TypeScript']);
+    // Nothing is persisted by this — "You have unsaved changes" is what says so.
+    expect(result.current.dirty).toBe(true);
+  });
+
+  it('applies onto edits made while the resume was parsing, not the snapshot it started from', async () => {
+    const { result } = renderHook(() => useProfileDraft());
+    act(() => result.current.load(EMPTY_PROFILE));
+
+    let release: (extracted: ExtractedProfile) => void = () => {};
+    const pending = new Promise<ExtractedProfile>((resolve) => (release = resolve));
+    let applied: Promise<unknown>;
+    act(() => {
+      applied = result.current.applyResume(new File([], 'cv.pdf'), () => pending);
+    });
+
+    // A parse takes seconds and the form stays editable throughout.
+    act(() => result.current.setProfile({ ...EMPTY_PROFILE, summary: 'Typed while waiting' }));
+    await act(async () => {
+      release(extraction);
+      await applied;
+    });
+
+    expect(result.current.profile?.summary).toBe('Typed while waiting');
+    expect(result.current.profile?.fullName).toBe('Jane Doe');
+  });
+
+  it('hands back a rejection unclassified and leaves the draft alone', async () => {
+    const { result } = renderHook(() => useProfileDraft());
+    const loaded: Profile = { ...EMPTY_PROFILE, fullName: 'Already here' };
+    act(() => result.current.load(loaded));
+    const error = new Error('not a resume');
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.applyResume(new File([], 'cv.pdf'), () =>
+        Promise.reject(error),
+      );
+    });
+
+    expect(outcome).toEqual({ kind: 'error', error });
+    expect(result.current.profile).toEqual(loaded);
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it('does nothing before the first load', async () => {
+    const { result } = renderHook(() => useProfileDraft());
+    const extract = vi.fn();
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.applyResume(new File([], 'cv.pdf'), extract);
+    });
+
+    expect(outcome).toEqual({ kind: 'stale' });
+    expect(extract).not.toHaveBeenCalled();
+  });
+
+  it('reports extracting for exactly as long as the parse is in flight, rejection included', async () => {
+    const { result } = renderHook(() => useProfileDraft());
+    act(() => result.current.load(EMPTY_PROFILE));
+    expect(result.current.extracting).toBe(false);
+
+    let release: (extracted: ExtractedProfile) => void = () => {};
+    const pending = new Promise<ExtractedProfile>((resolve) => (release = resolve));
+    let applied: Promise<unknown>;
+    act(() => {
+      applied = result.current.applyResume(new File([], 'cv.pdf'), () => pending);
+    });
+    await waitFor(() => expect(result.current.extracting).toBe(true));
+
+    await act(async () => {
+      release(extraction);
+      await applied;
+    });
+    expect(result.current.extracting).toBe(false);
+
+    await act(async () => {
+      await result.current.applyResume(new File([], 'cv.pdf'), () => Promise.reject(new Error()));
+    });
+    expect(result.current.extracting).toBe(false);
   });
 });

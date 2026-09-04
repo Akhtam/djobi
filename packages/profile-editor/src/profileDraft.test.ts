@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EMPTY_PROFILE, type ExtractedProfile, type Profile } from '@djobi/shared';
 import {
+  addSkill,
   applyExtractedProfile,
   changeCredentialKind,
+  commaList,
   normalizeProfileDraft,
+  optionalList,
   optionalText,
+  removeSkill,
+  spliceProjectBullets,
   spliceWorkBullets,
-  storyTags,
   withScreeningAnswer,
 } from './profileDraft.js';
 
@@ -50,11 +54,59 @@ describe('profile draft normalization', () => {
     });
   });
 
-  it('parses comma-separated story tags and drops blank entries', () => {
-    expect(storyTags(' leadership, , incident-response,')).toEqual([
+  it('parses a comma-separated list and drops blank entries', () => {
+    expect(commaList(' leadership, , incident-response,')).toEqual([
       'leadership',
       'incident-response',
     ]);
+  });
+
+  it('reports an entirely blank comma list as null where the schema stores null', () => {
+    expect(optionalList('TypeScript, Postgres')).toEqual(['TypeScript', 'Postgres']);
+    // Not `[]`: `technologies` is nullable, and a field the candidate cleared has to round-trip as
+    // the same thing a project that never had one stores.
+    expect(optionalList('  ,  ')).toBeNull();
+    expect(optionalList('')).toBeNull();
+  });
+
+  it('splices project bullets without any starred-index bookkeeping', () => {
+    const project: Profile['projects'][number] = {
+      name: 'djobi',
+      description: '',
+      bullets: ['first', 'second', 'third'],
+      link: null,
+      technologies: null,
+    };
+
+    // The three cases both editors used to write out inline: edit, remove, append.
+    expect(spliceProjectBullets(project, 1, 1, 'rewritten').bullets).toEqual([
+      'first',
+      'rewritten',
+      'third',
+    ]);
+    expect(spliceProjectBullets(project, 0, 1).bullets).toEqual(['second', 'third']);
+    expect(spliceProjectBullets(project, project.bullets.length, 0, '').bullets).toEqual([
+      'first',
+      'second',
+      'third',
+      '',
+    ]);
+  });
+
+  it('adds a skill exactly as typed, and refuses only an empty one', () => {
+    const profile: Profile = { ...EMPTY_PROFILE, skills: ['TypeScript'] };
+
+    expect(addSkill(profile, 'Go').skills).toEqual(['TypeScript', 'Go']);
+    // Neither trimmed nor deduplicated — showing back what was typed beats quietly altering it.
+    expect(addSkill(profile, '  Go  ').skills).toEqual(['TypeScript', '  Go  ']);
+    expect(addSkill(profile, 'TypeScript').skills).toEqual(['TypeScript', 'TypeScript']);
+    expect(addSkill(profile, '')).toBe(profile);
+  });
+
+  it('removes every chip equal to the named skill', () => {
+    const profile: Profile = { ...EMPTY_PROFILE, skills: ['Go', 'TypeScript', 'Go'] };
+    expect(removeSkill(profile, 'Go').skills).toEqual(['TypeScript']);
+    expect(removeSkill(profile, 'Rust').skills).toEqual(['Go', 'TypeScript', 'Go']);
   });
 
   it('drops blank bullets and repairs blank or duplicate story ids', () => {
