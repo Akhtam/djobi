@@ -271,6 +271,19 @@ export const AddApplicationNoteResultSchema = z.object({
 export type AddApplicationNoteResult = z.infer<typeof AddApplicationNoteResultSchema>;
 
 /**
+ * Acknowledgement of a compact `DELETE /applications/:id/notes/:noteId`.
+ *
+ * The removed note's id, not the note: there is nothing left to return, and echoing the deleted
+ * content back would invite a caller to treat the response as somewhere it still lives. The id is
+ * what an optimistic client needs to reconcile the row it already updated.
+ */
+export const DeleteApplicationNoteResultSchema = z.object({
+  id: z.string(),
+  noteId: z.string(),
+});
+export type DeleteApplicationNoteResult = z.infer<typeof DeleteApplicationNoteResultSchema>;
+
+/**
  * Body of `POST /profile` — the whole Profile, which is what the route stores.
  *
  * `ProfileSchema` rather than a fresh object, and aliased here for the same reason

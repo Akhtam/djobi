@@ -37,6 +37,7 @@ function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
     createApplication: () => Promise.resolve(structuredClone(application)),
     findApplicationDuplicates: () => Promise.resolve({ count: 0, latest: null }),
     updateStage: (id, stage) => Promise.resolve({ id, stage }),
+    deleteNote: (id, noteId) => Promise.resolve({ id, noteId }),
     addNote: (id, appended) =>
       Promise.resolve({
         id,
@@ -220,6 +221,64 @@ describe('useApplicationStore', () => {
       expect(notes.filter((n) => n.id.startsWith('optimistic-'))).toEqual([]);
       expect(notes.map((n) => n.text)).toContain('Second note.');
     });
+  });
+
+  it('removes a Note optimistically and keeps it gone once the write lands', async () => {
+    const store = await loadedStore(client());
+    await act(async () => void (await store.current.addNote('app-1', note)));
+    const [{ notes }] = store.current.applications;
+    const target = notes.at(-1)!;
+
+    await act(async () => {
+      expect(await store.current.deleteNote('app-1', target.id)).toBe(true);
+    });
+
+    expect(store.current.applications[0].notes).toEqual([]);
+  });
+
+  it('puts a deleted Note back, in its own place, when the write fails', async () => {
+    // The one that matters: an optimistic delete that the backend refuses must not quietly lose an
+    // entry, which is the exact loss the append-only log exists to prevent. Order is asserted
+    // because a note restored at the end of the log is a note with the wrong history around it.
+    const store = await loadedStore(
+      client({ deleteNote: () => Promise.reject(new Error('Backend unreachable')) }),
+    );
+    await act(async () => void (await store.current.addNote('app-1', note)));
+    await act(
+      async () => void (await store.current.addNote('app-1', { ...note, text: 'Second note.' })),
+    );
+    const [first, second] = store.current.applications[0].notes;
+
+    await act(async () => {
+      expect(await store.current.deleteNote('app-1', first.id)).toBe(false);
+    });
+
+    expect(store.current.applications[0].notes.map((n) => n.text)).toEqual([
+      first.text,
+      second.text,
+    ]);
+  });
+
+  it('keeps a Note that landed while a failing delete was in flight', async () => {
+    // The same rule as the Stage rollback below, on the operation where breaking it would silently
+    // discard something the candidate wrote: restoring the record's whole note list would undo the
+    // append too.
+    const failing = deferred<{ id: string; noteId: string }>();
+    const store = await loadedStore(client({ deleteNote: () => failing.promise }));
+    await act(async () => void (await store.current.addNote('app-1', note)));
+    const doomed = store.current.applications[0].notes[0];
+
+    let deleting!: Promise<boolean>;
+    act(() => {
+      deleting = store.current.deleteNote('app-1', doomed.id);
+    });
+    await act(async () => void (await store.current.addNote('app-1', { ...note, text: 'Later.' })));
+    await act(async () => {
+      failing.reject(new Error('Backend unreachable'));
+      await deleting;
+    });
+
+    expect(store.current.applications[0].notes.map((n) => n.text)).toEqual([doomed.text, 'Later.']);
   });
 
   /**

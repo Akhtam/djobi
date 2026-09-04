@@ -14,6 +14,7 @@ import {
   type ApplicationStage,
   type ApplicationWriteResult,
   type AddApplicationNoteResult,
+  type DeleteApplicationNoteResult,
   type DuplicateApplicationSummary,
   type NewApplication,
   type NewNote,
@@ -297,7 +298,56 @@ async function addApplicationNote(
 }
 
 /**
- * The routes' view of the eight operations above, under the names `ApplicationStore` states.
+ * Removes one note from an application's log, or `null` when this user has no application with that
+ * id **or** that application has no note with that id.
+ *
+ * One statement, for the same reason {@link addApplicationNote} is one: a read, a filter and a
+ * write let a note appended between the read and the write come back from the dead, which is the
+ * mirror image of the loss the append exists to prevent. Postgres rebuilds the array with
+ * `jsonb_agg` over the elements that survive the filter, so nothing outside this note is rewritten
+ * from a stale copy.
+ *
+ * `coalesce(…, '[]')` is load-bearing: `jsonb_agg` over zero surviving rows is `NULL`, not an empty
+ * array, so deleting the only note would otherwise write `NULL` into a `NOT NULL` column — and on a
+ * nullable one it would produce a row that no longer parses as an Application.
+ *
+ * The `exists` in the `WHERE` is what makes "deleted" and "there was nothing to delete"
+ * distinguishable. Without it the update matches the row, changes nothing, and `RETURNING` hands
+ * back a perfectly good row — so a client asking to delete a note that another tab already deleted
+ * would be told it succeeded.
+ */
+async function deleteApplicationNote(
+  userId: string,
+  id: string,
+  noteId: string,
+): Promise<Written<DeleteApplicationNoteResult> | null> {
+  const [row] = await db
+    .update(applications)
+    .set({
+      notes: sql`(
+        select coalesce(jsonb_agg(note), '[]'::jsonb)
+        from jsonb_array_elements(${applications.notes}) as note
+        where note->>'id' is distinct from ${noteId}
+      )`,
+    })
+    .where(
+      and(
+        eq(applications.id, id),
+        eq(applications.userId, userId),
+        sql`exists (
+          select 1 from jsonb_array_elements(${applications.notes}) as note
+          where note->>'id' = ${noteId}
+        )`,
+      ),
+    )
+    .returning();
+
+  if (!row) return null;
+  return { id: row.id, noteId, application: toWrittenApplication(row) };
+}
+
+/**
+ * The routes' view of the nine operations above, under the names `ApplicationStore` states.
  *
  * Written as one object rather than eight exports because the seam is the point: a route holding
  * eight loose imports can only be run without Postgres by replacing this module, which is what four
@@ -312,4 +362,5 @@ export const postgresApplicationStore: ApplicationStore = {
   replaceSnapshot: updateApplication,
   setStage: updateApplicationStage,
   appendNote: addApplicationNote,
+  deleteNote: deleteApplicationNote,
 };

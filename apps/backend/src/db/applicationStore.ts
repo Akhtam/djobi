@@ -32,6 +32,7 @@ import {
   type ApplicationSnapshot,
   type ApplicationStage,
   type ApplicationWriteResult,
+  type DeleteApplicationNoteResult,
   type DuplicateApplicationSummary,
   type NewApplication,
   type NewNote,
@@ -110,6 +111,20 @@ export interface ApplicationStore {
     id: string,
     note: NewNote,
   ): Promise<Written<AddApplicationNoteResult> | null>;
+  /**
+   * Removes one Note from an Application's log. `null` when this user has no such application
+   * **or** when the row has no note with that id.
+   *
+   * The two are one answer on purpose, and it is the same reasoning as the ownership rule above:
+   * both mean "there is nothing here to delete", and both are the 404 the route already knows how
+   * to write. Reporting a delete that deleted nothing as a success is the failure worth avoiding —
+   * a client would clear the note from its own view and be wrong about the record.
+   */
+  deleteNote(
+    userId: string,
+    id: string,
+    noteId: string,
+  ): Promise<Written<DeleteApplicationNoteResult> | null>;
 }
 
 /**
@@ -249,6 +264,20 @@ export function inMemoryApplicationStore(
       const annotated: Application = { ...existing, notes: [...existing.notes, appended] };
       rows.set(id, annotated);
       return { id, note: appended, application: annotated };
+    },
+
+    async deleteNote(userId, id, noteId) {
+      const existing = ownedRow(userId, id);
+      if (!existing) return null;
+
+      const remaining = existing.notes.filter((note) => note.id !== noteId);
+      // Length, not a lookup, for the same reason the Postgres adapter compares lengths: it is the
+      // one check that cannot disagree with what the filter actually did.
+      if (remaining.length === existing.notes.length) return null;
+
+      const trimmed: Application = { ...existing, notes: remaining };
+      rows.set(id, trimmed);
+      return { id, noteId, application: trimmed };
     },
   };
 }

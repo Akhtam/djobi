@@ -119,7 +119,7 @@ export interface HttpTransportOptions {
 
 /** One request's options. `method` defaults to `'POST'` when a body is given, `'GET'` when not. */
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   /**
    * The caller's own cancellation, combined with the deadline rather than replacing it.
@@ -199,7 +199,7 @@ const DEFAULT_TIMEOUT_MS = 90_000;
  * Shared by the request and by the messages describing it, so a failure names the method that was
  * actually sent rather than one re-derived beside it.
  */
-function resolveMethod(options: RequestOptions): 'GET' | 'POST' | 'PATCH' {
+function resolveMethod(options: RequestOptions): 'GET' | 'POST' | 'PATCH' | 'DELETE' {
   return options.method ?? (options.body === undefined ? 'GET' : 'POST');
 }
 
@@ -248,7 +248,14 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
 
     const init: RequestInit =
       body === undefined
-        ? { method }
+        ? // No body, but still `application/json` on anything that changes state. The backend's CSRF
+          // guard (`app.ts`) requires that header of every POST/PATCH/PUT/DELETE, because a request
+          // carrying it is never a CORS "simple request" and so must be preflighted — which is
+          // exactly as true of a body-less `DELETE …/notes/:id` as of a POST with a payload. A GET
+          // declares nothing, having nothing to declare.
+          method === 'GET'
+          ? { method }
+          : { method, headers: { 'content-type': 'application/json' } }
         : body instanceof FormData
           ? { method, headers: { 'x-djobi-upload': '1' }, body }
           : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };

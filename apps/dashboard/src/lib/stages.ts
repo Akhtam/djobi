@@ -13,6 +13,7 @@ import {
   type KeywordCategory,
   NoteCategorySchema,
   type NoteCategory,
+  type RequirementEvidenceVerdict,
 } from '@djobi/shared';
 
 /** Every stage, in pipeline order. */
@@ -96,4 +97,23 @@ export const KEYWORD_CATEGORY_LABELS: Record<KeywordCategory, string> = {
   platform: 'Platform',
   domain: 'Domain',
   'soft-skill': 'Soft skill',
+};
+
+/**
+ * What each stored requirement verdict is called on screen.
+ *
+ * Here rather than beside either renderer, because both the Analytics roll-up
+ * (`RequirementsPanel`) and one application's own list (`RequirementList`) name the same five
+ * verdicts, and a vocabulary stated twice is a vocabulary that drifts.
+ *
+ * `direct-evidence` has a label because the roll-up counts it; no requirement row ever wears it —
+ * the good case is the common case, and badging every evidenced requirement would bury the four
+ * that mean something is wrong.
+ */
+export const EVIDENCE_LABELS: Record<RequirementEvidenceVerdict, string> = {
+  'direct-evidence': 'Evidenced',
+  'skill-only': 'Skill only',
+  'omitted-profile-evidence': 'Dropped from resume',
+  'needs-confirmation': 'Unconfirmed',
+  unsupported: 'No evidence',
 };

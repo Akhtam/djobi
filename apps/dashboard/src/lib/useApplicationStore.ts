@@ -43,6 +43,8 @@ export interface ApplicationStore {
   updateStage(id: string, stage: ApplicationStage): Promise<boolean>;
   /** Resolves `true` if the note was appended, so a composer knows whether to clear itself. */
   addNote(id: string, note: NewNote): Promise<boolean>;
+  /** Resolves `true` if the note was removed; a failure puts it back and reports `writeError`. */
+  deleteNote(id: string, noteId: string): Promise<boolean>;
   /** Creates and inserts a full row, or resolves null after reporting the failed write. */
   createApplication(payload: NewApplicationRequest): Promise<Application | null>;
   /**
@@ -287,6 +289,37 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     [client, mutate],
   );
 
+  const deleteNote = useCallback(
+    (id: string, noteId: string) => {
+      // Unslotted for the same reason `addNote` is: this mutation owns exactly the Note carrying
+      // this id, so two deletes (or a delete and an append) in flight together each find their own
+      // work again.
+      return mutate({
+        id,
+        apply: (a) => ({ ...a, notes: a.notes.filter((note) => note.id !== noteId) }),
+        write: () => client.deleteNote(id, noteId),
+        // Nothing to reconcile: the server's answer is the id already removed. The row is left as
+        // the optimistic apply made it rather than rebuilt, so a Note appended while this write was
+        // in flight is not dropped by its success.
+        reconcile: (a) => a,
+        // Put back where it was, into the log *as it now stands* — not by restoring `previous.notes`
+        // wholesale. That would undo any Note appended while this delete was in flight, which is the
+        // same field-specific-rollback rule `updateStage` follows and the loss an append-only log
+        // exists to prevent. The index comes from `previous` because that is the only record of
+        // where the Note sat.
+        rollback: (a, previous) => {
+          const index = previous.notes.findIndex((note) => note.id === noteId);
+          if (index === -1 || a.notes.some((note) => note.id === noteId)) return a;
+
+          const notes = [...a.notes];
+          notes.splice(index, 0, previous.notes[index]);
+          return { ...a, notes };
+        },
+      });
+    },
+    [client, mutate],
+  );
+
   const createApplication = useCallback(
     async (payload: NewApplicationRequest): Promise<Application | null> => {
       setWriteError(null);
@@ -319,6 +352,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     reportUnauthorized,
     updateStage,
     addNote,
+    deleteNote,
     createApplication,
     reload,
   };

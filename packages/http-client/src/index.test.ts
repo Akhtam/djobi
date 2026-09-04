@@ -42,6 +42,21 @@ describe('createHttpTransport', () => {
     expect(calls[1].init?.body).toBe('{"name":"Ada"}');
   });
 
+  it('declares JSON on a body-less state-changing call, and on no GET', async () => {
+    // The backend's CSRF guard requires `content-type: application/json` of every method that
+    // changes state, body or not — it is what forces a preflight the origin allowlist can refuse.
+    // `DELETE /applications/:id/notes/:noteId` is the caller with nothing to send.
+    const { fetchImpl, calls } = respondWith(() => new Response('{"id":"a"}'));
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    await client.json('/applications/a/notes/n', Schema, { method: 'DELETE' });
+    await client.json('/profile', Schema);
+
+    expect(calls[0].init?.headers).toEqual({ 'content-type': 'application/json' });
+    expect(calls[0].init?.body).toBeUndefined();
+    expect(calls[1].init?.headers).toBeUndefined();
+  });
+
   it('applies the transport-level credentials mode to every call, unset by default', async () => {
     const { fetchImpl: withoutCreds, calls: callsWithoutCreds } = respondWith(
       () => new Response('{"id":"a"}'),

@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1635 tests**
-(278 shared / 25 http-client / 30 profile-editor / 314 backend / 740 extension / 248 dashboard),
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1692 tests**
+(278 shared / 26 http-client / 30 profile-editor / 326 backend / 746 extension / 286 dashboard),
 `pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -143,7 +143,13 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   rows. The current Save Step does not establish whether employer submission happened. Notes are a
   timestamped, categorized log (`technical` / `behavioral` / `general`) you append to, not a single
   overwritable text field — so old interview-question notes stay around as reference for future
-  applications.
+  applications. A note can be **deleted** (`DELETE /applications/:id/notes/:noteId`, two clicks
+  behind a confirmation) but never edited: removing an entry the candidate says never belonged is a
+  different act from rewriting one in place, which would leave history that cannot be trusted. That
+  is not a softening of the append-only rule — see the `addApplicationNote` entry under
+  _Constraints that look like mistakes_ — which is about two concurrent writes not silently
+  discarding one another, and which `deleteApplicationNote` observes in the same way: one statement,
+  `jsonb_agg` over the survivors, never a read-modify-write.
 - **A new Story gets a generated UUID by default.** The id is editable, but
   `QuestionAnswer.sourceStoryIds` is only useful if it points at something — so it must not depend
   on the candidate having replaced a placeholder.
@@ -174,7 +180,12 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   same array under read-modify-write and the second write silently discards the first. Losing an
   entry is precisely what an append-only log exists to prevent, so the concatenation happens in
   Postgres where it is atomic. `id` and `createdAt` are generated in that function, never accepted
-  from the request body.
+  from the request body. **`deleteApplicationNote` follows the same rule from the other side**: one
+  statement rebuilding the array with `jsonb_agg` over the notes that survive the filter, so a note
+  appended between a read and a write cannot come back from the dead. Its `WHERE` carries an
+  `exists` over the array specifically so "deleted" and "there was no such note" stay
+  distinguishable — without it the update matches, changes nothing, and `RETURNING` reports success
+  for a delete that deleted nothing.
 - **The dashboard's optimistic writes revert one record, and report whether they landed.**
   `useApplicationStore.mutate` restores only the record that failed — snapshotting the whole array
   also undoes any _other_ write that succeeded while this one was in flight. It also resolves
@@ -1665,12 +1676,16 @@ Decisions:
   pasted posting, its autofill entry from the text the run actually analyzed. `extractionVersion`
   ships alongside it, stamped from `EXTRACTION_VERSION`, so the rows a given prompt change predates
   are identifiable rather than merely re-runnable.
-  **What is still missing is the reader, not the data.** Nothing anywhere loads a stored
-  `rawDescription` back: `scripts/evalExtraction.ts` judges a prompt change against its own
-  hand-written `POSTINGS`, not against the candidate's history, and no sweep re-runs extraction over
-  rows stamped with an older `extractionVersion`. So the retroactive improvement this entry was
-  about is now merely unbuilt, where it used to be impossible — the several KB a row is being paid
-  for and is not yet buying anything.
+  **The reader now exists for a human, not yet for a sweep.** `ApplicationDetail`'s **Posting** tab
+  renders a stored `rawDescription` as the text the Analysis Step was actually given — which is the
+  copy that outlives the posting URL, and the only way to ask why extraction produced what it did.
+  Its requirement list reads `requirementEvidence` back the same way, per requirement, through
+  `components/RequirementList.tsx` (the verdict vocabulary now lives once, in `lib/stages.ts`'s
+  `EVIDENCE_LABELS`, shared with the Analytics roll-up).
+  What is still missing is the _machine_ reader: `scripts/evalExtraction.ts` judges a prompt change
+  against its own hand-written `POSTINGS`, not against the candidate's history, and no sweep re-runs
+  extraction over rows stamped with an older `extractionVersion`. `bulletProvenance` still has no
+  reader at all.
 
 - **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
   with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,

@@ -135,8 +135,8 @@ Where an Application has got to in the employer's interview pipeline: `applied` 
 _Avoid_: status (there is no longer a separate status field — see Application), step
 
 **Note**:
-One timestamped, categorized entry (`technical` / `behavioral` / `general`) in an Application's notes log. Appended, never overwritten, so interview questions recorded against one Application stay usable as preparation for the next.
-_Avoid_: comment, note field (there is no single overwritable text field)
+One timestamped, categorized entry (`technical` / `behavioral` / `general`) in an Application's notes log. Appended, never overwritten, so interview questions recorded against one Application stay usable as preparation for the next. A candidate may **delete** one — behind a confirmation, and never in bulk — but may not edit it: a note rewritten in place is history that can no longer be trusted, while a note removed is one the candidate has said never belonged in the log. "Never overwritten" is a rule about concurrent writes not losing each other, not a claim that entries are permanent.
+_Avoid_: comment, note field (there is no single overwritable text field), immutable (removal is offered; editing is not)
 
 ### Tracking
 

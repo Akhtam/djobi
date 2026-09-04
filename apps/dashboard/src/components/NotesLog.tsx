@@ -2,9 +2,18 @@
  * An application's notes, newest first, filterable by category.
  *
  * Newest first because the reason to open this log is usually "what happened in the last
- * conversation". There is no edit or delete affordance, and there should not be one: the log is
- * append-only by product decision (see `CONTEXT.md`), so past interview questions stay usable as
- * preparation for the next application.
+ * conversation".
+ *
+ * **Delete yes, edit no**, and the asymmetry is deliberate. The log is append-only against
+ * *concurrent* writes — two notes added close together must not overwrite one another, which is why
+ * the backend appends in SQL — but that rule is about not losing entries by accident, not about
+ * refusing a candidate who says a note never belonged there. A note rewritten in place is history
+ * that can no longer be trusted; a note removed is one the candidate has said was a mistake. So
+ * removal is offered and editing is not.
+ *
+ * Removal is two clicks, never one. This log is read months after it is written, an accidental
+ * delete has nothing to recover from, and the delete is a network write that can fail — see
+ * `useApplicationStore.deleteNote` for how a failed one puts the note back where it was.
  */
 import { useState } from 'react';
 import type { Note, NoteCategory } from '@djobi/shared';
@@ -12,8 +21,21 @@ import { formatDateTime } from '../lib/format';
 import { NOTE_CATEGORIES, NOTE_CATEGORY_LABELS } from '../lib/stages';
 import { countByOption, FilterPills } from './FilterPills';
 
-export function NotesLog({ notes }: { notes: Note[] }) {
+export function NotesLog({
+  notes,
+  onDelete,
+}: {
+  notes: Note[];
+  /**
+   * Removes one note. Optional, so a caller with nothing to write to — a read-only rendering of a
+   * log — gets no delete affordance rather than a button that cannot work.
+   */
+  onDelete?: (noteId: string) => void;
+}) {
   const [category, setCategory] = useState<NoteCategory | null>(null);
+  // One id, not a set: arming a second note disarms the first, because two live "are you sure"
+  // prompts in one list is two chances to confirm the wrong one.
+  const [armed, setArmed] = useState<string | null>(null);
 
   const newestFirst = [...notes].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const visible = category ? newestFirst.filter((note) => note.category === category) : newestFirst;
@@ -50,6 +72,38 @@ export function NotesLog({ notes }: { notes: Note[] }) {
                 <time dateTime={note.createdAt}>{formatDateTime(note.createdAt)}</time>
               </div>
               <p className="note__text">{note.text}</p>
+              {onDelete ? (
+                armed === note.id ? (
+                  <p className="note__confirm">
+                    Delete this note?
+                    <button
+                      type="button"
+                      className="note__delete note__delete--confirm"
+                      onClick={() => {
+                        setArmed(null);
+                        onDelete(note.id);
+                      }}
+                    >
+                      Yes, delete
+                    </button>
+                    <button type="button" className="note__delete" onClick={() => setArmed(null)}>
+                      Keep it
+                    </button>
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="note__delete"
+                    // Named by which note it deletes: every row's button would otherwise be called
+                    // "Delete note", which is unusable by anyone reading the page through its
+                    // accessibility tree rather than its layout.
+                    aria-label={`Delete note from ${formatDateTime(note.createdAt)}`}
+                    onClick={() => setArmed(note.id)}
+                  >
+                    Delete
+                  </button>
+                )
+              ) : null}
             </li>
           ))}
         </ul>

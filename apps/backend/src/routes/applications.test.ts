@@ -602,3 +602,77 @@ describe('POST /applications/:id/notes', () => {
     expect(res.status).toBe(404);
   });
 });
+
+/**
+ * The one operation on a note that is not an append. Deleting is deliberate and explicit — a
+ * candidate removing something they wrote — which is a different thing from the concurrent
+ * read-modify-write loss the append-only rule exists to prevent; see `deleteApplicationNote`.
+ */
+describe('DELETE /applications/:id/notes/:noteId', () => {
+  /** Seeds one note through the route, since ids are server-assigned and this needs a real one. */
+  async function withNote(app: { request: typeof fetch }) {
+    const res = await app.request('/applications/application-1/notes?response=compact', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ category: 'technical', text: 'Asked about idempotency keys.' }),
+    });
+    const { note } = (await res.json()) as { note: { id: string } };
+    return note.id;
+  }
+
+  it('removes the note and answers with what it removed', async () => {
+    const { app, applicationStore } = createTestApp({ applications: [sampleApplication] });
+    const noteId = await withNote(app);
+
+    // `content-type: application/json` on a body-less DELETE is not ceremony: `app.ts`'s CSRF
+    // guard requires it of every state-changing method precisely because a request carrying it is
+    // never a CORS "simple request", so the browser must preflight it and the origin allowlist gets
+    // to refuse. The real client sends it for the same reason.
+    const res = await app.request(`/applications/application-1/notes/${noteId}?response=compact`, {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ id: 'application-1', noteId });
+    expect((await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1'))?.notes).toEqual([]);
+  });
+
+  it('returns the full updated Application when no compact response was asked for', async () => {
+    const { app } = createTestApp({ applications: [sampleApplication] });
+    const noteId = await withNote(app);
+
+    const res = await app.request(`/applications/application-1/notes/${noteId}`, {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    await expect(res.json()).resolves.toMatchObject({ id: 'application-1', notes: [] });
+  });
+
+  it('404s for a note the application does not have, rather than reporting a delete that deleted nothing', async () => {
+    const { app, applicationStore } = createTestApp({ applications: [sampleApplication] });
+    await withNote(app);
+
+    const res = await app.request('/applications/application-1/notes/no-such-note', {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(404);
+    expect((await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1'))?.notes).toHaveLength(
+      1,
+    );
+  });
+
+  it('404s for an application that does not exist', async () => {
+    const { app } = createTestApp();
+
+    const res = await app.request('/applications/nope/notes/whatever', {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(404);
+  });
+});

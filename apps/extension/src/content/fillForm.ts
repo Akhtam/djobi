@@ -75,6 +75,75 @@ function press(el: Element): void {
 }
 
 /**
+ * The `keydown`/`keyup` pair a key press produces, dispatched at `el`.
+ *
+ * Custom widgets are keyboard-operable by construction — ARIA requires it — so the keyboard is the
+ * one interface every combobox implementation is obliged to support, and the fallback the retry
+ * pass leans on when a press did not take. `key` and `code` are both set because handlers are split
+ * over which they read.
+ */
+function pressKey(el: Element, key: string, modifiers: KeyboardEventInit = {}): void {
+  const init = { bubbles: true, cancelable: true, key, code: key, ...modifiers };
+  el.dispatchEvent(new KeyboardEvent('keydown', init));
+  el.dispatchEvent(new KeyboardEvent('keyup', init));
+}
+
+/**
+ * Brings `el` into view before it is pressed, where the environment can.
+ *
+ * A menu long enough to scroll is routinely virtualized, and a widget that renders only the rows
+ * near the viewport can unmount the row under an out-of-view press between the lookup and the
+ * click. Scrolling first also matters for the plain case of a sticky header sitting over the
+ * control. Guarded because jsdom has no layout and therefore no `scrollIntoView`.
+ */
+function scrollIntoView(el: Element): void {
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
+}
+
+/**
+ * Types `value` into the focused `el` through the editing host itself, returning whether it took.
+ *
+ * `execCommand('insertText')` is the one route from a content script to an input event the browser
+ * generates rather than the extension — `isTrusted`, carrying a real `inputType` and preceded by a
+ * real `beforeinput`. That distinction is invisible to React, which is why the ordinary path does
+ * not need it, but it is exactly what the stricter widgets check: masked and formatted inputs
+ * (phone, date, currency) rebuild their value from `beforeinput` and ignore a value that simply
+ * appeared, and a few hardened forms drop untrusted events outright. So this is the retry pass's
+ * first move on a field that was written and did not stick.
+ *
+ * Deprecated but not replaced: no standard API dispatches a trusted input event, and every browser
+ * still implements this one for editing hosts. It is guarded on every side — absent in jsdom, it
+ * throws on a detached or non-editable element, and it silently no-ops where the selection could
+ * not be established — so the return value is a re-read of the field rather than its own verdict.
+ */
+function insertText(el: HTMLInputElement | HTMLTextAreaElement, value: string): boolean {
+  const doc = el.ownerDocument;
+  if (value === '' || typeof doc.execCommand !== 'function') return false;
+
+  try {
+    el.select();
+    doc.execCommand('insertText', false, value);
+  } catch {
+    return false;
+  }
+
+  return el.value === value;
+}
+
+/**
+ * How hard a fill is trying: `'first'` is the ordinary path, `'retry'` the heavier imitation of a
+ * real user run only against the fields a first pass wrote and could not verify — see
+ * {@link fillForm}.
+ *
+ * A mode rather than two code paths, because the retry differs from the first attempt in a handful
+ * of details per widget (a trusted keystroke instead of a synthetic one, arrow keys instead of a
+ * press) and not in what it is trying to achieve. Keeping the ordinary path unchanged is the point:
+ * the extra events are ones a page can legitimately dislike, so they are spent only where the page
+ * has already demonstrated that the quiet version does not work.
+ */
+type FillMode = 'first' | 'retry';
+
+/**
  * Writes `value` and drives the event sequence a real keystroke produces: `focus`, `input`,
  * `change`, then `blur`/`focusout`.
  *
@@ -89,11 +158,22 @@ function press(el: Element): void {
 function commitValue(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
+  mode: FillMode = 'first',
 ): void {
   el.focus();
-  setNativeValue(el, value);
+
+  // On a retry, imitate a keystroke rather than merely announcing one: a `keydown` before the value
+  // changes and a `keyup` after it, around a trusted insertion where the element can take one. The
+  // ordinary path stays a plain write, because these events are the ones a page is entitled to act
+  // on (a `keydown` handler that filters characters, a `keyup` that triggers a lookup) and there is
+  // no reason to provoke that until the quiet write has been shown not to stick.
+  const typed = mode === 'retry' && !isInstanceOf(el, 'HTMLSelectElement');
+  if (typed) el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true }));
+  if (!typed || !insertText(el as HTMLInputElement | HTMLTextAreaElement, value))
+    setNativeValue(el, value);
 
   dispatchInput(el, value);
+  if (typed) el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 
   // Prefer the real blur, which the browser turns into a `blur` + `focusout` pair; synthesize that
@@ -206,12 +286,13 @@ function fillSelect(
   field: DetectedField,
   el: HTMLSelectElement,
   value: string,
+  mode: FillMode,
 ): FillVerifier {
   const choice = resolveChoice(doc, field, value);
   if (!choice.ok) return FAILED;
 
   const { value: optionValue } = choice.element as HTMLOptionElement;
-  commitValue(el, optionValue);
+  commitValue(el, optionValue, mode);
   return () => el.value === optionValue;
 }
 
@@ -228,12 +309,47 @@ function fillSelect(
  * `<button role="radio">`s rather than radios (Ashby renders them that way), and `HTMLElement.click`
  * drives both identically.
  */
-function fillGroup(doc: Document, field: DetectedField, value: string): FillVerifier {
+function fillGroup(
+  doc: Document,
+  field: DetectedField,
+  value: string,
+  mode: FillMode,
+): FillVerifier {
   const choice = resolveChoice(doc, field, value);
   if (!choice.ok) return FAILED;
 
-  choice.element.click();
-  return () => isChosen(choice.element);
+  const verify = () => isChosen(choice.element);
+
+  // Never press a choice that already reads as chosen. A radio absorbs the second press harmlessly,
+  // but a checkbox *toggles*: on the retry pass — which by definition runs against a field whose
+  // verification failed — a re-press of a box the page did check would turn the correct answer off,
+  // and on a group the retry could only ever make worse. The same guard also keeps the first pass
+  // from clearing an answer the candidate (or the ATS's own prefill) had already given.
+  if (verify()) return verify;
+
+  activateChoice(choice.element, mode);
+  return verify;
+}
+
+/**
+ * Presses one choice: an `<input>` through {@link HTMLElement.click}, anything else through the full
+ * {@link press} sequence.
+ *
+ * The split is about activation behaviour versus handlers. For a native radio or checkbox `click()`
+ * is the whole contract — the browser flips `checked` and fires `change` — and nothing is gained by
+ * synthesizing the mouse events around it. An **ARIA choice is a `<div>` or a `<button>` with no
+ * activation behaviour at all**: whether it registers is entirely down to which event its handler
+ * is bound to, and a widget library that binds `onMouseDown` (the same convention that makes a
+ * react-select trigger deaf to a lone `click` — see {@link press}) ignored every group answer this
+ * module used to send it. Ashby's yes/no buttons are that shape.
+ *
+ * The retry pass sends the mouse sequence to a native input too, since a page that wraps its own
+ * radios in a `mousedown` handler is the remaining explanation for a `click()` that changed nothing.
+ */
+function activateChoice(el: HTMLElement, mode: FillMode): void {
+  scrollIntoView(el);
+  if (mode === 'first' && isInstanceOf(el, 'HTMLInputElement')) el.click();
+  else press(el);
 }
 
 /**
@@ -261,6 +377,11 @@ export interface FillOptions {
   optionWaitAttempts?: number;
   /** How long to wait between those looks. Default 50ms. */
   optionWaitIntervalMs?: number;
+  /**
+   * Whether to make a second, heavier attempt at the fields a first pass could not verify.
+   * Default `true`; `false` is for tests that assert on the first pass alone.
+   */
+  retryUnverified?: boolean;
 }
 
 /** Defaults for {@link FillOptions}, resolved once per {@link fillForm} call. */
@@ -268,6 +389,7 @@ const DEFAULT_FILL_OPTIONS = {
   settleMs: 300,
   optionWaitAttempts: 20,
   optionWaitIntervalMs: 50,
+  retryUnverified: true,
 } satisfies Required<FillOptions>;
 
 type ResolvedFillOptions = Required<FillOptions>;
@@ -310,7 +432,56 @@ function isSearchable(trigger: Element): trigger is HTMLInputElement {
 function abandonSearch(trigger: HTMLInputElement): void {
   setNativeValue(trigger, '');
   dispatchInput(trigger, '');
+  // Escape before blur, because closing is the widget's documented answer to it and a menu left
+  // open is one more place the *next* field's `resolveChoice` can find a second matching option.
+  // Blur is the backstop for a widget that ignores the key, and what makes it let go of the text.
+  pressKey(trigger, 'Escape');
   trigger.blur();
+}
+
+/**
+ * Whether `option` is the row a keyboard commit would take — the widget's own highlight, read the
+ * three ways implementations express it.
+ *
+ * `aria-activedescendant` on the trigger is the one the ARIA pattern specifies and what react-select
+ * and downshift set; `aria-selected` is the fallback for a listbox that marks the row instead; and
+ * Radix's `data-highlighted` is neither, being a styling hook that happens to be the only signal it
+ * publishes. Reading the highlight is what makes {@link chooseByKeyboard} safe: without it, an Enter
+ * is a press on whichever row the widget happens to be pointing at.
+ */
+function isHighlighted(trigger: Element, option: Element): boolean {
+  const active = trigger.getAttribute('aria-activedescendant');
+  if (active && option.id && active === option.id) return true;
+  return option.getAttribute('aria-selected') === 'true' || option.hasAttribute('data-highlighted');
+}
+
+/**
+ * Walks an open menu to `match` with `ArrowDown` and commits it with `Enter`, or reports that it
+ * could not.
+ *
+ * The retry pass's route into a combobox that ignored a pressed option. Keyboard operation is the
+ * one interface an ARIA combobox is *required* to implement, so a widget that drops synthetic mouse
+ * events on its rows — a virtualized list whose rows are pointer-event-transparent, a menu that
+ * commits from its own `keydown` handler — still answers to this.
+ *
+ * It only ever presses Enter on a step where the widget's own highlight has landed on `match`, which
+ * is what keeps a blind Enter from committing whichever row happened to be first. Bounded by the
+ * number of rows on offer plus one, so a widget that ignores the arrows (or wraps around past the
+ * match without ever highlighting it) ends the walk instead of hammering the key.
+ */
+function chooseByKeyboard(trigger: HTMLElement, match: HTMLElement): boolean {
+  const rows = match.parentElement?.querySelectorAll('[role="option"]').length ?? 0;
+
+  for (let step = 0; step <= rows; step++) {
+    if (isHighlighted(trigger, match)) {
+      scrollIntoView(match);
+      pressKey(trigger, 'Enter');
+      return true;
+    }
+    pressKey(trigger, 'ArrowDown');
+  }
+
+  return false;
 }
 
 /**
@@ -336,11 +507,24 @@ async function fillCombobox(
   field: DetectedField,
   value: string,
   options: ResolvedFillOptions,
+  mode: FillMode,
 ): Promise<FillVerifier> {
   const trigger = resolveField(doc, field);
   if (!trigger) return FAILED;
 
+  scrollIntoView(trigger);
   press(trigger);
+
+  // A widget that did not open on the press gets the keyboard's version of the same request. Both
+  // keys are sent because implementations disagree about which opens a closed combobox, and a
+  // widget already open treats either as a move within the menu, which the highlight walk below
+  // then corrects.
+  if (mode === 'retry') {
+    trigger.focus();
+    pressKey(trigger, 'ArrowDown');
+    if (trigger.getAttribute('aria-expanded') !== 'true')
+      pressKey(trigger, 'ArrowDown', { altKey: true });
+  }
 
   const searchable = isSearchable(trigger);
   if (searchable) {
@@ -362,8 +546,17 @@ async function fillCombobox(
     return FAILED;
   }
 
+  const verify = () => comboboxHolds(trigger, value);
+
+  // Keyboard first on the retry, mouse first otherwise. On a field that reached the retry pass the
+  // press is the move already known not to have worked, and {@link chooseByKeyboard} declines
+  // rather than guessing when it cannot see its row highlighted — so the press stays as its
+  // fallback, not the other way round.
+  if (mode === 'retry' && chooseByKeyboard(trigger, match)) return verify;
+
+  scrollIntoView(match);
   press(match);
-  return () => comboboxHolds(trigger, value);
+  return verify;
 }
 
 /**
@@ -384,7 +577,16 @@ async function fillCombobox(
  * check over a form the ATS will reject as empty.
  *
  * That settle is a delay, not a poll: there is nothing to wait *for*, since a fill that worked
- * already reads back correctly. It costs its budget once per run, at the very end.
+ * already reads back correctly. It costs its budget once per sweep, at the very end of it.
+ *
+ * **A field that fails verification is then tried a second time, harder** ({@link FillMode}), and
+ * only the fields that fail twice are reported unfilled. The retry is not a repetition: it swaps a
+ * synthetic keystroke for a browser-generated one, a pressed menu row for arrow keys and Enter, a
+ * `click()` for the full mouse sequence — the moves a page can distinguish from a real user's, in
+ * the order that the ATSes this project has hit actually distinguish them. Scoping it to the failed
+ * fields is what makes those moves affordable: the extra events are ones a page is entitled to
+ * react to, so they are spent only where the quiet version has already been shown not to work, and
+ * a form that filled cleanly pays nothing beyond the one settle.
  */
 export async function fillForm(
   doc: Document,
@@ -393,6 +595,30 @@ export async function fillForm(
   fillOptions: FillOptions = {},
 ): Promise<string[]> {
   const options = { ...DEFAULT_FILL_OPTIONS, ...fillOptions };
+  const requested = fields.filter((field) => values[field.id] !== undefined);
+  if (requested.length === 0) return [];
+
+  const filled = await runPass(doc, requested, values, options, 'first');
+  const unverified = requested.filter((field) => !filled.includes(field.id));
+  if (unverified.length === 0 || !options.retryUnverified) return filled;
+
+  return [...filled, ...(await runPass(doc, unverified, values, options, 'retry'))];
+}
+
+/**
+ * Fills `fields` in one sweep, settles, and returns the ids that verified.
+ *
+ * The write loop stays synchronous for every widget that can be written synchronously — a caller
+ * that never awaits (nothing in the extension, but several tests) still sees its text fields
+ * written — and awaits only the comboboxes, which have a menu to wait for.
+ */
+async function runPass(
+  doc: Document,
+  fields: DetectedField[],
+  values: Record<string, string>,
+  options: ResolvedFillOptions,
+  mode: FillMode,
+): Promise<string[]> {
   const verifiers: Array<[string, FillVerifier]> = [];
 
   for (const field of fields) {
@@ -400,12 +626,12 @@ export async function fillForm(
     if (value === undefined) continue;
 
     if (field.elementRole === 'combobox') {
-      verifiers.push([field.id, await fillCombobox(doc, field, value, options)]);
+      verifiers.push([field.id, await fillCombobox(doc, field, value, options, mode)]);
       continue;
     }
 
     if (field.elementRole === 'radiogroup' || field.elementRole === 'checkboxgroup') {
-      verifiers.push([field.id, fillGroup(doc, field, value)]);
+      verifiers.push([field.id, fillGroup(doc, field, value, mode)]);
       continue;
     }
 
@@ -416,15 +642,13 @@ export async function fillForm(
     }
 
     if (isInstanceOf(el, 'HTMLSelectElement')) {
-      verifiers.push([field.id, fillSelect(doc, field, el, value)]);
+      verifiers.push([field.id, fillSelect(doc, field, el, value, mode)]);
       continue;
     }
 
-    commitValue(el, value);
+    commitValue(el, value, mode);
     verifiers.push([field.id, () => el.value === value]);
   }
-
-  if (verifiers.length === 0) return [];
 
   await new Promise((resolve) => setTimeout(resolve, options.settleMs));
   return verifiers.filter(([, verify]) => verify()).map(([id]) => id);

@@ -44,6 +44,24 @@ describe('createFixtureDashboardClient', () => {
     expect(updated.notes).toEqual([result.note]);
   });
 
+  it('removes the note it is asked to remove, and only that one', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+    const kept = await client.addNote('app-sonar', { category: 'general', text: 'Kept.' });
+    const doomed = await client.addNote('app-sonar', { category: 'general', text: 'Mistyped.' });
+
+    const result = await client.deleteNote('app-sonar', doomed.note.id);
+
+    expect(result).toEqual({ id: 'app-sonar', noteId: doomed.note.id });
+    const updated = (await client.listApplications()).find((a) => a.id === 'app-sonar')!;
+    expect(updated.notes).toEqual([kept.note]);
+  });
+
+  it('rejects a delete of a note that is not there, the way the route 404s', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications);
+
+    await expect(client.deleteNote('app-sonar', 'no-such-note')).rejects.toThrow();
+  });
+
   it('leaves the seed untouched, so one test cannot leak into the next', async () => {
     const client = createFixtureDashboardClient(fixtureApplications);
     await client.updateStage('app-sonar', 'rejected');

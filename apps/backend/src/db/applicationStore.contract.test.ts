@@ -357,6 +357,38 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     });
   });
 
+  describe('deleteNote', () => {
+    it('removes only the named note, leaving the rest of the log in order', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+      await store.appendNote(USER_A, id, { category: 'technical', text: 'First' });
+      const middle = await store.appendNote(USER_A, id, { category: 'general', text: 'Second' });
+      await store.appendNote(USER_A, id, { category: 'behavioral', text: 'Third' });
+
+      const result = await store.deleteNote(USER_A, id, middle!.note.id);
+
+      expect(result).toMatchObject({ id, noteId: middle!.note.id });
+      const stored = await store.byId(USER_A, id);
+      expect(stored?.notes.map((note) => note.text)).toEqual(['First', 'Third']);
+    });
+
+    it('answers null for a note id the row does not have, and changes nothing', async () => {
+      // Distinguished from a successful delete, not folded into it: "already gone" and "deleted"
+      // look identical in the resulting row, and only the write itself can tell the caller which
+      // of the two happened.
+      const { id } = await store.create(USER_A, newApplication());
+      await store.appendNote(USER_A, id, { category: 'general', text: 'Kept' });
+
+      expect(await store.deleteNote(USER_A, id, 'no-such-note')).toBeNull();
+      expect((await store.byId(USER_A, id))?.notes).toHaveLength(1);
+    });
+
+    it('answers null for an id no row has', async () => {
+      expect(
+        await store.deleteNote(USER_A, '00000000-0000-4000-8000-0000000000ff', 'whatever'),
+      ).toBeNull();
+    });
+  });
+
   /**
    * The property Phase A (`docs/multi-tenant-auth.md`) exists to guarantee: nothing here is
    * reachable, readable or writable by a `userId` other than the one that created it. Every one of
@@ -422,6 +454,14 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
         await store.appendNote(USER_B, id, { category: 'general', text: 'Not yours' }),
       ).toBeNull();
       expect(await store.byId(USER_A, id)).toMatchObject({ notes: [] });
+    });
+
+    it('deleteNote answers null and leaves the note in place for a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+      const note = await store.appendNote(USER_A, id, { category: 'general', text: 'Mine' });
+
+      expect(await store.deleteNote(USER_B, id, note!.note.id)).toBeNull();
+      expect((await store.byId(USER_A, id))?.notes).toHaveLength(1);
     });
 
     it('create assigns the row to the calling user, not whichever user created earlier ones', async () => {

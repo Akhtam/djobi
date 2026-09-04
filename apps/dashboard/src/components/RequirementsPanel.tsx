@@ -15,7 +15,7 @@
  * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
  */
 import { useState, type ReactNode } from 'react';
-import { normalizeLabel, type Application, type RequirementEvidenceVerdict } from '@djobi/shared';
+import { normalizeLabel, type Application } from '@djobi/shared';
 import {
   evidenceByRequirement,
   requirementEvidenceRollup,
@@ -25,20 +25,7 @@ import {
 import { applicationPath, PAGE_SIZE } from '../lib/useHashRoute';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 import { formatDate } from '../lib/format';
-
-/**
- * What each stored verdict is called on screen. `direct-evidence` has a label because the roll-up
- * counts it, but no requirement row ever wears it: the good case is the common case, and badging
- * every evidenced requirement would bury the four verdicts that mean something is wrong — the same
- * reason `ApplicationDetail` suppresses the `unspecified` requirement-kind badge.
- */
-const EVIDENCE_LABELS: Record<RequirementEvidenceVerdict, string> = {
-  'direct-evidence': 'Evidenced',
-  'skill-only': 'Skill only',
-  'omitted-profile-evidence': 'Dropped from resume',
-  'needs-confirmation': 'Unconfirmed',
-  unsupported: 'No evidence',
-};
+import { EVIDENCE_LABELS } from '../lib/stages';
 
 /**
  * Splits `text` on a case-insensitive match of `term`, wrapping each match in `<mark>`. Built with
@@ -253,14 +240,14 @@ export function RequirementsPanel({
                                     ) : null}
                                     {verdict && verdict.verdict !== 'direct-evidence' ? (
                                       <span
-                                        className={`analytics-req__verdict analytics-req__verdict--${verdict.verdict}`}
+                                        className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
                                       >
                                         {EVIDENCE_LABELS[verdict.verdict]}
                                       </span>
                                     ) : null}
                                     {verdict?.verdict === 'omitted-profile-evidence' &&
                                     verdict.evidence ? (
-                                      <span className="analytics-req__omitted">
+                                      <span className="requirement-omitted">
                                         Your profile has: “{verdict.evidence}”
                                       </span>
                                     ) : null}

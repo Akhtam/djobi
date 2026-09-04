@@ -1595,6 +1595,49 @@ h3 {
   white-space: pre-wrap;
 }
 
+/*
+ * The delete affordance on one note: quiet until hovered or focused, because a log is for reading
+ * and the destructive control should not be the loudest thing in the row. It stays in the tab order
+ * regardless — `opacity` is the only thing that changes, never `display`.
+ */
+.note__delete {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.note:hover .note__delete,
+.note__delete:focus-visible {
+  opacity: 1;
+}
+
+.note__delete--confirm {
+  border-color: var(--danger);
+  color: var(--danger);
+  opacity: 1;
+}
+
+/* The armed state: the question and both answers on one line, under the note they act on. */
+.note__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.note__confirm .note__delete {
+  margin-top: 0;
+}
+
 .add-note {
   margin-top: 14px;
   padding: 14px 16px;
@@ -2271,7 +2314,12 @@ h3 {
   opacity: 0.8;
 }
 
-.analytics-req__verdict {
+/*
+ * A stored requirement verdict, wherever it is rendered: the Analytics roll-up across postings and
+ * one application's own requirement list. One badge, because they are the same five verdicts on the
+ * same data — see `EVIDENCE_LABELS`.
+ */
+.requirement-verdict {
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -2285,23 +2333,44 @@ h3 {
   white-space: nowrap;
 }
 
-.analytics-req__verdict--omitted-profile-evidence {
+.requirement-verdict--omitted-profile-evidence {
   background: color-mix(in srgb, var(--warning) 15%, transparent);
   color: var(--warning);
 }
 
-.analytics-req__verdict--unsupported {
+.requirement-verdict--unsupported {
   background: var(--danger-bg);
   color: var(--danger);
 }
 
-/* The dropped bullet itself, so the fix is visible without opening the application. */
-.analytics-req__omitted {
+/* The dropped bullet itself, so the fix is visible without opening the profile. */
+.requirement-omitted {
   display: block;
   margin-top: 3px;
   color: var(--text-muted);
   font-size: 12px;
   font-style: italic;
+}
+
+/*
+ * The stored posting, shown as it was analyzed. `pre` keeps the blank lines and bullet indentation
+ * that carry a posting's structure — the extractor was given exactly this text, so reflowing it
+ * here would show something the analysis never saw — with wrapping on, since a posting is prose and
+ * a horizontal scrollbar over several screens of it is unreadable.
+ */
+.posting-text {
+  margin: 10px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .analytics-summary-strip__years-toggle {

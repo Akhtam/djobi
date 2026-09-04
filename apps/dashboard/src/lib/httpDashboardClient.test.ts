@@ -230,6 +230,31 @@ describe('addNote', () => {
   });
 });
 
+describe('deleteNote', () => {
+  it('DELETEs the addressed note, declaring JSON with nothing to send', async () => {
+    // The header is the CSRF guard's requirement, not the body's — see `app.ts`. A delete has
+    // nothing to put in a body, and the note it removes is named by the path.
+    const fetchMock = stubFetch({ jsonBody: { id: 'app-brex', noteId: 'note-1' } });
+
+    await httpDashboardClient.deleteNote('app-brex', 'note-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('/applications/app-brex/notes/note-1?response=compact', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+  });
+
+  it('encodes an id with a slash in it, so it cannot reach a route of its own', async () => {
+    const fetchMock = stubFetch({ jsonBody: { id: 'a/b', noteId: 'n/1' } });
+
+    await httpDashboardClient.deleteNote('a/b', 'n/1');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb/notes/n%2F1?response=compact');
+  });
+});
+
 describe('signIn', () => {
   it('POSTs Better Auth’s sign-in route with credentials included', async () => {
     const fetchMock = stubFetch({

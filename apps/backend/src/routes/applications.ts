@@ -134,5 +134,17 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     ),
   );
 
+  /**
+   * The only note operation that isn't an append. `:noteId` is a path parameter rather than a body,
+   * because deleting one note is addressing it — and it keeps the route shaped like the resource
+   * the append created.
+   */
+  route.delete('/applications/:id/notes/:noteId', async (c) =>
+    writeResponse(
+      c,
+      await store.deleteNote(c.get('userId'), c.req.param('id'), c.req.param('noteId')),
+    ),
+  );
+
   return route;
 }

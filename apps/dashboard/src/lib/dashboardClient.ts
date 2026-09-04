@@ -23,6 +23,8 @@ import {
   type AddApplicationNoteRequest,
   AddApplicationNoteResultSchema,
   type AddApplicationNoteResult,
+  DeleteApplicationNoteResultSchema,
+  type DeleteApplicationNoteResult,
   type Application,
   ApplicationSchema,
   type ApplicationStage,
@@ -70,6 +72,12 @@ export interface DashboardClient {
   updateStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult>;
   /** Appends to the notes log. `id`/`createdAt` are assigned by the server, never sent. */
   addNote(id: string, note: NewNote): Promise<AddApplicationNoteResult>;
+  /**
+   * Removes one note from the log. Rejects when the note is not there — the route answers 404 for
+   * a note it cannot find, and an optimistic caller has to be able to tell that apart from a
+   * delete that worked.
+   */
+  deleteNote(id: string, noteId: string): Promise<DeleteApplicationNoteResult>;
   /**
    * The single stored Profile, or `null` before the candidate has saved one.
    *
@@ -175,6 +183,13 @@ export const httpDashboardClient: DashboardClient = {
       `/applications/${encodeURIComponent(id)}/notes?response=compact`,
       AddApplicationNoteResultSchema,
       { method: 'POST', body: note satisfies AddApplicationNoteRequest },
+    ),
+
+  deleteNote: (id, noteId) =>
+    transport.json(
+      `/applications/${encodeURIComponent(id)}/notes/${encodeURIComponent(noteId)}?response=compact`,
+      DeleteApplicationNoteResultSchema,
+      { method: 'DELETE' },
     ),
 
   getProfile: () => transport.json('/profile', MaybeProfileSchema),
@@ -385,6 +400,20 @@ export function createFixtureDashboardClient(
       };
       replace({ ...application, notes: [...application.notes, appended] });
       return Promise.resolve({ id, note: structuredClone(appended) });
+    },
+
+    deleteNote: (id, noteId) => {
+      if (!hasSession) return unauthorized(`/applications/${id}/notes/${noteId}`);
+      const application = mustFind(id);
+      const remaining = application.notes.filter((note) => note.id !== noteId);
+      // Rejects rather than resolving quietly, because the route 404s for a note it cannot find
+      // and a fixture that shrugged would let a caller's "did this land" logic pass here and fail
+      // against the real backend.
+      if (remaining.length === application.notes.length) {
+        return Promise.reject(new Error(`No note ${noteId} on application ${id}`));
+      }
+      replace({ ...application, notes: remaining });
+      return Promise.resolve({ id, noteId });
     },
 
     getProfile: () => {

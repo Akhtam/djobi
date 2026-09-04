@@ -77,6 +77,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     reportUnauthorized,
     updateStage,
     addNote,
+    deleteNote,
     createApplication,
     reload,
   } = useApplicationStore(client);
@@ -265,6 +266,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
               back={backTarget.current}
               onStageChange={(id, stage) => void updateStage(id, stage)}
               onAddNote={addNote}
+              onDeleteNote={(id, noteId) => void deleteNote(id, noteId)}
             />
           ) : (
             <p className="empty-state">

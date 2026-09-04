@@ -193,8 +193,26 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-03-22T10:30:00.000Z',
       },
     ],
-    rawDescription: null,
-    extractionVersion: null,
+    /*
+     * The one fixture carrying the posting it was analyzed from. Every other row leaves it `null`,
+     * standing in for the rows written before the column existed — so the detail page's Posting tab
+     * has both cases to render, and the empty one is not a hypothetical.
+     */
+    rawDescription: [
+      'About the role',
+      '',
+      'We are looking for a Senior Frontend Engineer to join our Infrastructure team. You will own',
+      'the surfaces every other engineering team builds on, from the design system through to the',
+      'tooling that ships it.',
+      '',
+      'What we are looking for',
+      '',
+      '- 5+ years building production React applications',
+      '- Experience with design systems at scale',
+      '- Comfort owning a service end to end',
+      '- Experience improving frontend performance at scale',
+    ].join('\n'),
+    extractionVersion: 'extract-job@3',
     /*
      * The scored row. Every other fixture leaves this `null`, standing in for the rows written
      * before the field existed — so the analytics roll-up has the mixed history that is the normal

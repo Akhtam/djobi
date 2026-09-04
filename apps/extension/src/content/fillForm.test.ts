@@ -789,6 +789,174 @@ describe('fillForm', () => {
 
     expect(clicked).toEqual(['opt-yes']);
   });
+
+  it('presses an ARIA choice through the full mouse sequence, for a group whose buttons act on mousedown', () => {
+    // The mirror of the react-select trigger case, on the other widget shape: an ARIA choice is a
+    // `<button>` with no activation behaviour of its own, so whether a press registers is entirely
+    // down to which event the widget bound. Ashby's yes/no buttons are this shape, and a lone
+    // `click()` — what this module used to send every group — reaches a `mousedown` handler never.
+    document.body.innerHTML = `
+      <div id="f1" role="radiogroup">
+        <button type="button" role="radio" id="opt-yes" aria-checked="false">Yes</button>
+      </div>
+    `;
+    const yes = document.querySelector<HTMLElement>('#opt-yes')!;
+    yes.addEventListener('mousedown', () => yes.setAttribute('aria-checked', 'true'));
+
+    fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'radiogroup',
+          options: [{ label: 'Yes', selector: '#opt-yes' }],
+        }),
+      ],
+      { f1: 'Yes' },
+    );
+
+    expect(yes.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('leaves a choice that already reads as chosen alone, rather than toggling the answer back off', async () => {
+    // A checkbox toggles, so a press on a box the page has already checked is the one move that can
+    // only make a correct answer wrong — and the retry pass, which runs precisely where
+    // verification failed, is where that would happen. The `change` count is the assertion: the
+    // field is not merely correct at the end, it was never touched.
+    document.body.innerHTML = `
+      <fieldset id="f1">
+        <label><input type="checkbox" id="opt-ts" checked />TypeScript</label>
+      </fieldset>
+    `;
+    const box = document.querySelector<HTMLInputElement>('#opt-ts')!;
+    let changes = 0;
+    box.addEventListener('change', () => changes++);
+
+    const filled = await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'checkboxgroup',
+          options: [{ label: 'TypeScript', selector: '#opt-ts' }],
+        }),
+      ],
+      { f1: 'TypeScript' },
+      FAST,
+    );
+
+    expect(box.checked).toBe(true);
+    expect(changes).toBe(0);
+    expect(filled).toEqual(['f1']);
+  });
+
+  it('writes a field again, as a keystroke, when the page threw away the quiet write', async () => {
+    // The reported failure in its purest form: the value is in the DOM, the ATS does not have it.
+    // A page that only trusts input it saw a key produce discards the first write, and nothing
+    // about that is visible until the verification re-read. The retry is what turns it into a
+    // filled field rather than a line in the panel's "go fix these" list.
+    document.body.innerHTML = `<input id="f1" type="text" />`;
+    const input = document.querySelector<HTMLInputElement>('#f1')!;
+    let typed = false;
+    input.addEventListener('keydown', () => {
+      typed = true;
+    });
+    input.addEventListener('input', () => {
+      if (typed) return;
+      setTimeout(() => {
+        input.value = '';
+      }, 0);
+    });
+
+    const filled = await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1' })],
+      { f1: 'jane@example.com' },
+      FAST,
+    );
+
+    expect(input.value).toBe('jane@example.com');
+    expect(filled).toEqual(['f1']);
+  });
+
+  it('spends nothing extra on a field the page kept — the retry is scoped to failures', async () => {
+    // The retry sends events a page is entitled to react to, so the guarantee that pays for it is
+    // that a form which filled cleanly is written exactly once.
+    document.body.innerHTML = `<input id="f1" type="text" />`;
+    const input = document.querySelector<HTMLInputElement>('#f1')!;
+    let inputs = 0;
+    input.addEventListener('input', () => inputs++);
+
+    await fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane' }, FAST);
+
+    expect(inputs).toBe(1);
+  });
+
+  it('commits a combobox with arrow keys and Enter when the widget ignores a pressed option', async () => {
+    // Keyboard operation is the one interface an ARIA combobox is obliged to implement, which makes
+    // it the fallback that holds when mouse events do not reach a row — a virtualized list, or a
+    // menu that commits from its own keydown handler. The walk only ever presses Enter on a step
+    // where the widget's *own* highlight has landed on the matched row, so it commits the intended
+    // answer rather than whichever one the menu opened on.
+    document.body.innerHTML = `
+      <div class="widget">
+        <input id="f1" role="combobox" readonly aria-expanded="false" aria-controls="lb" />
+        <div id="lb" role="listbox">
+          <div role="option" id="o1">Yes</div>
+          <div role="option" id="o2">No</div>
+        </div>
+      </div>
+    `;
+    const trigger = document.querySelector<HTMLInputElement>('#f1')!;
+    const rows = ['o1', 'o2'];
+    let active = -1;
+
+    trigger.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') {
+        trigger.setAttribute('aria-expanded', 'true');
+        active = Math.min(active + 1, rows.length - 1);
+        trigger.setAttribute('aria-activedescendant', rows[active]!);
+      }
+      if (event.key === 'Enter' && active >= 0) {
+        trigger.value = document.querySelector(`#${rows[active]}`)!.textContent!;
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    const filled = await fillForm(
+      document,
+      [
+        field({
+          id: 'f1',
+          selector: '#f1',
+          elementRole: 'combobox',
+          options: [
+            { label: 'Yes', selector: '#o1' },
+            { label: 'No', selector: '#o2' },
+          ],
+        }),
+      ],
+      { f1: 'No' },
+      FAST,
+    );
+
+    expect(trigger.value).toBe('No');
+    expect(filled).toEqual(['f1']);
+  });
+
+  it('sends Escape when giving up on a combobox, so the abandoned menu cannot answer the next field', async () => {
+    reactSelect(['Otta']);
+    const keys: string[] = [];
+    document.querySelector('#f1')!.addEventListener('keydown', (event) => {
+      keys.push((event as KeyboardEvent).key);
+    });
+
+    await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST);
+
+    expect(keys).toContain('Escape');
+  });
 });
 
 describe('resolveField', () => {

@@ -2,9 +2,16 @@
  * One application: what it is, where it has got to, and what you have learned since.
  *
  * The header card carries identity and the two actions that change often (posting link, stage).
- * Everything else — job info, the resume that went out, drafted answers, and notes — sits behind a
- * tab bar rather than stacked `<details>`: those sections are read one at a time, and a tab keeps
- * the reader's place instead of asking them to scroll past whichever ones they didn't open.
+ * Everything else — job info, the posting it was extracted from, the resume that went out, drafted
+ * answers, and notes — sits behind a tab bar rather than stacked `<details>`: those sections are
+ * read one at a time, and a tab keeps the reader's place instead of asking them to scroll past
+ * whichever ones they didn't open.
+ *
+ * Two of those sections read columns nothing outside the Analytics roll-up had read back before:
+ * the posting text the Analysis Step was actually given (`rawDescription`) and the per-requirement
+ * verdicts computed at save time (`requirementEvidence`, rendered by `RequirementList`). Both were
+ * already being stored at every save; this is where they answer a question about *this* application
+ * rather than about the history in aggregate.
  *
  * Nothing here edits the resume or the answers. That belongs to the review surface during a run —
  * a second editor over the same record would need `PATCH /applications/:id` semantics this phase
@@ -15,13 +22,16 @@ import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
 import { AddNoteForm } from '../components/AddNoteForm';
 import { NotesLog } from '../components/NotesLog';
 import { PostingLink } from '../components/PostingLink';
+import { RequirementList } from '../components/RequirementList';
 import { StageSelect } from '../components/StageSelect';
+import { evidenceByRequirement } from '../lib/analytics';
 import { formatDate } from '../lib/format';
 import { KEYWORD_CATEGORY_LABELS } from '../lib/stages';
 
-/** The detail page's three sections, tabbed rather than stacked — see file header. */
+/** The detail page's four sections, tabbed rather than stacked — see file header. */
 const DETAIL_TABS = [
   { key: 'jobinfo', label: 'Job info' },
+  { key: 'posting', label: 'Posting' },
   { key: 'materials', label: 'Materials' },
   { key: 'notes', label: 'Notes' },
 ] as const;
@@ -32,6 +42,7 @@ export function ApplicationDetail({
   back,
   onStageChange,
   onAddNote,
+  onDeleteNote,
 }: {
   application: Application;
   /**
@@ -43,6 +54,7 @@ export function ApplicationDetail({
   back: { href: string; label: string };
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
+  onDeleteNote: (id: string, noteId: string) => void;
 }) {
   const { jobInfo, tailoredResume, answers } = application;
   // A manually logged application stores the base profile in `tailoredResume` (see `baseResumeOf`),
@@ -57,16 +69,10 @@ export function ApplicationDetail({
   // reference material, not a list someone scans with several open side by side.
   const [openAnswer, setOpenAnswer] = useState<number | null>(answers.length > 0 ? 0 : null);
 
-  const requirementGroups = [
-    {
-      kind: 'required' as const,
-      requirements: jobInfo.requirements.filter((requirement) => requirement.kind !== 'preferred'),
-    },
-    {
-      kind: 'preferred' as const,
-      requirements: jobInfo.requirements.filter((requirement) => requirement.kind === 'preferred'),
-    },
-  ];
+  // Empty for every row saved before the verdicts were computed, which is most of the history and
+  // has to render as "nothing to say" rather than as a page of missing badges — see
+  // `RequirementList`.
+  const evidence = evidenceByRequirement(application);
 
   return (
     <article className="detail">
@@ -123,35 +129,7 @@ export function ApplicationDetail({
             {jobInfo.requirements.length > 0 ? (
               <>
                 <h3>Requirements</h3>
-                <div className="requirement-groups">
-                  {requirementGroups.map(({ kind, requirements }) =>
-                    requirements.length > 0 ? (
-                      <section
-                        key={kind}
-                        className={`requirement-group requirement-group--${kind}`}
-                      >
-                        <h4
-                          className={`requirement-group__title requirement-kind requirement-kind--${kind}`}
-                        >
-                          {kind}
-                        </h4>
-                        <ul className="bullets requirement-group__items">
-                          {requirements.map((requirement) => (
-                            <li key={requirement.text}>
-                              {requirement.text}
-                              {requirement.yearsOfExperience !== null ? (
-                                <span className="requirement-years">
-                                  {' '}
-                                  ({requirement.yearsOfExperience}+ yrs)
-                                </span>
-                              ) : null}
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    ) : null,
-                  )}
-                </div>
+                <RequirementList requirements={jobInfo.requirements} evidence={evidence} />
               </>
             ) : null}
             {jobInfo.keywords.length > 0 ? (
@@ -172,6 +150,31 @@ export function ApplicationDetail({
                 </ul>
               </>
             ) : null}
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'posting' && (
+        <section className="detail__panel">
+          <div className="detail__panel-head">
+            <h2>Posting as analyzed</h2>
+          </div>
+          <div className="detail__panel-body">
+            {application.rawDescription ? (
+              <>
+                <p className="empty-hint">
+                  The text the Analysis Step was given{' '}
+                  {loggedManually ? 'when you logged this' : 'for this run'} — not the live page,
+                  which may have changed or been taken down since.
+                </p>
+                <pre className="posting-text">{application.rawDescription}</pre>
+              </>
+            ) : (
+              <p className="empty-hint">
+                This one was saved before the posting text was kept, so there is no copy of it here.
+                The posting link above is all there is — and it may not outlive the role.
+              </p>
+            )}
           </div>
         </section>
       )}
@@ -265,7 +268,10 @@ export function ApplicationDetail({
             <h2>Notes</h2>
           </div>
           <div className="detail__panel-body">
-            <NotesLog notes={application.notes} />
+            <NotesLog
+              notes={application.notes}
+              onDelete={(noteId) => onDeleteNote(application.id, noteId)}
+            />
             <AddNoteForm onAdd={(note) => onAddNote(application.id, note)} />
           </div>
         </section>
