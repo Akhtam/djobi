@@ -14,8 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1621 tests**
-(271 shared / 25 http-client / 30 profile-editor / 311 backend / 739 extension / 245 dashboard),
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1635 tests**
+(278 shared / 25 http-client / 30 profile-editor / 314 backend / 740 extension / 248 dashboard),
 `pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
@@ -37,7 +37,10 @@ anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
   Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
 build` compiles the shared package and emits a plain-Node production server to `dist/`.
 - **`apps/dashboard`** — Vite + React on `localhost:5174`, browsing past Applications and tracking
-  their Stage and Notes against the live backend. Two views behind a hand-rolled hash router; one
+  their Stage and Notes against the live backend. A marketing `LandingPage` at the bare path, and
+  six views behind a hand-rolled hash router (`lib/useHashRoute.ts`): the applications list, one
+  application's detail, Analytics, the Profile editor, sign-in and sign-up — with manual logging
+  (`NewApplication`) opening inside the list rather than claiming a route of its own. One
   `DashboardClient` seam (`lib/dashboardClient.ts`) whose fixture implementation is test-only, so
   every view is exercised without a network while the running app always talks to Postgres.
 - **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
@@ -953,7 +956,7 @@ projection (no `fullName`/`email`/…) without widening what reaches the model.
 - [ ] Live: no live model call made against the new `postingSpelling` prompt instruction or the
       `<requirement_evidence>` block — both are exercised only by the fake-model test suite so far
 
-### Phase 12 — The Analytics view, and the extraction that feeds it (planned, not started)
+### Phase 12 — The Analytics view, and the extraction that feeds it (done)
 
 A third dashboard route, `#/analytics`, that reads the postings the candidate has already applied to
 and answers one question: **which keywords do these roles ask for, and which of them does the Profile
@@ -1288,6 +1291,66 @@ Decisions — the extraction that feeds it:
       real (204/16/234/676/151→169 across the five packages by the end) but the red-green discipline
       itself was skipped — flagged here rather than checked off under a claim that doesn't hold
 
+#### Phase 12.3 — Outcomes and stored evidence in Analytics (done)
+
+Phase 12 read two fields of every saved row (`jobInfo.keywords`, `jobInfo.requirements`) and used
+`stage` only as a filter. Two things the record already held were therefore never reported: whether
+a posting ever came back, and the per-requirement verdicts `requirementEvidence` computes and
+persists at every save. Both are pure additions over the array the view already has — no endpoint,
+no schema change, no migration.
+
+- **A response rate, with pending applications excluded from the denominator.** `outcomeOf` maps a
+  stage onto `responded` / `no-response` / `pending`; the rate is `responded / (responded +
+noResponse)`, and `applied` is carried alongside as `pending` rather than counted as a rejection.
+  Dividing by pending rows would report a collapsing rate that measures nothing but recency — the
+  censoring problem, and the one way this number could actively mislead.
+- **The mapping leans on `rejected` and `rejected_ats` staying distinct**, which is the reason
+  `ApplicationStageSchema` carries both. A candidate who marks every rejection `rejected` reads as a
+  100% response rate, and nothing here can detect that; guessing around it would fabricate an
+  outcome the record never stated. `stage` is also a scalar with no history, so a `rejected` row
+  cannot say how far it got — this reports _whether_ a posting responded, never how far or how fast.
+- **No rate is printed below `MIN_DECIDED_FOR_RATE` (5) resolved postings**; it reads `—` and its
+  tooltip says why. Three applications cannot distinguish a 33% rate from
+  a 67% one. The fixture set never reaches the threshold in any range, which is itself the honest
+  reading of eight rows across three months — the view tests that need a rendered percentage build
+  their own set rather than lowering the bar to make the fixtures qualify.
+- **The rate disappears entirely while a stage filter is on**, rather than being shown with a caveat.
+  Filtering to `offer` selects the population on the very variable being measured and reports 100%;
+  filtering to `rejected` reports 0%. Both look like findings. A response rate is only a fact about
+  an unselected population.
+- **A per-keyword rate is a place to look, not a cause.** No posting asks for one keyword, so a
+  term's rate is the rate of postings that _happened_ to ask for it, confounded with everything else
+  those postings wanted. Only terms trailing the page's own baseline by ≥10 points are tinted — a
+  table where every rate is coloured is a table where the colour means nothing — and deliberately in
+  a new `--warning` token rather than the `--danger` the `missing` coverage badge uses: a low rate
+  must not read as loud as a stated gap.
+- **`requirementEvidence` is read back in aggregate for the first time.** It is strictly better than
+  the keyword coverage beside it for the same reason the module exists: coverage answers "is this
+  term in my profile", this answers "does the resume I actually sent evidence what the posting
+  actually asked for". `omitted-profile-evidence` is the verdict worth surfacing — the Profile had
+  the bullet and the tailored resume dropped it, a selection the candidate can fix rather than a
+  skill they lack — so the requirements panel badges it and quotes the dropped bullet inline.
+- **The roll-up states its own denominator.** `requirementEvidence` is `null` for every row saved
+  before the field existed and for any row whose Profile could not be read at save time, and nothing
+  backfills one; `unscoredPostings` is reported rather than folded away, and the strip is suppressed
+  entirely when no posting in range carries evidence — a strip of zeros over unscored rows would
+  read as "nothing was dropped" when the truth is "nothing was checked". Same rule
+  `requirementKindCounts` already follows for `unspecified`.
+- **Only the four non-`direct-evidence` verdicts get a badge**, the same suppression
+  `ApplicationDetail` applies to the `unspecified` requirement kind: badging the good, common case
+  buries the ones that mean something is wrong. The strip above them still counts **all five**, so
+  it sums to the requirements it was drawn from — an omitted verdict there would leave a strip of
+  zeros standing over rows visibly badged with the verdict it dropped.
+- `fixtures.ts` gains exactly one scored row (`app-brex`, with a fourth requirement whose evidence
+  the tailored resume dropped) and leaves the rest `null`, so the mixed history that is the normal
+  case — and the caveat that reports it — are both exercised rather than assumed.
+
+Still not answerable, and the reason is one missing field: `applications` records no
+stage-transition timestamps (no `updatedAt`, no history), so time-to-response, funnel velocity and
+"these have gone quiet" remain uncomputable. A `stageHistory` jsonb column written on every stage
+PATCH — jsonb rather than new columns, matching `profiles.data` and the four Phase 12 fields — is
+the unlock whenever those questions are worth having.
+
 #### Phase 12.2 — Background enrichment (exploratory, not started)
 
 Not part of the phase above. `extractJob` is a single synchronous call on a fast/cheap model, and
@@ -1299,11 +1362,12 @@ This becomes worth exploring only if a **second, heavier extraction pass** is ev
 stronger model doing something `extractJob`'s fast model shouldn't be asked to do inline (semantic
 keyword canonicalization, the taxonomy/versioning enrichment considered and declined above) — where
 the cost is real enough that it shouldn't sit in the interactive Save path. Two things are
-prerequisites, not part of the job itself:
+prerequisites, not part of the job itself — the first of which Phase 19 has since met:
 
-- **The raw job description has to start being stored**, which it is not today — `jobDescription`
-  reaches `POST /extract-job` and nothing downstream of it. A background job with nothing to run
-  against re-processes nothing.
+- ~~**The raw job description has to start being stored**~~ — done, by Phase 19, after this was
+  written: `raw_description` holds the posting text every save analyzed, and `extraction_version`
+  says which prompt generation produced the row beside it. This prerequisite is met; a background
+  job now has something real to run against.
 - **The job should be a fire-and-forget call plus a nullable `enrichedAt` timestamp, not a queue.**
   At this app's save volume a lost enrichment on a backend restart is an acceptable, low-stakes
   miss — reprocessed later by a manual sweep over `rawDescription IS NOT NULL AND enrichedAt IS
@@ -1595,14 +1659,18 @@ Decisions:
 
 ## Known loose ends
 
-- **The job description is never stored, so no extraction change can be backfilled.** An
-  `applications` row keeps `jobInfo`, `tailoredResume` and `answers` — the outputs of the run — and the
-  posting text `extractJob` read is discarded when the run ends. Every improvement to extraction
-  therefore applies only to rows saved after it ships, and the history keeps whatever fidelity it was
-  written with. Storing the text (a `text` column plus a migration; the extension already holds the
-  string at save time) would turn re-extraction into a batch job and make Phase 12's keyword and
-  requirement changes retroactive. Not decided: it is the candidate's own data in their own database,
-  but it is also several KB a row that nothing currently reads.
+- ~~**The job description is never stored, so no extraction change can be backfilled.**~~ Decided and
+  shipped by Phase 19: `raw_description` is a `text` column (migration `0008_numerous_doorman.sql`,
+  `db/schema.ts`), and both save paths fill it — `applicationPayload.ts`'s manual entry from the
+  pasted posting, its autofill entry from the text the run actually analyzed. `extractionVersion`
+  ships alongside it, stamped from `EXTRACTION_VERSION`, so the rows a given prompt change predates
+  are identifiable rather than merely re-runnable.
+  **What is still missing is the reader, not the data.** Nothing anywhere loads a stored
+  `rawDescription` back: `scripts/evalExtraction.ts` judges a prompt change against its own
+  hand-written `POSTINGS`, not against the candidate's history, and no sweep re-runs extraction over
+  rows stamped with an older `extractionVersion`. So the retroactive improvement this entry was
+  about is now merely unbuilt, where it used to be impossible — the several KB a row is being paid
+  for and is not yet buying anything.
 
 - **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
   with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,

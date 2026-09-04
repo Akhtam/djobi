@@ -19,6 +19,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins';
 import { db } from './db/client.js';
+import { publicOrigins } from './publicOrigins.js';
 import * as schema from './db/schema.js';
 
 // A named function, typed by its own return value, rather than `ReturnType<typeof betterAuth>`
@@ -56,14 +57,15 @@ function createAuth() {
     // unpinned dev build gets a fresh random id every reload, which no static allowlist entry could
     // ever match. Without this the extension's sign-in gets a 403 `Invalid origin` before it ever
     // reaches Better Auth's own credential check.
-    // `PUBLIC_ORIGINS` (comma-separated) appends real deployed origins to the local-dev list rather
-    // than replacing it, so a production dashboard domain has somewhere to be configured without
-    // breaking `pnpm dev`. Unset in dev, where the two localhost origins below are all that's needed.
+    // `PUBLIC_ORIGINS` (comma-separated, read through `publicOrigins()` — the same parse `app.ts`'s
+    // CORS allowlist uses) appends real deployed origins to the local-dev list rather than replacing
+    // it, so a production dashboard domain has somewhere to be configured without breaking `pnpm
+    // dev`. Unset in dev, where the three origins below are all that's needed.
     trustedOrigins: [
       'http://localhost:5174',
       'http://127.0.0.1:5174',
       'chrome-extension://fgfmcenbbggfhbddflgfoehjahnbimkg',
-      ...(process.env.PUBLIC_ORIGINS?.split(',').map((origin) => origin.trim()) ?? []),
+      ...publicOrigins(),
     ],
     // Better Auth's own default id is a random base62 string, which a `uuid` column rejects outright
     // — every table it owns (`users`, `session`, `account`, `verification`) is `uuid` in

@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { Application, JobKeyword, JobRequirement } from '@djobi/shared';
+import type {
+  Application,
+  JobKeyword,
+  JobRequirement,
+  RequirementEvidenceEntry,
+} from '@djobi/shared';
 import {
   DEFAULT_RANGE,
+  MIN_DECIDED_FOR_RATE,
   RANGES,
   coverageForKeywords,
+  evidenceByRequirement,
   keywordFrequency,
+  outcomeOf,
   rangeStart,
+  requirementEvidenceRollup,
   requirementKindCounts,
+  responseRate,
   yearsOfExperienceDistribution,
 } from './analytics';
 import { fixtureProfile } from './fixtures';
@@ -308,5 +318,159 @@ describe('coverageForKeywords', () => {
 
   it('returns an empty map for no keywords', () => {
     expect(coverageForKeywords([], fixtureProfile)).toEqual(new Map());
+  });
+});
+
+describe('outcomeOf', () => {
+  it('reads a human stage as a response, however it ended', () => {
+    expect(outcomeOf('phone_screen')).toBe('responded');
+    expect(outcomeOf('onsite')).toBe('responded');
+    expect(outcomeOf('offer')).toBe('responded');
+  });
+
+  it('reads only rejected_ats as no response — the rejection that never reached a person', () => {
+    expect(outcomeOf('rejected_ats')).toBe('no-response');
+    expect(outcomeOf('rejected')).toBe('responded');
+  });
+
+  it('reads applied as pending, never as a rejection', () => {
+    expect(outcomeOf('applied')).toBe('pending');
+  });
+});
+
+describe('responseRate', () => {
+  it('excludes pending applications from the denominator rather than counting them against it', () => {
+    const applications = [
+      application({ stage: 'phone_screen' }),
+      application({ stage: 'offer' }),
+      application({ stage: 'rejected_ats' }),
+      application({ stage: 'rejected_ats' }),
+      application({ stage: 'rejected_ats' }),
+      application({ stage: 'applied' }),
+      application({ stage: 'applied' }),
+    ];
+
+    expect(responseRate(applications)).toEqual({
+      responded: 2,
+      decided: 5,
+      pending: 2,
+      rate: 2 / 5,
+    });
+  });
+
+  it('withholds a rate below the minimum sample, reporting the counts alone', () => {
+    const applications = [
+      application({ stage: 'offer' }),
+      application({ stage: 'rejected_ats' }),
+      application({ stage: 'rejected_ats' }),
+    ];
+
+    expect(responseRate(applications)).toEqual({
+      responded: 1,
+      decided: 3,
+      pending: 0,
+      rate: null,
+    });
+  });
+
+  it('reports a null rate, not zero, when nothing has resolved yet', () => {
+    const rate = responseRate([application({ stage: 'applied' })]);
+
+    expect(rate.rate).toBeNull();
+    expect(rate.decided).toBe(0);
+  });
+
+  it('returns zeros for no applications', () => {
+    expect(responseRate([])).toEqual({ responded: 0, decided: 0, pending: 0, rate: null });
+  });
+
+  it('reports a rate once exactly the minimum has resolved', () => {
+    const applications = Array.from({ length: MIN_DECIDED_FOR_RATE }, () =>
+      application({ stage: 'rejected_ats' }),
+    );
+
+    expect(responseRate(applications).rate).toBe(0);
+  });
+});
+
+describe('requirementEvidenceRollup', () => {
+  function evidence(
+    verdict: RequirementEvidenceEntry['verdict'],
+    text = 'Some requirement',
+  ): RequirementEvidenceEntry {
+    return { requirement: requirement({ text }), verdict, evidence: null };
+  }
+
+  it('counts every verdict across the postings that carry evidence', () => {
+    const applications = [
+      application({
+        requirementEvidence: [
+          evidence('direct-evidence', 'a'),
+          evidence('omitted-profile-evidence', 'b'),
+        ],
+      }),
+      application({ requirementEvidence: [evidence('unsupported', 'c')] }),
+    ];
+
+    expect(requirementEvidenceRollup(applications)).toEqual({
+      'direct-evidence': 1,
+      'skill-only': 0,
+      'omitted-profile-evidence': 1,
+      'needs-confirmation': 0,
+      unsupported: 1,
+      total: 3,
+      scoredPostings: 2,
+      unscoredPostings: 0,
+    });
+  });
+
+  it('states how many postings carry no evidence rather than folding them into a denominator', () => {
+    const rollup = requirementEvidenceRollup([
+      application({ requirementEvidence: [evidence('direct-evidence')] }),
+      application({ requirementEvidence: null }),
+      application({ requirementEvidence: null }),
+    ]);
+
+    expect(rollup.scoredPostings).toBe(1);
+    expect(rollup.unscoredPostings).toBe(2);
+    expect(rollup.total).toBe(1);
+  });
+
+  it('counts a scored posting with no requirements as scored, contributing nothing', () => {
+    const rollup = requirementEvidenceRollup([application({ requirementEvidence: [] })]);
+
+    expect(rollup.scoredPostings).toBe(1);
+    expect(rollup.total).toBe(0);
+  });
+
+  it('returns all zeros for no applications', () => {
+    expect(requirementEvidenceRollup([])).toEqual({
+      'direct-evidence': 0,
+      'skill-only': 0,
+      'omitted-profile-evidence': 0,
+      'needs-confirmation': 0,
+      unsupported: 0,
+      total: 0,
+      scoredPostings: 0,
+      unscoredPostings: 0,
+    });
+  });
+});
+
+describe('evidenceByRequirement', () => {
+  it('keys one posting’s stored verdicts by the requirement text the list renders', () => {
+    const entry: RequirementEvidenceEntry = {
+      requirement: requirement({ text: '5+ years of React' }),
+      verdict: 'omitted-profile-evidence',
+      evidence: 'Led a 400-component design system migration.',
+    };
+
+    const byText = evidenceByRequirement(application({ requirementEvidence: [entry] }));
+
+    expect(byText.get('5+ years of React')).toBe(entry);
+  });
+
+  it('returns an empty map for a posting saved before evidence was computed', () => {
+    expect(evidenceByRequirement(application({ requirementEvidence: null }))).toEqual(new Map());
   });
 });

@@ -805,4 +805,15 @@ describe('NewApplicationSchema', () => {
       false,
     );
   });
+
+  it('rejects a job URL whose scheme is not http(s)', () => {
+    // `z.string().url()` is `new URL(value)` in a try/catch and accepts every one of these. A
+    // stored `jobUrl` is rendered as an `<a href>` by the dashboard, so the write boundary is where
+    // a script URL has to stop — see `httpUrl.ts`.
+    for (const jobUrl of ['javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd']) {
+      expect(NewApplicationSchema.safeParse({ ...validNewApplication, jobUrl }).success).toBe(
+        false,
+      );
+    }
+  });
 });

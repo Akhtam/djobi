@@ -27,14 +27,21 @@ export default defineConfig({
      * Worker as the API, at which point this becomes moot rather than something to unwind.
      *
      * Paths only, not a catch-all: the dashboard's own routing lives entirely in the hash fragment
-     * (`#/...`), which never reaches the server, so these three prefixes are exactly the backend's
-     * real HTTP surface (`app.ts`'s `/api/auth/*`, `/applications`, `/profile`) and nothing here can
-     * collide with an asset or page path this dev server itself needs to serve.
+     * (`#/...`), which never reaches the server, so these prefixes are exactly the backend routes
+     * `lib/dashboardClient.ts` actually calls (`app.ts`'s `/api/auth/*`, `/applications`,
+     * `/profile`, `/extract-job`) and nothing here can collide with an asset or page path this dev
+     * server itself needs to serve.
+     *
+     * `/extract-job` was missing, and it is the one entry whose absence didn't look like an
+     * absence: the dev server answers an unproxied path with `index.html` and a 200, so the New
+     * Application view's extraction failed as an invalid-response parse error rather than as a
+     * connection problem pointing at this list. Every path `dashboardClient.ts` names belongs here.
      */
     proxy: {
       '/api': { target: 'http://127.0.0.1:5391', changeOrigin: true },
       '/applications': { target: 'http://127.0.0.1:5391', changeOrigin: true },
       '/profile': { target: 'http://127.0.0.1:5391', changeOrigin: true },
+      '/extract-job': { target: 'http://127.0.0.1:5391', changeOrigin: true },
     },
   },
 });

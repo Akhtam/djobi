@@ -15,6 +15,7 @@
 import {
   failureMessage,
   findDuplicate,
+  isHttpUrl,
   manualApplicationPayload,
   type JobInfo,
   type Profile,
@@ -53,22 +54,6 @@ type LogState =
   | ({ kind: 'save-error'; message: string } & Reviewed)
   | { kind: 'saved'; company: string; roleTitle: string };
 
-/**
- * `jobUrl` is required and validated as a URL by `NewApplicationSchema`, and it's also the key the
- * duplicate guard matches on, so it's a required field here rather than something we invent a
- * placeholder for. Checked before the request so a bad paste fails in the panel, not as a 400.
- */
-function isUsableUrl(value: string): boolean {
-  try {
-    // http/https only, spelled out: `startsWith('http')` also accepted made-up schemes like
-    // `httpx:`, which parse fine and are not something a job posting is ever served over.
-    const { protocol } = new URL(value.trim());
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 export function LogApplication({
   client,
   profile,
@@ -90,7 +75,11 @@ export function LogApplication({
   const [roleTitle, setRoleTitle] = useState('');
   const [state, setState] = useState<LogState>({ kind: 'form' });
 
-  const urlValid = isUsableUrl(jobUrl);
+  // `jobUrl` is required and refused as anything but http(s) by `NewApplicationSchema`, and it's
+  // also the key the duplicate guard matches on, so it's a required field here rather than
+  // something we invent a placeholder for. `isHttpUrl` is that same rule from `@djobi/shared`,
+  // checked before the request so a bad paste fails in the panel and not as a 400.
+  const urlValid = isHttpUrl(jobUrl);
 
   /**
    * Follows the tracked tab while the field is still the prefill and no extraction exists yet.

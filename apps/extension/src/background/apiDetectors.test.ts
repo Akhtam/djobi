@@ -303,6 +303,16 @@ describe('enrichWithApiOracle', () => {
       expect(fetchImpl).not.toHaveBeenCalled();
     });
 
+    it('takes the subdomain from the end of the host, not from its first .workable.com', async () => {
+      const fetchImpl = stubFetch({ questions: [] });
+
+      await enrichWithApiOracle('https://a.workable.com.b.workable.com/j/ABC123', [], fetchImpl);
+
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'https://a.workable.com.b.workable.com/spi/v3/jobs/ABC123/application_form',
+      );
+    });
+
     it('fills in required and choices', async () => {
       const fields = [question('Work authorization')];
       const response = {

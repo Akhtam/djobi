@@ -14,9 +14,12 @@ import {
   keywordCoverage,
   normalizeLabel,
   type Application,
+  type ApplicationStage,
   type CoverageVerdict,
   type KeywordCategory,
   type Profile,
+  type RequirementEvidenceEntry,
+  type RequirementEvidenceVerdict,
   type RequirementKind,
 } from '@djobi/shared';
 
@@ -210,4 +213,151 @@ export function yearsOfExperienceDistribution(
   return [...counts.entries()]
     .map(([years, count]) => ({ years, count }))
     .sort((a, b) => a.years - b.years);
+}
+
+/**
+ * What an application's {@link ApplicationStage} says about whether the posting ever came back.
+ *
+ * - `responded` — a human engaged: a screen, an onsite, an offer, or a `rejected` that is not
+ *   `rejected_ats`.
+ * - `no-response` — `rejected_ats`, the rejection that never reached a person.
+ * - `pending` — `applied`, which is not a "no" yet and must never be counted as one.
+ *
+ * **This leans on `rejected` and `rejected_ats` being kept distinct**, which is the whole reason
+ * `ApplicationStageSchema` carries both. A candidate who marks every rejection `rejected` reads as
+ * a 100% response rate here — the mapping cannot detect that, and inventing a heuristic to guess
+ * around it would be fabricating an outcome the record never stated, the same guess this app's
+ * extraction prompts already forbid on the way in.
+ *
+ * **And `stage` is a scalar with no history**, so a `rejected` row cannot say how far it got before
+ * it ended. This reports *whether* a posting responded, never *how far* or *how fast*; the funnel
+ * and time-to-response questions need stage-transition timestamps the `applications` table does not
+ * record today.
+ */
+export type Outcome = 'responded' | 'no-response' | 'pending';
+
+export function outcomeOf(stage: ApplicationStage): Outcome {
+  if (stage === 'applied') return 'pending';
+  if (stage === 'rejected_ats') return 'no-response';
+  return 'responded';
+}
+
+/**
+ * Applications that must have *resolved* before a rate is reported at all. Below this, `rate` is
+ * `null` and callers show the counts alone: three applications cannot distinguish a 33% response
+ * rate from a 67% one, and a page that prints a percentage over that sample manufactures
+ * confidence the data does not hold.
+ */
+export const MIN_DECIDED_FOR_RATE = 5;
+
+/** Outcomes across some set of applications — see {@link responseRate}. */
+export interface ResponseRate {
+  responded: number;
+  /** `responded + noResponse` — the applications that resolved, and the rate's denominator. */
+  decided: number;
+  /** Still `applied`. Excluded from `decided` entirely, never counted as a rejection. */
+  pending: number;
+  /**
+   * `responded / decided`, or `null` when fewer than {@link MIN_DECIDED_FOR_RATE} have resolved.
+   * `null` means "not enough data to say", never "zero".
+   */
+  rate: number | null;
+}
+
+/**
+ * How often `applications` came back at all.
+ *
+ * **Pending applications are excluded from the denominator, not counted against it.** A week's
+ * worth of applications is mostly `applied`, and dividing by them would report a collapsing
+ * response rate that measures nothing but recency — the censoring problem, and the one way this
+ * number could actively mislead. `pending` is carried alongside so a caller can say what the rate
+ * is still waiting on.
+ */
+export function responseRate(applications: Application[]): ResponseRate {
+  let responded = 0;
+  let noResponse = 0;
+  let pending = 0;
+  for (const application of applications) {
+    const outcome = outcomeOf(application.stage);
+    if (outcome === 'responded') responded += 1;
+    else if (outcome === 'no-response') noResponse += 1;
+    else pending += 1;
+  }
+  const decided = responded + noResponse;
+  return {
+    responded,
+    decided,
+    pending,
+    rate: decided >= MIN_DECIDED_FOR_RATE ? responded / decided : null,
+  };
+}
+
+/**
+ * What `Application.requirementEvidence` says across a set of postings — the per-requirement
+ * verdicts already computed and persisted at save time, read back in aggregate for the first time.
+ *
+ * Strictly better than the keyword coverage beside it for the same reason `requirementEvidence.ts`
+ * exists at all: coverage answers "does this term appear in my profile", this answers "does the
+ * resume I actually sent evidence what the posting actually asked for" — and it distinguishes
+ * `omitted-profile-evidence`, the one verdict that names a fixable mistake rather than a missing
+ * skill. That bullet was in the Profile and this resume dropped it.
+ *
+ * **Counted over scored postings only.** `requirementEvidence` is `null` for every row saved before
+ * the field existed and for any row whose Profile could not be read at save time, and nothing
+ * backfills one. `unscoredPostings` carries that count so a caller states the denominator rather
+ * than quietly reporting a rate over whichever rows happened to have the field — the same rule
+ * `requirementKindCounts` follows for `unspecified`.
+ */
+export interface RequirementEvidenceRollup extends Record<RequirementEvidenceVerdict, number> {
+  /** Every requirement these verdicts are drawn from. */
+  total: number;
+  /** Postings carrying a `requirementEvidence` array — the ones `total` is drawn from. */
+  scoredPostings: number;
+  /** Postings whose `requirementEvidence` is `null`; contributed nothing to any count above. */
+  unscoredPostings: number;
+}
+
+export function requirementEvidenceRollup(applications: Application[]): RequirementEvidenceRollup {
+  const rollup: RequirementEvidenceRollup = {
+    'direct-evidence': 0,
+    'skill-only': 0,
+    'omitted-profile-evidence': 0,
+    'needs-confirmation': 0,
+    unsupported: 0,
+    total: 0,
+    scoredPostings: 0,
+    unscoredPostings: 0,
+  };
+  for (const application of applications) {
+    if (application.requirementEvidence === null) {
+      rollup.unscoredPostings += 1;
+      continue;
+    }
+    rollup.scoredPostings += 1;
+    for (const entry of application.requirementEvidence) {
+      rollup[entry.verdict] += 1;
+      rollup.total += 1;
+    }
+  }
+  return rollup;
+}
+
+/**
+ * One application's stored verdicts, keyed by the requirement's own text so the requirements list
+ * can badge a row it is already rendering.
+ *
+ * Text is the only key available: `requirementEvidence` stores a copy of the `JobRequirement` it
+ * scored rather than an index into `jobInfo.requirements`, and the two arrays are written in the
+ * same transaction from the same source, so a row whose text matches is that row. A posting that
+ * genuinely repeats a requirement verbatim collapses to one entry — harmless, since both would
+ * carry the same verdict.
+ *
+ * Returns an empty map for an unscored row, so callers badge nothing rather than branching.
+ */
+export function evidenceByRequirement(
+  application: Application,
+): Map<string, RequirementEvidenceEntry> {
+  return new Map(
+    (application.requirementEvidence ?? []).map((entry) => [entry.requirement.text, entry]),
+  );
 }

@@ -109,6 +109,11 @@ export const fixtureApplications: Application[] = [
           kind: 'unspecified',
           yearsOfExperience: null,
         },
+        {
+          text: 'Experience improving frontend performance at scale',
+          kind: 'preferred',
+          yearsOfExperience: null,
+        },
       ],
       keywords: [
         { term: 'React', category: 'framework', postingSpelling: null },
@@ -190,7 +195,55 @@ export const fixtureApplications: Application[] = [
     ],
     rawDescription: null,
     extractionVersion: null,
-    requirementEvidence: null,
+    /*
+     * The scored row. Every other fixture leaves this `null`, standing in for the rows written
+     * before the field existed — so the analytics roll-up has the mixed history that is the normal
+     * case to report over, not a uniformly scored set that would never exercise its own caveat.
+     * One entry per requirement above, in the same order, carrying the three verdicts the
+     * requirements panel renders differently: the dropped bullet is in `fixtureProfile` and
+     * missing from this row's `tailoredResume`, which is exactly what that verdict means.
+     */
+    requirementEvidence: [
+      {
+        requirement: {
+          text: '5+ years building production React applications',
+          kind: 'required',
+          yearsOfExperience: 5,
+        },
+        verdict: 'needs-confirmation',
+        evidence: null,
+      },
+      {
+        requirement: {
+          text: 'Experience with design systems at scale',
+          kind: 'preferred',
+          yearsOfExperience: null,
+        },
+        verdict: 'direct-evidence',
+        evidence:
+          'Led the migration of a 400-component design system to CSS custom properties, cutting bundle size 18%.',
+      },
+      {
+        requirement: {
+          text: 'Comfort owning a service end to end',
+          kind: 'unspecified',
+          yearsOfExperience: null,
+        },
+        verdict: 'direct-evidence',
+        evidence:
+          'Owned the checkout surface end to end, from GraphQL schema through to the React client.',
+      },
+      {
+        requirement: {
+          text: 'Experience improving frontend performance at scale',
+          kind: 'preferred',
+          yearsOfExperience: null,
+        },
+        verdict: 'omitted-profile-evidence',
+        evidence:
+          'Reduced p99 checkout latency from 2.4s to 480ms by moving fee calculation off the request path.',
+      },
+    ],
     bulletProvenance: null,
   },
   {

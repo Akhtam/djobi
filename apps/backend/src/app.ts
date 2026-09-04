@@ -5,6 +5,7 @@ import type { MiddlewareHandler } from 'hono';
 import { auth } from './auth.js';
 import type { AuthEnv } from './authMiddleware.js';
 import { StructuredCallError } from './llm/structuredCall.js';
+import { publicOrigins } from './publicOrigins.js';
 import { RequestValidationError } from './requestBody.js';
 import type { ApplicationStore } from './db/applicationStore.js';
 import type { ProfileStore } from './db/profileStore.js';
@@ -84,14 +85,10 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
     '*',
     cors({
       // `PUBLIC_ORIGINS` (comma-separated) appends real deployed origins to the local-dev pair
-      // rather than replacing them — the same env var `auth.ts`'s `trustedOrigins` reads, so the two
-      // allowlists (this one for the browser's CORS check, that one for Better Auth's own origin
-      // check) can't drift out of sync on a real deploy.
-      origin: [
-        'http://localhost:5174',
-        'http://127.0.0.1:5174',
-        ...(process.env.PUBLIC_ORIGINS?.split(',').map((origin) => origin.trim()) ?? []),
-      ],
+      // rather than replacing them — the same env var `auth.ts`'s `trustedOrigins` reads, through
+      // the same `publicOrigins()`, so the two allowlists (this one for the browser's CORS check,
+      // that one for Better Auth's own origin check) can't drift out of sync on a real deploy.
+      origin: ['http://localhost:5174', 'http://127.0.0.1:5174', ...publicOrigins()],
       allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
       // `x-djobi-upload` exists purely to force a preflight — see the content-type middleware below
       // for why `POST /profile/extract-resume` needs one despite not sending JSON.

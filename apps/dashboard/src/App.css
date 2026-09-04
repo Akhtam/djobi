@@ -25,6 +25,10 @@
   --danger-bg: #fdeced;
   --success: #1a9d6c;
   --success-bg: #e7f7f0;
+  /* Between `--success` and `--danger`: "look at this", not "this is wrong". Its first uses are the
+     analytics response rate that trails the baseline and the requirement a resume dropped — both
+     things to investigate, neither a failure the way a missing skill is. */
+  --warning: #b4630a;
   --ring: rgb(99 86 216 / 32%);
   /* The two anchors of the brand gradient, used to colour the two live-but-early stages. Applied
      takes the blue end, phone screen the violet, so both read as djobi without reading as each
@@ -70,6 +74,7 @@
   --danger-bg: rgb(255 107 131 / 14%);
   --success: #46dc9e;
   --success-bg: rgb(61 219 155 / 14%);
+  --warning: #f0ae52;
   --ring: rgb(143 131 242 / 38%);
   --stage-applied-fg: #8ea3f7;
   --stage-applied-bg: rgb(109 127 240 / 16%);
@@ -639,6 +644,14 @@ h3 {
 .posting-link:hover {
   border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
   color: var(--primary);
+}
+
+/* A stored jobUrl whose scheme isn't http(s) renders as a `span`, not an `a` — see
+   `components/PostingLink.tsx`. It keeps the pill's shape so the column doesn't reflow, and loses
+   the hover affordance, because there is nothing here to click. */
+.posting-link--unsafe {
+  border-style: dashed;
+  cursor: default;
 }
 
 .posting-link:focus-visible {
@@ -2237,6 +2250,58 @@ h3 {
 
 .analytics-summary-strip__years {
   flex-basis: 100%;
+}
+
+/*
+ * The requirement-evidence roll-up, one strip under the required/preferred one. `is-actionable`
+ * marks the single count that names a fixable mistake rather than a missing skill — the profile had
+ * the bullet and the tailored resume dropped it.
+ */
+.analytics-summary-strip--evidence {
+  padding-top: 6px;
+}
+
+.analytics-summary-strip--evidence .is-actionable {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.analytics-summary-strip__caveat {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.analytics-req__verdict {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.analytics-req__verdict--omitted-profile-evidence {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+
+.analytics-req__verdict--unsupported {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* The dropped bullet itself, so the fix is visible without opening the application. */
+.analytics-req__omitted {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
 }
 
 .analytics-summary-strip__years-toggle {

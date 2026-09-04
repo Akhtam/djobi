@@ -5,6 +5,7 @@
 import { screen, within } from '@testing-library/react';
 import type userEvent from '@testing-library/user-event';
 import { HttpError } from '@djobi/http-client';
+import type { Application } from '@djobi/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFixtureDashboardClient } from '../lib/dashboardClient';
 import { fixtureApplications, fixtureProfile } from '../lib/fixtures';
@@ -321,5 +322,95 @@ describe('analytics', () => {
     expect(
       await screen.findByText(/No applications yet\. Fill one in with the extension/),
     ).toBeInTheDocument();
+  });
+
+  describe('response rates', () => {
+    /*
+     * The fixture rows deliberately never reach `MIN_DECIDED_FOR_RATE` in any range — five resolved
+     * postings is more than eight rows spread over three months can supply once the two pending
+     * ones are excluded — so the test that needs a *rendered* percentage builds its own set. The
+     * fixtures still cover the case that matters most: a rate withheld for want of data.
+     */
+    function staged(stages: readonly Application['stage'][]): Application[] {
+      const [template] = fixtureApplications;
+      return stages.map((stage, index) => ({
+        ...structuredClone(template),
+        id: `app-staged-${index}`,
+        stage,
+        createdAt: new Date(Date.UTC(2026, 2, 18)).toISOString(),
+      }));
+    }
+
+    it('reports a response rate over the postings that resolved, not the ones still waiting', async () => {
+      // Three of ten resolved postings responded; the eleventh is still out.
+      const applications = staged([
+        'offer',
+        'phone_screen',
+        'onsite',
+        'rejected_ats',
+        'rejected_ats',
+        'rejected_ats',
+        'rejected_ats',
+        'rejected_ats',
+        'rejected_ats',
+        'rejected_ats',
+        'applied',
+      ]);
+      renderDashboard({ client: createFixtureDashboardClient(applications) });
+
+      const summary = await screen.findByText(/response rate/);
+      expect(summary).toHaveTextContent('30% response rate');
+      expect(summary).toHaveTextContent('1 pending');
+    });
+
+    it('withholds the rate rather than printing a percentage over too few resolved postings', async () => {
+      renderDashboard();
+
+      // The default 7-day range holds three fixture postings, only two of them resolved.
+      const summary = await screen.findByText(/response rate/);
+      expect(summary).toHaveTextContent('— response rate');
+      expect(summary).not.toHaveTextContent('%');
+    });
+
+    it('hides the rate entirely while a stage filter selects on the outcome being measured', async () => {
+      const { user } = renderDashboard();
+      await user.click(await screen.findByRole('button', { name: '60 days' }));
+      await screen.findByText(/response rate/);
+
+      await user.click(screen.getByRole('button', { name: /^Onsite/ }));
+
+      expect(screen.queryByText(/response rate/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('requirement evidence', () => {
+    it('rolls up the stored verdicts and states how many postings carry none', async () => {
+      renderDashboard();
+
+      // Brex is the one scored fixture row; the other two in the default range predate the field.
+      expect(await screen.findByText('1 dropped from resume')).toBeInTheDocument();
+      expect(screen.getByText('2 evidenced')).toBeInTheDocument();
+      expect(screen.getByText(/over 1 of 3 postings/)).toBeInTheDocument();
+
+      // Every verdict is accounted for, so the strip sums to Brex's four requirements rather than
+      // leaving one of them uncounted.
+      expect(screen.getByText('1 unconfirmed')).toBeInTheDocument();
+      expect(screen.getByText('0 skill only')).toBeInTheDocument();
+      expect(screen.getByText('0 unevidenced')).toBeInTheDocument();
+    });
+
+    it('badges a requirement whose evidence the tailored resume dropped, and quotes the bullet', async () => {
+      renderDashboard();
+
+      expect(await screen.findByText('Dropped from resume')).toBeInTheDocument();
+      expect(screen.getByText(/Reduced p99 checkout latency/)).toBeInTheDocument();
+    });
+
+    it('leaves an evidenced requirement unbadged, so only the ones worth acting on carry one', async () => {
+      renderDashboard();
+
+      await screen.findByText('Dropped from resume');
+      expect(screen.queryByText('Evidenced')).not.toBeInTheDocument();
+    });
   });
 });

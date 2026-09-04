@@ -318,13 +318,24 @@ const workable: AtsOracle = {
     const parsed = parseUrl(url);
     if (!parsed || !parsed.hostname.endsWith('.workable.com')) return null;
 
+    // Sliced off the end, not `replace('.workable.com', '')`. `String.replace` with a string
+    // pattern removes the *first* occurrence, so a host like `a.workable.com.b.workable.com` —
+    // which passes the `endsWith` check above — yielded the subdomain `a.b`, addressing a host
+    // other than the page's own. Both are still under `workable.com`, so `manifest.ts`'s host
+    // permission bounds the damage; the request was simply not the one this oracle meant to make.
+    const subdomain = parsed.hostname.slice(0, -'.workable.com'.length);
     // The API is scoped to a company subdomain, so the generic hosts can't be addressed at all.
-    const subdomain = parsed.hostname.replace('.workable.com', '');
     if (['apply', 'jobs', 'www'].includes(subdomain)) return null;
 
     const match = parsed.pathname.match(/\/(?:j|jobs)\/([^/]+)/);
     if (!match) return null;
 
+    // Interpolated as-is, deliberately, unlike the Greenhouse adapter's `encodeURIComponent` on its
+    // board token. That token comes from `searchParams.get`, which hands back a *decoded* value that
+    // has to be re-encoded; this one is a single path segment `URL.pathname` has already encoded, so
+    // encoding it again would corrupt any shortcode containing a legitimately escaped character. It
+    // cannot reshape the request either way: `[^/]+` stops at a separator, and `..` (in any
+    // percent-encoded spelling) is resolved away by the `parseUrl` above before this ever sees it.
     return { url: `https://${subdomain}.workable.com/spi/v3/jobs/${match[1]}/application_form` };
   },
 

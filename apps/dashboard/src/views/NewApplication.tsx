@@ -7,6 +7,7 @@ import { HttpError } from '@djobi/http-client';
 import {
   failureMessage,
   findDuplicate,
+  isHttpUrl,
   manualApplicationPayload,
   type Application,
   type DuplicateApplication,
@@ -27,15 +28,6 @@ type ProfileState =
   | { kind: 'ready'; profile: Profile }
   | { kind: 'none' }
   | { kind: 'error'; message: string };
-
-function isUsableUrl(value: string): boolean {
-  try {
-    const { protocol } = new URL(value.trim());
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
 
 function isUnauthorized(error: unknown): boolean {
   return error instanceof HttpError && error.kind === 'http' && error.status === 401;
@@ -111,7 +103,7 @@ export function NewApplication({
 
   async function handleExtract(event: FormEvent) {
     event.preventDefault();
-    if (!jobDescription.trim() || !isUsableUrl(jobUrl)) return;
+    if (!jobDescription.trim() || !isHttpUrl(jobUrl)) return;
     setExtracting(true);
     setError(null);
     try {
@@ -286,7 +278,7 @@ export function NewApplication({
                   required
                   onChange={(event) => setJobUrl(event.target.value)}
                 />
-                {jobUrl && !isUsableUrl(jobUrl) ? (
+                {jobUrl && !isHttpUrl(jobUrl) ? (
                   <small>Enter a complete http:// or https:// URL.</small>
                 ) : null}
               </label>
@@ -310,7 +302,7 @@ export function NewApplication({
             <button
               type="submit"
               className="button button--primary new-application__submit"
-              disabled={extracting || !jobDescription.trim() || !isUsableUrl(jobUrl)}
+              disabled={extracting || !jobDescription.trim() || !isHttpUrl(jobUrl)}
             >
               {extracting ? 'Reading job posting…' : 'Extract job details'}
             </button>

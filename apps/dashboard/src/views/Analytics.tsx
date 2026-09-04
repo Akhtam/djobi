@@ -26,10 +26,13 @@ import { countByOption, FilterPills } from '../components/FilterPills';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import {
   coverageForKeywords,
+  MIN_DECIDED_FOR_RATE,
   RANGES,
   keywordFrequency,
   rangeStart,
+  responseRate,
   type Range,
+  type ResponseRate,
 } from '../lib/analytics';
 import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
@@ -72,6 +75,23 @@ const CATEGORY_GROUP_LABELS: Record<KeywordCategory, string> = {
   'soft-skill': 'Ways of working',
 };
 const UNCATEGORIZED_LABEL = 'Other';
+
+/** A rate as a whole percentage — `null` reads as `—`, never as `0%`. */
+function formatRate(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`;
+}
+
+/**
+ * What the summary strip's response rate says on hover — the counts behind the percentage, and,
+ * when there are too few of them, why no percentage is shown at all.
+ */
+function rateTitle(rate: ResponseRate): string {
+  const resolved = `${rate.responded} of ${rate.decided} resolved ${rate.decided === 1 ? 'posting' : 'postings'} responded`;
+  const pending = rate.pending > 0 ? `, ${rate.pending} still awaiting a reply` : '';
+  return rate.rate === null
+    ? `Not enough resolved postings to report a rate (needs ${MIN_DECIDED_FOR_RATE}) — ${resolved}${pending}`
+    : `${resolved}${pending}`;
+}
 
 function isUnauthorized(error: unknown): boolean {
   return error instanceof HttpError && error.kind === 'http' && error.status === 401;
@@ -142,6 +162,21 @@ export function Analytics({
   );
 
   const frequency = useMemo(() => keywordFrequency(filtered), [filtered]);
+
+  // Over `filtered`, the same set the frequency table counts — so a term's rate and its count are
+  // always drawn from one population, and the baseline below is the rate of the very postings the
+  // page is showing rather than of the whole history.
+  //
+  // **Suppressed entirely while a stage filter is on**, which is the one way this number could lie
+  // outright: filtering to `offer` selects the population on the very variable being measured and
+  // reports 100%, filtering to `rejected` reports 0%, and both look like findings. A response rate
+  // is only a fact about an unselected population, so it disappears with the filter that would
+  // have invalidated it rather than being shown under a caveat nobody reads.
+  const outcomesMeasurable = stage === null;
+  const baseline = useMemo(
+    () => (outcomesMeasurable ? responseRate(filtered) : null),
+    [filtered, outcomesMeasurable],
+  );
 
   const coverageByTerm = useMemo(() => {
     if (profileState.kind !== 'ready') return null;
@@ -261,6 +296,12 @@ export function Analytics({
           {profileState.kind === 'ready' ? (
             <span className="gap-count">
               <b>{gapCount}</b> not evidenced by your profile
+            </span>
+          ) : null}
+          {baseline ? (
+            <span title={rateTitle(baseline)}>
+              <b>{formatRate(baseline.rate)}</b> response rate
+              {baseline.pending > 0 ? ` · ${baseline.pending} pending` : ''}
             </span>
           ) : null}
           <span>

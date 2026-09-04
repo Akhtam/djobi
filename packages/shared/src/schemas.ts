@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { HttpUrlSchema } from './httpUrl.js';
 import { CustomAnswerSchema, ScreeningAnswersSchema } from './screeningAnswers.js';
 // Type-only, so these add no runtime import (see the note on `RequirementEvidenceVerdictSchema`
 // below) — they exist solely so the compile-time equality checks near each schema's hand-written
@@ -705,7 +706,12 @@ export type Application = z.infer<typeof ApplicationSchema>;
  */
 export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
   // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
-  jobUrl: z.string().url(),
+  //
+  // `HttpUrlSchema`, not `z.string().url()`: zod's `.url()` is `new URL(value)` in a try/catch, so
+  // it accepts `javascript:alert(1)` as readily as `https://…`. A stored `jobUrl` is rendered as an
+  // `<a href>` by the dashboard's `PostingLink`, which made a non-http scheme reaching this column a
+  // script URL one click away from running on the dashboard's own origin. See `httpUrl.ts`.
+  jobUrl: HttpUrlSchema,
   source: ApplicationSourceSchema.default('autofill'),
   stage: ApplicationStageSchema.default('applied'),
   notes: z.array(NoteSchema).default([]),

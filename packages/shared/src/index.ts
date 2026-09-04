@@ -8,6 +8,7 @@
  * - `keywordCoverage.ts` — what a Tailored Resume evidences of a posting's keywords.
  * - `requirementEvidence.ts` — what a Tailored Resume/Profile evidences of a posting's requirements.
  * - `bulletProvenance.ts` — which Profile sentence each Tailored Resume bullet most likely came from.
+ * - `httpUrl.ts` — the schemes a posting URL may be stored and rendered under.
  * - `jobKey.ts` — the URL identity of a job posting, shared by draft scoping and the Duplicate Guard.
  * - `screeningAnswers.ts` / `preparedAnswers.ts` — the facts a Profile answers without a model.
  * - `duplicateGuard.ts` — what the candidate already has on file for a posting, failing open.
@@ -34,6 +35,7 @@ export * from './labelMatching.js';
 export * from './keywordCoverage.js';
 export * from './requirementEvidence.js';
 export * from './bulletProvenance.js';
+export * from './httpUrl.js';
 export * from './jobKey.js';
 export * from './screeningAnswers.js';
 export * from './preparedAnswers.js';
