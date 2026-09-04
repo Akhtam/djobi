@@ -21,6 +21,24 @@ function field(overrides: Partial<DetectedField>): DetectedField {
  * {@link FillOptions}, so every test that awaited a fill paid the real 300ms settle, and the
  * "options never arrive" case paid the whole 20 × 50ms poll budget.
  */
+/**
+ * Timing config for tests. Every `fillForm` call in this file passes it, and every call is
+ * **awaited** — both are load-bearing rather than stylistic.
+ *
+ * `fillForm` is `async`. Thirteen calls here used to be made without `await`, which left a promise
+ * running after its own test had finished and its `document.body.innerHTML` had been replaced by
+ * the next one's. The stray walk then resolved against whichever DOM happened to be mounted and
+ * wrote into it — the observed symptom was `expected 'Maybe' to be 'No'` in the combobox test,
+ * `'Maybe'` being a value from a select test three cases earlier. It reproduced roughly one run in
+ * five, and only under the CPU contention of a full-workspace `pnpm test`, which is exactly the
+ * shape of failure that gets re-run until green rather than fixed.
+ *
+ * Two of those calls were wrapped in `expect(() => fillForm(...)).not.toThrow()`, which cannot
+ * observe an async rejection at all: they asserted nothing while leaking the promise.
+ *
+ * `FAST` is what keeps awaiting cheap — the real default is `settleMs: 300`, and awaiting that in
+ * every case took the file from 391 ms to 5.8 s.
+ */
 const FAST = { settleMs: 0, optionWaitAttempts: 3, optionWaitIntervalMs: 1 };
 
 /**
@@ -125,7 +143,7 @@ describe('fillForm', () => {
     document.body.innerHTML = '';
   });
 
-  it("sets a text input's value and dispatches an input event so the page reacts to the change", () => {
+  it("sets a text input's value and dispatches an input event so the page reacts to the change", async () => {
     document.body.innerHTML = `<input id="f1" type="text" />`;
     const input = document.querySelector<HTMLInputElement>('#f1')!;
     let inputEventFired = false;
@@ -133,13 +151,18 @@ describe('fillForm', () => {
       inputEventFired = true;
     });
 
-    fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane@example.com' });
+    await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1' })],
+      { f1: 'jane@example.com' },
+      FAST,
+    );
 
     expect(input.value).toBe('jane@example.com');
     expect(inputEventFired).toBe(true);
   });
 
-  it("writes through the prototype setter so React's value tracker sees a change and fires onChange", () => {
+  it("writes through the prototype setter so React's value tracker sees a change and fires onChange", async () => {
     // React makes an input controlled by installing an *instance-level* `value` accessor whose
     // setter moves its cached copy in lockstep. A plain `el.value = x` hits that accessor, the
     // cache follows, React's change detector sees cached === current, and no `onChange` is
@@ -163,7 +186,12 @@ describe('fillForm', () => {
       },
     });
 
-    fillForm(document, [field({ id: 'f1', selector: '#f1' })], { f1: 'jane@example.com' });
+    await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1' })],
+      { f1: 'jane@example.com' },
+      FAST,
+    );
 
     // The DOM took the value, but the instance tracker was bypassed — exactly the divergence
     // React's `updateValueIfChanged` looks for before dispatching a change.
@@ -228,10 +256,10 @@ describe('fillForm', () => {
     ).toEqual([]);
   });
 
-  it('leaves fields with no supplied value untouched and skips selectors that resolve to nothing, without throwing', () => {
+  it('leaves fields with no supplied value untouched and skips selectors that resolve to nothing, without throwing', async () => {
     document.body.innerHTML = `<input id="f1" type="text" value="original" /><input id="f2" type="text" />`;
 
-    expect(() =>
+    await expect(
       fillForm(
         document,
         [
@@ -240,14 +268,15 @@ describe('fillForm', () => {
           field({ id: 'f3', selector: '#does-not-exist' }),
         ],
         { f2: 'filled' },
+        FAST,
       ),
-    ).not.toThrow();
+    ).resolves.not.toThrow();
 
     expect(document.querySelector<HTMLInputElement>('#f1')!.value).toBe('original');
     expect(document.querySelector<HTMLInputElement>('#f2')!.value).toBe('filled');
   });
 
-  it('fills a native select by matching the option text, not the raw option value', () => {
+  it('fills a native select by matching the option text, not the raw option value', async () => {
     document.body.innerHTML = `
       <select id="f1">
         <option value="">Select...</option>
@@ -256,14 +285,19 @@ describe('fillForm', () => {
       </select>
     `;
 
-    fillForm(document, [field({ id: 'f1', selector: '#f1', inputType: 'select' })], {
-      f1: ' yes ',
-    });
+    await fillForm(
+      document,
+      [field({ id: 'f1', selector: '#f1', inputType: 'select' })],
+      {
+        f1: ' yes ',
+      },
+      FAST,
+    );
 
     expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('opt_yes');
   });
 
-  it('leaves a select untouched when no option matches the given value', () => {
+  it('leaves a select untouched when no option matches the given value', async () => {
     document.body.innerHTML = `
       <select id="f1">
         <option value="opt_yes" selected>Yes</option>
@@ -271,11 +305,16 @@ describe('fillForm', () => {
       </select>
     `;
 
-    expect(() =>
-      fillForm(document, [field({ id: 'f1', selector: '#f1', inputType: 'select' })], {
-        f1: 'Maybe',
-      }),
-    ).not.toThrow();
+    await expect(
+      fillForm(
+        document,
+        [field({ id: 'f1', selector: '#f1', inputType: 'select' })],
+        {
+          f1: 'Maybe',
+        },
+        FAST,
+      ),
+    ).resolves.not.toThrow();
 
     expect(document.querySelector<HTMLSelectElement>('#f1')!.value).toBe('opt_yes');
   });
@@ -354,7 +393,7 @@ describe('fillForm', () => {
     expect(filled).toEqual([]);
   });
 
-  it("checks the radio the option's recorded selector points at, without re-deriving any label text", () => {
+  it("checks the radio the option's recorded selector points at, without re-deriving any label text", async () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <label><input type="radio" id="opt-yes" name="auth" value="yes" />Yes</label>
@@ -362,7 +401,7 @@ describe('fillForm', () => {
       </fieldset>
     `;
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -383,7 +422,7 @@ describe('fillForm', () => {
     expect(document.querySelector<HTMLInputElement>('#opt-no')!.checked).toBe(false);
   });
 
-  it("follows the recorded selector even when the option's label no longer matches the DOM text — an ATS API's wording can differ from what the page renders", () => {
+  it("follows the recorded selector even when the option's label no longer matches the DOM text — an ATS API's wording can differ from what the page renders", async () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <label><input type="radio" id="opt-yes" name="auth" />Yes, authorized</label>
@@ -391,7 +430,7 @@ describe('fillForm', () => {
       </fieldset>
     `;
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -406,12 +445,13 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Authorized to work' },
+      FAST,
     );
 
     expect(document.querySelector<HTMLInputElement>('#opt-yes')!.checked).toBe(true);
   });
 
-  it('fills an option whose own label contains a comma — the value is one choice, never a delimited list', () => {
+  it('fills an option whose own label contains a comma — the value is one choice, never a delimited list', async () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <label><input type="radio" id="opt-sf" name="loc" />San Francisco, CA</label>
@@ -419,7 +459,7 @@ describe('fillForm', () => {
       </fieldset>
     `;
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -433,13 +473,14 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'San Francisco, CA' },
+      FAST,
     );
 
     expect(document.querySelector<HTMLInputElement>('#opt-sf')!.checked).toBe(true);
     expect(document.querySelector<HTMLInputElement>('#opt-ny')!.checked).toBe(false);
   });
 
-  it("falls back to matching label text for an option with no recorded selector, including a `for=id` sibling label (Ashby's markup)", () => {
+  it("falls back to matching label text for an option with no recorded selector, including a `for=id` sibling label (Ashby's markup)", async () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <span><input type="radio" id="opt-a" name="office" /></span>
@@ -449,7 +490,7 @@ describe('fillForm', () => {
       </fieldset>
     `;
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -463,13 +504,14 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Yes and I am local' },
+      FAST,
     );
 
     expect(document.querySelector<HTMLInputElement>('#opt-a')!.checked).toBe(true);
     expect(document.querySelector<HTMLInputElement>('#opt-b')!.checked).toBe(false);
   });
 
-  it('checks the matching checkbox in a checkboxgroup', () => {
+  it('checks the matching checkbox in a checkboxgroup', async () => {
     document.body.innerHTML = `
       <fieldset id="f1">
         <label><input type="checkbox" id="opt-ts" value="ts" />TypeScript</label>
@@ -477,7 +519,7 @@ describe('fillForm', () => {
       </fieldset>
     `;
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -491,6 +533,7 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'TypeScript' },
+      FAST,
     );
 
     expect(document.querySelector<HTMLInputElement>('#opt-ts')!.checked).toBe(true);
@@ -728,7 +771,7 @@ describe('fillForm', () => {
     expect(await fillForm(document, [COMBOBOX_FIELD], { f1: 'LinkedIn' }, FAST)).toEqual([]);
   });
 
-  it("clicks the ARIA radio the option's recorded selector points at — an Ashby-style group whose choices are buttons, not inputs", () => {
+  it("clicks the ARIA radio the option's recorded selector points at — an Ashby-style group whose choices are buttons, not inputs", async () => {
     document.body.innerHTML = `
       <div id="f1" role="radiogroup">
         <button type="button" role="radio" id="opt-yes" aria-checked="false">Yes</button>
@@ -740,7 +783,7 @@ describe('fillForm', () => {
       document.querySelector(`#${id}`)!.addEventListener('click', () => clicked.push(id));
     }
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -754,12 +797,18 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'No' },
+      FAST,
     );
 
-    expect(clicked).toEqual(['opt-no']);
+    // Two presses, not one: these buttons never set `aria-checked`, so `fillGroup`'s verification
+    // fails after the first pass and the retry pass presses the same choice again — the documented
+    // behaviour for a widget that ignores a press (`fillForm.ts`'s `activateChoice`). The single
+    // press this used to assert was an artefact of the call not being awaited: the assertion ran
+    // while the retry was still pending, so it measured the first pass only.
+    expect(clicked).toEqual(['opt-no', 'opt-no']);
   });
 
-  it('falls back to matching an ARIA choice by its visible text when the option carries no recorded selector (e.g. it came from the platform API, not the DOM)', () => {
+  it('falls back to matching an ARIA choice by its visible text when the option carries no recorded selector (e.g. it came from the platform API, not the DOM)', async () => {
     document.body.innerHTML = `
       <div id="f1" role="radiogroup">
         <button type="button" role="radio" id="opt-yes">Yes</button>
@@ -771,7 +820,7 @@ describe('fillForm', () => {
       document.querySelector(`#${id}`)!.addEventListener('click', () => clicked.push(id));
     }
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -785,12 +834,18 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'yes' },
+      FAST,
     );
 
-    expect(clicked).toEqual(['opt-yes']);
+    // Two presses, not one: these buttons never set `aria-checked`, so `fillGroup`'s verification
+    // fails after the first pass and the retry pass presses the same choice again — the documented
+    // behaviour for a widget that ignores a press (`fillForm.ts`'s `activateChoice`). The single
+    // press this used to assert was an artefact of the call not being awaited: the assertion ran
+    // while the retry was still pending, so it measured the first pass only.
+    expect(clicked).toEqual(['opt-yes', 'opt-yes']);
   });
 
-  it('presses an ARIA choice through the full mouse sequence, for a group whose buttons act on mousedown', () => {
+  it('presses an ARIA choice through the full mouse sequence, for a group whose buttons act on mousedown', async () => {
     // The mirror of the react-select trigger case, on the other widget shape: an ARIA choice is a
     // `<button>` with no activation behaviour of its own, so whether a press registers is entirely
     // down to which event the widget bound. Ashby's yes/no buttons are this shape, and a lone
@@ -803,7 +858,7 @@ describe('fillForm', () => {
     const yes = document.querySelector<HTMLElement>('#opt-yes')!;
     yes.addEventListener('mousedown', () => yes.setAttribute('aria-checked', 'true'));
 
-    fillForm(
+    await fillForm(
       document,
       [
         field({
@@ -814,6 +869,7 @@ describe('fillForm', () => {
         }),
       ],
       { f1: 'Yes' },
+      FAST,
     );
 
     expect(yes.getAttribute('aria-checked')).toBe('true');

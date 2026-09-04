@@ -77,7 +77,7 @@ export function profileRoute(store: ProfileStore): Hono<AuthEnv> {
         );
       }
 
-      const pdfBytes = Buffer.from(await file.arrayBuffer());
+      const pdfBytes = new Uint8Array(await file.arrayBuffer());
 
       try {
         const extracted = await extractResume(pdfBytes, c.req.raw.signal);

@@ -50,7 +50,7 @@ function expectedReadingOrder(
  * This is deliberately a report/check seam: it never mutates candidate content to make a render pass.
  */
 export async function preflightResumePdf(
-  pdfBytes: Buffer,
+  pdfBytes: Uint8Array,
   profile: RenderResumePdfProfile,
   tailoredResume: TailoredResume,
 ): Promise<void> {

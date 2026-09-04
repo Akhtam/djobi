@@ -43,16 +43,16 @@ const sampleTailoredResume: TailoredResume = {
 
 describe('renderResumePdf', () => {
   it('renders a non-empty PDF from a profile and tailored resume', async () => {
-    const buffer = await renderResumePdf(sampleProfile, sampleTailoredResume);
+    const bytes = await renderResumePdf(sampleProfile, sampleTailoredResume);
 
-    expect(buffer.length).toBeGreaterThan(0);
-    expect(buffer.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+    expect(bytes.length).toBeGreaterThan(0);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-');
   });
 
   it('heads each role with the company, then the title on its own line as "Role: …"', async () => {
     // The layout is the product here, and "it starts with %PDF-" cannot fail on a layout change.
-    // Reading the text back is the cheapest check that actually can — `@react-pdf/renderer` draws
-    // each `<Text>` as its own positioned run, so the extracted order is the rendered order.
+    // Reading the text back is the cheapest check that actually can — the renderer draws each run
+    // at its own position top-down, so the extracted order is the rendered order.
     const buffer = await renderResumePdf(sampleProfile, sampleTailoredResume);
     const pdf = await getDocumentProxy(new Uint8Array(buffer));
     const { text } = await extractText(pdf, { mergePages: true });
@@ -131,9 +131,10 @@ describe('renderResumePdf', () => {
   });
 
   it('does not hyphenate a long word that falls at a line wrap', async () => {
-    // react-pdf's default hyphenation engine splits long words with a real "-" glyph when they
-    // land at a line break (e.g. "functionality" -> "function-" / "ality"). That corrupts the
-    // rendered text and used to fail preflight on bullets like this one.
+    // A renderer that hyphenates splits long words with a real "-" glyph when they land at a line
+    // break (e.g. "functionality" -> "function-" / "ality"), which corrupts the rendered text and
+    // fails preflight on bullets like this one. `layoutText` keeps an over-long word intact
+    // instead; this is the test that holds it to that.
     const tailoredResume: TailoredResume = {
       ...sampleTailoredResume,
       workExperience: [
@@ -154,9 +155,85 @@ describe('renderResumePdf', () => {
     expect(text).toContain('functionality');
   });
 
+  it('keeps tracked headings extractable as whole words', async () => {
+    // The name and the section headings are drawn with a non-zero `Tc` (character spacing) to get
+    // the design's letter-spacing. `Tc` moves glyph *advance*, so the string in the content stream
+    // is untouched and an extractor still reads "SKILLS" — whereas faking the same look by drawing
+    // one glyph at a time would extract as "S K I L L S" and break both preflight and every ATS.
+    // This is the test that stops that implementation from ever being substituted.
+    const bytes = await renderResumePdf(sampleProfile, sampleTailoredResume);
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(bytes)), {
+      mergePages: true,
+    });
+
+    expect(text).toContain('SKILLS');
+    expect(text).toContain('EXPERIENCE');
+    expect(text).toContain('EDUCATION');
+    expect(text).toContain('Jane Doe');
+    expect(text).not.toMatch(/S\s+K\s+I\s+L\s+L\s+S/);
+  });
+
+  it('subsets the embedded fonts rather than shipping both full faces', async () => {
+    // The two embedded faces are ~0.4 MB together. `save({ subsetFonts: true })` writes only the
+    // glyphs a given resume uses; without it every rendered resume carries all 0.4 MB, and the
+    // extension attaches that to each application. A plain one-page resume must stay far under the
+    // size a single embedded face would already exceed.
+    const bytes = await renderResumePdf(sampleProfile, sampleTailoredResume);
+
+    expect(bytes.length).toBeLessThan(200_000);
+  });
+
+  it('renders a name written with combining accents (NFD)', async () => {
+    // Text does not arrive normalised: `extractPdfText` (pdf.js) routinely yields decomposed
+    // sequences from uploaded resumes and the LLM copies the name straight through, so `José` can
+    // reach the renderer as `e` + U+0301. The generated subset must carry U+0300–U+036F or the
+    // shaper substitutes a different mark, preflight sees text that is not the candidate's own
+    // words, and every accented name is a permanent 500 on `POST /render-resume-pdf`.
+    const decomposed = { ...sampleProfile, fullName: 'Jose\u0301 Nin\u0303o' };
+
+    const bytes = await renderResumePdf(decomposed, sampleTailoredResume);
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { text } = await extractText(pdf, { mergePages: true });
+
+    expect(text.normalize('NFC')).toContain('José Niño');
+  });
+
+  it('wraps a tracked name that only fits the measure without its tracking', async () => {
+    // The name is drawn with `Tc` tracking, which `layoutText` cannot see when it wraps. This name
+    // measures 511.2pt against a 511.28pt measure, so untracked it does not wrap — and then draws
+    // 528.0pt, 16.7pt past the right margin. Wrapping is the observable proof the measure handed
+    // to `layoutText` accounts for the tracking; extraction cannot check the overflow directly,
+    // since pdf.js reports glyph advances with `Tc` excluded.
+    const longName = 'Wolfeschlegelsteinhausenbergerdorff Maximilian Alexander';
+
+    const bytes = await renderResumePdf(
+      { ...sampleProfile, fullName: longName },
+      sampleTailoredResume,
+    );
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const { items } = await (await pdf.getPage(1)).getTextContent();
+    const runs = items.flatMap((item) => ('str' in item && item.str ? [item.str] : []));
+
+    expect(runs[0]).toBe('Wolfeschlegelsteinhausenbergerdorff Maximilian');
+    expect(runs[1]).toBe('Alexander');
+  });
+
+  it('renders a profile that carries no explicit page size', async () => {
+    // `resumePageSize` gained a schema default rather than always existing, so a profile built
+    // before it — or by hand in a test — simply has none. That is not a reason to fail a render.
+    const { resumePageSize: _omitted, ...withoutPageSize } = sampleProfile;
+
+    const bytes = await renderResumePdf(
+      withoutPageSize as typeof sampleProfile,
+      sampleTailoredResume,
+    );
+
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-');
+  });
+
   it('preflight rejects an implausibly small file', async () => {
     await expect(
-      preflightResumePdf(Buffer.from('%PDF-'), sampleProfile, sampleTailoredResume),
+      preflightResumePdf(new TextEncoder().encode('%PDF-'), sampleProfile, sampleTailoredResume),
     ).rejects.toThrow('file size');
   });
 

@@ -1,13 +1,22 @@
-# Resume design conventions — research for `renderResume.tsx`
+# Resume design conventions — research for `renderResume.ts`
 
-> **Status: implemented (updated 2026-08-31).** The typography recommendations below were
-> mostly applied to `apps/backend/src/pdf/renderResume.tsx`, which also gained a one-page fitting
-> ladder built on the sourced ranges. PDF preflight later added A4/Letter selection, registered Noto
+> **Status: implemented (updated 2026-09-04).** The typography recommendations below were
+> mostly applied to `apps/backend/src/pdf/renderResume.ts`, which also gained a one-page fitting
+> ladder built on the sourced ranges. PDF preflight later added A4/Letter selection, embedded Noto
 > Sans for Unicode text, and made the literal `Role: ` prefix a profile preference that defaults on.
 > This doc
 > is kept as the **record of where the numbers came from** — every "current state" note and the
 > summary comparison describe the code _before_ that pass, not today's. Read it as research history,
 > not as a to-do list.
+>
+> **The rendering library changed on 2026-09-04**, from `@react-pdf/renderer` to `@libpdf/core`, so
+> that the renderer can run in a Cloudflare Worker (react-pdf reads font files off disk and its Yoga
+> layout engine instantiates WebAssembly at runtime — a Worker permits neither). **Every number in
+> this doc survived that change unaltered**; they are typographic decisions, not library settings.
+> What changed is how they are applied: what was a `StyleSheet` of flexbox rules is now explicit
+> cursor arithmetic in `ResumeLayout`. The two renderer-specific claims below — that text extracts
+> as text rather than vector paths, and that `letterSpacing` does not corrupt the text stream — were
+> **re-verified against the new renderer** and still hold; each now has a test pinning it.
 
 ## Why this doc exists
 
@@ -283,24 +292,31 @@ a parsing spec. **Unverified.**
 ### Text as vector paths — verified directly for this renderer
 
 This is the one hazard that could plausibly come from the rendering library rather than the design.
-It does not: the PDF produced by the current `renderResume.tsx` was text-extracted with `unpdf`
+It does not: the PDF produced by the current `renderResume.ts` was text-extracted with `unpdf`
 (pdf.js) and returned clean, correctly ordered, selectable text including the `•` bullets:
 
 ```
 "Akhtam Ismatov\nakhtam.ismatov@gmail.com · 415-937-4262 · ...\nSkills\n...\nExperience\nCheckr August 2022 – June 2024\nRole: Full-Stack Developer\n• Improved API response times by 75% ...\nEducation\n..."
 ```
 
-**react-pdf embeds real fonts and real text operators, not outlined paths**, and the single-column
-flow extracts in the correct reading order. Confirmed directly, not from docs.
+**The renderer embeds real fonts and real text operators, not outlined paths**, and the
+single-column flow extracts in the correct reading order. Confirmed directly, not from docs — and
+re-confirmed after the move to `@libpdf/core`, which also embeds a real font program (subsetted to
+the glyphs each resume uses) and emits ordinary text-showing operators.
 
 ### The `letterSpacing` hazard, specifically
 
 Greenhouse's "spaces between the letters" failure is about _literal space characters_ between glyphs
 (`R E S U M E`), which produces `R E S U M E` in the text stream. **PDF `letterSpacing` is different**:
 it adjusts glyph advance via the Tc operator without inserting space characters, so the extracted
-string stays `RESUME`. The extraction above is the evidence that react-pdf's spacing does not corrupt
-the text stream. Still, **keep `letterSpacing` small (≤1 pt)** — some extractors synthesise word
-breaks from horizontal gaps above a threshold, and large tracking is the one way to trip that.
+string stays `RESUME`. The extraction above is the evidence that this spacing does not corrupt the
+text stream. `renderResume.ts` now emits that `Tc` operator directly (`ops.setCharSpacing`, reset to
+`0` after each tracked run so it cannot leak onto the rest of the page), and
+`renderResume.test.ts`'s "keeps tracked headings extractable as whole words" asserts both that
+`SKILLS` comes back whole and that it does _not_ come back as `S K I L L S` — which is what
+drawing the glyphs individually to fake the same look would produce. Still, **keep `letterSpacing`
+small (≤1 pt)** — some extractors synthesise word breaks from horizontal gaps above a threshold, and
+large tracking is the one way to trip that.
 
 ### Design rules this yields
 

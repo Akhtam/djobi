@@ -5,3 +5,7 @@ apps/backend/src/db/migrations
 
 # Captured live ATS markup and API responses — regression fixtures, kept byte-exact.
 apps/extension/src/content/__fixtures__/
+
+# Generated: ~0.6 MB of base64 font bytes (scripts/generateFonts.mts). Nothing to format, and
+# reformatting a string literal that size is pure cost on every `pnpm format`.
+apps/backend/src/pdf/notoSansFonts.ts

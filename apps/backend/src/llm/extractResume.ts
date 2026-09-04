@@ -35,7 +35,7 @@ export class NoResumeTextError extends Error {
  * @throws If the model doesn't return a tool call, or returns one that fails validation.
  */
 export async function extractResume(
-  pdfBytes: Buffer,
+  pdfBytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<ExtractedProfile> {
   let text: string;

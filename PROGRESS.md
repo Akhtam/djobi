@@ -231,9 +231,12 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   at the backend" fired for a fault that was never in the backend. It is app-owned rather than Hono's
   `HTTPException` because that class's `getResponse()` returns a plain-text body, which would put a
   second error shape on a wire the extension parses as `{ error }`.
-- **`renderResume.tsx` compiles under `apps/backend/tsconfig.json`'s `"jsx": "react-jsx"`.** That
-  tsconfig is what replaced its explicit `import React`; delete or retarget the file and the backend
-  build stops compiling JSX, with the error pointing at the component rather than at the config.
+- **`src/pdf/notoSansFonts.ts` is generated, ~0.6 MB, and must not be hand-edited.** It holds Noto
+  Sans 400/700 as base64 so `renderResume.ts` can embed fonts with no filesystem — the thing a
+  Cloudflare Worker cannot provide. Regenerate with `pnpm --filter backend fonts:generate`
+  (`scripts/generateFonts.mts`), which is also the only remaining reason
+  `@expo-google-fonts/noto-sans` is still a dev dependency. It is in `.prettierignore`; formatting a
+  0.6 MB string literal is pure cost.
 - **`packages/shared`'s `exports` now resolves to `dist/`, so shared source edits need a build.**
   `pnpm dev:backend` and `pnpm build:extension` run `pnpm --filter @djobi/shared build` first via
   `pre*` hooks, but `tsx watch` does **not** re-run them — edit a schema in `packages/shared/src`
@@ -759,7 +762,7 @@ Two more of the seven audit improvements: verifiably truthful bullet rewriting w
 (item 3, partially — see _Known loose ends_ below for what's still open), resume editing (item 4),
 and conventional experience ordering plus opt-in suppression (item 5). Built concurrently with
 another in-progress phase (PDF preflight / Unicode fonts / Letter-A4 / `Role:` prefix) touching
-`schemas.ts`, `renderResume.tsx` and `options/App.tsx` in parallel — every file this phase shares
+`schemas.ts`, `renderResume.tsx` (now `renderResume.ts`) and `options/App.tsx` in parallel — every file this phase shares
 with that work was re-read immediately before editing, and the two landed without conflict.
 
 **Phase 16a — `apps/backend/src/llm/bulletTruthfulness.ts`.** `reconcileResume` already guarantees a
@@ -1550,7 +1553,7 @@ decide what lands: the candidate **stars** the bullets that must always appear, 
 Before this phase every bullet on a role landed on every resume. `tailorResume` already permitted omission and
 already verifies each kept bullet against the Profile (see _Bullet reconciliation by source index_
 above), but nothing bounds the count — so the bank cannot grow without the resume growing with it,
-and that is what pushes a resume off one page: `renderResume.tsx` walks a density ladder to fit, and
+and that is what pushes a resume off one page: `renderResume.ts` walks a density ladder to fit, and
 when the tightest step still spills it returns two pages, its own comment naming the real fix as a
 content problem belonging upstream in `llm/tailorResume.ts`. This is that fix.
 

@@ -2,12 +2,18 @@
 
 Date: 2026-08-20
 
-**Status: Superseded (as of 2026-09-03).** No `wrangler`/Cloudflare config exists in the repo, and
-the backend's actual production build is a plain-Node server (`pnpm --filter backend build` emits
-`dist/`, started via `node dist/index.js` — see `apps/backend/README.md` and `PROGRESS.md`'s
-`apps/backend` entry), not a Worker. `docs/multi-tenant-auth.md` now states outright that this ADR
-"is explicitly _not_ assumed" by the live multi-tenant/auth design. The body below is kept as a
-historical record of the original decision, not current architecture.
+**Status: Accepted, partially implemented (as of 2026-09-04).** This ADR was briefly marked
+Superseded on 2026-09-03 on the grounds that no `wrangler` config existed and the backend built as a
+plain-Node server. That reading was wrong about where the code was actually heading: the dashboard
+had already been changed to call **relative** paths (`apps/dashboard/src/lib/dashboardClient.ts`
+sets `baseUrl: ''`), with `vite.config.ts`'s dev proxy standing in for the same-origin deployment
+this ADR describes. The dashboard therefore _requires_ the single-origin topology below; it is not
+optional. `docs/multi-tenant-auth.md`'s line that this ADR "is explicitly _not_ assumed" contradicts
+that and should be read as stale.
+
+Still true: there is no `wrangler` config in the repo, and `pnpm --filter backend build` still emits
+a plain-Node `dist/` started with `node dist/index.js`. The Worker entrypoint and `wrangler.jsonc`
+remain to be written — see "Known porting items" below for what is now done and what is left.
 
 ## Status
 
@@ -48,19 +54,52 @@ but not to the deployed Worker. One deploy, one URL, no preflights.
 
 ### Known porting items
 
-1. **Module-scope Anthropic client.** `apps/backend/src/llm/client.ts` does
-   `export const anthropic = new Anthropic()` at module scope, reading `ANTHROPIC_API_KEY` at import
-   time. Workers evaluate module scope on cold start, where bindings aren't reliably available.
-   Reuse the lazy `Proxy` pattern already written and documented in `apps/backend/src/db/client.ts`,
-   which solves exactly this problem for `DATABASE_URL`.
-2. **PDF rendering needs `nodejs_compat`.** `apps/backend/src/pdf/renderResume.tsx` uses
-   `renderToBuffer` from `@react-pdf/renderer`, which returns a Node `Buffer`, resolves packaged Noto
-   Sans font files at runtime, and parses the result through `unpdf`. This requires a real workerd
-   smoke test rather than assuming Node compatibility is sufficient.
-3. **Hardcoded origins** to replace with build-time config:
-   `apps/dashboard/src/lib/dashboardClient.ts`, `apps/extension/src/lib/callBackend.ts`, and the
-   host permission in `apps/extension/src/manifest.ts`. The extension is not deployed, but it must
-   learn the deployed origin.
+1. **Module-scope LLM client.** `apps/backend/src/llm/client.ts` does
+   `export const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })` at
+   module scope, reading the key at import time. (This item originally named `new Anthropic()`; the
+   provider changed, the hazard did not.) Workers evaluate module scope on cold start, where
+   bindings aren't reliably available. Reuse the lazy `Proxy` pattern already written and documented
+   in `apps/backend/src/db/client.ts`, which solves exactly this problem for `DATABASE_URL`.
+   **Still open.**
+2. ~~**PDF rendering needs `nodejs_compat`.**~~ **Done (2026-09-04) — and it needed a renderer
+   change, not a compatibility flag.** The workerd smoke test this item asked for was run, and
+   `@react-pdf/renderer` failed it three separate ways: `createRequire(import.meta.url)` at module
+   scope in `renderResume.tsx` threw on evaluation and took down the _entire_ Worker (not just this
+   route); its Node build's `renderToBuffer` needs `fs`/streams while wrangler resolves its browser
+   build, whose `renderToBuffer` throws by design; and underneath both, its Yoga layout engine ships
+   as base64-inlined WebAssembly that instantiates at runtime, which workerd refuses outright
+   (`Wasm code generation disallowed by embedder`). Extracting Yoga's `.wasm` and feeding it through
+   Emscripten's `instantiateWasm` hook got past instantiation and then hung.
+
+   The renderer was rewritten on `@libpdf/core` — pure JavaScript, no WebAssembly, no `node:`
+   imports — with the fonts inlined as base64 (`src/pdf/notoSansFonts.ts`) instead of resolved from
+   disk. Verified rendering a Cyrillic resume in `wrangler dev` in ~19 ms. `unpdf`, which preflight
+   and resume parsing both use, was smoke-tested on workerd separately and works unchanged.
+
+3. ~~**Hardcoded origins** to replace with build-time config.~~ **Done.** Both clients read
+   `VITE_BACKEND_ORIGIN` at build time — `apps/dashboard/src/lib/dashboardClient.ts` (which then
+   deliberately uses a _relative_ base, see the status note above) and
+   `apps/extension/src/extensionConfig.ts`, whose `EXTENSION_BACKEND_ORIGIN` also feeds the host
+   permission in `apps/extension/src/manifest.ts`. The extension still has to be rebuilt and
+   repackaged against the deployed origin.
+4. ~~**Bundle size.**~~ **Done (2026-09-04).** The whole backend bundles for Workers at **8.83 MB
+   raw / 1.87 MB gzip** (`wrangler deploy --dry-run`), inside both the 10 MB gzip paid limit and the
+   3 MB free one. The fonts were the largest single input at 1.64 MB; subsetting them at generation
+   time to the scripts the product actually renders (`scripts/generateFonts.mts`) cut their gzipped
+   contribution from 749 KB to 253 KB and brought the bundle back to what it measured _before_ the
+   renderer change (1.87 MB then, 1.87 MB now) — while now actually running.
+
+   Those figures predate adding the combining-mark range to the subset (U+0300–U+036F, needed for
+   decomposed accents — see `scripts/generateFonts.mts`). Measured by gzipping the generated module
+   either way, the range costs **+65 KB raw / +31 KB gzip**, so the bundle is now ≈1.90 MB gzip
+   rather than 1.87 MB — unchanged against both limits. The whole-bundle numbers above have not
+   been re-run through `wrangler deploy --dry-run` since; treat them as 30 KB light.
+
+   For anyone tempted to squeeze further: measured by package, the remaining large inputs are
+   `unpdf` (1.58 MB minified — pdf.js, needed to parse arbitrary uploaded resumes, not just our own
+   output), `@libpdf/core` (488 KB), `zod` (391 KB) and `pkijs` (293 KB, pulled in by
+   `@libpdf/core`'s digital-signature support, which this backend never uses — it is not
+   tree-shakeable today because the package exposes only a single `.` export).
 
 ### Tooling constraint
 

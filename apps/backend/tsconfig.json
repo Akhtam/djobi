@@ -4,7 +4,6 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
-    "jsx": "react-jsx",
     "rootDir": "src",
     "outDir": "dist",
     "resolveJsonModule": true,
@@ -13,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "exclude": ["src/**/*.test.ts"]
 }

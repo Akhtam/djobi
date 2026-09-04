@@ -158,7 +158,7 @@ describe('POST /profile/extract-resume', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(extractedDraft);
-    expect(mockExtractResume).toHaveBeenCalledWith(expect.any(Buffer), expect.any(AbortSignal));
+    expect(mockExtractResume).toHaveBeenCalledWith(expect.any(Uint8Array), expect.any(AbortSignal));
     expect(await profileStore.get(BOOTSTRAP_USER_ID)).toBeNull();
   });
 
