@@ -15,7 +15,14 @@ import { StageSelect } from '../components/StageSelect';
 import { stageFilterIcon } from '../components/StageFilterIcon';
 import { formatDate } from '../lib/format';
 import type { DashboardClient } from '../lib/dashboardClient';
-import { IN_PROGRESS_STAGES, STAGE_FILTERS, STAGE_LABELS, stageFilterOf } from '../lib/stages';
+import {
+  IN_PROGRESS_STAGES,
+  REJECTION_FILTER_LABELS,
+  REJECTION_FILTERS,
+  STAGE_FILTERS,
+  STAGE_LABELS,
+  stageFilterOf,
+} from '../lib/stages';
 import { applicationPath, PAGE_SIZE, type ListFilters } from '../lib/useHashRoute';
 import { NewApplication } from './NewApplication';
 
@@ -62,7 +69,7 @@ export function ApplicationsList({
   onCreateApplication: (payload: NewApplicationRequest) => Promise<Application | null>;
   onUnauthorized: () => void;
 }) {
-  const { query, stage } = filters;
+  const { query, stage, rejection } = filters;
   const [loggingApplication, setLoggingApplication] = useState(false);
   const logButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -84,11 +91,13 @@ export function ApplicationsList({
   const visible = useMemo(
     () =>
       searchMatches
-        // Compared through `stageFilterOf` rather than against the stage itself: the Rejected pill
-        // stands for both rejections, so an equality check would hide every ATS-rejected row.
-        .filter((application) => (stage ? stageFilterOf(application.stage) === stage : true))
+        .filter((application) => {
+          if (!stage) return true;
+          if (stage === 'rejected' && rejection) return application.stage === rejection;
+          return stageFilterOf(application.stage) === stage;
+        })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [searchMatches, stage],
+    [rejection, searchMatches, stage],
   );
 
   /*
@@ -110,6 +119,11 @@ export function ApplicationsList({
     (inProgress > 0 ? ` · ${inProgress} in progress` : '');
 
   const counts = countByOption(STAGE_FILTERS, searchMatches, (a) => stageFilterOf(a.stage));
+  const rejectionCounts = {
+    rejected_ats: searchMatches.filter((a) => a.stage === 'rejected_ats').length,
+    rejected: searchMatches.filter((a) => a.stage === 'rejected').length,
+  };
+  const rejectedCount = rejectionCounts.rejected_ats + rejectionCounts.rejected;
 
   return (
     <>
@@ -145,17 +159,40 @@ export function ApplicationsList({
             onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
           />
         </label>
-        <div className="list-stage-filters segmented-filter">
-          <FilterPills
-            options={STAGE_FILTERS}
-            labels={STAGE_LABELS}
-            selected={stage}
-            onSelect={(next) => onFiltersChange({ ...filters, stage: next })}
-            groupLabel="Filter by stage"
-            counts={counts}
-            allCount={searchMatches.length}
-            renderIcon={stageFilterIcon}
-          />
+        <div className="list-stage-filter-stack">
+          <div className="list-stage-filters segmented-filter">
+            <FilterPills
+              options={STAGE_FILTERS}
+              labels={STAGE_LABELS}
+              selected={stage}
+              onSelect={(next) =>
+                onFiltersChange({
+                  ...filters,
+                  stage: next,
+                  rejection: next === 'rejected' ? rejection : undefined,
+                })
+              }
+              groupLabel="Filter by stage"
+              counts={counts}
+              allCount={searchMatches.length}
+              renderIcon={stageFilterIcon}
+            />
+          </div>
+          {stage === 'rejected' ? (
+            <div className="list-rejection-filters">
+              <span className="list-rejection-filters__label">Rejected by</span>
+              <FilterPills
+                options={REJECTION_FILTERS}
+                labels={REJECTION_FILTER_LABELS}
+                selected={rejection ?? null}
+                onSelect={(next) => onFiltersChange({ ...filters, rejection: next })}
+                allLabel="All rejected"
+                allCount={rejectedCount}
+                groupLabel="Filter rejected applications"
+                counts={rejectionCounts}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 

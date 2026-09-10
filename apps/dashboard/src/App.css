@@ -739,8 +739,15 @@ h3 {
 .page--applications .list-filters {
   display: grid;
   grid-template-columns: minmax(260px, 0.62fr) minmax(620px, 1.38fr);
+  align-items: start;
   gap: 24px;
   margin-bottom: 22px;
+}
+
+.list-stage-filter-stack {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
 }
 
 .list-search {
@@ -855,6 +862,46 @@ h3 {
 
 .segmented-filter .filter-pill__icon--rejected {
   color: var(--danger);
+}
+
+.list-rejection-filters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.list-rejection-filters__label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.list-rejection-filters .filter-pills {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--stage-filter-bg);
+}
+
+.list-rejection-filters .filter-pill {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.list-rejection-filters .filter-pill:hover {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.list-rejection-filters .filter-pill.is-selected {
+  background: var(--danger-bg);
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
 .application-table-wrap {
@@ -2990,6 +3037,16 @@ h3 {
 
   .list-stage-filters .filter-pills {
     display: flex;
+    width: max-content;
+  }
+
+  .list-rejection-filters {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .list-rejection-filters .filter-pills {
+    flex-wrap: nowrap;
     width: max-content;
   }
 

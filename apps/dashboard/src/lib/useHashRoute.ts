@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApplicationStageSchema } from '@djobi/shared';
 import { DEFAULT_RANGE, RANGES, type Range } from './analytics';
-import { stageFilterOf, type StageFilter } from './stages';
+import { REJECTION_FILTERS, stageFilterOf, type RejectionFilter, type StageFilter } from './stages';
 
 /**
  * How many rows the list reveals at a time — the first render's worth, and one press of Load more.
@@ -29,7 +29,7 @@ import { stageFilterOf, type StageFilter } from './stages';
  */
 export const PAGE_SIZE = 20;
 
-/** What the list is narrowed to. Both fields are "no filter" when empty/null. */
+/** What the list is narrowed to. Fields are "no filter" when empty/null. */
 export interface ListFilters {
   /** Free text matched against company and role. Trimmed at the point of matching, not here. */
   query: string;
@@ -38,6 +38,8 @@ export interface ListFilters {
    * is no filter value that selects only `rejected_ats`.
    */
   stage: StageFilter | null;
+  /** An exact rejection outcome, used only while the combined Rejected stage is selected. */
+  rejection?: RejectionFilter | null;
 }
 
 /**
@@ -89,6 +91,13 @@ function stageFilterFrom(params: URLSearchParams): StageFilter | null {
   return stage.success ? stageFilterOf(stage.data) : null;
 }
 
+function rejectionFilterFrom(params: URLSearchParams): RejectionFilter | null {
+  const rejection = params.get('rejection');
+  return REJECTION_FILTERS.includes(rejection as RejectionFilter)
+    ? (rejection as RejectionFilter)
+    : null;
+}
+
 /**
  * Parses a location hash into a {@link Route}.
  *
@@ -133,11 +142,14 @@ export function parseHash(hash: string): Route {
   }
 
   const shown = Number(params.get('show'));
+  const stage = stageFilterFrom(params);
+  const rejection = stage === 'rejected' ? rejectionFilterFrom(params) : null;
   return {
     name: 'list',
     filters: {
       query: params.get('q') ?? '',
-      stage: stageFilterFrom(params),
+      stage,
+      ...(rejection ? { rejection } : {}),
     },
     shown: Number.isInteger(shown) && shown > PAGE_SIZE ? shown : PAGE_SIZE,
   };
@@ -159,6 +171,9 @@ export function listPath(filters: ListFilters, shown: number = PAGE_SIZE): strin
   const params = new URLSearchParams();
   if (filters.query) params.set('q', filters.query);
   if (filters.stage) params.set('stage', filters.stage);
+  if (filters.stage === 'rejected' && filters.rejection) {
+    params.set('rejection', filters.rejection);
+  }
   if (shown > PAGE_SIZE) params.set('show', String(shown));
   const search = params.toString();
   return search ? `#/?${search}` : '#/';

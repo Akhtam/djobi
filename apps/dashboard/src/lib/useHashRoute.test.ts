@@ -46,9 +46,32 @@ describe('parseHash', () => {
   });
 
   it('normalises a stage that shares a pill onto the pill it shares', () => {
-    // `rejected_ats` is a real stage but not a filter — the Rejected pill covers both. Landing on
-    // that pill is closer to the intent than dropping the filter and showing everything.
+    // A legacy stage-only link opens the combined parent rather than guessing a subtype selection.
     expect(parseHash('#/?stage=rejected_ats')).toEqual({
+      name: 'list',
+      filters: { query: '', stage: 'rejected' },
+      shown: PAGE_SIZE,
+    });
+  });
+
+  it('reads an exact rejection outcome under the combined Rejected filter', () => {
+    expect(parseHash('#/?stage=rejected&rejection=rejected_ats')).toEqual({
+      name: 'list',
+      filters: { query: '', stage: 'rejected', rejection: 'rejected_ats' },
+      shown: PAGE_SIZE,
+    });
+  });
+
+  it('ignores a rejection outcome unless Rejected is selected', () => {
+    expect(parseHash('#/?stage=onsite&rejection=rejected_ats')).toEqual({
+      name: 'list',
+      filters: { query: '', stage: 'onsite' },
+      shown: PAGE_SIZE,
+    });
+  });
+
+  it('ignores an unknown rejection outcome', () => {
+    expect(parseHash('#/?stage=rejected&rejection=robot')).toEqual({
       name: 'list',
       filters: { query: '', stage: 'rejected' },
       shown: PAGE_SIZE,
@@ -185,6 +208,15 @@ describe('listPath', () => {
 
   it('round-trips filters through parseHash', () => {
     const filters: ListFilters = { query: 'a&b=c', stage: 'phone_screen' };
+    expect(parseHash(listPath(filters))).toEqual({ name: 'list', filters, shown: PAGE_SIZE });
+  });
+
+  it('round-trips an exact rejection outcome', () => {
+    const filters: ListFilters = {
+      query: '',
+      stage: 'rejected',
+      rejection: 'rejected_ats',
+    };
     expect(parseHash(listPath(filters))).toEqual({ name: 'list', filters, shown: PAGE_SIZE });
   });
 

@@ -52,6 +52,19 @@ export const STAGE_FILTERS = [
 /** One of the {@link STAGE_FILTERS} — a filter value, which is narrower than a stage. */
 export type StageFilter = (typeof STAGE_FILTERS)[number];
 
+/** The two outcomes available inside the combined Rejected list filter. */
+export const REJECTION_FILTERS = [
+  'rejected',
+  'rejected_ats',
+] as const satisfies readonly ApplicationStage[];
+
+export type RejectionFilter = (typeof REJECTION_FILTERS)[number];
+
+export const REJECTION_FILTER_LABELS: Record<RejectionFilter, string> = {
+  rejected_ats: 'ATS',
+  rejected: 'Non-ATS',
+};
+
 /** The pill a stage falls under, and the normaliser for a `?stage=` in the URL. */
 export function stageFilterOf(stage: ApplicationStage): StageFilter {
   return stage === 'rejected_ats' ? 'rejected' : stage;

@@ -60,7 +60,6 @@ describe('applications list', () => {
   });
 
   it('shows both kinds of rejection under the one Rejected pill', async () => {
-    // There is no ATS-only pill by design. The kind still shows on each row's stage badge.
     const { user } = renderDashboard();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
@@ -75,11 +74,72 @@ describe('applications list', () => {
     ).toBeInTheDocument();
   });
 
+  it('filters rejected applications by ATS or non-ATS outcome', async () => {
+    const { user } = renderDashboard();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    expect(
+      screen.queryByRole('group', { name: 'Filter rejected applications' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Rejected/ }));
+
+    const rejectionFilters = screen.getByRole('group', { name: 'Filter rejected applications' });
+    expect(
+      within(rejectionFilters).getByRole('button', { name: /^All rejected/ }),
+    ).toHaveAccessibleName('All rejected2');
+    expect(within(rejectionFilters).getByRole('button', { name: /^ATS/ })).toHaveAccessibleName(
+      'ATS1',
+    );
+    expect(within(rejectionFilters).getByRole('button', { name: /^Non-ATS/ })).toHaveAccessibleName(
+      'Non-ATS1',
+    );
+
+    await user.click(within(rejectionFilters).getByRole('button', { name: /^ATS/ }));
+    expect(
+      screen.getByRole('link', { name: 'Member of Technical Staff, Product' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Software Engineer, Developer Experience' }),
+    ).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('#/?stage=rejected&rejection=rejected_ats');
+
+    await user.click(within(rejectionFilters).getByRole('button', { name: /^Non-ATS/ }));
+    expect(
+      screen.queryByRole('link', { name: 'Member of Technical Staff, Product' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Software Engineer, Developer Experience' }),
+    ).toBeInTheDocument();
+  });
+
+  it('clears the rejection outcome when another stage is selected', async () => {
+    const { user } = renderDashboard();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    await user.click(screen.getByRole('button', { name: /^Rejected/ }));
+    const rejectionFilters = screen.getByRole('group', { name: 'Filter rejected applications' });
+    await user.click(within(rejectionFilters).getByRole('button', { name: /^ATS/ }));
+    await user.click(screen.getByRole('button', { name: /^Applied/ }));
+
+    expect(window.location.hash).toBe('#/?stage=applied');
+    expect(
+      screen.queryByRole('group', { name: 'Filter rejected applications' }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^Rejected/ }));
+    expect(
+      within(screen.getByRole('group', { name: 'Filter rejected applications' })).getByRole(
+        'button',
+        { name: /^All rejected/ },
+      ),
+    ).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('counts both rejections on the one pill', async () => {
     renderDashboard();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
 
-    // One `rejected` fixture and one `rejected_ats`.
+    // One `rejected` fixture and one `rejected_ats`; the subtype controls stay hidden until needed.
     expect(screen.getByRole('button', { name: /^Rejected/ })).toHaveAccessibleName('Rejected2');
     expect(screen.queryByRole('button', { name: /ATS/ })).not.toBeInTheDocument();
   });
