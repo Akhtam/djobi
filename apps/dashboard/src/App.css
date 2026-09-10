@@ -1576,6 +1576,17 @@ h3 {
   font-size: 12px;
 }
 
+.note__meta-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.note__meta-actions time {
+  white-space: nowrap;
+}
+
 .note__category {
   font-weight: 600;
   text-transform: uppercase;
@@ -1595,11 +1606,7 @@ h3 {
   white-space: pre-wrap;
 }
 
-/*
- * The delete affordance on one note: quiet until hovered or focused, because a log is for reading
- * and the destructive control should not be the loudest thing in the row. It stays in the tab order
- * regardless — `opacity` is the only thing that changes, never `display`.
- */
+/* The neutral button style is used by "Keep it" in the confirmation prompt. */
 .note__delete {
   margin-top: 6px;
   padding: 2px 8px;
@@ -1613,13 +1620,32 @@ h3 {
   transition: opacity 120ms ease;
 }
 
-.note:hover .note__delete,
 .note__delete:focus-visible {
   opacity: 1;
 }
 
+.note__delete--trigger {
+  margin-top: 0;
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 600;
+  opacity: 1;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.note__delete--trigger:hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
 .note__delete--confirm {
   border-color: var(--danger);
+  background: var(--danger-bg);
   color: var(--danger);
   opacity: 1;
 }

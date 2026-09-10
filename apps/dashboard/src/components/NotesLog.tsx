@@ -69,40 +69,41 @@ export function NotesLog({
                 <span className={`note__category note__category--${note.category}`}>
                   {NOTE_CATEGORY_LABELS[note.category]}
                 </span>
-                <time dateTime={note.createdAt}>{formatDateTime(note.createdAt)}</time>
-              </div>
-              <p className="note__text">{note.text}</p>
-              {onDelete ? (
-                armed === note.id ? (
-                  <p className="note__confirm">
-                    Delete this note?
+                <div className="note__meta-actions">
+                  <time dateTime={note.createdAt}>{formatDateTime(note.createdAt)}</time>
+                  {onDelete && armed !== note.id ? (
                     <button
                       type="button"
-                      className="note__delete note__delete--confirm"
-                      onClick={() => {
-                        setArmed(null);
-                        onDelete(note.id);
-                      }}
+                      className="note__delete note__delete--trigger"
+                      // Named by which note it deletes: every row's button would otherwise be called
+                      // "Delete note", which is unusable by anyone reading the page through its
+                      // accessibility tree rather than its layout.
+                      aria-label={`Delete note from ${formatDateTime(note.createdAt)}`}
+                      onClick={() => setArmed(note.id)}
                     >
-                      Yes, delete
+                      Delete
                     </button>
-                    <button type="button" className="note__delete" onClick={() => setArmed(null)}>
-                      Keep it
-                    </button>
-                  </p>
-                ) : (
+                  ) : null}
+                </div>
+              </div>
+              <p className="note__text">{note.text}</p>
+              {onDelete && armed === note.id ? (
+                <p className="note__confirm">
+                  Delete this note?
                   <button
                     type="button"
-                    className="note__delete"
-                    // Named by which note it deletes: every row's button would otherwise be called
-                    // "Delete note", which is unusable by anyone reading the page through its
-                    // accessibility tree rather than its layout.
-                    aria-label={`Delete note from ${formatDateTime(note.createdAt)}`}
-                    onClick={() => setArmed(note.id)}
+                    className="note__delete note__delete--confirm"
+                    onClick={() => {
+                      setArmed(null);
+                      onDelete(note.id);
+                    }}
                   >
-                    Delete
+                    Yes, delete
                   </button>
-                )
+                  <button type="button" className="note__delete" onClick={() => setArmed(null)}>
+                    Keep it
+                  </button>
+                </p>
               ) : null}
             </li>
           ))}
