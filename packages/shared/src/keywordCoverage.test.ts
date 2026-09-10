@@ -82,6 +82,12 @@ describe('keywordCoverage', () => {
     expect(entry.verdict).toBe('skills');
   });
 
+  it('matches space and dash variants of the same keyword', () => {
+    const [entry] = coverage(resume({ skills: ['Full Stack'] }), jobInfo(['Full-stack']));
+
+    expect(entry).toEqual({ keyword: 'Full-stack', verdict: 'skills', evidence: 'Full Stack' });
+  });
+
   it('does not let a short keyword match a longer word that merely starts with it', () => {
     const result = coverage(
       resume({ skills: ['React'], workExperience: [role(['Built services in Google Cloud'])] }),

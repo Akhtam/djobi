@@ -3,6 +3,7 @@ import type { TypedMessage } from '../lib/messages';
 import { setJobContext } from '../lib/tabStore/jobContext';
 import { patchPipelineRun } from '../lib/tabStore/pipelineRun';
 import { recordReport } from './detectedFields';
+import { clearSavedBadge } from './saveBadge';
 import {
   productionDeps,
   runAnalysis,
@@ -61,6 +62,9 @@ export function handleTypedMessage(
     }
 
     case 'START_ANALYSIS':
+      // A fresh run is not the saved one the badge was raised for, so the tab's saved marker goes
+      // as the run that earned it is replaced.
+      void clearSavedBadge(message.tabId);
       // `runAnalysis` checkpoints progress into `tabStore/pipelineRun.ts` itself, so the panel
       // reads results from there rather than from a reply it would have to stay open to receive.
       return withWorkerKeptAlive(() =>
@@ -89,6 +93,17 @@ export function handleTypedMessage(
 
     case 'UPDATE_JOB_CONTEXT':
       return setJobContext(message.tabId, message.tabUrl, message.jobDescription, message.source);
+
+    case 'REPORT_SUBMISSION': {
+      // The candidate pressed the ATS's own Submit on a form this extension filled. Saving is the
+      // Save Step exactly as the panel's Save button runs it — including its claim, which will
+      // refuse a run that isn't a completed, unsaved fill (`startableFrom('save')`), and its
+      // `expectedRunId` check, which refuses a submission belonging to a superseded run.
+      const tabId = sender.tab?.id;
+      if (tabId === undefined) return Promise.resolve();
+
+      return withWorkerKeptAlive(() => runSaveApplication(tabId, deps, message.runId));
+    }
 
     case 'CHECK_RUN':
       // Nothing to do, deliberately. The work this message asks for has already happened by the

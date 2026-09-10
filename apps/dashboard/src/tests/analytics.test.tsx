@@ -123,27 +123,39 @@ describe('analytics', () => {
     expect(marks.length).toBeGreaterThan(0);
   });
 
-  it('groups each posting under one Required and one Preferred heading', async () => {
+  it('groups each posting by importance band, most decisive first', async () => {
     renderDashboard();
 
     const link = await screen.findByRole('link', {
       name: /Brex — Senior Frontend Engineer/,
     });
     const posting = link.closest('article') as HTMLElement;
-    const required = within(posting).getByRole('heading', { name: 'required', level: 3 });
+
+    expect(
+      within(posting)
+        .getAllByRole('heading', { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(['critical', 'high', 'meaningful', 'preferred']);
+
+    const critical = within(posting).getByRole('heading', { name: 'critical', level: 3 });
     const preferred = within(posting).getByRole('heading', { name: 'preferred', level: 3 });
 
-    expect(within(posting).getAllByRole('heading', { level: 3 })).toHaveLength(2);
     expect(
-      within(required.closest('section')!).getByText(/5\+ years building production React/),
-    ).toBeInTheDocument();
-    // Unclassified requirements stay visible under Required instead of creating a third heading.
-    expect(
-      within(required.closest('section')!).getByText(/Comfort owning a service end to end/),
+      within(critical.closest('section')!).getByText(/5\+ years building production React/),
     ).toBeInTheDocument();
     expect(
       within(preferred.closest('section')!).getByText(/Experience with design systems at scale/),
     ).toBeInTheDocument();
+  });
+
+  it('counts the decisive bands in the summary strip, naming the unassessed rather than hiding them', async () => {
+    renderDashboard();
+
+    await screen.findByRole('link', { name: /Brex — Senior Frontend Engineer/ });
+
+    expect(await screen.findByText('1 critical')).toBeInTheDocument();
+    expect(screen.getByText('1 high')).toBeInTheDocument();
+    expect(screen.getByText('4 not assessed')).toBeInTheDocument();
   });
 
   it('narrows the range and drops postings outside it', async () => {

@@ -59,7 +59,16 @@ const jobInfo: JobInfo = {
   roleTitle: 'Senior Engineer',
   seniority: 'Senior',
   location: null,
-  requirements: [{ text: '5+ years', kind: 'unspecified', yearsOfExperience: 5 }],
+  requirements: [
+    {
+      text: '5+ years',
+      kind: 'unspecified',
+      yearsOfExperience: 5,
+      importance: null,
+      importanceTier: null,
+      postingSignal: null,
+    },
+  ],
   keywords: [{ term: 'TypeScript', category: 'language', postingSpelling: null }],
 };
 

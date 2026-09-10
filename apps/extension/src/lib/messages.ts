@@ -115,6 +115,11 @@ export const UpdateJobContextMessageSchema = z
 export type UpdateJobContextMessage = ZodTypeOf<typeof UpdateJobContextMessageSchema>;
 
 export interface FillFormPayload {
+  /**
+   * The run this fill belongs to. The page keeps it so that a submission it observes afterwards can
+   * name the run it is a submission *of* — see {@link ReportSubmissionMessageSchema}.
+   */
+  runId: string;
   fields: DetectedField[];
   values: Record<string, string>;
   resumeFile?: { name: string; type: string; bytes: number[] };
@@ -179,9 +184,27 @@ export interface ScrapeJobDescriptionResponse {
   candidate: ScrapedJobDescription | null;
 }
 
+/**
+ * Background -> content: tell the candidate, on the page itself, that their application was
+ * recorded. No response.
+ *
+ * The side panel is usually closed by the time an auto-save lands, and the submit that triggered it
+ * usually navigates the tab, so the panel's own `saved` status is not on screen for anyone to read.
+ * This is best-effort for exactly that reason — a frame already torn down by the navigation simply
+ * never receives it, and `background/saveBadge.ts` is the confirmation that survives.
+ */
+export interface ShowSavedToastCommandMessage {
+  type: 'SHOW_SAVED_TOAST';
+  company: string;
+  roleTitle: string;
+}
+
 /** Everything the background sends *to* a content script. See `lib/pageClient.ts`. */
 export type ContentCommandMessage =
-  FillFormCommandMessage | ScanPageCommandMessage | ScrapeJobDescriptionCommandMessage;
+  | FillFormCommandMessage
+  | ScanPageCommandMessage
+  | ScrapeJobDescriptionCommandMessage
+  | ShowSavedToastCommandMessage;
 
 /**
  * The coordination protocol: content script and panel telling the background that something
@@ -213,6 +236,20 @@ export type ContentCommandMessage =
  * Harmless when the worker is alive and genuinely working: the sweep has already run for that
  * instance, so this routes to a no-op and the real step keeps going.
  */
+/**
+ * Content script -> background: the candidate just submitted a form this extension had filled. No
+ * response.
+ *
+ * `runId` names the run the fill was performed for, and is the same defence `background/runClaim.ts`
+ * documents for `START_FILL`/`START_SAVE_APPLICATION`: a submission reported after the tab has moved
+ * on to another posting must not save *that* posting's run. The content script only ever arms its
+ * watcher from a `FILL_FORM` it completed, so this can only be sent for a run the extension filled.
+ */
+export const ReportSubmissionMessageSchema = z
+  .object({ type: z.literal('REPORT_SUBMISSION'), runId: z.string().min(1) })
+  .strict();
+export type ReportSubmissionMessage = ZodTypeOf<typeof ReportSubmissionMessageSchema>;
+
 export const CheckRunMessageSchema = z
   .object({ type: z.literal('CHECK_RUN'), tabId: z.number().int().nonnegative() })
   .strict();
@@ -226,6 +263,7 @@ export const TypedMessageSchema = z.discriminatedUnion('type', [
   UpdateRunMessageSchema,
   UpdateJobContextMessageSchema,
   CheckRunMessageSchema,
+  ReportSubmissionMessageSchema,
 ]);
 export type TypedMessage = ZodTypeOf<typeof TypedMessageSchema>;
 

@@ -393,7 +393,14 @@ describe('JobInfoSchema', () => {
     const parsed = JobInfoSchema.parse(validJobInfo);
 
     expect(parsed.requirements).toEqual([
-      { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+      {
+        text: '5+ years of backend experience',
+        kind: 'unspecified',
+        yearsOfExperience: null,
+        importance: null,
+        importanceTier: null,
+        postingSignal: null,
+      },
     ]);
     expect(parsed.keywords).toEqual([
       { term: 'TypeScript', category: null, postingSpelling: null },
@@ -411,7 +418,14 @@ describe('JobInfoSchema', () => {
     });
 
     expect(parsed.requirements).toEqual([
-      { text: '5+ years of backend experience', kind: 'required', yearsOfExperience: 5 },
+      {
+        text: '5+ years of backend experience',
+        kind: 'required',
+        yearsOfExperience: 5,
+        importance: null,
+        importanceTier: null,
+        postingSignal: null,
+      },
     ]);
     expect(parsed.keywords).toEqual([
       { term: 'TypeScript', category: 'language', postingSpelling: 'TS' },
@@ -444,6 +458,44 @@ describe('JobInfoSchema', () => {
     ).toBe(false);
   });
 
+  it('round-trips an importance band, its tier and the posting wording it rests on', () => {
+    const parsed = JobInfoSchema.parse({
+      ...validJobInfo,
+      requirements: [
+        {
+          text: 'Production Kubernetes experience',
+          kind: 'required',
+          yearsOfExperience: null,
+          importance: 'critical',
+          importanceTier: 'stated',
+          postingSignal: 'Must have production Kubernetes experience',
+        },
+      ],
+    });
+
+    expect(parsed.requirements).toEqual([
+      {
+        text: 'Production Kubernetes experience',
+        kind: 'required',
+        yearsOfExperience: null,
+        importance: 'critical',
+        importanceTier: 'stated',
+        postingSignal: 'Must have production Kubernetes experience',
+      },
+    ]);
+  });
+
+  it('rejects an importance band outside the five', () => {
+    const parsed = JobInfoSchema.safeParse({
+      ...validJobInfo,
+      requirements: [
+        { text: 'Owns incidents', kind: 'required', yearsOfExperience: null, importance: 'urgent' },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it('a mix of legacy and canonical rows in one posting parses to canonical shape throughout', () => {
     const parsed = JobInfoSchema.parse({
       ...validJobInfo,
@@ -455,8 +507,22 @@ describe('JobInfoSchema', () => {
     });
 
     expect(parsed.requirements).toEqual([
-      { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
-      { text: 'Owns incidents', kind: 'preferred', yearsOfExperience: null },
+      {
+        text: '5+ years of backend experience',
+        kind: 'unspecified',
+        yearsOfExperience: null,
+        importance: null,
+        importanceTier: null,
+        postingSignal: null,
+      },
+      {
+        text: 'Owns incidents',
+        kind: 'preferred',
+        yearsOfExperience: null,
+        importance: null,
+        importanceTier: null,
+        postingSignal: null,
+      },
     ]);
     expect(parsed.keywords).toEqual([
       { term: 'TypeScript', category: null, postingSpelling: null },
@@ -766,7 +832,14 @@ describe('NewApplicationSchema', () => {
   it('accepts an explicit rawDescription, requirementEvidence and bulletProvenance', () => {
     const requirementEvidence = [
       {
-        requirement: { text: '5+ years', kind: 'required' as const, yearsOfExperience: 5 },
+        requirement: {
+          text: '5+ years',
+          kind: 'required' as const,
+          yearsOfExperience: 5,
+          importance: null,
+          importanceTier: null,
+          postingSignal: null,
+        },
         verdict: 'direct-evidence' as const,
         evidence: 'Led the billing service migration',
       },

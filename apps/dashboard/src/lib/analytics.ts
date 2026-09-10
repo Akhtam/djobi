@@ -12,7 +12,7 @@
 import {
   baseResumeOf,
   keywordCoverage,
-  normalizeLabel,
+  normalizeKeyword,
   type Application,
   type ApplicationStage,
   type CoverageVerdict,
@@ -20,6 +20,7 @@ import {
   type Profile,
   type RequirementEvidenceEntry,
   type RequirementEvidenceVerdict,
+  type RequirementImportance,
   type RequirementKind,
 } from '@djobi/shared';
 
@@ -72,11 +73,10 @@ export interface KeywordFrequencyRow {
 }
 
 /**
- * Every keyword `applications` extracted, grouped by {@link normalizeLabel} so `K8s` and
- * `Kubernetes` do not become two rows nothing can merge — though the extraction prompt collapsing
- * synonyms at the source is the real fix; this only prevents case/whitespace variants of the same
- * canonical name from splitting. Sorted by count descending, alphabetical tie-break so ordering is
- * stable across renders.
+ * Every keyword `applications` extracted, grouped by {@link normalizeKeyword}. The extraction
+ * prompt remains responsible for collapsing synonyms such as `K8s` and `Kubernetes`; this prevents
+ * case, whitespace and dash variants of the same canonical name from splitting. Sorted by count
+ * descending, alphabetical tie-break so ordering is stable across renders.
  *
  * **A keyword's count is postings that asked, not mentions.** One `Set` per application before
  * counting, so a posting listing a term twice — or under two spellings that normalize the same —
@@ -91,7 +91,7 @@ export function keywordFrequency(applications: Application[]): KeywordFrequencyR
   for (const application of applications) {
     const seen = new Set<string>();
     for (const keyword of application.jobInfo.keywords) {
-      const normalized = normalizeLabel(keyword.term);
+      const normalized = normalizeKeyword(keyword.term);
       if (!normalized) continue;
 
       const spellings = termCounts.get(normalized) ?? new Map<string, number>();
@@ -140,6 +140,53 @@ export function requirementKindCounts(applications: Application[]): RequirementK
   for (const application of applications) {
     for (const requirement of application.jobInfo.requirements) {
       counts[requirement.kind] += 1;
+      counts.total += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * How many `requirements` across `applications` fell into each {@link RequirementImportance} band.
+ *
+ * Strictly more informative than {@link requirementKindCounts} beside it, for the same reason
+ * `requirementEvidence` is more informative than `keywordCoverage`: `kind` records how a posting
+ * *phrased* a requirement, while the band records how much it *matters* in that posting, which is
+ * the thing a reader can act on.
+ *
+ * **`unbanded` is reported, never folded away.** Most of the stored history predates importance
+ * entirely. Those requirements are not `low-signal` ones — nothing assessed them — so they are
+ * counted on their own line rather than absorbed into the lowest band or quietly dropped from a
+ * denominator, the same discipline {@link requirementEvidenceRollup} follows with its unscored
+ * postings.
+ *
+ * These are counts, and only counts. Nothing here may be summed into a weight, averaged, or shown
+ * as a percentage: a band is a label, and an importance figure on screen is a figure someone will
+ * try to raise.
+ */
+export interface RequirementImportanceCounts extends Record<RequirementImportance, number> {
+  /** Requirements carrying no band — extracted before importance existed, or left unassessed. */
+  unbanded: number;
+  /** Every requirement these counts are drawn from, banded and unbanded alike. */
+  total: number;
+}
+
+export function requirementImportanceCounts(
+  applications: Application[],
+): RequirementImportanceCounts {
+  const counts: RequirementImportanceCounts = {
+    critical: 0,
+    high: 0,
+    meaningful: 0,
+    preferred: 0,
+    'low-signal': 0,
+    unbanded: 0,
+    total: 0,
+  };
+  for (const application of applications) {
+    for (const requirement of application.jobInfo.requirements) {
+      if (requirement.importance === null) counts.unbanded += 1;
+      else counts[requirement.importance] += 1;
       counts.total += 1;
     }
   }

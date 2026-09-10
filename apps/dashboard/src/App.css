@@ -402,11 +402,16 @@ h3 {
 }
 
 /*
- * `required`/`preferred`, read off a posting's own headings — see `JobRequirementSchema`.
- * `unspecified` renders no badge at all rather than a third color: most postings draw no
- * distinction, and badging the common case would make the two that matter harder to spot.
+ * Importance bands, the grouping both requirement views use — see `lib/requirementGroups.ts`.
+ *
+ * Deliberately a chip and never a bar, meter or filled track. A length is read as a quantity, and a
+ * quantity on this screen is one the candidate would set about raising; a band is a label for what
+ * the posting asked for, which is not a thing they can change. Only the two decisive bands are
+ * colored — `meaningful` and below stay muted so the eye lands on what actually decides the
+ * application, and `unbanded` is greyest of all because it is the absence of an assessment rather
+ * than a low one.
  */
-.requirement-kind {
+.requirement-band {
   display: inline-block;
   margin-right: 6px;
   padding: 1px 7px;
@@ -416,16 +421,41 @@ h3 {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   vertical-align: middle;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
 }
 
-.requirement-kind--required {
+.requirement-band--critical {
+  background: rgba(244, 63, 94, 0.15);
+  color: #f43f5e;
+}
+
+.requirement-band--high {
   background: rgba(139, 92, 246, 0.15);
   color: #8b5cf6;
 }
 
-.requirement-kind--preferred {
-  background: rgba(20, 184, 166, 0.15);
-  color: #14b8a6;
+
+.requirement-groups__trimmed,
+.analytics-req-groups__trimmed {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/*
+ * The reveal on the detail page, which is a button rather than the panel's static line — see
+ * `RequirementList`. Styled as the line it replaces so the trim reads the same on both screens,
+ * with only the pointer and underline saying this one can be acted on.
+ */
+button.requirement-groups__trimmed {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .requirement-years {

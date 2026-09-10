@@ -116,6 +116,7 @@ describe('typed-message protocol', () => {
       source: 'manual',
     },
     { type: 'CHECK_RUN', tabId: 1 },
+    { type: 'REPORT_SUBMISSION', runId: 'run-1' },
   ];
 
   it.each(messages)('parses $type from the versioned envelope', (message) => {

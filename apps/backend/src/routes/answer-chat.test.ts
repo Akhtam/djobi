@@ -26,7 +26,14 @@ const jobInfo: JobInfo = {
   seniority: 'Senior',
   location: 'Remote',
   requirements: [
-    { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+    {
+      text: '5+ years of backend experience',
+      kind: 'unspecified',
+      yearsOfExperience: null,
+      importance: null,
+      importanceTier: null,
+      postingSignal: null,
+    },
   ],
   keywords: [{ term: 'TypeScript', category: null, postingSpelling: null }],
 };

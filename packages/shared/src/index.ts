@@ -7,6 +7,7 @@
  * - `labelMatching.ts` — when two labels count as the same, under a name per rule.
  * - `keywordCoverage.ts` — what a Tailored Resume evidences of a posting's keywords.
  * - `requirementEvidence.ts` — what a Tailored Resume/Profile evidences of a posting's requirements.
+ * - `requirementImportance.ts` — the gate capping an importance band the posting cannot back.
  * - `bulletProvenance.ts` — which Profile sentence each Tailored Resume bullet most likely came from.
  * - `httpUrl.ts` — the schemes a posting URL may be stored and rendered under.
  * - `jobKey.ts` — the URL identity of a job posting, shared by draft scoping and the Duplicate Guard.
@@ -34,6 +35,7 @@ export * from './resumeFileName.js';
 export * from './labelMatching.js';
 export * from './keywordCoverage.js';
 export * from './requirementEvidence.js';
+export * from './requirementImportance.js';
 export * from './bulletProvenance.js';
 export * from './httpUrl.js';
 export * from './jobKey.js';

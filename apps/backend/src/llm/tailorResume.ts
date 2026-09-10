@@ -150,7 +150,7 @@ function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume)
 
 /**
  * A deterministic, pre-computed reading of what the Profile's *full, uncapped* bullet bank already
- * evidences for each requirement — required first — so the model spends its selection budget on
+ * evidences for each requirement, most decisive first, so the model spends its selection budget on
  * requirements the Profile can actually support instead of re-deriving that itself from scratch.
  *
  * Run against `baseResumeOf(grounding)` rather than the eventual tailored output: this runs before
@@ -166,6 +166,10 @@ function requirementEvidenceContext(grounding: TailorResumeProfile, jobInfo: Job
   const summary = evidence.map(({ requirement, verdict, evidence: match }) => ({
     requirement: requirement.text,
     kind: requirement.kind,
+    // Carried because the order below is now the band's, so a model told only the `kind` could not
+    // see why the list is arranged as it is. `null` on a posting extracted before importance
+    // existed, which is why the instruction leans on the ordering rather than on the field.
+    importance: requirement.importance,
     verdict,
     evidencedBy: match,
   }));
@@ -192,7 +196,7 @@ export async function tailorResume(
 
 The arrays in base_profile are authoritative and zero-indexed. Skills are copied unchanged by the server and must not appear in the output. Return every work-experience role exactly once as {"sourceIndex":N,"bullets":[...]}; sourceIndex selects which role's bullets you are reporting, not where that role appears — role order always follows base_profile's own reverse-chronological order and cannot be changed. Bullets may be reordered or omitted up to the role's cap. Every index in starredIndices is already selected: return each exactly once as {"sourceIndex":M} with no text, and exclude it from the bullets you select. For each selected non-starred bullet return {"sourceIndex":M,"text":"..."}, where sourceIndex points into that role's original bullets and text is its truth-preserving rewrite. Do not copy company, title, dates, or skill text into the output.
 
-A requirement_evidence block, when present, is a deterministic pre-check of what base_profile's bullets already evidence per requirement, required requirements listed first. Prioritize keeping or selecting the bullets it names as evidencedBy for direct-evidence/skill-only/omitted-profile-evidence required items over bullets that only serve a preferred item. It also names unsupported/needs-confirmation required items so you can leave them alone rather than spend a rewrite pretending to address them — never invent a bullet or a detail to cover one.
+A requirement_evidence block, when present, is a deterministic pre-check of what base_profile's bullets already evidence per requirement. It is ordered by how much each requirement decides this application — most decisive first, and within one importance the unmet before the met — so earlier entries matter more than later ones. Prioritize keeping or selecting the bullets it names as evidencedBy for direct-evidence/skill-only/omitted-profile-evidence entries near the top of that list over bullets that only serve entries near the bottom. It also names unsupported/needs-confirmation entries so you can leave them alone rather than spend a rewrite pretending to address them — never invent a bullet or a detail to cover one.
 
 ${groundingContext(grounding)}`;
 

@@ -105,6 +105,18 @@ Matching is whole-word, by the same rule that keeps a stored "No" out of "Norway
 _Avoid_: match score, ATS score (both name it as a number to maximize, which is what invites
 keyword stuffing), keyword match rate
 
+**Importance Band**:
+How much one of a posting's requirements matters _in that posting_ — one of `critical`, `high`,
+`meaningful`, `preferred`, `low-signal`, or null when nothing assessed it. Never a claim about the
+candidate, and never a number: five bands, because the evidence cannot support finer grain and a
+figure would invite arithmetic (summing weight, "% of importance matched") nobody has licensed.
+Paired with an **Importance Tier** — `stated`, `structural` or `inferred` — saying where the band
+came from, and a **Posting Signal**: the posting's own wording the band rests on, and gated by one rule: an `inferred` band can never be `critical` or `high`, so every
+band a reader acts on rests on the posting's own words or layout rather than on market guesswork.
+Distinct from a requirement's `kind`, which records how the posting _phrased_ it.
+_Avoid_: requirement score, priority score, weight (all name it as a number to maximize or to do
+arithmetic with)
+
 **Detected Field**:
 One thing on a job application page a candidate fills in, classified into a category (name, email, resume upload, question, etc.) by the field-detection heuristic. Usually one input, textarea or select — but a whole group of choices answering a single question (a fieldset, a `role="radiogroup"`, or radios sharing a `name`) is _one_ Detected Field, with the choices as its options.
 _Avoid_: form field, input (both suggest a single element, which a choice group isn't)

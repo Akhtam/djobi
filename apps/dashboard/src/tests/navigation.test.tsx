@@ -87,26 +87,41 @@ describe('routing', () => {
     ).toBeInTheDocument();
   });
 
-  it('groups requirement kinds once while preserving years and keyword categories', async () => {
+  it('groups requirements by importance band, most decisive first, keeping years and keyword categories', async () => {
     renderDashboard({ hash: '#/applications/app-brex' });
 
     await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
     const jobInfo = screen.getByRole('tab', { name: 'Job info' }).closest('article') as HTMLElement;
-    const required = within(jobInfo).getByRole('heading', { name: 'required', level: 4 });
+    const headings = within(jobInfo).getAllByRole('heading', { level: 4 });
+
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      'critical',
+      'high',
+      'meaningful',
+      'preferred',
+    ]);
+
+    const critical = within(jobInfo).getByRole('heading', { name: 'critical', level: 4 });
     const preferred = within(jobInfo).getByRole('heading', { name: 'preferred', level: 4 });
 
-    expect(within(jobInfo).getAllByRole('heading', { level: 4 })).toHaveLength(2);
     expect(
-      within(required.closest('section')!).getByText(/5\+ years building production React/),
-    ).toBeInTheDocument();
-    expect(
-      within(required.closest('section')!).getByText(/Comfort owning a service end to end/),
+      within(critical.closest('section')!).getByText(/5\+ years building production React/),
     ).toBeInTheDocument();
     expect(
       within(preferred.closest('section')!).getByText(/Experience with design systems at scale/),
     ).toBeInTheDocument();
     expect(within(jobInfo).getByText(/\(5\+ yrs\)/)).toBeInTheDocument();
     expect(within(jobInfo).getByText('· Framework')).toBeInTheDocument();
+  });
+
+  it('renders a posting whose requirements predate importance under one unassessed heading', async () => {
+    renderDashboard({ hash: '#/applications/app-ramp' });
+
+    await screen.findByRole('heading', { name: 'Ramp · Spend · New York, NY' });
+    const jobInfo = screen.getByRole('tab', { name: 'Job info' }).closest('article') as HTMLElement;
+    const headings = within(jobInfo).getAllByRole('heading', { level: 4 });
+
+    expect(headings.map((heading) => heading.textContent)).toEqual(['not assessed']);
   });
 
   it('shows the same brand header on both routes', async () => {

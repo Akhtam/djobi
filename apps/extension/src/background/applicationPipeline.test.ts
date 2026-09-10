@@ -882,6 +882,7 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       {
+        runId: expect.any(String),
         fields: [emailField, questionField],
         values: { 'f-email': 'jane@example.com', 'f-why': 'Draft answer.' },
         resume: undefined,
@@ -906,6 +907,7 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       {
+        runId: expect.any(String),
         fields: [emailField],
         values: { 'f-email': 'jane@example.com' },
         resume: undefined,
@@ -929,6 +931,7 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       {
+        runId: expect.any(String),
         fields: [emailField, questionField],
         values: { 'f-email': 'jane@example.com' },
         resume: undefined,
@@ -1160,6 +1163,7 @@ describe('runFill', () => {
     expect(deps.page.fill).toHaveBeenCalledWith(
       7,
       {
+        runId: expect.any(String),
         fields: [decoyField, resumeField],
         values: {},
         resume: { name: 'jane_doe_resume.pdf', type: 'application/pdf', bytes: pdfBytes.buffer },
@@ -1221,6 +1225,34 @@ describe('runFill', () => {
       expect.any(Object),
     );
     expect(deps.backend.saveApplication).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the candidate on the tab once the row exists, naming the job that was saved', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const announce = vi.fn();
+    const deps = { ...makeDeps({}), saveNotice: { announce } };
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    expect(announce).toHaveBeenCalledWith(7, { company: 'Acme', roleTitle: 'Senior Engineer' });
+  });
+
+  it('announces nothing when the write failed, since there is no record to report', async () => {
+    stubChrome();
+    await seedReviewRun(7, [emailField]);
+    const announce = vi.fn();
+    const deps = {
+      ...makeDeps({ saveApplication: vi.fn().mockRejectedValue(new Error('backend unreachable')) }),
+      saveNotice: { announce },
+    };
+
+    await runFill(7, profile, deps);
+    await runSaveApplication(7, deps);
+
+    expect(await getPipelineRun(7)).toMatchObject({ status: 'save-error' });
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it('saves the description Analysis actually analyzed, even if the editor has since diverged', async () => {
@@ -1658,6 +1690,8 @@ describe('the backend adapter', () => {
       7,
       {
         type: 'FILL_FORM',
+        // The run being filled, so a submission the page observes afterwards can name it.
+        runId: expect.any(String),
         fields: [emailField, resumeField],
         values: { 'f-email': 'jane@example.com' },
         resumeFile: {

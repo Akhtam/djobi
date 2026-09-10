@@ -48,7 +48,14 @@ const jobInfo: JobInfo = {
   seniority: 'Senior',
   location: 'Remote',
   requirements: [
-    { text: '5+ years of backend experience', kind: 'unspecified', yearsOfExperience: null },
+    {
+      text: '5+ years of backend experience',
+      kind: 'unspecified',
+      yearsOfExperience: null,
+      importance: null,
+      importanceTier: null,
+      postingSignal: null,
+    },
   ],
   keywords: [
     { term: 'TypeScript', category: null, postingSpelling: null },
@@ -126,15 +133,29 @@ describe('tailorResume', () => {
     expect(promptText().indexOf('<base_profile>')).toBeLessThan(promptText().indexOf('<job_info>'));
   });
 
-  it('tells the model, per requirement, what the full bullet bank already evidences — required first', async () => {
+  it('tells the model, per requirement, what the full bullet bank already evidences — most decisive first', async () => {
     mockDoGenerate.mockResolvedValue(
       objectGeneration({ workExperience: [{ sourceIndex: 0, bullets: [] }] }),
     );
     const evidencedJobInfo: JobInfo = {
       ...jobInfo,
       requirements: [
-        { text: 'Comfort with ambiguity', kind: 'preferred', yearsOfExperience: null },
-        { text: 'Led the billing service migration', kind: 'required', yearsOfExperience: null },
+        {
+          text: 'Comfort with ambiguity',
+          kind: 'preferred',
+          yearsOfExperience: null,
+          importance: 'preferred',
+          importanceTier: 'structural',
+          postingSignal: 'listed under Nice to have',
+        },
+        {
+          text: 'Led the billing service migration',
+          kind: 'required',
+          yearsOfExperience: null,
+          importance: 'critical',
+          importanceTier: 'stated',
+          postingSignal: 'Required: led a billing service migration',
+        },
       ],
     };
 
@@ -143,17 +164,20 @@ describe('tailorResume', () => {
     const summary = JSON.parse(
       promptText().split('<requirement_evidence>\n')[1].split('\n</requirement_evidence>')[0],
     );
-    // Required first, even though it was listed second in the posting.
+    // The critical requirement leads, even though the posting listed it second — and the band
+    // travels with it, so the model can see what the ordering is claiming.
     expect(summary).toEqual([
       {
         requirement: 'Led the billing service migration',
         kind: 'required',
+        importance: 'critical',
         verdict: 'direct-evidence',
         evidencedBy: 'Led the billing service migration',
       },
       {
         requirement: 'Comfort with ambiguity',
         kind: 'preferred',
+        importance: 'preferred',
         verdict: 'unsupported',
         evidencedBy: null,
       },

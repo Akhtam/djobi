@@ -24,7 +24,7 @@
  * "covered" costs them the gap they came here to find — erring toward missing remains the reason
  * this stays a report and not a correction.
  */
-import { containsAsWords, normalizeLabel } from './labelMatching.js';
+import { containsAsWords, normalizeKeyword } from './labelMatching.js';
 import type { JobInfo, Profile, TailoredResume } from './schemas.js';
 
 /** Where a keyword was found — or that it was not. */
@@ -65,15 +65,15 @@ export function keywordCoverage(
     // so a Profile carrying either spelling counts as evidence. The report itself still names the
     // keyword by its canonical `term`, since that is the spelling the rest of the app reads.
     const needles = [
-      normalizeLabel(keyword),
-      postingSpelling ? normalizeLabel(postingSpelling) : '',
+      normalizeKeyword(keyword),
+      postingSpelling ? normalizeKeyword(postingSpelling) : '',
     ]
       .filter(Boolean)
       .filter((value, index, all) => all.indexOf(value) === index);
     if (needles.length === 0) return [];
 
     const carries = (candidate: string): boolean => {
-      const normalized = normalizeLabel(candidate);
+      const normalized = normalizeKeyword(candidate);
       return needles.some((needle) => containsAsWords(normalized, needle));
     };
 

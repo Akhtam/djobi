@@ -315,8 +315,76 @@ export const RequirementKindSchema = z.enum(['required', 'preferred', 'unspecifi
 export type RequirementKind = z.infer<typeof RequirementKindSchema>;
 
 /**
+ * How much a requirement matters *in this posting* — never how proficient the candidate is, and
+ * never a number. Five bands rather than a 0-100 integer because 101 distinguishable levels is a
+ * precision the evidence cannot support: "87" versus "84" will not reproduce across two extractions
+ * of the same posting, and a number invites the arithmetic nobody has licensed here — summing
+ * importance, averaging it, "% of importance matched". Every other machine-read judgement in this
+ * repo is a bounded enum ({@link RequirementKindSchema}, {@link RequirementEvidenceVerdictSchema},
+ * {@link KeywordCategorySchema}); this is not the exception.
+ *
+ * Distinct from `kind`, which records how the *posting phrased* the requirement (under a
+ * "Requirements" heading versus a "Nice to have" one). Both are stored: a posting can list a
+ * boilerplate line and a screen-deciding must-have under the same heading, which is exactly the
+ * distinction `kind` cannot make.
+ */
+export const RequirementImportanceSchema = z.enum([
+  'critical',
+  'high',
+  'meaningful',
+  'preferred',
+  'low-signal',
+]);
+/** Inferred type of {@link RequirementImportanceSchema}. */
+export type RequirementImportance = z.infer<typeof RequirementImportanceSchema>;
+
+/**
+ * The bands in decreasing order of how much they decide an application — the one place that order
+ * is written down.
+ *
+ * Read off the enum rather than retyped, so the sort in `requirementEvidence.ts` and the group
+ * order in the dashboard cannot drift from the set of bands or from each other. A band added to the
+ * enum lands in this list automatically, at whatever position it was declared, which is why the
+ * enum above is itself declared most-decisive-first.
+ */
+export const IMPORTANCE_BANDS = RequirementImportanceSchema.options;
+
+/**
+ * Where a requirement's {@link RequirementImportanceSchema} band came from. The band alone is not
+ * auditable — this says whether it can be checked against the posting at all, and it is what the
+ * cap in `requirementImportance.ts` reads.
+ *
+ * - `stated` — the posting itself marks it required ("must have", "required", a legal or language
+ *   gate, or it appears in the job title). Carries a **verbatim** quote in `postingSignal`.
+ * - `structural` — no must-have wording, but the posting's own structure carries the weight: the
+ *   section it sits under, repetition across responsibilities, position in the list. Auditable from
+ *   the posting text alone, with no market knowledge.
+ * - `inferred` — neither; the band is knowledge of how such roles are actually screened. Allowed,
+ *   because market weight is genuinely useful and pretending it is unavailable only pushes the guess
+ *   underground into an unlabelled band. Labelling it is what makes the cap possible.
+ *
+ * Deliberately *not* named `RequirementEvidence*`: `requirementEvidence.ts` already owns that word
+ * for what the candidate's resume shows, which is a claim about the candidate rather than about the
+ * posting. Two `evidence` vocabularies on one screen is a vocabulary nobody can hold.
+ */
+export const ImportanceTierSchema = z.enum(['stated', 'structural', 'inferred']);
+/** Inferred type of {@link ImportanceTierSchema}. */
+export type ImportanceTier = z.infer<typeof ImportanceTierSchema>;
+
+/**
  * One qualification a posting states, with the structure Phase 12's analytics aggregates over.
  * `yearsOfExperience` is null unless the posting states a number — never a guess.
+ *
+ * `importance`/`importanceTier`/`postingSignal` are all nullable and all default to `null`, so a
+ * requirement stored before they existed parses unchanged — `jobInfo` is jsonb read back exactly as
+ * written, the same tolerant read {@link JobRequirementInputSchema} performs for a bare string.
+ * A `null` band means "not assessed", and it is **not** a sixth band: it must never be counted as a
+ * low one, the same way `kind: 'unspecified'` is not a fourth kind of `false`.
+ *
+ * The schema stays permissive on purpose. The one rule these fields have — that an `inferred` band
+ * can never be `critical` or `high` — is enforced by `normalizeRequirementImportance` in
+ * `requirementImportance.ts` at extraction time, not by a refinement here. A refinement would make
+ * an already-stored row fail to parse, turning a bad extraction into an unreadable application.
  */
 export const JobRequirementSchema = z.object({
   text: z.string().describe("The requirement in the posting's own words"),
@@ -325,6 +393,19 @@ export const JobRequirementSchema = z.object({
     .number()
     .nullable()
     .describe('Years the posting states for this requirement, if any; null otherwise'),
+  importance: RequirementImportanceSchema.nullable()
+    .default(null)
+    .describe('How much this requirement matters in this posting; null if not assessed'),
+  importanceTier: ImportanceTierSchema.nullable()
+    .default(null)
+    .describe('Where the importance band came from; null travels with a null band'),
+  postingSignal: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'The posting wording the band rests on: a verbatim quote for stated, a section or repetition reference for structural, null for inferred',
+    ),
 });
 /** Inferred type of {@link JobRequirementSchema}. */
 export type JobRequirement = z.infer<typeof JobRequirementSchema>;
@@ -332,7 +413,7 @@ export type JobRequirement = z.infer<typeof JobRequirementSchema>;
 /**
  * A {@link JobRequirement}, or the bare string every `requirements` row stored before this shape
  * existed — `jobInfo` is jsonb read back exactly as written, so an old row parses through this
- * branch and lifts to `kind: 'unspecified'`, `yearsOfExperience: null`. This is a tolerant *read*,
+ * branch and lifts to `kind: 'unspecified'` with every later-added field null. This is a tolerant *read*,
  * not a migration: nothing rewrites the stored row, and every consumer downstream of
  * {@link JobInfoSchema} sees only the canonical object shape, the same way {@link parseProfile}
  * completes a Profile saved before a field existed.
@@ -342,6 +423,9 @@ export const JobRequirementInputSchema = z.union([
     text,
     kind: 'unspecified',
     yearsOfExperience: null,
+    importance: null,
+    importanceTier: null,
+    postingSignal: null,
   })),
   JobRequirementSchema,
 ]);
@@ -626,7 +710,7 @@ export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
  * schemas produce changes materially (a Phase 12/13-style widening), not on every prompt wording
  * tweak — this is a compatibility marker, not a build number.
  */
-export const EXTRACTION_VERSION = '2026-08-31';
+export const EXTRACTION_VERSION = '2026-09-10';
 
 /** {@link BulletProvenanceEntry}'s verdict — mirrors `bulletProvenance.ts`'s own type, see the note on {@link RequirementEvidenceVerdictSchema}. */
 export const BulletProvenanceVerdictSchema = z.enum(['verbatim', 'reworded', 'unmatched']);

@@ -9,9 +9,13 @@ export interface LlmRoute {
 
 /** The complete model policy, keyed by the application operation it serves. */
 export const ROUTES = {
+  // 4096 rather than the 2048 a bare requirement list needs: every `stated` requirement now carries
+  // a verbatim quote from the posting, so the response grows by roughly the length of the
+  // requirements section itself. A truncated tool call fails validation outright, which is a worse
+  // outcome than the extra tokens on a model this cheap.
   extractJob: {
     model: 'google/gemini-3.1-flash-lite',
-    defaultMaxTokens: 2048,
+    defaultMaxTokens: 4096,
   },
   tailorResume: {
     model: 'anthropic/claude-sonnet-5',

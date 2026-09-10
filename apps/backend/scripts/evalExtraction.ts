@@ -16,7 +16,14 @@
  * short one) as new extraction cases turn up worth guarding against a regression.
  */
 import 'dotenv/config';
-import { bulletProvenance, requirementEvidence, type Profile } from '@djobi/shared';
+import {
+  bulletProvenance,
+  DECISIVE_BANDS,
+  normalizeQuote,
+  quoteHolds,
+  requirementEvidence,
+  type Profile,
+} from '@djobi/shared';
 import { extractJob } from '../src/llm/extractJob.js';
 import { tailorResume } from '../src/llm/tailorResume.js';
 
@@ -119,6 +126,23 @@ Nice to have
 - Experience with Kubernetes
 - Open-source contributions`,
   },
+  {
+    // No must-have wording and no Requirements/Nice-to-have headings anywhere, so nothing here can
+    // be `stated` and very little can be `structural`. Every band the model wants to call decisive
+    // has to come from market knowledge — which is exactly what the cap refuses. A `critical` or
+    // `high` row in this posting's output means the gate leaked.
+    label: 'no must-have wording at all — exercises the inferred cap',
+    text: `Engineer, Growth
+Umbrella · Remote
+
+We are a small team building tools people use every day. Day to day you might be tuning a slow
+query, sketching an experiment with a designer, or working out why a funnel dropped overnight. We
+work in TypeScript, deploy several times a day, and talk to customers ourselves.
+
+You will probably enjoy this if you like owning something end to end and are comfortable when the
+problem is not yet well defined. We care much more about how you think than about which frameworks
+you have used before.`,
+  },
 ];
 
 function printJson(label: string, value: unknown): void {
@@ -140,20 +164,41 @@ async function evaluatePosting(posting: { label: string; text: string }): Promis
 
   const tailoredResume = await tailorResume(SAMPLE_PROFILE, jobInfo);
 
+  // The quote check `normalizeRequirementImportance` already applied inside `extractJob`, re-run
+  // here only to report it. A `stated` band that survived extraction has a findable quote by
+  // construction, so a line printed below means the gate itself is not doing what it claims.
+  const normalizedPosting = normalizeQuote(posting.text);
+  const laundered = jobInfo.requirements.filter(
+    (requirement) =>
+      requirement.importanceTier === 'stated' &&
+      !quoteHolds(requirement.postingSignal, normalizedPosting),
+  );
+  if (laundered.length > 0) {
+    console.log(`\n  ✗ ${laundered.length} stated band(s) whose quote is not in the posting`);
+  }
+
   const evidence = requirementEvidence(tailoredResume, jobInfo, SAMPLE_PROFILE);
-  console.log('\n  requirement evidence (required first):');
+  console.log('\n  requirement evidence (most decisive first):');
   for (const entry of evidence) {
+    const band = entry.requirement.importance ?? 'unbanded';
+    const tier = entry.requirement.importanceTier ?? '—';
     console.log(
-      `    [${entry.requirement.kind}] ${entry.verdict.padEnd(24)} ${entry.requirement.text}`,
+      `    [${band}/${tier}]`.padEnd(28) + `${entry.verdict.padEnd(24)} ${entry.requirement.text}`,
     );
   }
-  const flaggedRequired = evidence.filter(
+
+  // Keyed on the band rather than on `kind`, because the band is what the gate has vouched for: a
+  // `critical` or `high` row rests on the posting's own words or structure, never on a guess about
+  // the market. Flagging on `kind` would let a boilerplate line under a "Requirements" heading
+  // raise the same alarm as a genuine must-have.
+  const flaggedDecisive = evidence.filter(
     (entry) =>
-      entry.requirement.kind === 'required' &&
+      entry.requirement.importance !== null &&
+      DECISIVE_BANDS.has(entry.requirement.importance) &&
       (entry.verdict === 'unsupported' || entry.verdict === 'needs-confirmation'),
   );
-  if (flaggedRequired.length > 0) {
-    console.log(`  ⚠ ${flaggedRequired.length} required item(s) unsupported or unconfirmed`);
+  if (flaggedDecisive.length > 0) {
+    console.log(`  ⚠ ${flaggedDecisive.length} decisive item(s) unsupported or unconfirmed`);
   }
 
   const provenance = bulletProvenance(tailoredResume, SAMPLE_PROFILE);

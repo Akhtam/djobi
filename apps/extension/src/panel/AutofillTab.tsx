@@ -390,6 +390,15 @@ export function AutofillTab({
                     : 'Preview tailored resume'}
                 </button>
               </div>
+              <div className="inline-error inline-warning" role="note">
+                <div className="inline-error-body">
+                  <p>
+                    <strong>Review your tailored resume before filling the form.</strong> Check
+                    every bullet for accuracy and edit anything that doesn't reflect your
+                    experience.
+                  </p>
+                </div>
+              </div>
               {resumePreview.state.kind === 'error' && (
                 <p className="preview-error" role="alert">
                   Couldn't render the resume preview — try again.

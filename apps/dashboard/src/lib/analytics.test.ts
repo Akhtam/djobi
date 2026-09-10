@@ -17,6 +17,7 @@ import {
   requirementEvidenceRollup,
   requirementKindCounts,
   responseRate,
+  requirementImportanceCounts,
   yearsOfExperienceDistribution,
 } from './analytics';
 import { fixtureProfile } from './fixtures';
@@ -27,7 +28,15 @@ function frequencyRow(overrides: Partial<KeywordFrequencyRow> = {}): KeywordFreq
 }
 
 function requirement(overrides: Partial<JobRequirement> = {}): JobRequirement {
-  return { text: 'Some requirement', kind: 'unspecified', yearsOfExperience: null, ...overrides };
+  return {
+    text: 'Some requirement',
+    kind: 'unspecified',
+    yearsOfExperience: null,
+    importance: null,
+    importanceTier: null,
+    postingSignal: null,
+    ...overrides,
+  };
 }
 
 function keyword(overrides: Partial<JobKeyword> = {}): JobKeyword {
@@ -114,7 +123,7 @@ describe('keywordFrequency', () => {
     ]);
   });
 
-  it('groups by normalizeLabel, so a case/whitespace variant does not split into a second row', () => {
+  it('groups by normalizeKeyword, so a case/whitespace variant does not split into a second row', () => {
     const applications = [
       application({
         jobInfo: { ...application().jobInfo, keywords: [keyword({ term: 'typescript' })] },
@@ -130,6 +139,24 @@ describe('keywordFrequency', () => {
     const rows = keywordFrequency(applications);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual({ term: 'TypeScript', category: null, count: 3 });
+  });
+
+  it('groups space and dash variants into one keyword row', () => {
+    const applications = [
+      application({
+        jobInfo: { ...application().jobInfo, keywords: [keyword({ term: 'Full Stack' })] },
+      }),
+      application({
+        jobInfo: { ...application().jobInfo, keywords: [keyword({ term: 'Full-stack' })] },
+      }),
+      application({
+        jobInfo: { ...application().jobInfo, keywords: [keyword({ term: 'full stack' })] },
+      }),
+    ];
+
+    expect(keywordFrequency(applications)).toEqual([
+      { term: 'Full Stack', category: null, count: 3 },
+    ]);
   });
 
   it('displays the most frequent original spelling within a normalized group', () => {
@@ -223,6 +250,60 @@ describe('requirementKindCounts', () => {
       unspecified: 0,
       total: 0,
     });
+  });
+});
+
+describe('requirementImportanceCounts', () => {
+  it('counts each band, and the unassessed on their own line', () => {
+    const applications = [
+      application({
+        jobInfo: {
+          ...application().jobInfo,
+          requirements: [
+            requirement({ text: 'a', importance: 'critical' }),
+            requirement({ text: 'b', importance: 'critical' }),
+            requirement({ text: 'c', importance: 'low-signal' }),
+            requirement({ text: 'd' }),
+          ],
+        },
+      }),
+      application({
+        jobInfo: {
+          ...application().jobInfo,
+          requirements: [requirement({ text: 'e', importance: 'high' })],
+        },
+      }),
+    ];
+
+    expect(requirementImportanceCounts(applications)).toEqual({
+      critical: 2,
+      high: 1,
+      meaningful: 0,
+      preferred: 0,
+      'low-signal': 1,
+      unbanded: 1,
+      total: 5,
+    });
+  });
+
+  it('counts a wholly unassessed history as unbanded rather than as a low band', () => {
+    const applications = [
+      application({
+        jobInfo: {
+          ...application().jobInfo,
+          requirements: [requirement({ text: 'a' }), requirement({ text: 'b' })],
+        },
+      }),
+    ];
+    const counts = requirementImportanceCounts(applications);
+
+    expect(counts.unbanded).toBe(2);
+    expect(counts['low-signal']).toBe(0);
+    expect(counts.total).toBe(2);
+  });
+
+  it('counts nothing for an empty range', () => {
+    expect(requirementImportanceCounts([]).total).toBe(0);
   });
 });
 

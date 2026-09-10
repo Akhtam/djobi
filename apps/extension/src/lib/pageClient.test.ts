@@ -102,6 +102,7 @@ describe('chromePageClient.fill', () => {
     });
 
     await chromePageClient.fill(7, {
+      runId: 'run-1',
       fields: [resumeField],
       values: {},
       resume: {
@@ -115,6 +116,7 @@ describe('chromePageClient.fill', () => {
       7,
       {
         type: 'FILL_FORM',
+        runId: 'run-1',
         fields: [resumeField],
         values: {},
         resumeFile: {
@@ -130,12 +132,17 @@ describe('chromePageClient.fill', () => {
   it('omits resumeFile entirely when there is no resume to attach', async () => {
     const { sendMessage } = stubTabs({ ok: true, filledFieldIds: [], resumeAttached: false });
 
-    await chromePageClient.fill(7, { fields: [], values: { 'f-email': 'jane@example.com' } });
+    await chromePageClient.fill(7, {
+      runId: 'run-1',
+      fields: [],
+      values: { 'f-email': 'jane@example.com' },
+    });
 
     expect(sendMessage).toHaveBeenCalledWith(
       7,
       {
         type: 'FILL_FORM',
+        runId: 'run-1',
         fields: [],
         values: { 'f-email': 'jane@example.com' },
         resumeFile: undefined,
@@ -147,7 +154,7 @@ describe('chromePageClient.fill', () => {
   it('addresses the frame holding the form when one is known', async () => {
     const { sendMessage } = stubTabs({ ok: true, filledFieldIds: [], resumeAttached: false });
 
-    await chromePageClient.fill(7, { fields: [], values: {} }, 3);
+    await chromePageClient.fill(7, { runId: 'run-1', fields: [], values: {} }, 3);
 
     expect(sendMessage).toHaveBeenCalledWith(
       7,
@@ -160,13 +167,17 @@ describe('chromePageClient.fill', () => {
   it("resolves null when no frame answers — which the caller must not read as 'nothing was filled'", async () => {
     stubTabs(undefined);
 
-    await expect(chromePageClient.fill(7, { fields: [], values: {} })).resolves.toBeNull();
+    await expect(
+      chromePageClient.fill(7, { runId: 'run-1', fields: [], values: {} }),
+    ).resolves.toBeNull();
   });
 
   it('rejects a malformed fill reply at the content-script boundary', async () => {
     stubTabs({ ok: true, filledFieldIds: 'not-an-array', resumeAttached: false });
 
-    await expect(chromePageClient.fill(7, { fields: [], values: {} })).rejects.toMatchObject({
+    await expect(
+      chromePageClient.fill(7, { runId: 'run-1', fields: [], values: {} }),
+    ).rejects.toMatchObject({
       name: 'PageResponseError',
       command: 'FILL_FORM',
     } satisfies Partial<PageResponseError>);
@@ -183,7 +194,9 @@ describe('chromePageClient.fill', () => {
   ])('rejects a contradictory fill reply: %s', async (reply, values, detail) => {
     stubTabs(reply);
 
-    await expect(chromePageClient.fill(7, { fields: [], values })).rejects.toMatchObject({
+    await expect(
+      chromePageClient.fill(7, { runId: 'run-1', fields: [], values }),
+    ).rejects.toMatchObject({
       name: 'PageResponseError',
       command: 'FILL_FORM',
       message: expect.stringContaining(detail),
@@ -194,7 +207,7 @@ describe('chromePageClient.fill', () => {
     stubTabs({ ok: true, filledFieldIds: [resumeField.id], resumeAttached: false });
 
     await expect(
-      chromePageClient.fill(7, { fields: [resumeField], values: {} }),
+      chromePageClient.fill(7, { runId: 'run-1', fields: [resumeField], values: {} }),
     ).rejects.toMatchObject({
       name: 'PageResponseError',
       message: expect.stringContaining('unrequested field'),

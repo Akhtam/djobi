@@ -7,6 +7,7 @@ import {
   matchOptionLabel,
   matchPreparedAnswerToOption,
   normalizeLabel,
+  normalizeKeyword,
   questionsMatch,
   uniqueMatch,
 } from './labelMatching.js';
@@ -20,6 +21,20 @@ describe('normalizeLabel', () => {
   it('keeps everything else, including internal punctuation an option may need to stay distinct', () => {
     expect(normalizeLabel('San Francisco, CA')).toBe('san francisco, ca');
     expect(normalizeLabel('Yes - with a visa')).toBe('yes - with a visa');
+  });
+});
+
+describe('normalizeKeyword', () => {
+  it('treats case, whitespace and dash variants as the same keyword', () => {
+    expect(normalizeKeyword(' Full-Stack ')).toBe('full stack');
+    expect(normalizeKeyword('full\u2013stack')).toBe('full stack');
+    expect(normalizeKeyword('full   stack')).toBe('full stack');
+  });
+
+  it('preserves punctuation that identifies a technology', () => {
+    expect(normalizeKeyword('Next.js')).toBe('next.js');
+    expect(normalizeKeyword('.NET')).toBe('.net');
+    expect(normalizeKeyword('C++')).toBe('c++');
   });
 });
 

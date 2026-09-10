@@ -324,6 +324,18 @@ describe('AutofillTab', () => {
     expect(screen.getByRole('button', { name: 'Fill form' })).toBeInTheDocument();
   });
 
+  it('reminds the user to review the tailored resume before filling', async () => {
+    await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
+
+    render(<AutofillHarness />);
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    await clickAnalyze();
+
+    expect(await screen.findByRole('note')).toHaveTextContent(
+      "Review your tailored resume before filling the form. Check every bullet for accuracy and edit anything that doesn't reflect your experience.",
+    );
+  });
+
   it('reveals a job-description editor holding the analyzed text when "Edit job description" is clicked on the review screen', async () => {
     await stubChrome({ tabUrl: 'https://boards.greenhouse.io/acme/jobs/1', profile, jobPageData });
 

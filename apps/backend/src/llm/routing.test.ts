@@ -13,7 +13,7 @@ describe('LLM routing', () => {
   });
 
   it('owns default token limits and reasoning policy', () => {
-    expect(routeFor('extractJob').defaultMaxTokens).toBe(2048);
+    expect(routeFor('extractJob').defaultMaxTokens).toBe(4096);
     expect(routeFor('tailorResume')).toMatchObject({ defaultMaxTokens: 2048, effort: 'none' });
     expect(routeFor('answerQuestions').defaultMaxTokens).toBe(1024);
     expect(routeFor('answerChat').defaultMaxTokens).toBe(4096);

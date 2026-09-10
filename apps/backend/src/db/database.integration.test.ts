@@ -173,7 +173,16 @@ const jobInfo = {
   roleTitle: 'Staff Engineer',
   seniority: 'Staff',
   location: 'Remote',
-  requirements: [{ text: 'Postgres', kind: 'unspecified', yearsOfExperience: null }],
+  requirements: [
+    {
+      text: 'Postgres',
+      kind: 'unspecified',
+      yearsOfExperience: null,
+      importance: null,
+      importanceTier: null,
+      postingSignal: null,
+    },
+  ],
   keywords: [{ term: 'SQL', category: null }],
 };
 

@@ -384,6 +384,98 @@ describe('content script', () => {
     });
   });
 
+  it('reports the candidate submitting a form it filled, naming the run the fill belonged to', async () => {
+    document.body.innerHTML = `<main><form><input id="email-field" type="text" /><button type="submit">Submit</button></form></main>`;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage,
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+    const sendResponse = vi.fn();
+    listener(
+      {
+        type: 'FILL_FORM',
+        runId: 'run-1',
+        fields: [
+          {
+            id: 'f1',
+            label: 'Email',
+            inputType: 'text',
+            selector: '#email-field',
+            category: 'email',
+            required: false,
+            elementRole: 'native',
+          },
+        ],
+        values: { f1: 'jane@example.com' },
+      },
+      {},
+      sendResponse,
+    );
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled());
+
+    document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true }));
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: { type: 'REPORT_SUBMISSION', runId: 'run-1' },
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('reports no submission on a page it never filled, so only a filled run can be saved this way', async () => {
+    document.body.innerHTML = `<main><form><input type="file" name="resume" /><button type="submit">Submit</button></form></main>`;
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage, onMessage: { addListener: vi.fn() } },
+    });
+
+    await loadContentScript();
+    document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true }));
+
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ type: 'REPORT_SUBMISSION' }) }),
+      expect.anything(),
+    );
+  });
+
+  it('shows the saved toast on the page when the background reports the application landed', async () => {
+    document.body.innerHTML = `<main></main>`;
+    let listener: (
+      message: unknown,
+      sender: unknown,
+      sendResponse: (r: unknown) => void,
+    ) => void = () => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(),
+        onMessage: { addListener: (fn: typeof listener) => (listener = fn) },
+      },
+    });
+
+    await loadContentScript();
+
+    expect(
+      listener(
+        { type: 'SHOW_SAVED_TOAST', company: 'Acme', roleTitle: 'Senior Engineer' },
+        {},
+        vi.fn(),
+      ),
+      // Nothing to reply, so the channel must not be held open.
+    ).toBe(false);
+    expect(document.querySelector('#djobi-saved-toast')).not.toBeNull();
+  });
+
   it('attaches the resume file to the resume_upload field when FILL_FORM includes one', async () => {
     document.body.innerHTML = `<main><input id="resume-field" type="file" /></main>`;
     let listener: (

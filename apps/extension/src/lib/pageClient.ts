@@ -31,6 +31,8 @@ import type { FillFormCommandMessage, ScanPageCommandMessage } from './messages'
  * likewise absent: `content/index.ts` owns that choice, being the only side that can see the page.
  */
 export interface FillPageCommand {
+  /** The run being filled, kept by the page so it can name it if the candidate then submits. */
+  runId: string;
   fields: DetectedField[];
   values: Record<string, string>;
   resume?: { name: string; type: string; bytes: ArrayBuffer };
@@ -112,6 +114,7 @@ export const chromePageClient: PageClient = {
   async fill(tabId, command, frameId) {
     const message: FillFormCommandMessage = {
       type: 'FILL_FORM',
+      runId: command.runId,
       fields: command.fields,
       values: command.values,
       // The wire can only carry plain JSON, so the bytes are encoded here, at the edge that

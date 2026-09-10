@@ -19,27 +19,21 @@
  * - **A row with no stored verdicts renders exactly as it did before they existed.** Most of the
  *   history predates the column, and an un-scored requirement must read as "nothing was checked",
  *   never as "nothing was found".
+ *
+ * Grouping and the row budget live in `lib/requirementGroups.ts`, shared with `RequirementsPanel`
+ * for the same reason the verdict vocabulary is shared: two screens showing one set of facts must
+ * not be able to disagree about how they are ordered.
+ *
+ * The budget is a default here rather than a ceiling. This is the only screen that shows a stored
+ * posting's requirements at all, so a row the budget dropped would otherwise be unreachable — and
+ * the trim takes the unassessed tail first, meaning the hidden rows are frequently the ones nothing
+ * looked at rather than the ones judged unimportant. The reveal says how many are hidden and not
+ * why, for the same reason: "lower-importance" would assert a ranking nobody made.
  */
+import { useState } from 'react';
 import type { JobRequirement, RequirementEvidenceEntry } from '@djobi/shared';
+import { BAND_LABELS, groupByImportance } from '../lib/requirementGroups';
 import { EVIDENCE_LABELS } from '../lib/stages';
-
-/**
- * Requirements split the way the posting states them. `unspecified` groups with `required`, since a
- * requirement the posting did not qualify is one it expects you to have — the distinction the
- * reader cares about is which ones are explicitly optional.
- */
-function groupsOf(requirements: readonly JobRequirement[]) {
-  return [
-    {
-      kind: 'required' as const,
-      requirements: requirements.filter((requirement) => requirement.kind !== 'preferred'),
-    },
-    {
-      kind: 'preferred' as const,
-      requirements: requirements.filter((requirement) => requirement.kind === 'preferred'),
-    },
-  ];
-}
 
 export function RequirementList({
   requirements,
@@ -49,45 +43,53 @@ export function RequirementList({
   /** Verdicts keyed by requirement text — empty for a row saved before they were computed. */
   evidence: Map<string, RequirementEvidenceEntry>;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const { groups, hiddenCount } = groupByImportance(requirements, showAll ? Infinity : undefined);
+
   return (
     <div className="requirement-groups">
-      {groupsOf(requirements).map(({ kind, requirements: group }) =>
-        group.length > 0 ? (
-          <section key={kind} className={`requirement-group requirement-group--${kind}`}>
-            <h4 className={`requirement-group__title requirement-kind requirement-kind--${kind}`}>
-              {kind}
-            </h4>
-            <ul className="bullets requirement-group__items">
-              {group.map((requirement) => {
-                const verdict = evidence.get(requirement.text);
-                return (
-                  <li key={requirement.text}>
-                    {requirement.text}
-                    {requirement.yearsOfExperience !== null ? (
-                      <span className="requirement-years">
-                        {' '}
-                        ({requirement.yearsOfExperience}+ yrs)
-                      </span>
-                    ) : null}
-                    {verdict && verdict.verdict !== 'direct-evidence' ? (
-                      <span
-                        className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
-                      >
-                        {EVIDENCE_LABELS[verdict.verdict]}
-                      </span>
-                    ) : null}
-                    {verdict?.verdict === 'omitted-profile-evidence' && verdict.evidence ? (
-                      <span className="requirement-omitted">
-                        Your profile has: “{verdict.evidence}”
-                      </span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ) : null,
-      )}
+      {groups.map(({ key, requirements: group }) => (
+        <section key={key} className={`requirement-group requirement-group--${key}`}>
+          <h4 className={`requirement-group__title requirement-band requirement-band--${key}`}>
+            {BAND_LABELS[key]}
+          </h4>
+          <ul className="bullets requirement-group__items">
+            {group.map((requirement) => {
+              const verdict = evidence.get(requirement.text);
+              return (
+                <li key={requirement.text}>
+                  {requirement.text}
+                  {requirement.yearsOfExperience !== null ? (
+                    <span className="requirement-years">
+                      {' '}
+                      ({requirement.yearsOfExperience}+ yrs)
+                    </span>
+                  ) : null}
+                  {verdict && verdict.verdict !== 'direct-evidence' ? (
+                    <span className={`requirement-verdict requirement-verdict--${verdict.verdict}`}>
+                      {EVIDENCE_LABELS[verdict.verdict]}
+                    </span>
+                  ) : null}
+                  {verdict?.verdict === 'omitted-profile-evidence' && verdict.evidence ? (
+                    <span className="requirement-omitted">
+                      Your profile has: “{verdict.evidence}”
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          className="requirement-groups__trimmed"
+          onClick={() => setShowAll(true)}
+        >
+          Show {hiddenCount} more requirement{hiddenCount === 1 ? '' : 's'}
+        </button>
+      ) : null}
     </div>
   );
 }

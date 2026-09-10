@@ -15,13 +15,15 @@
  * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
  */
 import { useState, type ReactNode } from 'react';
-import { normalizeLabel, type Application } from '@djobi/shared';
+import { IMPORTANCE_BANDS, normalizeKeyword, type Application } from '@djobi/shared';
 import {
   evidenceByRequirement,
   requirementEvidenceRollup,
+  requirementImportanceCounts,
   requirementKindCounts,
   yearsOfExperienceDistribution,
 } from '../lib/analytics';
+import { BAND_LABELS, groupByImportance, UNBANDED } from '../lib/requirementGroups';
 import { applicationPath, PAGE_SIZE } from '../lib/useHashRoute';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 import { formatDate } from '../lib/format';
@@ -35,7 +37,12 @@ import { EVIDENCE_LABELS } from '../lib/stages';
  */
 function highlightTerm(text: string, term: string | null): ReactNode {
   if (!term) return text;
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = term
+    .trim()
+    .split(/[\s\u2010-\u2015-]+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\s\\u2010-\\u2015-]+');
+  if (!escaped) return text;
   const parts = text.split(new RegExp(`(${escaped})`, 'i'));
   if (parts.length === 1) return text;
   // `String.split` against a one-group capturing regex alternates non-match/match/non-match/…
@@ -56,9 +63,9 @@ export function RequirementsPanel({
   applications: Application[];
   /**
    * The term selected from the keyword frequency table, or `null` for every posting in range.
-   * Matched via `normalizeLabel` — the same grouping the frequency table itself uses — so selecting
-   * the displayed spelling still finds postings that used a different-cased variant. Also the term
-   * highlighted inside each shown requirement's text.
+   * Matched via `normalizeKeyword` — the same grouping the frequency table itself uses — so
+   * selecting the displayed spelling still finds postings that used a case, whitespace or dash
+   * variant. Also the term highlighted inside each shown requirement's text.
    */
   selectedKeyword: string | null;
   /**
@@ -69,10 +76,10 @@ export function RequirementsPanel({
   resetKey: string;
 }) {
   const [showExperience, setShowExperience] = useState(false);
-  const needle = selectedKeyword ? normalizeLabel(selectedKeyword) : null;
+  const needle = selectedKeyword ? normalizeKeyword(selectedKeyword) : null;
   const matching = needle
     ? applications.filter((application) =>
-        application.jobInfo.keywords.some((keyword) => normalizeLabel(keyword.term) === needle),
+        application.jobInfo.keywords.some((keyword) => normalizeKeyword(keyword.term) === needle),
       )
     : applications;
   const sorted = [...matching].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -85,6 +92,8 @@ export function RequirementsPanel({
   const visible = sorted.slice(0, visibleCount);
 
   const requirementCounts = requirementKindCounts(matching);
+  const bandCounts = requirementImportanceCounts(matching);
+  const anyBanded = bandCounts.total > bandCounts.unbanded;
   const yearsDistribution = yearsOfExperienceDistribution(matching);
   const evidence = requirementEvidenceRollup(matching);
 
@@ -104,9 +113,29 @@ export function RequirementsPanel({
 
       {requirementCounts.total > 0 ? (
         <div className="analytics-summary-strip">
-          <span>{requirementCounts.required} required</span>
-          <span>{requirementCounts.preferred} preferred</span>
-          <span>{requirementCounts.unspecified} unspecified</span>
+          {/*
+            One ordering at a time, matching the list below. Bands are the stronger signal and
+            replace the kind counts wherever anything carries one; a range made entirely of
+            postings extracted before importance existed has no bands to show, so it keeps the
+            kind counts rather than reading "0 critical · 0 high" — which would report an absence
+            of decisive requirements where the truth is that none were ever assessed.
+          */}
+          {anyBanded
+            ? IMPORTANCE_BANDS.map((band) => (
+                <span key={band} className="analytics-summary-strip__band">
+                  {bandCounts[band]} {BAND_LABELS[band]}
+                </span>
+              ))
+            : [
+                `${requirementCounts.required} required`,
+                `${requirementCounts.preferred} preferred`,
+                `${requirementCounts.unspecified} unspecified`,
+              ].map((label) => <span key={label}>{label}</span>)}
+          {anyBanded && bandCounts.unbanded > 0 ? (
+            <span className="analytics-summary-strip__band">
+              {bandCounts.unbanded} {BAND_LABELS[UNBANDED]}
+            </span>
+          ) : null}
           {yearsDistribution.length > 0 ? (
             <div className="analytics-summary-strip__years">
               <button
@@ -188,6 +217,7 @@ export function RequirementsPanel({
         >
           {visible.map((application) => {
             const verdicts = evidenceByRequirement(application);
+            const { groups, hiddenCount } = groupByImportance(application.jobInfo.requirements);
             return (
               <article key={application.id} className="analytics-posting">
                 <div className="analytics-posting__head">
@@ -201,64 +231,55 @@ export function RequirementsPanel({
                 </div>
                 {application.jobInfo.requirements.length > 0 ? (
                   <div className="analytics-req-groups">
-                    {[
-                      {
-                        kind: 'required' as const,
-                        requirements: application.jobInfo.requirements.filter(
-                          (requirement) => requirement.kind !== 'preferred',
-                        ),
-                      },
-                      {
-                        kind: 'preferred' as const,
-                        requirements: application.jobInfo.requirements.filter(
-                          (requirement) => requirement.kind === 'preferred',
-                        ),
-                      },
-                    ].map(({ kind, requirements }) =>
-                      requirements.length > 0 ? (
-                        <section
-                          key={kind}
-                          className={`analytics-req-group analytics-req-group--${kind}`}
+                    {groups.map(({ key, requirements }) => (
+                      <section
+                        key={key}
+                        className={`analytics-req-group analytics-req-group--${key}`}
+                      >
+                        <h3
+                          className={`analytics-req-group__title requirement-band requirement-band--${key}`}
                         >
-                          <h3
-                            className={`analytics-req-group__title requirement-kind requirement-kind--${kind}`}
-                          >
-                            {kind}
-                          </h3>
-                          <ul className="analytics-reqs">
-                            {requirements.map((requirement) => {
-                              const verdict = verdicts.get(requirement.text);
-                              return (
-                                <li key={requirement.text} className="analytics-req">
-                                  <span className="analytics-req__text">
-                                    {highlightTerm(requirement.text, selectedKeyword)}
-                                    {requirement.yearsOfExperience !== null ? (
-                                      <span className="analytics-req__years">
-                                        {' '}
-                                        · {requirement.yearsOfExperience}+ yrs
-                                      </span>
-                                    ) : null}
-                                    {verdict && verdict.verdict !== 'direct-evidence' ? (
-                                      <span
-                                        className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
-                                      >
-                                        {EVIDENCE_LABELS[verdict.verdict]}
-                                      </span>
-                                    ) : null}
-                                    {verdict?.verdict === 'omitted-profile-evidence' &&
-                                    verdict.evidence ? (
-                                      <span className="requirement-omitted">
-                                        Your profile has: “{verdict.evidence}”
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </section>
-                      ) : null,
-                    )}
+                          {BAND_LABELS[key]}
+                        </h3>
+                        <ul className="analytics-reqs">
+                          {requirements.map((requirement) => {
+                            const verdict = verdicts.get(requirement.text);
+                            return (
+                              <li key={requirement.text} className="analytics-req">
+                                <span className="analytics-req__text">
+                                  {highlightTerm(requirement.text, selectedKeyword)}
+                                  {requirement.yearsOfExperience !== null ? (
+                                    <span className="analytics-req__years">
+                                      {' '}
+                                      · {requirement.yearsOfExperience}+ yrs
+                                    </span>
+                                  ) : null}
+                                  {verdict && verdict.verdict !== 'direct-evidence' ? (
+                                    <span
+                                      className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
+                                    >
+                                      {EVIDENCE_LABELS[verdict.verdict]}
+                                    </span>
+                                  ) : null}
+                                  {verdict?.verdict === 'omitted-profile-evidence' &&
+                                  verdict.evidence ? (
+                                    <span className="requirement-omitted">
+                                      Your profile has: “{verdict.evidence}”
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    ))}
+                    {hiddenCount > 0 ? (
+                      <p className="analytics-req-groups__trimmed">
+                        +{hiddenCount} more requirement
+                        {hiddenCount === 1 ? '' : 's'} not listed
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </article>

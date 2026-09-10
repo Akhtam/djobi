@@ -23,7 +23,14 @@
  * app's extraction prompts already forbid on the model side.
  */
 import { containsAsWords, normalizeLabel } from './labelMatching.js';
-import type { JobInfo, JobRequirement, Profile, TailoredResume } from './schemas.js';
+import { IMPORTANCE_BANDS } from './schemas.js';
+import type {
+  JobInfo,
+  JobRequirement,
+  Profile,
+  RequirementImportance,
+  TailoredResume,
+} from './schemas.js';
 
 /**
  * What the Profile and this resume show for one requirement.
@@ -222,16 +229,52 @@ function evidenceFor(
   return { requirement, ...text };
 }
 
-const KIND_ORDER: Record<JobRequirement['kind'], number> = {
-  required: 0,
-  preferred: 1,
-  unspecified: 2,
-};
+/**
+ * Where each band sorts, read off the one declared order in `schemas.ts` so this cannot drift from
+ * the dashboard's group order or from the set of bands itself.
+ *
+ * A requirement carrying no band sorts *after* every banded one, at `UNBANDED_RANK`. An earlier
+ * draft interleaved it instead, borrowing a slot from `kind` so the large pre-importance history
+ * would not all sink to the bottom. That was wrong twice over. It states a priority nothing
+ * assessed, which is the fabrication the whole feature is built to avoid; and it disagreed with
+ * the dashboard, which sinks the unassessed — leaving one set of facts with two orderings. The
+ * interleave also bought almost nothing in practice: a posting is extracted all at once, so its
+ * requirements are banded together or not at all, and a wholly unbanded posting sorts by verdict
+ * and posting order under either rule.
+ */
+const BAND_ORDER: Record<RequirementImportance, number> = Object.fromEntries(
+  IMPORTANCE_BANDS.map((band, index) => [band, index]),
+) as Record<RequirementImportance, number>;
+
+const UNBANDED_RANK = IMPORTANCE_BANDS.length;
 
 /**
- * Every requirement in `jobInfo`, with what `resume`/`profile` evidence it — required requirements
- * first, then preferred, then unspecified, stable within each group in the order the posting listed
- * them.
+ * Verdicts worst first, so a band's gaps sit above what it already has covered.
+ *
+ * Ranking exists to put the reader in front of what needs work; leading a band with
+ * `direct-evidence` would lead with the best news and bury the reason to read on.
+ */
+const VERDICT_ORDER: Record<RequirementEvidenceVerdict, number> = {
+  unsupported: 0,
+  'needs-confirmation': 1,
+  'omitted-profile-evidence': 2,
+  'skill-only': 3,
+  'direct-evidence': 4,
+};
+
+function bandRank(requirement: JobRequirement): number {
+  return requirement.importance === null ? UNBANDED_RANK : BAND_ORDER[requirement.importance];
+}
+
+/**
+ * Every requirement in `jobInfo`, with what `resume`/`profile` evidence it — ordered by importance
+ * band with the unassessed last (see {@link BAND_ORDER}), then unmet before met within a band, then
+ * stably in the order the posting listed them.
+ *
+ * The band ordering is the one the dashboard groups by; the verdict tiebreak is not. This list is
+ * read top-down by a model deciding where to spend a selection budget, so an unmet requirement is
+ * the more useful thing to meet first. The dashboard keeps the posting's own order inside a group
+ * because a reader is matching the screen against the posting in front of them.
  *
  * `resume` and `profile` are separate on purpose, the same split `keywordCoverage` takes: a
  * requirement a source bullet evidences but this tailored, capped resume dropped is a different fact
@@ -258,7 +301,8 @@ export function requirementEvidence(
     .map((entry, index) => ({ entry, index }))
     .sort(
       (a, b) =>
-        KIND_ORDER[a.entry.requirement.kind] - KIND_ORDER[b.entry.requirement.kind] ||
+        bandRank(a.entry.requirement) - bandRank(b.entry.requirement) ||
+        VERDICT_ORDER[a.entry.verdict] - VERDICT_ORDER[b.entry.verdict] ||
         a.index - b.index,
     )
     .map(({ entry }) => entry);

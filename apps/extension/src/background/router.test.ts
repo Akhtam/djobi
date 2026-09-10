@@ -237,6 +237,26 @@ describe('handleTypedMessage', () => {
     await expect(returned).resolves.toBeUndefined();
   });
 
+  it('saves the application when the page reports the candidate submitting a form we filled', async () => {
+    const returned = handleTypedMessage({ type: 'REPORT_SUBMISSION', runId: 'run-1' }, {
+      tab: { id: 7 },
+    } as chrome.runtime.MessageSender);
+
+    // The same Save Step the panel's Save button runs, named with the run the fill belonged to —
+    // a submission arriving after a re-analysis must not save the newer run's posting.
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps, 'run-1');
+    await expect(returned).resolves.toBeUndefined();
+  });
+
+  it('ignores a submission report from a sender with no tab, since there is no run to save', async () => {
+    await handleTypedMessage(
+      { type: 'REPORT_SUBMISSION', runId: 'run-1' },
+      {} as chrome.runtime.MessageSender,
+    );
+
+    expect(mockRunSaveApplication).not.toHaveBeenCalled();
+  });
+
   it('lets a runner rejection reach the service-worker observation boundary', async () => {
     const failure = new Error('session storage unavailable');
     mockRunFill.mockRejectedValue(failure);

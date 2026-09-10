@@ -3,7 +3,15 @@ import { requirementEvidence } from './requirementEvidence.js';
 import type { JobInfo, JobRequirement, Profile, TailoredResume } from './schemas.js';
 
 function requirement(overrides: Partial<JobRequirement> = {}): JobRequirement {
-  return { text: 'Some requirement', kind: 'unspecified', yearsOfExperience: null, ...overrides };
+  return {
+    text: 'Some requirement',
+    kind: 'unspecified',
+    yearsOfExperience: null,
+    importance: null,
+    importanceTier: null,
+    postingSignal: null,
+    ...overrides,
+  };
 }
 
 function jobInfo(requirements: JobRequirement[]): Pick<JobInfo, 'requirements'> {
@@ -112,24 +120,89 @@ describe('requirementEvidence', () => {
     });
   });
 
-  it('prioritizes required requirements before preferred, then unspecified, preserving posting order within each', () => {
+  it('orders by importance band, most decisive first', () => {
     const requirements = [
-      requirement({ text: 'unspecified one', kind: 'unspecified' }),
-      requirement({ text: 'preferred one', kind: 'preferred' }),
-      requirement({ text: 'required one', kind: 'required' }),
-      requirement({ text: 'required two', kind: 'required' }),
-      requirement({ text: 'preferred two', kind: 'preferred' }),
+      requirement({ text: 'low-signal one', importance: 'low-signal' }),
+      requirement({ text: 'high one', importance: 'high' }),
+      requirement({ text: 'preferred one', importance: 'preferred' }),
+      requirement({ text: 'critical one', importance: 'critical' }),
+      requirement({ text: 'meaningful one', importance: 'meaningful' }),
     ];
 
     const result = evidence(resume(), requirements);
 
     expect(result.map((entry) => entry.requirement.text)).toEqual([
-      'required one',
-      'required two',
+      'critical one',
+      'high one',
+      'meaningful one',
       'preferred one',
-      'preferred two',
-      'unspecified one',
+      'low-signal one',
     ]);
+  });
+
+  it('sorts unmet before met within one band', () => {
+    const bullet = 'Shipped a Kafka streaming pipeline to production';
+    const requirements = [
+      requirement({ text: 'Kafka streaming pipeline experience', importance: 'critical' }),
+      requirement({ text: 'Erlang supervision tree experience', importance: 'critical' }),
+    ];
+
+    const result = evidence(resume({ workExperience: [role([bullet])] }), requirements, [
+      role([bullet]),
+    ]);
+
+    expect(result.map((entry) => entry.verdict)).toEqual(['unsupported', 'direct-evidence']);
+  });
+
+  it('sorts every unassessed requirement after every banded one, whatever its kind', () => {
+    const requirements = [
+      requirement({ text: 'unbanded required', kind: 'required' }),
+      requirement({ text: 'banded low', importance: 'low-signal' }),
+      requirement({ text: 'unbanded preferred', kind: 'preferred' }),
+      requirement({ text: 'banded critical', importance: 'critical' }),
+    ];
+
+    const result = evidence(resume(), requirements);
+
+    expect(result.map((entry) => entry.requirement.text)).toEqual([
+      'banded critical',
+      'banded low',
+      'unbanded required',
+      'unbanded preferred',
+    ]);
+  });
+
+  // The order the dashboard groups by, so one set of facts never reads two ways — see
+  // `apps/dashboard/src/lib/requirementGroups.ts`, which puts the unassessed last for the same
+  // reason: nothing assessed them, so ranking them among the bands would state a priority nobody
+  // formed.
+  it('leaves a wholly unassessed posting in posting order, gaps first', () => {
+    const bullet = 'Shipped a Kafka streaming pipeline to production';
+    const requirements = [
+      requirement({ text: 'Kafka streaming pipeline experience', kind: 'preferred' }),
+      requirement({ text: 'Erlang supervision tree experience', kind: 'required' }),
+    ];
+
+    const result = evidence(resume({ workExperience: [role([bullet])] }), requirements, [
+      role([bullet]),
+    ]);
+
+    expect(result.map((entry) => entry.requirement.text)).toEqual([
+      'Erlang supervision tree experience',
+      'Kafka streaming pipeline experience',
+    ]);
+  });
+
+  it('keeps posting order when band and verdict are equal', () => {
+    const requirements = [
+      requirement({ text: 'first', importance: 'high' }),
+      requirement({ text: 'second', importance: 'high' }),
+      requirement({ text: 'third', importance: 'high' }),
+    ];
+
+    const result = evidence(resume(), requirements);
+
+    expect(result.map((entry) => entry.requirement.text)).toEqual(['first', 'second', 'third']);
   });
 
   // Tenure is read from the Profile's own dated roles, not the tailored resume — a fact about the

@@ -26,7 +26,7 @@ import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
 import { answersFor, STEP_STATUS } from '../lib/run';
-import type { JobPageData } from '../lib/messages';
+import type { JobPageData, ShowSavedToastCommandMessage } from '../lib/messages';
 import { chromePageClient, type PageClient } from '../lib/pageClient';
 import type { DetectedFrameRef } from '../lib/tabStore/detectedPage';
 import {
@@ -37,6 +37,7 @@ import {
   asAnalyzedRun,
 } from '../lib/run';
 import { withRunClaim, type RunClaim } from './runClaim';
+import { showSavedBadge } from './saveBadge';
 
 /**
  * The tab's Detected Fields, as the pipeline needs to read them — the two calls into
@@ -65,6 +66,23 @@ export interface PipelineDeps {
   backend: BackendClient;
   page: PageClient;
   detection: DetectedFieldsPort;
+  /**
+   * How a completed save is announced to the candidate. Optional, and the only optional member
+   * here, because it is pure output: a test that doesn't care what the toolbar and the page were
+   * told shouldn't have to supply a fake to exercise the write that matters.
+   */
+  saveNotice?: SaveNotice;
+}
+
+/**
+ * Telling the candidate their application was recorded, on the two surfaces that outlive the
+ * submission — see `background/saveBadge.ts` and `content/savedToast.ts`.
+ *
+ * A seam of its own rather than a method on {@link PageClient}: one of the two surfaces isn't the
+ * page at all, and neither has a response to wait on, where every `PageClient` call does.
+ */
+export interface SaveNotice {
+  announce(tabId: number, job: { company: string; roleTitle: string }): void;
 }
 
 /**
@@ -80,10 +98,33 @@ export const productionDetection: DetectedFieldsPort = { snapshotForRun, frameFo
  * dispatch above these functions, not just to each of them, so a caller substituting the adapter
  * substitutes it once for the whole protocol.
  */
+/**
+ * The production announcement: a toolbar badge on the tab, and a toast in whichever frame is still
+ * there to render one.
+ *
+ * Both are fire-and-forget. A save that succeeded is saved whether or not the candidate's tab was
+ * still around to be told about it, so nothing here is allowed to reject into the Save Step.
+ */
+export const productionSaveNotice: SaveNotice = {
+  announce(tabId, job) {
+    void showSavedBadge(tabId);
+    const message: ShowSavedToastCommandMessage = {
+      type: 'SHOW_SAVED_TOAST',
+      company: job.company,
+      roleTitle: job.roleTitle,
+    };
+    // Broadcast rather than addressed to the filled frame: the submission has usually navigated the
+    // tab by now, so the frame that was filled may not exist and the top frame is as good a place
+    // to show it. Reading `lastError` is what marks an unanswered broadcast handled.
+    chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+  },
+};
+
 export const productionDeps: PipelineDeps = {
   backend: httpBackendClient,
   page: chromePageClient,
   detection: productionDetection,
+  saveNotice: productionSaveNotice,
 };
 
 type AnalysisResult = Pick<
@@ -274,7 +315,7 @@ async function fillStep(
   const filled =
     fields.length === 0
       ? { ok: true as const, filledFieldIds: [], resumeAttached: false }
-      : await deps.page.fill(tabId, { fields, values, resume }, frameId);
+      : await deps.page.fill(tabId, { runId: run.runId, fields, values, resume }, frameId);
 
   // What the page confirmed it kept. A run whose content script didn't answer at all (`null`) has
   // no such account, and falling back to the drafted values is the honest reading there: the fill
@@ -363,6 +404,13 @@ export async function runSaveApplication(
       const application = run.applicationId
         ? await deps.backend.updateApplication(run.applicationId, payload)
         : await deps.backend.saveApplication(payload);
+
+      // After the write, and only on the path where it succeeded: the badge and the toast are a
+      // report of a row that exists. `run.jobInfo` is present because `asAnalyzedRun` narrowed it.
+      deps.saveNotice?.announce(tabId, {
+        company: run.jobInfo.company,
+        roleTitle: run.jobInfo.roleTitle,
+      });
 
       return { status: STEP_STATUS.save.succeeded, applicationId: application.id, failure: null };
     },

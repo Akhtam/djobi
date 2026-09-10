@@ -8,6 +8,8 @@ import { notify, type ContentCommandMessage, type JobPageData } from '../lib/mes
 import { detectFields } from './detectFields';
 import { watchForJobApplicationPage } from './detect';
 import { fillPage } from './fillForm';
+import { armSubmitWatch } from './submitWatch';
+import { showSavedToast } from './savedToast';
 import { extractJobDescriptionWhenReady } from './extractJobDescription';
 
 /** Scans the live page into the shape the background stores and the Application Pipeline consumes. */
@@ -63,6 +65,13 @@ stopWatching = watchForJobApplicationPage(document, report);
 if (orphaned) stopWatching();
 
 /**
+ * Cancels the previous fill's submission watcher, if any. A re-fill of the same page re-arms rather
+ * than adding a second listener pair, and a fill for a *new* run must not leave a watcher behind
+ * that would report the old run's id.
+ */
+let stopSubmitWatch: (() => void) | null = null;
+
+/**
  * Tears down the page watcher. A real content script never calls this — the page going away is what
  * ends it. Tests do: this module is a singleton over one shared jsdom `document`, so without it each
  * re-import leaves its observer and route poll running, and they go on reporting into the *next*
@@ -70,6 +79,30 @@ if (orphaned) stopWatching();
  */
 export function stopReporting(): void {
   stopWatching?.();
+  stopSubmitWatch?.();
+  stopSubmitWatch = null;
+}
+
+/**
+ * Watches for the candidate submitting the form we just filled, and reports it once.
+ *
+ * Reporting is fire-and-forget by design: a submission normally navigates the page, so this content
+ * script is being torn down as the message goes out. The service worker owns the Save Step from
+ * there — see `background/applicationPipeline.ts`, where the Save Step is deliberately
+ * `cancellation: 'none'` for this same reason.
+ */
+function watchForSubmission(runId: string): void {
+  stopSubmitWatch?.();
+  stopSubmitWatch = armSubmitWatch(document, () => {
+    stopSubmitWatch = null;
+    try {
+      notify({ type: 'REPORT_SUBMISSION', runId });
+    } catch {
+      // An orphaned content script (extension reloaded since the fill) has nobody to tell. There is
+      // nothing to retry and nothing the candidate can do about it from here, so it stays quiet —
+      // `report()` above already warns once about this tab being orphaned.
+    }
+  });
 }
 
 chrome.runtime.onMessage.addListener(
@@ -95,6 +128,11 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
 
+    if (message.type === 'SHOW_SAVED_TOAST') {
+      showSavedToast(document, { company: message.company, roleTitle: message.roleTitle });
+      return false;
+    }
+
     if (message.type !== 'FILL_FORM') return false;
 
     const resumeFile = message.resumeFile
@@ -107,7 +145,13 @@ chrome.runtime.onMessage.addListener(
     // A non-owner must decline synchronously. Sending `null` or holding its channel open would let
     // an empty third-party frame beat the real form's asynchronous verified response.
     if (pending === null) return false;
-    void pending.then(sendResponse);
+    const { runId } = message;
+    void pending.then((result) => {
+      // Armed from the fill's own result, in the frame that owns the form: this frame filled it, so
+      // this frame is the one whose submission means the run went out.
+      watchForSubmission(runId);
+      sendResponse(result);
+    });
 
     return true; // keep the message channel open for the async sendResponse above
   },

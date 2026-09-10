@@ -35,6 +35,17 @@ export function normalizeLabel(text: string): string {
 }
 
 /**
+ * The canonical form of a keyword for aggregation and evidence matching. Unlike form labels,
+ * keyword spellings commonly interchange spaces and dashes without changing meaning.
+ */
+export function normalizeKeyword(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\s\u2010-\u2015-]+/g, ' ')
+    .trim();
+}
+
+/**
  * The single candidate satisfying `predicate`, or `undefined` if none or several do.
  *
  * **The ambiguity invariant, implemented once.** Two candidates that both look right mean the input
