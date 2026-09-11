@@ -17,6 +17,10 @@
  *   applying a resume extraction onto one, the screening-answer/credential-kind edits, and the
  *   per-field operations both editors share (comma lists, project bullets, skills).
  * - `profileSections.ts` — which sections the editor has, in what order, and scrolling to one.
+ * - `fieldChrome.ts` — the `FieldChrome`/`BulletListClassNames` shape each app supplies to render
+ *   the field bodies below through its own markup.
+ * - `profileFieldBodies.tsx` — the controlled field bodies themselves: one component per section or
+ *   per entry, rendering through the caller's `FieldChrome` rather than choosing its own wrapper.
  */
 export * from './useProfileDraft.js';
 export * from './listEditing.js';
@@ -24,3 +28,5 @@ export * from './profileLists.js';
 export * from './bulletEditing.js';
 export * from './profileDraft.js';
 export * from './profileSections.js';
+export * from './fieldChrome.js';
+export * from './profileFieldBodies.js';

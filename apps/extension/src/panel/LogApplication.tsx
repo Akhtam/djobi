@@ -5,54 +5,18 @@
  *
  * Deliberately not part of the Application Pipeline. This flow needs no detected form and never
  * reads page content; it only follows the active tab's URL as a prefill until the candidate edits it.
- * It therefore doesn't go through `lib/tabStore/` or `PipelineStatus`. Its form and request state
- * are local.
- *
- * The two calls are the ones that already exist: `POST /extract-job` for the job details, then
- * `POST /applications` with `source: 'manual'` and the base profile as the stored resume (see
- * `baseResumeOf`). No tailoring, no answers — the candidate wrote those themselves.
+ * It therefore doesn't go through `lib/tabStore/` or `PipelineStatus`. Its form fields are local; the
+ * extract → review → save state machine itself is `@djobi/manual-log`'s `useManualLogFlow`, shared
+ * with the dashboard's own "Log an application" modal — see that package's own doc for what stays
+ * here versus what moved: this file supplies the client adapter, the URL-follows-the-tab prefill,
+ * and every pixel; the state machine, the Duplicate Guard call and the idempotency key are the
+ * package's.
  */
-import {
-  failureMessage,
-  findDuplicate,
-  isHttpUrl,
-  manualApplicationPayload,
-  type JobInfo,
-  type Profile,
-} from '@djobi/shared';
+import { isHttpUrl, type Profile } from '@djobi/shared';
+import { useManualLogFlow, type ManualLogPorts } from '@djobi/manual-log';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
 import { formatAppliedDate } from '../lib/format';
-import type { DuplicateApplication } from '../lib/run';
-
-/** What the review screen is about: the extracted details, plus whatever the Duplicate Guard found. */
-interface Reviewed {
-  jobInfo: JobInfo;
-  /**
-   * What the candidate has already saved for this posting, or `null` — the Duplicate Guard's hit.
-   * `null` is the normal case. Warns, never blocks: logging the same posting twice is the
-   * candidate's call to make, and so is logging one the guard couldn't check.
-   */
-  duplicate: DuplicateApplication | null;
-}
-
-/**
- * `extracted` holds the job details for review before anything is written — the extraction is a
- * model call, so the candidate gets to see what it made of the posting (and fix the two fields that
- * become plain columns) before it becomes a row.
- *
- * All three review states carry the same {@link Reviewed} payload, `saving` included: the screen
- * they render is one screen, and dropping the duplicates for the moment the write is in flight only
- * made every reader re-supply them.
- */
-type LogState =
-  | { kind: 'form' }
-  | { kind: 'extracting' }
-  | { kind: 'extract-error'; message: string }
-  | ({ kind: 'extracted' } & Reviewed)
-  | ({ kind: 'saving' } & Reviewed)
-  | ({ kind: 'save-error'; message: string } & Reviewed)
-  | { kind: 'saved'; company: string; roleTitle: string };
 
 export function LogApplication({
   client,
@@ -73,7 +37,23 @@ export function LogApplication({
   // they're what every later list and duplicate check reads.
   const [company, setCompany] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
-  const [state, setState] = useState<LogState>({ kind: 'form' });
+
+  // `client`'s own methods, adapted to `ManualLogPorts`'s shape. No `handleError` policy of its
+  // own today — a 401 here surfaces as `extract-error`/`save-error` like any other failure, the
+  // same as before this flow moved into the shared package. See `useManualLogFlow`'s own doc for
+  // why that's an explicit port rather than the flow guessing: the dashboard's counterpart *does*
+  // have one, redirecting to sign-in instead.
+  const ports: ManualLogPorts = {
+    extractJob: (jobDescription) => client.extractJob(jobDescription),
+    findApplicationDuplicates: (jobUrl, signal) => client.findApplicationDuplicates(jobUrl, signal),
+    save: async (payload, idempotencyKey) => {
+      await client.saveApplication(payload, idempotencyKey);
+      return true;
+    },
+    handleError: () => false,
+  };
+  const flow = useManualLogFlow(ports);
+  const { state } = flow;
 
   // `jobUrl` is required and refused as anything but http(s) by `NewApplicationSchema`, and it's
   // also the key the duplicate guard matches on, so it's a required field here rather than
@@ -97,49 +77,10 @@ export function LogApplication({
 
   async function handleExtract() {
     if (!jobDescription.trim() || !urlValid) return;
-
-    setState({ kind: 'extracting' });
-    try {
-      // Both requests go out together: the duplicate check doesn't depend on the extraction, and
-      // serializing them would put a database round-trip behind a model call for no reason.
-      //
-      // Sharing a `Promise.all` with the extraction is only safe because the guard resolves rather
-      // than rejects — see `@djobi/shared`'s `duplicateGuard.ts`. Calling the lookup directly here,
-      // as this did, meant a backend hiccup on a *warning* rejected the pair and reported an
-      // extraction failure for an extraction that had succeeded, discarding the model call it had
-      // just paid for.
-      const [jobInfo, duplicate] = await Promise.all([
-        client.extractJob(jobDescription),
-        findDuplicate(client, jobUrl.trim()),
-      ]);
+    const jobInfo = await flow.extract(jobUrl, jobDescription);
+    if (jobInfo) {
       setCompany(jobInfo.company);
       setRoleTitle(jobInfo.roleTitle);
-      setState({ kind: 'extracted', jobInfo, duplicate });
-    } catch (error) {
-      setState({ kind: 'extract-error', message: failureMessage(error) });
-    }
-  }
-
-  async function handleSave(reviewed: Reviewed) {
-    if (!company.trim() || !roleTitle.trim() || !urlValid) return;
-
-    const { jobInfo } = reviewed;
-    // Spread first: the caller hands us the current review state, so a trailing `...reviewed` would
-    // put its old `kind` back and the screen would never leave `extracted`.
-    setState({ ...reviewed, kind: 'saving' });
-    try {
-      await client.saveApplication(
-        manualApplicationPayload(profile, {
-          jobUrl,
-          jobDescription,
-          jobInfo,
-          company,
-          roleTitle,
-        }),
-      );
-      setState({ kind: 'saved', company: company.trim(), roleTitle: roleTitle.trim() });
-    } catch (error) {
-      setState({ ...reviewed, kind: 'save-error', message: failureMessage(error) });
     }
   }
 
@@ -150,7 +91,7 @@ export function LogApplication({
     setJobDescription('');
     setCompany('');
     setRoleTitle('');
-    setState({ kind: 'form' });
+    flow.backToForm();
   }
 
   if (state.kind === 'saved') {
@@ -233,7 +174,7 @@ export function LogApplication({
         <button
           type="button"
           className="btn-primary"
-          onClick={() => void handleSave(state)}
+          onClick={() => void flow.save(profile, company, roleTitle)}
           disabled={saving || !company.trim() || !roleTitle.trim()}
         >
           {saving && <span className="spinner" />}
@@ -242,7 +183,7 @@ export function LogApplication({
         <button
           type="button"
           className="btn-link"
-          onClick={() => setState({ kind: 'form' })}
+          onClick={() => flow.backToForm()}
           disabled={saving}
         >
           Back

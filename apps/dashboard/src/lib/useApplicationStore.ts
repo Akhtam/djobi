@@ -13,14 +13,13 @@
  * {@link Mutation} for why the revert is per-record and why it reports whether the write landed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isUnauthorized, userMessage } from '@djobi/http-client';
 import {
-  failureMessage,
   type Application,
   type ApplicationStage,
   type NewApplicationRequest,
   type NewNote,
 } from '@djobi/shared';
-import { isUnauthorized } from './dashboardSession';
 import type { DashboardClient } from './dashboardClient';
 
 export interface ApplicationStore {
@@ -45,8 +44,16 @@ export interface ApplicationStore {
   addNote(id: string, note: NewNote): Promise<boolean>;
   /** Resolves `true` if the note was removed; a failure puts it back and reports `writeError`. */
   deleteNote(id: string, noteId: string): Promise<boolean>;
-  /** Creates and inserts a full row, or resolves null after reporting the failed write. */
-  createApplication(payload: NewApplicationRequest): Promise<Application | null>;
+  /**
+   * Creates and inserts a full row, or resolves null after reporting the failed write.
+   *
+   * `idempotencyKey` passes straight through to `DashboardClient.createApplication` — see its own
+   * doc for what it protects a retry against.
+   */
+  createApplication(
+    payload: NewApplicationRequest,
+    idempotencyKey: string,
+  ): Promise<Application | null>;
   /**
    * Re-fetches from scratch and clears `unauthorized` — what `App` calls once a fresh sign-in has
    * replaced the session that expired. Resetting `unauthorized` here, rather than the instant a 401
@@ -117,7 +124,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
           setApplications([]);
           setUnauthorized(true);
         } else {
-          setLoadError(failureMessage(err));
+          setLoadError(userMessage(err));
         }
       })
       .finally(() => {
@@ -233,7 +240,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
             setApplications((current) =>
               current.map((a) => (a.id === id ? rollback(a, previous) : a)),
             );
-            setWriteError(failureMessage(err));
+            setWriteError(userMessage(err));
           }
         }
         return false;
@@ -316,10 +323,10 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
   );
 
   const createApplication = useCallback(
-    async (payload: NewApplicationRequest): Promise<Application | null> => {
+    async (payload: NewApplicationRequest, idempotencyKey: string): Promise<Application | null> => {
       setWriteError(null);
       try {
-        const created = await client.createApplication(payload);
+        const created = await client.createApplication(payload, idempotencyKey);
         setApplications((current) => [
           created,
           ...current.filter((item) => item.id !== created.id),
@@ -330,7 +337,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
           setApplications([]);
           setUnauthorized(true);
         } else {
-          setWriteError(failureMessage(err));
+          setWriteError(userMessage(err));
         }
         return null;
       }

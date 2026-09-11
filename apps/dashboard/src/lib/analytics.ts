@@ -23,6 +23,7 @@ import {
   type RequirementImportance,
   type RequirementKind,
 } from '@djobi/shared';
+import { stageFilterOf, type StageFilter } from './stages.js';
 
 /**
  * The Analytics view's date ranges. `'7d'` is the default so the first reading stays focused on the
@@ -407,4 +408,127 @@ export function evidenceByRequirement(
   return new Map(
     (application.requirementEvidence ?? []).map((entry) => [entry.requirement.text, entry]),
   );
+}
+
+/**
+ * What `Analytics.tsx` filters `applications` by before reporting anything — range, stage, and the
+ * two keyword-table toggles. Grouped into one argument because every field below is drawn from this
+ * same filter state; splitting them into separate parameters would just make the call site repeat
+ * this list of names as `analyticsReport(applications, range, stage, today, …)`.
+ */
+export interface AnalyticsReportFilters {
+  range: Range;
+  stage: StageFilter | null;
+  /** "Now," as the view pinned it — see {@link rangeStart}'s own note on why the clock isn't read here. */
+  asOf: Date;
+  /** Keeps a keyword row only once at least this many postings in range asked for it. */
+  minAppearances: number;
+  /** Narrows `rows` further to keywords `profile` doesn't evidence — a no-op without one. */
+  gapsOnly: boolean;
+  /** `null` while no Profile is available yet; coverage (and so `gapsOnly`) is skipped entirely. */
+  profile: Profile | null;
+}
+
+/**
+ * Everything the Analytics view renders from one filtered look at `applications` — the range,
+ * stage and keyword-table toggle interaction that used to live as eight chained `useMemo` calls in
+ * `Analytics.tsx` itself, untested at that boundary because nothing sat behind an interface a test
+ * could call directly. One filter argument in, one report out; the view's own `useMemo` wraps this
+ * single call instead of each field inside it.
+ */
+export interface AnalyticsReport {
+  rangeStartDate: Date;
+  /** Every application in range, before the stage filter — what the stage pills count against. */
+  inRange: Application[];
+  /** In range and matching the stage filter — the population every field below is drawn from. */
+  filtered: Application[];
+  /** Every keyword `filtered` asked for, before `minAppearances`/`gapsOnly` narrow it to `rows`. */
+  frequency: KeywordFrequencyRow[];
+  /** `frequency`, narrowed by `minAppearances` and, when set, `gapsOnly` — what the table renders. */
+  rows: KeywordFrequencyRow[];
+  /** `null` until `filters.profile` is given. */
+  coverageByTerm: Map<string, CoverageVerdict> | null;
+  /** How many of `frequency` (not `rows`) are gaps — the summary strip's count regardless of the toggle. */
+  gapCount: number;
+  /** `null` when `filters.stage` narrows the population — see {@link responseRate}'s own caution. */
+  baseline: ResponseRate | null;
+}
+
+export function analyticsReport(
+  applications: Application[],
+  filters: AnalyticsReportFilters,
+): AnalyticsReport {
+  const rangeStartDate = rangeStart(filters.range, filters.asOf);
+  const inRange = applications.filter(
+    (application) => new Date(application.createdAt) >= rangeStartDate,
+  );
+  const filtered = filters.stage
+    ? inRange.filter((application) => stageFilterOf(application.stage) === filters.stage)
+    : inRange;
+
+  const frequency = keywordFrequency(filtered);
+  const coverageByTerm = filters.profile ? coverageForKeywords(frequency, filters.profile) : null;
+  const gapCount = coverageByTerm
+    ? frequency.filter((row) => coverageByTerm.get(row.term) === 'missing').length
+    : 0;
+  // `gapsOnly` with no `coverageByTerm` to check against (the caller has no Profile yet) hides
+  // every row rather than showing all of them — nothing can be confirmed a gap without something
+  // to score it against, so nothing is shown as one. The view keeps this state unreachable by
+  // disabling the toggle until a Profile has loaded; the report still has to answer it sanely.
+  const rows = frequency
+    .filter((row) => !filters.gapsOnly || coverageByTerm?.get(row.term) === 'missing')
+    .filter((row) => row.count >= filters.minAppearances);
+
+  // Suppressed entirely while a stage filter is on — see `responseRate`'s own note: a population
+  // selected on the outcome being measured reports a rate that isn't one.
+  const baseline = filters.stage === null ? responseRate(filtered) : null;
+
+  return { rangeStartDate, inRange, filtered, frequency, rows, coverageByTerm, gapCount, baseline };
+}
+
+/**
+ * Everything `RequirementsPanel` renders for one keyword selection — the same filter/roll-up chain
+ * that used to live inline in the component, called on every render with nothing behind an
+ * interface a test could reach without mounting it.
+ */
+export interface RequirementsReport {
+  /** `applications`, narrowed to postings that asked for the selected keyword — or all, if none. */
+  matching: Application[];
+  /** `matching`, newest first — what the panel actually lists. */
+  sorted: Application[];
+  requirementCounts: RequirementKindCounts;
+  bandCounts: RequirementImportanceCounts;
+  /** Whether anything in `matching` carries an importance band at all — see `RequirementImportanceCounts`. */
+  anyBanded: boolean;
+  yearsDistribution: YearsOfExperienceCount[];
+  evidence: RequirementEvidenceRollup;
+}
+
+export function requirementsReport(
+  applications: Application[],
+  selectedKeyword: string | null,
+): RequirementsReport {
+  const needle = selectedKeyword ? normalizeKeyword(selectedKeyword) : null;
+  const matching = needle
+    ? applications.filter((application) =>
+        application.jobInfo.keywords.some((keyword) => normalizeKeyword(keyword.term) === needle),
+      )
+    : applications;
+  const sorted = [...matching].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const requirementCounts = requirementKindCounts(matching);
+  const bandCounts = requirementImportanceCounts(matching);
+  const anyBanded = bandCounts.total > bandCounts.unbanded;
+  const yearsDistribution = yearsOfExperienceDistribution(matching);
+  const evidence = requirementEvidenceRollup(matching);
+
+  return {
+    matching,
+    sorted,
+    requirementCounts,
+    bandCounts,
+    anyBanded,
+    yearsDistribution,
+    evidence,
+  };
 }

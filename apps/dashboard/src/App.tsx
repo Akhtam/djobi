@@ -150,6 +150,8 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     backTarget.current = { href: analyticsPath(route.range, route.stage), label: 'Analytics' };
   }
 
+  const publicAuthRoute = route.name === 'login' || route.name === 'signup';
+
   return (
     <>
       {/*
@@ -160,9 +162,10 @@ function DashboardApp({ client }: { client: DashboardClient }) {
       <header className="page-header">
         <div className="page-header__inner">
           {/*
-            The same brand lockup on every route. Going back to an index route is the *page's*
-            business, not the chrome's, so the back link lives at the top of the detail view beside
-            the record it belongs to — see `ApplicationDetail`.
+            The same brand lockup on every route. On login and signup it returns to the public
+            landing page; once signed in it returns to the applications index. Going back to an
+            index route is otherwise the *page's* business, not the chrome's, so the back link lives
+            at the top of the detail view beside the record it belongs to — see `ApplicationDetail`.
 
             The SVG rather than one of the PNGs: it stays crisp on a high-DPI display where a 26px
             raster wouldn't, and it's 642 bytes. It is emitted as a file rather than inlined as a
@@ -170,7 +173,11 @@ function DashboardApp({ client }: { client: DashboardClient }) {
             share one emitted asset and one cache entry. Same mark as the extension's icon; the
             PNGs beside it are byte-identical to `apps/extension/src/assets/icons/`.
           */}
-          <a className="brand" href="#/" aria-label="djobi — all applications">
+          <a
+            className="brand"
+            href={publicAuthRoute ? '/' : '#/'}
+            aria-label={publicAuthRoute ? 'djobi home' : 'djobi — all applications'}
+          >
             <img className="brand__logo" src={logoUrl} alt="" width={26} height={26} />
             <span className="wordmark">djobi</span>
           </a>
@@ -178,29 +185,31 @@ function DashboardApp({ client }: { client: DashboardClient }) {
             A peer of the brand lockup, not something `.page` lays out: the nav belongs to the
             chrome that sits on every route, the same reason the brand link and theme toggle do.
           */}
-          <nav className="nav" aria-label="Views">
-            <a
-              className="nav-link"
-              href="#/"
-              aria-current={route.name === 'list' ? 'page' : undefined}
-            >
-              Applications
-            </a>
-            <a
-              className="nav-link"
-              href="#/analytics"
-              aria-current={route.name === 'analytics' ? 'page' : undefined}
-            >
-              Analytics
-            </a>
-          </nav>
+          {!publicAuthRoute ? (
+            <nav className="nav" aria-label="Views">
+              <a
+                className="nav-link"
+                href="#/"
+                aria-current={route.name === 'list' ? 'page' : undefined}
+              >
+                Applications
+              </a>
+              <a
+                className="nav-link"
+                href="#/analytics"
+                aria-current={route.name === 'analytics' ? 'page' : undefined}
+              >
+                Analytics
+              </a>
+            </nav>
+          ) : null}
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
           {/*
             Hidden on `login`/`signup`: those routes render before a session exists (a fresh
             visitor's own load 401s immediately, same reasoning as the redirect effect above), so
             an account menu there would act on a session that isn't there yet.
           */}
-          {route.name !== 'login' && route.name !== 'signup' ? (
+          {!publicAuthRoute ? (
             <AccountMenu client={client} onSignOut={() => void handleSignOut()} />
           ) : null}
         </div>

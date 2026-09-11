@@ -16,18 +16,18 @@
  * own: whether a command is *eligible* — which the buttons' `disabled` and the review guards say —
  * and the resume preview's lifecycle. The words for a Run Notice are `RunNoticeView.tsx`'s.
  */
-import type { DetectedField, JobInfo, Profile, TailoredResume } from '@djobi/shared';
+import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
-import { autofillSource } from '../lib/fieldDisposition';
 import type { JobPageData } from '../lib/messages';
 import { pipelineCommands } from './pipelineCommands';
 import type { PostingReadOutcome } from '../lib/postingReader';
-import { answersFor, canEditRun, canFill, canSave, hasFilled, hasUnsavedFill } from '../lib/run';
+import { canEditRun, canFill, canSave, hasFilled, hasUnsavedFill } from '../lib/run';
 import type { RunNoticeAction } from '../lib/run';
 import { CoverageReport } from './CoverageReport';
 import { getDetectedPage, subscribeDetectedPage } from '../lib/tabStore/detectedPage';
 import { type PipelineStatus } from '../lib/run';
+import { questionPresentation } from './questionPresentation';
 import { ResumeReview } from './ResumeReview';
 import { RunNoticeView } from './RunNoticeView';
 import type { ActiveRun } from './useActiveRun';
@@ -108,41 +108,14 @@ export function AutofillTab({
   const tailoredResume: TailoredResume | null = run?.tailoredResume ?? null;
   const answers = run?.answers ?? [];
   const coverage = run?.coverage ?? [];
-  /**
-   * Which answers may be handed to the Ask Tab: the freeform ones. A `question`-category Detected
-   * Field rendered as a select, combobox or radiogroup answers from the page's own fixed options,
-   * and rewriting one as prose produces something that can't be filled back in.
-   */
-  const refinableFieldIds = new Set(
-    (jobPageData?.fields ?? [])
-      .filter(
-        (field) =>
-          autofillSource(field.category) === 'question' &&
-          field.elementRole === 'native' &&
-          !field.options,
-      )
-      .map((field) => field.id),
-  );
-  // Which questions Fill will leave blank — decided by `lib/runAnswers.ts`, which is the resolution
-  // Fill itself uses, given the same run. Two derivations of this rule is how the panel came to
-  // warn about the wrong questions: it resolved by label set, so it flagged a remounted field whose
-  // id Fill still matched, and said nothing about a question whose drafted answer had been dropped.
-  //
-  // Both sources of fields are handed over: a just-finished Fill scan may have checkpointed new
-  // questions onto the run while panel-side detection still holds an older empty snapshot from the
-  // route transition. They overlap, and `unanswered` names each question once.
-  const unfilledQuestions: DetectedField[] = answersFor(run).unanswered([
-    ...(run?.jobPageData.fields ?? []),
-    ...(detectedPage?.fields ?? []),
-  ]);
-  // Only the required ones are listed: an optional question left blank is a normal outcome, and
-  // naming every one of them buries the entries that actually block a submission.
-  const unfilledRequiredQuestions = unfilledQuestions.filter((field) => field.required);
-  // Only until a Fill reports. This banner predicts what Fill will skip; once it has run,
-  // `unresolvedRequiredFields` is the page's own account of what it actually kept, and it names the
-  // same questions plus any the form rejected outright. Showing both listed the same questions
-  // twice, under two headings, one of them stale.
-  const hasNewApplicationQuestions = outcome === null && unfilledQuestions.length > 0;
+  // What to show about this run's questions — a pure derivation from `run` and the live detection,
+  // with nothing about rendering in it. See `questionPresentation.ts`.
+  const {
+    refinableFieldIds,
+    unfilledQuestions,
+    unfilledRequiredQuestions,
+    hasNewApplicationQuestions,
+  } = questionPresentation(run, detectedPage, outcome);
 
   // The Tailored Resume preview, and the blob-URL lifecycle that comes with it.
   const resumePreview = useResumePreview(client, profile, tailoredResume);

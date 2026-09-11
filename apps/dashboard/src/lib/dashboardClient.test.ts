@@ -92,18 +92,39 @@ describe('createFixtureDashboardClient', () => {
     const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
     const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0];
 
-    const created = await client.createApplication({
-      ...template,
-      company: 'New company',
-      roleTitle: 'New role',
-      jobUrl: 'https://example.com/jobs/new-role',
-      source: 'manual',
-    });
+    const created = await client.createApplication(
+      {
+        ...template,
+        company: 'New company',
+        roleTitle: 'New role',
+        jobUrl: 'https://example.com/jobs/new-role',
+        source: 'manual',
+      },
+      'idempotency-key-1',
+    );
 
     expect(created.id).toBeTruthy();
     expect(created.createdAt).toBeTruthy();
     expect(created.source).toBe('manual');
     expect((await client.listApplications())[0]).toEqual(created);
+  });
+
+  it('returns the same row for a repeated idempotency key instead of creating a second one', async () => {
+    const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
+    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0];
+    const payload = {
+      ...template,
+      company: 'New company',
+      roleTitle: 'New role',
+      jobUrl: 'https://example.com/jobs/new-role',
+      source: 'manual' as const,
+    };
+
+    const first = await client.createApplication(payload, 'retry-key');
+    const second = await client.createApplication(payload, 'retry-key');
+
+    expect(second).toEqual(first);
+    expect((await client.listApplications()).filter((a) => a.id === first.id)).toHaveLength(1);
   });
 
   it('reports duplicates for an exact posting URL', async () => {
@@ -176,7 +197,9 @@ describe('createFixtureDashboardClient, auth', () => {
       HttpError,
     );
     const { id: _id, createdAt: _createdAt, ...payload } = fixtureApplications[0];
-    await expect(client.createApplication(payload)).rejects.toBeInstanceOf(HttpError);
+    await expect(client.createApplication(payload, 'idempotency-key-1')).rejects.toBeInstanceOf(
+      HttpError,
+    );
   });
 
   it('signs in with the default credentials and then serves normally', async () => {

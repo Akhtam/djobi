@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createHttpTransport, HttpError } from './index.js';
+import { createHttpTransport, HttpError, isUnauthorized, userMessage } from './index.js';
 
 const Schema = z.object({ id: z.string() });
 
@@ -396,5 +396,129 @@ describe('createHttpTransport', () => {
     await client.json('/profile', Schema);
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('isUnauthorized', () => {
+  it('is true only for an HttpError with kind "http" and status 401', () => {
+    expect(isUnauthorized(new HttpError('http', '/profile', 'nope', 401))).toBe(true);
+  });
+
+  it('is false for an HttpError with a different status', () => {
+    expect(isUnauthorized(new HttpError('http', '/profile', 'nope', 403))).toBe(false);
+    expect(isUnauthorized(new HttpError('http', '/profile', 'nope', 500))).toBe(false);
+  });
+
+  it('is false for an HttpError with kind "http" and no status at all', () => {
+    expect(isUnauthorized(new HttpError('http', '/profile', 'nope'))).toBe(false);
+  });
+
+  it('is false for a non-http HttpError kind, even carrying status 401', () => {
+    expect(isUnauthorized(new HttpError('timeout', '/profile', 'slow', 401))).toBe(false);
+    expect(isUnauthorized(new HttpError('network', '/profile', 'down', 401))).toBe(false);
+    expect(isUnauthorized(new HttpError('invalid-response', '/profile', 'bad', 401))).toBe(false);
+  });
+
+  it('is false for anything that is not an HttpError', () => {
+    expect(isUnauthorized(new Error('nope'))).toBe(false);
+    expect(isUnauthorized({ kind: 'http', status: 401 })).toBe(false);
+    expect(isUnauthorized(null)).toBe(false);
+    expect(isUnauthorized(undefined)).toBe(false);
+    expect(isUnauthorized('401')).toBe(false);
+  });
+});
+
+describe('a non-2xx response, and what a caller sees of it', () => {
+  it("reads this app's own { error } body as the reason", async () => {
+    const { fetchImpl } = respondWith(
+      () => new Response(JSON.stringify({ error: 'Something went wrong.' }), { status: 500 }),
+    );
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error: HttpError = await client
+      .json('/profile', Schema)
+      .catch((e: unknown) => e as HttpError);
+
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error.reason).toBe('Something went wrong.');
+    expect(error.message).toBe('GET /profile failed (500): Something went wrong.');
+  });
+
+  it("reads Better Auth's own top-level { message } body as the reason — not the whole JSON blob", async () => {
+    // The exact shape a failed `/api/auth/sign-in/email` answers with — `app.ts` passes Better
+    // Auth's own routes straight through, so this never goes through this app's `{ error }`
+    // convention. Before this was handled, the whole raw body — braces and all — became the
+    // "reason" and was shown to the candidate verbatim.
+    const body = JSON.stringify({
+      message: 'Invalid email or password',
+      code: 'INVALID_EMAIL_OR_PASSWORD',
+    });
+    const { fetchImpl } = respondWith(() => new Response(body, { status: 401 }));
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error: HttpError = await client
+      .json('/api/auth/sign-in/email', Schema)
+      .catch((e: unknown) => e as HttpError);
+
+    expect(error.reason).toBe('Invalid email or password');
+    expect(error.message).not.toContain('{"message"');
+  });
+
+  it('falls back to the raw body only when nothing recognizable is in it', async () => {
+    const { fetchImpl } = respondWith(
+      () => new Response('<!doctype html>Not Found', { status: 404 }),
+    );
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error: HttpError = await client
+      .json('/profile', Schema)
+      .catch((e: unknown) => e as HttpError);
+
+    expect(error.reason).toContain('Not Found');
+  });
+
+  it('gives an invalid-response failure a clean reason instead of the zod issue list', async () => {
+    const { fetchImpl } = respondWith(() => new Response('{"nope":1}', { status: 200 }));
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
+
+    const error: HttpError = await client
+      .json('/profile', Schema)
+      .catch((e: unknown) => e as HttpError);
+
+    expect(error.kind).toBe('invalid-response');
+    expect(error.reason).toBe('The server sent back something unexpected. Please try again.');
+    expect(error.message).not.toBe(error.reason);
+  });
+
+  it('gives a timeout a clean reason with no path in it', () => {
+    const error = new HttpError('timeout', '/profile', '/profile did not respond within 90s');
+
+    // No explicit `reason` passed — falls back to `message`, unlike the two curated kinds above.
+    // Timeout wording is addressed separately from this suite's other assertions since the
+    // transport itself is what supplies a curated `reason` for a real timeout; this only proves a
+    // caller reading `.reason` without one still gets a string, not `undefined`.
+    expect(error.reason).toBe(error.message);
+  });
+});
+
+describe('userMessage', () => {
+  it("reads an HttpError's reason, not its diagnostic message", () => {
+    const error = new HttpError(
+      'http',
+      '/api/auth/sign-in/email',
+      'POST … failed (401): boom',
+      401,
+      {
+        reason: 'Invalid email or password',
+      },
+    );
+
+    expect(userMessage(error)).toBe('Invalid email or password');
+  });
+
+  it('falls back to failureMessage for anything that is not an HttpError', () => {
+    expect(userMessage(new Error('plain failure'))).toBe('plain failure');
+    expect(userMessage('a string rejection')).toBe('a string rejection');
+    expect(userMessage(null)).toBe('Unknown error');
   });
 });

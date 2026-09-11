@@ -75,13 +75,13 @@ describe('httpBackendClient', () => {
   it('reads the profile bodyless, over GET', async () => {
     await httpBackendClient.getProfile();
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), undefined, 'GET');
+    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), { method: 'GET' });
   });
 
   it('saves the profile as the whole body', async () => {
     await httpBackendClient.saveProfile(profile);
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), profile);
+    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), { body: profile });
   });
 
   it('uploads the resume through the multipart transport, under the "resume" field', async () => {
@@ -129,22 +129,17 @@ describe('httpBackendClient', () => {
   it('extracts job info from the pasted description', async () => {
     await httpBackendClient.extractJob('a posting');
 
-    expect(callBackend).toHaveBeenCalledWith(
-      '/extract-job',
-      expect.anything(),
-      { jobDescription: 'a posting' },
-      'POST',
-      undefined,
-    );
+    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+      body: { jobDescription: 'a posting' },
+      signal: undefined,
+    });
   });
 
   it('sends only resume fields to tailoring', async () => {
     await httpBackendClient.tailorResume(profile, jobInfo);
 
-    expect(callBackend).toHaveBeenCalledWith(
-      '/tailor-resume',
-      expect.anything(),
-      {
+    expect(callBackend).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
+      body: {
         profile: {
           workExperience: profile.workExperience,
           maxBulletsPerRole: profile.maxBulletsPerRole,
@@ -152,18 +147,15 @@ describe('httpBackendClient', () => {
         },
         jobInfo,
       },
-      'POST',
-      undefined,
-    );
+      signal: undefined,
+    });
   });
 
   it('sends only grounding fields to question drafting', async () => {
     await httpBackendClient.answerQuestions(profile, jobInfo, []);
 
-    expect(callBackend).toHaveBeenCalledWith(
-      '/answer-questions',
-      expect.anything(),
-      {
+    expect(callBackend).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
+      body: {
         profile: {
           workExperience: profile.workExperience,
           education: profile.education,
@@ -177,9 +169,8 @@ describe('httpBackendClient', () => {
         jobInfo,
         questions: [],
       },
-      'POST',
-      undefined,
-    );
+      signal: undefined,
+    });
   });
 
   it('encodes the id into the update path', async () => {
@@ -200,8 +191,7 @@ describe('httpBackendClient', () => {
     expect(callBackend).toHaveBeenCalledWith(
       '/applications/a%20b%2Fc?response=compact',
       expect.anything(),
-      expect.anything(),
-      'PATCH',
+      expect.objectContaining({ method: 'PATCH' }),
     );
   });
 
@@ -214,9 +204,7 @@ describe('httpBackendClient', () => {
     expect(callBackend).toHaveBeenCalledWith(
       '/applications?jobUrl=https%3A%2F%2Fboards.example.com%2Fj%3Fid%3D1&response=compact',
       expect.anything(),
-      undefined,
-      'GET',
-      undefined,
+      { method: 'GET', signal: undefined },
     );
   });
 
@@ -225,13 +213,10 @@ describe('httpBackendClient', () => {
 
     await httpBackendClient.extractJob('a posting', signal);
 
-    expect(callBackend).toHaveBeenCalledWith(
-      '/extract-job',
-      expect.anything(),
-      { jobDescription: 'a posting' },
-      'POST',
+    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+      body: { jobDescription: 'a posting' },
       signal,
-    );
+    });
   });
 
   it('parses a duplicate-lookup response with newest application metadata', async () => {
@@ -311,20 +296,23 @@ describe('httpBackendClient', () => {
     respondWith({});
 
     await expect(
-      httpBackendClient.saveApplication({
-        company: 'Acme',
-        roleTitle: 'Engineer',
-        jobUrl: 'https://example.com/job',
-        jobInfo,
-        tailoredResume,
-        answers: [],
-      }),
+      httpBackendClient.saveApplication(
+        {
+          company: 'Acme',
+          roleTitle: 'Engineer',
+          jobUrl: 'https://example.com/job',
+          jobInfo,
+          tailoredResume,
+          answers: [],
+        },
+        'idempotency-key-1',
+      ),
     ).rejects.toThrow();
 
     expect(callBackend).toHaveBeenCalledWith(
       '/applications?response=compact',
       expect.anything(),
-      expect.anything(),
+      expect.objectContaining({ idempotencyKey: 'idempotency-key-1' }),
     );
   });
 });
@@ -338,15 +326,17 @@ describe('httpBackendClient.answerChat', () => {
     });
 
     expect(callBackend).toHaveBeenCalledWith('/answer-chat', expect.anything(), {
-      profile: {
-        workExperience: profile.workExperience,
-        education: profile.education,
-        skills: profile.skills,
-        stories: profile.stories,
-        customAnswers: profile.customAnswers,
+      body: {
+        profile: {
+          workExperience: profile.workExperience,
+          education: profile.education,
+          skills: profile.skills,
+          stories: profile.stories,
+          customAnswers: profile.customAnswers,
+        },
+        question: 'Why do you want to work here?',
+        messages: [],
       },
-      question: 'Why do you want to work here?',
-      messages: [],
     });
   });
 
@@ -363,9 +353,11 @@ describe('httpBackendClient.answerChat', () => {
       '/answer-chat',
       expect.anything(),
       expect.objectContaining({
-        jobInfo,
-        currentAnswer: 'A first draft.',
-        messages: [{ role: 'user', content: 'Make it shorter.' }],
+        body: expect.objectContaining({
+          jobInfo,
+          currentAnswer: 'A first draft.',
+          messages: [{ role: 'user', content: 'Make it shorter.' }],
+        }),
       }),
     );
   });
@@ -380,7 +372,7 @@ describe('httpBackendClient.answerChat', () => {
       messages: [],
     });
 
-    expect(vi.mocked(callBackend).mock.calls[0][1]).not.toHaveProperty('jobInfo');
+    expect(vi.mocked(callBackend).mock.calls[0][2]?.body).not.toHaveProperty('jobInfo');
   });
 });
 
@@ -426,7 +418,8 @@ describe('Profile projections', () => {
     const call = binary
       ? vi.mocked(callBackendBinary).mock.calls[0]
       : vi.mocked(callBackend).mock.calls[0];
-    return (call[binary ? 1 : 2] as { profile: unknown }).profile;
+    const body = binary ? call[1] : (call[2] as { body: unknown }).body;
+    return (body as { profile: unknown }).profile;
   }
 
   it('grounds tailoring in work history alone — no contact details, no screening declarations', async () => {

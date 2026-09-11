@@ -29,7 +29,7 @@ describe('callBackend', () => {
     );
 
     const result = await callBackend('/extract-job', Result, {
-      jobDescription: 'Senior Engineer at Acme...',
+      body: { jobDescription: 'Senior Engineer at Acme...' },
     });
 
     expect(result).toEqual({ id: 'application-1' });
@@ -65,7 +65,7 @@ describe('callBackend', () => {
     });
     const controller = new AbortController();
 
-    const pending = callBackend('/extract-job', Result, {}, 'POST', controller.signal);
+    const pending = callBackend('/extract-job', Result, { body: {}, signal: controller.signal });
     controller.abort();
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
@@ -81,7 +81,7 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/extract-job', Result, {})).rejects.toThrow(
+    await expect(callBackend('/extract-job', Result, { body: {} })).rejects.toThrow(
       'jobDescription is required',
     );
   });
@@ -94,7 +94,7 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/answer-questions', Result, {})).rejects.toThrow(
+    await expect(callBackend('/answer-questions', Result, { body: {} })).rejects.toThrow(
       'POST /answer-questions failed (500): Internal Server Error',
     );
   });
@@ -107,7 +107,7 @@ describe('callBackend', () => {
       }),
     );
 
-    await expect(callBackend('/answer-questions', Result, {})).rejects.toMatchObject({
+    await expect(callBackend('/answer-questions', Result, { body: {} })).rejects.toMatchObject({
       kind: 'http',
       status: 500,
       path: '/answer-questions',
@@ -127,7 +127,7 @@ describe('callBackend', () => {
       ),
     );
 
-    const error = await callBackend('/answer-questions', Result, {}).catch(
+    const error = await callBackend('/answer-questions', Result, { body: {} }).catch(
       (caught: unknown) => caught,
     );
 
@@ -146,7 +146,9 @@ describe('callBackend', () => {
   it('reports an empty error body rather than throwing on the empty string', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('', { status: 502 }));
 
-    await expect(callBackend('/extract-job', Result, {})).rejects.toThrow('empty response body');
+    await expect(callBackend('/extract-job', Result, { body: {} })).rejects.toThrow(
+      'empty response body',
+    );
   });
 
   it('names the path and the failed expectation when a 2xx body is not what the route promised', async () => {
@@ -159,7 +161,9 @@ describe('callBackend', () => {
       }),
     );
 
-    const error = await callBackend('/applications', Result, {}).catch((caught: unknown) => caught);
+    const error = await callBackend('/applications', Result, { body: {} }).catch(
+      (caught: unknown) => caught,
+    );
 
     expect(error).toMatchObject({ kind: 'invalid-response', path: '/applications' });
     expect((error as Error).message).toContain(
@@ -173,7 +177,7 @@ describe('callBackend', () => {
     // with nothing at all read as a successful call returning a valid value.
     vi.mocked(fetch).mockResolvedValue(new Response('', { status: 200 }));
 
-    await expect(callBackend('/applications', Result, {})).rejects.toThrow(
+    await expect(callBackend('/applications', Result, { body: {} })).rejects.toThrow(
       'returned an unexpected response',
     );
   });
@@ -186,12 +190,9 @@ describe('callBackend', () => {
       }),
     );
 
-    const result = await callBackend(
-      '/profile',
-      DuplicateApplicationSummarySchema,
-      undefined,
-      'GET',
-    );
+    const result = await callBackend('/profile', DuplicateApplicationSummarySchema, {
+      method: 'GET',
+    });
 
     expect(result).toEqual({ count: 0, latest: null });
     expect(fetch).toHaveBeenCalledWith(`${EXTENSION_BACKEND_ORIGIN}/profile`, {

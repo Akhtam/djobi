@@ -202,6 +202,46 @@ describe('POST /applications', () => {
   });
 
   /**
+   * The defect an `idempotency-key` header exists to close: a retry after a timeout or a lost
+   * response must not write a second row for the same attempt.
+   */
+  it('an idempotency-key retry returns the row the first create wrote, not a second one', async () => {
+    const { app, applicationStore } = createTestApp();
+
+    const post = () =>
+      app.request('/applications?response=compact', {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, 'idempotency-key': 'retry-key-1' },
+        body: JSON.stringify(newApplication),
+      });
+
+    const first = await post();
+    const second = await post();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstBody = (await first.json()) as { id: string };
+    const secondBody = (await second.json()) as { id: string };
+    expect(secondBody.id).toBe(firstBody.id);
+    expect(await applicationStore.list(BOOTSTRAP_USER_ID)).toHaveLength(1);
+  });
+
+  it('two creates with no idempotency-key never collide', async () => {
+    const { app, applicationStore } = createTestApp();
+
+    for (let i = 0; i < 2; i++) {
+      const res = await app.request('/applications?response=compact', {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify(newApplication),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    expect(await applicationStore.list(BOOTSTRAP_USER_ID)).toHaveLength(2);
+  });
+
+  /**
    * The optimization the `Written` row exists for, stated as behaviour rather than as a comment: a
    * full-row write answers from what the write returned, so it costs one store call and not two.
    * Against Neon that second call was a second HTTP round trip; a `byId` here would put it back

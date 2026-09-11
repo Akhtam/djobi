@@ -5,8 +5,8 @@
  * through `chrome.storage.local`, which does not exist on a plain web page. The markup and the two
  * icons are kept identical so the control looks the same in both surfaces.
  *
- * Unlike the extension's version this seeds from `prefers-color-scheme`, because a web page has a
- * meaningful OS-level default to inherit and an unconfigured extension page does not.
+ * Unlike the extension's version, this persists through `localStorage`. New visitors start in light
+ * mode; an explicitly saved preference takes precedence.
  */
 import { useEffect, useState } from 'react';
 
@@ -39,8 +39,7 @@ function themeStorage(): Storage | undefined {
 function preferredTheme(): Theme {
   const stored = themeStorage()?.getItem(THEME_KEY);
   if (stored === 'dark' || stored === 'light') return stored;
-  // `matchMedia` is likewise absent in jsdom; an unconfigured page then defaults to light.
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return 'light';
 }
 
 /** Keeps the page on one persisted color preference. */

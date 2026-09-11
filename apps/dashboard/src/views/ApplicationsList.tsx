@@ -66,7 +66,10 @@ export function ApplicationsList({
   onFiltersChange: (filters: ListFilters) => void;
   onShowMore: (shown: number) => void;
   onStageChange: (id: string, stage: ApplicationStage) => void;
-  onCreateApplication: (payload: NewApplicationRequest) => Promise<Application | null>;
+  onCreateApplication: (
+    payload: NewApplicationRequest,
+    idempotencyKey: string,
+  ) => Promise<Application | null>;
   onUnauthorized: () => void;
 }) {
   const { query, stage, rejection } = filters;

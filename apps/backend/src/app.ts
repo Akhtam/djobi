@@ -92,7 +92,9 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
       allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
       // `x-djobi-upload` exists purely to force a preflight — see the content-type middleware below
       // for why `POST /profile/extract-resume` needs one despite not sending JSON.
-      allowHeaders: ['content-type', 'x-djobi-upload'],
+      // `idempotency-key` is `routes/applications.ts`'s dedupe token for `POST /applications` — see
+      // `applicationStore.ts`'s `create`.
+      allowHeaders: ['content-type', 'x-djobi-upload', 'idempotency-key'],
       credentials: true,
     }),
   );

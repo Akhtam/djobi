@@ -64,8 +64,15 @@ export interface DashboardClient {
   listApplications(): Promise<Application[]>;
   /** Extracts the reviewable job details used by a manual dashboard entry. */
   extractJob(jobDescription: string): Promise<JobInfo>;
-  /** Creates a manual application and returns the full authoritative row. */
-  createApplication(payload: NewApplicationRequest): Promise<Application>;
+  /**
+   * Creates a manual application and returns the full authoritative row.
+   *
+   * `idempotencyKey` should be the same string across every retry of one logical save attempt —
+   * `NewApplication.tsx` generates it once per extraction and reuses it for every submit while that
+   * review is on screen — so a resend after a timeout lands the same row back instead of a second
+   * one. See `applicationStore.ts`'s `create`.
+   */
+  createApplication(payload: NewApplicationRequest, idempotencyKey: string): Promise<Application>;
   /** Existing rows saved against the exact posting URL, for the manual-entry warning. */
   findApplicationDuplicates(jobUrl: string): Promise<DuplicateApplicationSummary>;
   /** Resolves with the authoritative Stage after an optimistic write. */
@@ -162,8 +169,12 @@ export const httpDashboardClient: DashboardClient = {
       body: { jobDescription } satisfies ExtractJobRequest,
     }),
 
-  createApplication: (payload) =>
-    transport.json('/applications', ApplicationSchema, { method: 'POST', body: payload }),
+  createApplication: (payload, idempotencyKey) =>
+    transport.json('/applications', ApplicationSchema, {
+      method: 'POST',
+      body: payload,
+      idempotencyKey,
+    }),
 
   findApplicationDuplicates: (jobUrl) =>
     transport.json(
@@ -294,6 +305,9 @@ export function createFixtureDashboardClient(
   // to whatever the form submitted, exactly as a real account creation would.
   let currentEmail = email;
   let currentPassword = password;
+  // Mirrors `applicationStore.ts`'s in-memory adapter: a same-keyed `createApplication` retry
+  // returns the row the first call already wrote rather than appending a second one.
+  const applicationsByIdempotencyKey = new Map<string, Application>();
 
   /**
    * `requireAuth()`'s own answer, reproduced here: `app.ts` puts every route this client calls
@@ -352,8 +366,12 @@ export function createFixtureDashboardClient(
       );
     },
 
-    createApplication: (payload) => {
+    createApplication: (payload, idempotencyKey) => {
       if (!hasSession) return unauthorized('/applications');
+
+      const existing = applicationsByIdempotencyKey.get(idempotencyKey);
+      if (existing) return Promise.resolve(structuredClone(existing));
+
       const parsed = NewApplicationSchema.parse(structuredClone(payload));
       const application = ApplicationSchema.parse({
         ...parsed,
@@ -361,6 +379,7 @@ export function createFixtureDashboardClient(
         createdAt: new Date().toISOString(),
       });
       applications = [application, ...applications];
+      applicationsByIdempotencyKey.set(idempotencyKey, application);
       return Promise.resolve(structuredClone(application));
     },
 

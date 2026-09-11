@@ -14,7 +14,7 @@
  * page would hit — the same reason every other route in `backendClient.ts` needs no CORS allowlist
  * entry on the backend either.
  */
-import { HttpError } from '@djobi/http-client';
+import { errorBodyFrom, HttpError, isUnauthorized } from '@djobi/http-client';
 import { SignInRequestSchema, SignInResultSchema, SignOutResultSchema } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { clearAuthToken, getAuthToken, setAuthToken } from './authToken';
@@ -41,10 +41,13 @@ export async function signIn(email: string, password: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const reason = await response
-      .json()
-      .then((body: unknown) => (body as { error?: string })?.error)
-      .catch(() => undefined);
+    // Better Auth's own error body is `{ message, code }` — e.g. `{"message":"Invalid email or
+    // password","code":"INVALID_EMAIL_OR_PASSWORD"}` — not this app's own `{ error }` convention,
+    // since this route is Better Auth's own (`app.ts`'s pass-through), never this backend's
+    // `app.onError`. Reading only `.error` here left every real reason unread and every candidate
+    // looking at the generic fallback below instead of what Better Auth actually said.
+    const rawBody = await response.text().catch(() => '');
+    const reason = rawBody ? errorBodyFrom(rawBody).reason : undefined;
     // An `HttpError`, not a plain `Error`, for the same reason every call through
     // `callBackend.ts` raises one: `kind`/`status` are what a caller classifies a 401 by, and
     // `createFakeBackendClient`'s own `signIn` already rejects in this shape. A bare `Error` here
@@ -130,11 +133,6 @@ export async function adoptSharedSession(): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
 }
 
 /**

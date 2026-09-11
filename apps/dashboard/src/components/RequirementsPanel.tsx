@@ -15,14 +15,8 @@
  * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
  */
 import { useState, type ReactNode } from 'react';
-import { IMPORTANCE_BANDS, normalizeKeyword, type Application } from '@djobi/shared';
-import {
-  evidenceByRequirement,
-  requirementEvidenceRollup,
-  requirementImportanceCounts,
-  requirementKindCounts,
-  yearsOfExperienceDistribution,
-} from '../lib/analytics';
+import { IMPORTANCE_BANDS, type Application } from '@djobi/shared';
+import { evidenceByRequirement, requirementsReport } from '../lib/analytics';
 import { BAND_LABELS, groupByImportance, UNBANDED } from '../lib/requirementGroups';
 import { applicationPath, PAGE_SIZE } from '../lib/useHashRoute';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
@@ -76,13 +70,8 @@ export function RequirementsPanel({
   resetKey: string;
 }) {
   const [showExperience, setShowExperience] = useState(false);
-  const needle = selectedKeyword ? normalizeKeyword(selectedKeyword) : null;
-  const matching = needle
-    ? applications.filter((application) =>
-        application.jobInfo.keywords.some((keyword) => normalizeKeyword(keyword.term) === needle),
-      )
-    : applications;
-  const sorted = [...matching].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const { sorted, requirementCounts, bandCounts, anyBanded, yearsDistribution, evidence } =
+    requirementsReport(applications, selectedKeyword);
 
   const { visibleCount, scrollRef, sentinelRef } = useRevealOnScroll(
     sorted.length,
@@ -90,12 +79,6 @@ export function RequirementsPanel({
     resetKey,
   );
   const visible = sorted.slice(0, visibleCount);
-
-  const requirementCounts = requirementKindCounts(matching);
-  const bandCounts = requirementImportanceCounts(matching);
-  const anyBanded = bandCounts.total > bandCounts.unbanded;
-  const yearsDistribution = yearsOfExperienceDistribution(matching);
-  const evidence = requirementEvidenceRollup(matching);
 
   const subtitle =
     sorted.length === 0

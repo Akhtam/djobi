@@ -128,10 +128,17 @@ async function listApplicationsByJobUrl(userId: string, jobUrl: string): Promise
 /**
  * Inserts a new application row owned by `userId` — after the candidate explicitly saves an autofill
  * run, or when they log an application they made by hand (`source: 'manual'`).
+ *
+ * `idempotencyKey` is what makes a resend safe. A caller that retries a timed-out or lost-response
+ * write sends the same key it sent the first time; if that first write actually landed, the
+ * `ON CONFLICT` below hands back the row it already wrote instead of inserting a second one. The
+ * `set` is a deliberate no-op — only its `RETURNING` is wanted — and a caller with no key to give
+ * always inserts, because a Postgres unique index never treats two `NULL`s as conflicting.
  */
 async function saveApplication(
   userId: string,
   newApplication: NewApplication,
+  idempotencyKey?: string,
 ): Promise<Written<ApplicationWriteResult>> {
   // Every column, not just `id`: `RETURNING *` costs the same round trip as `RETURNING id`, and it
   // is what spares the route a second query when the caller wants the row back. Same below.
@@ -141,6 +148,11 @@ async function saveApplication(
       ...newApplication,
       userId,
       jobKey: jobKeyForUrl(newApplication.jobUrl),
+      idempotencyKey: idempotencyKey || null,
+    })
+    .onConflictDoUpdate({
+      target: [applications.userId, applications.idempotencyKey],
+      set: { id: sql`${applications.id}` },
     })
     .returning();
   return { id: row.id, application: toWrittenApplication(row) };

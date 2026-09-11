@@ -375,8 +375,16 @@ async function fillStep(
  * whose work is a write the server may already have committed. Aborting the request in flight
  * cannot establish whether the row landed, and a run whose `applicationId` is still null writes a
  * *second* Application on the next save — the exact duplicate an update-in-place exists to prevent.
- * Until the write carries an idempotency key, a superseding run leaves this one to finish; its
- * checkpoint is dropped by run identity if the tab has moved on, which costs nothing.
+ * A superseding run leaves this one to finish; its checkpoint is dropped by run identity if the tab
+ * has moved on, which costs nothing.
+ *
+ * The create call below sends `run.runId` as the idempotency key, which is what actually closes the
+ * duplicate-write hole a dropped or superseded save otherwise left open: a retried create for a run
+ * whose first attempt already landed gets that same row back rather than a second one. `runId` is
+ * stable for the run's whole lifetime and assigned once per Analysis Step
+ * (`runClaim.ts`), and the key only matters for the *first* save — every save after
+ * `run.applicationId` is set goes through `updateApplication`, which is idempotent by construction
+ * (it replaces the row at that id).
  */
 export async function runSaveApplication(
   tabId: number,
@@ -403,7 +411,7 @@ export async function runSaveApplication(
 
       const application = run.applicationId
         ? await deps.backend.updateApplication(run.applicationId, payload)
-        : await deps.backend.saveApplication(payload);
+        : await deps.backend.saveApplication(payload, run.runId);
 
       // After the write, and only on the path where it succeeded: the badge and the toast are a
       // report of a row that exists. `run.jobInfo` is present because `asAnalyzedRun` narrowed it.

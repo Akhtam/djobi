@@ -65,15 +65,18 @@ describe('useApplicationStore', () => {
     const store = await loadedStore(client({ createApplication: () => Promise.resolve(created) }));
 
     await act(async () => {
-      await store.current.createApplication({
-        company: created.company,
-        roleTitle: created.roleTitle,
-        jobUrl: created.jobUrl,
-        jobInfo: created.jobInfo,
-        tailoredResume: created.tailoredResume,
-        answers: [],
-        source: 'manual',
-      });
+      await store.current.createApplication(
+        {
+          company: created.company,
+          roleTitle: created.roleTitle,
+          jobUrl: created.jobUrl,
+          jobInfo: created.jobInfo,
+          tailoredResume: created.tailoredResume,
+          answers: [],
+          source: 'manual',
+        },
+        'idempotency-key-1',
+      );
     });
 
     expect(store.current.applications[0]).toEqual(created);

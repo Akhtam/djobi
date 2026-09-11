@@ -115,7 +115,17 @@ export interface BackendClient {
    * saved on its own; the options page's existing `saveProfile` above is still the only save path.
    */
   extractResume(file: File, signal?: AbortSignal): Promise<ExtractedProfile>;
-  saveApplication(payload: NewApplicationRequest): Promise<ApplicationWriteResult>;
+  /**
+   * `idempotencyKey` should be the same string across every retry of one logical save attempt — a
+   * re-fill's create is retried under the run's own id (`background/applicationPipeline.ts`), and
+   * the Log tab generates one per extraction (`panel/LogApplication.tsx`) — so a resend after a
+   * timeout lands the same row back instead of writing a second one. See
+   * `applicationStore.ts`'s `create`.
+   */
+  saveApplication(
+    payload: NewApplicationRequest,
+    idempotencyKey: string,
+  ): Promise<ApplicationWriteResult>;
   updateApplication(id: string, payload: ApplicationSnapshot): Promise<ApplicationWriteResult>;
   /** Count and newest metadata for Applications saved against this exact job URL. */
   findApplicationDuplicates(
@@ -131,37 +141,26 @@ export interface BackendClient {
 /** The production adapter: the local Hono server on `127.0.0.1:5391`. */
 export const httpBackendClient: BackendClient = {
   extractJob: (jobDescription, signal) =>
-    callBackend(
-      '/extract-job',
-      JobInfoSchema,
-      ExtractJobRequestSchema.parse({ jobDescription }),
-      'POST',
+    callBackend('/extract-job', JobInfoSchema, {
+      body: ExtractJobRequestSchema.parse({ jobDescription }),
       signal,
-    ),
+    }),
 
   tailorResume: (profile, jobInfo, signal) =>
-    callBackend(
-      '/tailor-resume',
-      TailoredResumeSchema,
-      TailorResumeRequestSchema.parse({ profile, jobInfo }),
-      'POST',
+    callBackend('/tailor-resume', TailoredResumeSchema, {
+      body: TailorResumeRequestSchema.parse({ profile, jobInfo }),
       signal,
-    ),
+    }),
 
   answerQuestions: (profile, jobInfo, questions, signal) =>
-    callBackend(
-      '/answer-questions',
-      QuestionAnswerSchema.array(),
-      AnswerQuestionsRequestSchema.parse({ profile, jobInfo, questions }),
-      'POST',
+    callBackend('/answer-questions', QuestionAnswerSchema.array(), {
+      body: AnswerQuestionsRequestSchema.parse({ profile, jobInfo, questions }),
       signal,
-    ),
+    }),
 
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
-    callBackend(
-      '/answer-chat',
-      AnswerChatResponseSchema,
-      AnswerChatRequestSchema.parse({
+    callBackend('/answer-chat', AnswerChatResponseSchema, {
+      body: AnswerChatRequestSchema.parse({
         profile,
         question,
         // `null` is the panel's "no run yet"; the wire contract's absent job is `undefined`, and an
@@ -170,7 +169,7 @@ export const httpBackendClient: BackendClient = {
         ...(currentAnswer ? { currentAnswer } : {}),
         messages,
       }),
-    ),
+    }),
 
   renderResumePdf: (profile, tailoredResume, signal) =>
     callBackendBinary(
@@ -179,10 +178,10 @@ export const httpBackendClient: BackendClient = {
       signal,
     ),
 
-  getProfile: () => callBackend('/profile', MaybeProfileSchema, undefined, 'GET'),
+  getProfile: () => callBackend('/profile', MaybeProfileSchema, { method: 'GET' }),
 
   saveProfile: (profile) =>
-    callBackend('/profile', ProfileSchema, profile satisfies SaveProfileRequest),
+    callBackend('/profile', ProfileSchema, { body: profile satisfies SaveProfileRequest }),
 
   extractResume: (file, signal) => {
     const formData = new FormData();
@@ -195,24 +194,27 @@ export const httpBackendClient: BackendClient = {
     );
   },
 
-  saveApplication: (payload) =>
-    callBackend('/applications?response=compact', ApplicationWriteResultSchema, payload),
+  saveApplication: (payload, idempotencyKey) =>
+    callBackend('/applications?response=compact', ApplicationWriteResultSchema, {
+      body: payload,
+      idempotencyKey,
+    }),
 
   updateApplication: (id, payload) =>
     callBackend(
       `/applications/${encodeURIComponent(id)}?response=compact`,
       ApplicationWriteResultSchema,
-      payload,
-      'PATCH',
+      {
+        body: payload,
+        method: 'PATCH',
+      },
     ),
 
   findApplicationDuplicates: (jobUrl, signal) =>
     callBackend(
       `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
       DuplicateApplicationSummarySchema,
-      undefined,
-      'GET',
-      signal,
+      { method: 'GET', signal },
     ),
 
   signIn: authSignIn,
@@ -328,7 +330,11 @@ export function createFakeBackendClient(
         awards: [],
       }),
     ),
-    saveApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
+    saveApplication: guarded(
+      '/applications',
+      (_payload: NewApplicationRequest, _idempotencyKey: string) =>
+        Promise.resolve({ id: 'application-1' }),
+    ),
     updateApplication: guarded('/applications', () => Promise.resolve({ id: 'application-1' })),
     findApplicationDuplicates: guarded('/applications', () =>
       Promise.resolve({ count: 0, latest: null }),

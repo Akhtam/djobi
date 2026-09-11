@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@djobi/http-client": "workspace:*",
+    "@djobi/manual-log": "workspace:*",
     "@djobi/profile-editor": "workspace:*",
     "@djobi/shared": "workspace:*",
     "react": "^18.3.1",

@@ -1,26 +1,16 @@
 /**
  * The dashboard's theme preference — a port of the extension's, differing in the two places that
- * matter: it persists to `localStorage`, and it seeds from `prefers-color-scheme` because a web
- * page has an OS-level default worth inheriting.
+ * matter: it persists to `localStorage`, and new visitors default to light mode.
  *
  * Both of those are guarded rather than assumed, and the guards are the point: a browser with site
- * data blocked *throws* on `localStorage` access, and jsdom exposes no `matchMedia` at all. The
- * theme is read before anything else is drawn, so either would take the whole app down at its first
- * render.
+ * data blocked *throws* on `localStorage` access. The theme is read before anything else is drawn,
+ * so that would otherwise take the whole app down at its first render.
  */
 import { act, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeToggle, useThemePreference } from './theme';
 
 const THEME_KEY = 'djobi-dashboard-theme';
-
-/** Replaces `window.matchMedia`, which jsdom does not provide. */
-function stubSystemPrefersDark(prefersDark: boolean) {
-  vi.stubGlobal(
-    'matchMedia',
-    vi.fn((query: string) => ({ matches: prefersDark && query.includes('dark') })),
-  );
-}
 
 /**
  * An in-memory `localStorage`.
@@ -79,31 +69,20 @@ describe('useThemePreference', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
-  it.each([
-    [true, 'dark'],
-    [false, 'light'],
-  ])(
-    'falls back to the system preference (prefers-dark: %s) when nothing is stored',
-    (prefersDark, expected) => {
-      stubSystemPrefersDark(prefersDark);
+  it('defaults to light when nothing is stored', () => {
+    const { result } = renderHook(() => useThemePreference());
 
-      const { result } = renderHook(() => useThemePreference());
-
-      expect(result.current.theme).toBe(expected);
-      expect(document.documentElement.dataset.theme).toBe(expected);
-    },
-  );
+    expect(result.current.theme).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
 
   it('ignores a stored value that is not a theme', () => {
     stubStorage({ [THEME_KEY]: 'solarized' });
-    stubSystemPrefersDark(false);
-
     expect(renderHook(() => useThemePreference()).result.current.theme).toBe('light');
   });
 
   it('persists a toggle and applies it', () => {
     const store = stubStorage();
-    stubSystemPrefersDark(false);
     const { result } = renderHook(() => useThemePreference());
 
     act(() => result.current.toggleTheme());
@@ -115,12 +94,10 @@ describe('useThemePreference', () => {
 
   /**
    * The absence jsdom itself presents, and a real one: a page whose browser exposes no
-   * `localStorage` still has to render, and still has to follow the system preference.
+   * `localStorage` still has to render with the light default.
    */
   it('renders where there is no localStorage at all', () => {
-    stubSystemPrefersDark(true);
-
-    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('dark');
+    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('light');
   });
 
   /**
@@ -129,20 +106,11 @@ describe('useThemePreference', () => {
    */
   it('renders and toggles where localStorage access throws', () => {
     stubBlockedStorage();
-    stubSystemPrefersDark(true);
-
     const { result } = renderHook(() => useThemePreference());
-    expect(result.current.theme).toBe('dark');
+    expect(result.current.theme).toBe('light');
 
     expect(() => act(() => result.current.toggleTheme())).not.toThrow();
-    expect(document.documentElement.dataset.theme).toBe('light');
-  });
-
-  /** jsdom, and any browser old enough to lack it: an unconfigured page defaults to light. */
-  it('defaults to light where matchMedia is absent', () => {
-    vi.stubGlobal('matchMedia', undefined);
-
-    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('dark');
   });
 });
 

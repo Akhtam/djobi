@@ -5,29 +5,30 @@
  * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
  * named.
  */
-import {
-  EMPTY_PROFILE,
-  failureMessage,
-  parseProfile,
-  SCREENING_TOPICS,
-  type Profile,
-} from '@djobi/shared';
+import { EMPTY_PROFILE, parseProfile, type Profile } from '@djobi/shared';
 import {
   addSkill,
-  commaList,
-  optionalList,
-  optionalText,
-  parseBulletCap,
+  ContactFields,
+  CredentialEntryFields,
+  CustomAnswerEntryFields,
+  EducationEntryFields,
+  LinksFields,
   profileListEditors,
   PROFILE_SECTIONS,
+  ProjectEntryFields,
   removeSkill,
+  ResumeSettingsFields,
+  ScreeningAnswerFields,
   scrollToSection,
-  spliceProjectBullets,
-  spliceWorkBullets,
-  toggleStarredBullet,
+  StoryEntryFields,
+  SummaryField,
   useProfileDraft,
-  withScreeningAnswer,
+  WorkExperienceEntryFields,
+  type BulletListClassNames,
+  type CheckboxFieldRenderer,
   type CredentialItem,
+  type FieldChrome,
+  type FieldRenderer,
   type ListEditor,
 } from '@djobi/profile-editor';
 import { useEffect, useRef, useState } from 'react';
@@ -35,14 +36,50 @@ import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import { withSharedSessionRetry } from '../lib/authClient';
 import type { BackendClient } from '../lib/backendClient';
-import { HttpError } from '../lib/callBackend';
+import { isUnauthorized, userMessage } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { Login } from './Login';
 
-/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
-}
+/**
+ * This page's `FieldChrome`: a `.field` div with its own `<label htmlFor>`, no input class (styled
+ * by its `.field` ancestor instead — see `App.css`). The dashboard's own renderer wraps the same
+ * field bodies in a plain `<label>` instead; see `apps/dashboard/src/views/Profile.tsx`.
+ */
+const Field: FieldRenderer = ({ id, label, span2, children }) => (
+  <div className={`field${span2 ? ' span-2' : ''}`}>
+    <label htmlFor={id}>{label}</label>
+    {children}
+  </div>
+);
+
+const Checkbox: CheckboxFieldRenderer = ({ id, label, checked, onChange }) => (
+  <label className="checkbox-field" htmlFor={id}>
+    <input
+      id={id}
+      type="checkbox"
+      checked={checked}
+      onChange={(event) => onChange(event.currentTarget.checked)}
+    />
+    {label}
+  </label>
+);
+
+const fieldChrome: FieldChrome = { Field, Checkbox };
+
+/** Class names `bullet-list`/`bullet-row` are scoped in `App.css`; `btn-star` only applies to work. */
+const workBulletListClassNames: BulletListClassNames = {
+  list: 'bullet-list',
+  row: 'bullet-row',
+  starButton: 'btn-star',
+  removeButton: 'btn-remove-bullet',
+  addButton: 'btn-add-inline',
+};
+const projectBulletListClassNames: BulletListClassNames = {
+  list: 'bullet-list',
+  row: 'bullet-row',
+  removeButton: 'btn-remove-bullet',
+  addButton: 'btn-add-inline',
+};
 
 /**
  * The chrome around one editable list: the card, its legend and hint, a numbered removable card per
@@ -174,7 +211,7 @@ export function App({ client }: { client: BackendClient }) {
           return;
         }
         draft.load(EMPTY_PROFILE);
-        setStatus({ kind: 'error', message: `Failed to load profile: ${failureMessage(error)}` });
+        setStatus({ kind: 'error', message: `Failed to load profile: ${userMessage(error)}` });
       }
     }
 
@@ -246,7 +283,7 @@ export function App({ client }: { client: BackendClient }) {
       }
       setExtraction({
         kind: 'error',
-        message: `Couldn't parse this resume: ${failureMessage(outcome.error)}`,
+        message: `Couldn't parse this resume: ${userMessage(outcome.error)}`,
       });
       return;
     }
@@ -273,7 +310,7 @@ export function App({ client }: { client: BackendClient }) {
         setUnauthorized(true);
         return;
       }
-      setStatus({ kind: 'error', message: failureMessage(outcome.error) });
+      setStatus({ kind: 'error', message: userMessage(outcome.error) });
       return;
     }
     setStatus({ kind: 'saved', message: 'Profile saved.' });
@@ -383,147 +420,28 @@ export function App({ client }: { client: BackendClient }) {
             <p>Used for form fields and the resume header.</p>
           </div>
           <div className="field-grid">
-            <div className="field">
-              <label htmlFor="fullName">Full name</label>
-              <input
-                id="fullName"
-                autoComplete="name"
-                value={profile.fullName}
-                onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={profile.email}
-                onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="phone">Phone</label>
-              <input
-                id="phone"
-                type="tel"
-                autoComplete="tel"
-                value={profile.phone ?? ''}
-                onChange={(e) => setProfile({ ...profile, phone: optionalText(e.target.value) })}
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="location">Location</label>
-              <input
-                id="location"
-                autoComplete="address-level2"
-                value={profile.location ?? ''}
-                onChange={(e) => setProfile({ ...profile, location: optionalText(e.target.value) })}
-              />
-            </div>
+            <ContactFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
           </div>
         </section>
 
         <fieldset id="section-links" className="card">
           <legend>Links</legend>
           <div className="field-grid">
-            <div className="field">
-              <label htmlFor="linkedin">LinkedIn</label>
-              <input
-                id="linkedin"
-                type="url"
-                autoComplete="url"
-                value={profile.links.linkedin ?? ''}
-                onChange={(e) =>
-                  setProfile({
-                    ...profile,
-                    links: { ...profile.links, linkedin: optionalText(e.target.value) },
-                  })
-                }
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="portfolio">Portfolio</label>
-              <input
-                id="portfolio"
-                type="url"
-                autoComplete="url"
-                value={profile.links.portfolio ?? ''}
-                onChange={(e) =>
-                  setProfile({
-                    ...profile,
-                    links: { ...profile.links, portfolio: optionalText(e.target.value) },
-                  })
-                }
-              />
-            </div>
-
-            <div className="field span-2">
-              <label htmlFor="github">GitHub</label>
-              <input
-                id="github"
-                type="url"
-                autoComplete="url"
-                value={profile.links.github ?? ''}
-                onChange={(e) =>
-                  setProfile({
-                    ...profile,
-                    links: { ...profile.links, github: optionalText(e.target.value) },
-                  })
-                }
-              />
-            </div>
+            <LinksFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
           </div>
         </fieldset>
 
         <fieldset id="section-summary" className="card">
           <legend>Summary</legend>
           <p className="card-hint">A short intro paragraph, shown near the top of the resume.</p>
-          <div className="field">
-            <label htmlFor="summary">Summary</label>
-            <textarea
-              id="summary"
-              value={profile.summary ?? ''}
-              onChange={(e) => setProfile({ ...profile, summary: optionalText(e.target.value) })}
-            />
-          </div>
+          <SummaryField chrome={fieldChrome} profile={profile} onChange={setProfile} />
         </fieldset>
 
         <fieldset id="section-resume" className="card">
           <legend>Resume PDF</legend>
           <p className="card-hint">Formatting used for both resume previews and attachments.</p>
           <div className="field-grid">
-            <div className="field">
-              <label htmlFor="resumePageSize">Page size</label>
-              <select
-                id="resumePageSize"
-                value={profile.resumePageSize}
-                onChange={(event) =>
-                  setProfile({
-                    ...profile,
-                    resumePageSize: event.currentTarget.value as Profile['resumePageSize'],
-                  })
-                }
-              >
-                <option value="A4">A4</option>
-                <option value="LETTER">Letter</option>
-              </select>
-            </div>
-            <label className="checkbox-field" htmlFor="showRolePrefix">
-              <input
-                id="showRolePrefix"
-                type="checkbox"
-                checked={profile.showRolePrefix}
-                onChange={(event) =>
-                  setProfile({ ...profile, showRolePrefix: event.currentTarget.checked })
-                }
-              />
-              Prefix titles with “Role:”
-            </label>
+            <ResumeSettingsFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
           </div>
         </fieldset>
 
@@ -608,133 +526,18 @@ export function App({ client }: { client: BackendClient }) {
             );
           }}
         >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor={`weCompany${n}`}>{`Company ${n}`}</label>
-                  <input
-                    id={`weCompany${n}`}
-                    value={entry.company}
-                    onChange={(e) => work.update(index, { company: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`weTitle${n}`}>{`Title ${n}`}</label>
-                  <input
-                    id={`weTitle${n}`}
-                    value={entry.title}
-                    onChange={(e) => work.update(index, { title: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`weStartDate${n}`}>{`Start date ${n}`}</label>
-                  <input
-                    id={`weStartDate${n}`}
-                    value={entry.startDate}
-                    onChange={(e) => work.update(index, { startDate: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`weEndDate${n}`}>{`End date ${n}`}</label>
-                  <input
-                    id={`weEndDate${n}`}
-                    value={entry.endDate ?? ''}
-                    onChange={(e) => work.update(index, { endDate: optionalText(e.target.value) })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`weMaxBullets${n}`}>{`Bullet cap ${n}`}</label>
-                  <input
-                    id={`weMaxBullets${n}`}
-                    type="number"
-                    min="0"
-                    step="1"
-                    placeholder={`Inherit ${profile.maxBulletsPerRole}`}
-                    value={entry.maxBullets ?? ''}
-                    onChange={(event) => {
-                      const cap = parseBulletCap(
-                        event.currentTarget.value,
-                        event.currentTarget.valueAsNumber,
-                      );
-                      if (cap !== undefined) work.update(index, { maxBullets: cap });
-                    }}
-                  />
-                </div>
-
-                <div className="field">
-                  <label className="checkbox-field" htmlFor={`weSuppressIfEmpty${n}`}>
-                    <input
-                      id={`weSuppressIfEmpty${n}`}
-                      type="checkbox"
-                      checked={entry.suppressIfEmpty}
-                      onChange={(event) =>
-                        work.update(index, { suppressIfEmpty: event.currentTarget.checked })
-                      }
-                    />
-                    {`Hide role ${n} entirely if tailoring selects no bullets for it`}
-                  </label>
-                </div>
-
-                <div className="field span-2">
-                  <label>{`Bullets ${n}`}</label>
-                  <div className="bullet-list">
-                    {entry.bullets.map((bullet, bulletIndex) => (
-                      <div key={bulletIndex} className="bullet-row">
-                        <button
-                          type="button"
-                          className="btn-star"
-                          aria-label={`${entry.starredIndices.includes(bulletIndex) ? 'Unstar' : 'Star'} bullet ${n}.${bulletIndex + 1}`}
-                          aria-pressed={entry.starredIndices.includes(bulletIndex)}
-                          onClick={() =>
-                            work.update(index, toggleStarredBullet(entry, bulletIndex))
-                          }
-                        >
-                          <span aria-hidden="true">
-                            {entry.starredIndices.includes(bulletIndex) ? '★' : '☆'}
-                          </span>
-                        </button>
-                        <input
-                          aria-label={`Bullet ${n}.${bulletIndex + 1}`}
-                          value={bullet}
-                          onChange={(e) =>
-                            work.update(
-                              index,
-                              spliceWorkBullets(entry, bulletIndex, 1, e.target.value),
-                            )
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="btn-remove-bullet"
-                          aria-label={`Remove bullet ${n}.${bulletIndex + 1}`}
-                          onClick={() =>
-                            work.update(index, spliceWorkBullets(entry, bulletIndex, 1))
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-add-inline"
-                    onClick={() =>
-                      work.update(index, spliceWorkBullets(entry, entry.bullets.length, 0, ''))
-                    }
-                  >
-                    + Add bullet
-                  </button>
-                </div>
-              </div>
-            );
-          }}
+          {(entry, index) => (
+            <div className="field-grid">
+              <WorkExperienceEntryFields
+                chrome={fieldChrome}
+                bulletListClassNames={workBulletListClassNames}
+                entry={entry}
+                index={index}
+                maxBulletsPerRole={profile.maxBulletsPerRole}
+                work={work}
+              />
+            </div>
+          )}
         </ListSection>
 
         <ListSection
@@ -746,94 +549,17 @@ export function App({ client }: { client: BackendClient }) {
           items={profile.projects}
           editor={projects}
         >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor={`projName${n}`}>{`Name ${n}`}</label>
-                  <input
-                    id={`projName${n}`}
-                    value={entry.name}
-                    onChange={(e) => projects.update(index, { name: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`projLink${n}`}>{`Link ${n}`}</label>
-                  <input
-                    id={`projLink${n}`}
-                    type="url"
-                    value={entry.link ?? ''}
-                    onChange={(e) => projects.update(index, { link: optionalText(e.target.value) })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`projDescription${n}`}>{`Description ${n}`}</label>
-                  <textarea
-                    id={`projDescription${n}`}
-                    value={entry.description}
-                    onChange={(e) => projects.update(index, { description: e.target.value })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`projTechnologies${n}`}>{`Technologies ${n}`}</label>
-                  <input
-                    id={`projTechnologies${n}`}
-                    placeholder="Comma-separated"
-                    value={(entry.technologies ?? []).join(', ')}
-                    onChange={(e) =>
-                      projects.update(index, { technologies: optionalList(e.target.value) })
-                    }
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label>{`Bullets ${n}`}</label>
-                  <div className="bullet-list">
-                    {entry.bullets.map((bullet, bulletIndex) => (
-                      <div key={bulletIndex} className="bullet-row">
-                        <input
-                          aria-label={`Project ${n} bullet ${bulletIndex + 1}`}
-                          value={bullet}
-                          onChange={(e) =>
-                            projects.update(
-                              index,
-                              spliceProjectBullets(entry, bulletIndex, 1, e.target.value),
-                            )
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="btn-remove-bullet"
-                          aria-label={`Remove project ${n} bullet ${bulletIndex + 1}`}
-                          onClick={() =>
-                            projects.update(index, spliceProjectBullets(entry, bulletIndex, 1))
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-add-inline"
-                    onClick={() =>
-                      projects.update(
-                        index,
-                        spliceProjectBullets(entry, entry.bullets.length, 0, ''),
-                      )
-                    }
-                  >
-                    + Add bullet
-                  </button>
-                </div>
-              </div>
-            );
-          }}
+          {(entry, index) => (
+            <div className="field-grid">
+              <ProjectEntryFields
+                chrome={fieldChrome}
+                bulletListClassNames={projectBulletListClassNames}
+                entry={entry}
+                index={index}
+                projects={projects}
+              />
+            </div>
+          )}
         </ListSection>
 
         <ListSection
@@ -844,52 +570,16 @@ export function App({ client }: { client: BackendClient }) {
           items={profile.education}
           editor={education}
         >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor={`eduSchool${n}`}>{`School ${n}`}</label>
-                  <input
-                    id={`eduSchool${n}`}
-                    value={entry.school}
-                    onChange={(e) => education.update(index, { school: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`eduDegree${n}`}>{`Degree ${n}`}</label>
-                  <input
-                    id={`eduDegree${n}`}
-                    value={entry.degree}
-                    onChange={(e) => education.update(index, { degree: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`eduField${n}`}>{`Field ${n}`}</label>
-                  <input
-                    id={`eduField${n}`}
-                    value={entry.field ?? ''}
-                    onChange={(e) =>
-                      education.update(index, { field: optionalText(e.target.value) })
-                    }
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`eduGradYear${n}`}>{`Graduation year ${n}`}</label>
-                  <input
-                    id={`eduGradYear${n}`}
-                    value={entry.graduationYear ?? ''}
-                    onChange={(e) =>
-                      education.update(index, { graduationYear: optionalText(e.target.value) })
-                    }
-                  />
-                </div>
-              </div>
-            );
-          }}
+          {(entry, index) => (
+            <div className="field-grid">
+              <EducationEntryFields
+                chrome={fieldChrome}
+                entry={entry}
+                index={index}
+                education={education}
+              />
+            </div>
+          )}
         </ListSection>
 
         <ListSection
@@ -901,68 +591,17 @@ export function App({ client }: { client: BackendClient }) {
           items={credentials.items}
           editor={credentials.editor}
         >
-          {(item, index) => {
-            const n = index + 1;
-            return (
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor={`credKind${n}`}>{`Type ${n}`}</label>
-                  <select
-                    id={`credKind${n}`}
-                    value={item.kind}
-                    onChange={(e) =>
-                      credentials.changeKind(item, e.currentTarget.value as CredentialItem['kind'])
-                    }
-                  >
-                    <option value="certification">Certification</option>
-                    <option value="award">Award</option>
-                  </select>
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`credName${n}`}>{`Name ${n}`}</label>
-                  <input
-                    id={`credName${n}`}
-                    value={item.name}
-                    onChange={(e) => credentials.editor.update(index, { name: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`credIssuer${n}`}>{`Issuer ${n}`}</label>
-                  <input
-                    id={`credIssuer${n}`}
-                    value={item.issuer}
-                    onChange={(e) => credentials.editor.update(index, { issuer: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`credDate${n}`}>{`Date ${n}`}</label>
-                  <input
-                    id={`credDate${n}`}
-                    value={item.date}
-                    onChange={(e) => credentials.editor.update(index, { date: e.target.value })}
-                  />
-                </div>
-
-                {item.kind === 'award' && (
-                  <div className="field span-2">
-                    <label htmlFor={`credDescription${n}`}>{`Description ${n}`}</label>
-                    <textarea
-                      id={`credDescription${n}`}
-                      value={item.description ?? ''}
-                      onChange={(e) =>
-                        credentials.editor.update(index, {
-                          description: optionalText(e.target.value) ?? undefined,
-                        })
-                      }
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          }}
+          {(item, index) => (
+            <div className="field-grid">
+              <CredentialEntryFields
+                chrome={fieldChrome}
+                item={item}
+                index={index}
+                editor={credentials.editor}
+                changeKind={credentials.changeKind}
+              />
+            </div>
+          )}
         </ListSection>
 
         {/* Facts, not prose. Anything answered here is filled straight from the profile and never
@@ -975,31 +614,7 @@ export function App({ client }: { client: BackendClient }) {
             usual.
           </p>
           <div className="screening-grid">
-            {SCREENING_TOPICS.map((entry) => (
-              <div className="field" key={entry.topic}>
-                <label htmlFor={entry.topic}>{entry.label}</label>
-                <input
-                  id={entry.topic}
-                  list={`${entry.topic}-suggestions`}
-                  value={profile.screeningAnswers[entry.topic] ?? ''}
-                  onChange={(e) =>
-                    setProfile({
-                      ...profile,
-                      screeningAnswers: withScreeningAnswer(
-                        profile.screeningAnswers,
-                        entry.topic,
-                        e.target.value,
-                      ),
-                    })
-                  }
-                />
-                <datalist id={`${entry.topic}-suggestions`}>
-                  {entry.suggestions.map((suggestion) => (
-                    <option key={suggestion} value={suggestion} />
-                  ))}
-                </datalist>
-              </div>
-            ))}
+            <ScreeningAnswerFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
           </div>
         </fieldset>
 
@@ -1013,24 +628,12 @@ export function App({ client }: { client: BackendClient }) {
           editor={customAnswers}
         >
           {(entry, index) => (
-            <>
-              <div className="field">
-                <label htmlFor={`customQuestion-${index}`}>Question</label>
-                <input
-                  id={`customQuestion-${index}`}
-                  value={entry.question}
-                  onChange={(e) => customAnswers.update(index, { question: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor={`customAnswer-${index}`}>Answer</label>
-                <textarea
-                  id={`customAnswer-${index}`}
-                  value={entry.answer}
-                  onChange={(e) => customAnswers.update(index, { answer: e.target.value })}
-                />
-              </div>
-            </>
+            <CustomAnswerEntryFields
+              chrome={fieldChrome}
+              entry={entry}
+              index={index}
+              customAnswers={customAnswers}
+            />
           )}
         </ListSection>
 
@@ -1042,79 +645,16 @@ export function App({ client }: { client: BackendClient }) {
           items={profile.stories}
           editor={stories}
         >
-          {(entry, index) => {
-            const n = index + 1;
-            return (
-              <div className="field-grid">
-                <div className="field">
-                  <label htmlFor={`storyId${n}`}>{`Story id ${n}`}</label>
-                  <input
-                    id={`storyId${n}`}
-                    value={entry.id}
-                    onChange={(e) => stories.update(index, { id: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label htmlFor={`storyTitle${n}`}>{`Story title ${n}`}</label>
-                  <input
-                    id={`storyTitle${n}`}
-                    value={entry.title}
-                    onChange={(e) => stories.update(index, { title: e.target.value })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`storyTags${n}`}>{`Story tags ${n}`}</label>
-                  <input
-                    id={`storyTags${n}`}
-                    value={entry.tags.join(', ')}
-                    onChange={(e) =>
-                      stories.update(index, {
-                        tags: commaList(e.target.value),
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`storySituation${n}`}>{`Situation ${n}`}</label>
-                  <textarea
-                    id={`storySituation${n}`}
-                    value={entry.situation}
-                    onChange={(e) => stories.update(index, { situation: e.target.value })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`storyTask${n}`}>{`Task ${n}`}</label>
-                  <textarea
-                    id={`storyTask${n}`}
-                    value={entry.task}
-                    onChange={(e) => stories.update(index, { task: e.target.value })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`storyAction${n}`}>{`Action ${n}`}</label>
-                  <textarea
-                    id={`storyAction${n}`}
-                    value={entry.action}
-                    onChange={(e) => stories.update(index, { action: e.target.value })}
-                  />
-                </div>
-
-                <div className="field span-2">
-                  <label htmlFor={`storyResult${n}`}>{`Result ${n}`}</label>
-                  <textarea
-                    id={`storyResult${n}`}
-                    value={entry.result}
-                    onChange={(e) => stories.update(index, { result: e.target.value })}
-                  />
-                </div>
-              </div>
-            );
-          }}
+          {(entry, index) => (
+            <div className="field-grid">
+              <StoryEntryFields
+                chrome={fieldChrome}
+                entry={entry}
+                index={index}
+                stories={stories}
+              />
+            </div>
+          )}
         </ListSection>
 
         <div className="footer-save">

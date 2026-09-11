@@ -17,7 +17,7 @@ describe('landing page', () => {
     renderDashboard({ client });
 
     expect(
-      screen.getByRole('heading', { name: 'Apply with context. Follow up with clarity.' }),
+      screen.getByRole('heading', { name: 'Apply with context. Track outcomes with clarity.' }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Open dashboard' })[0]).toHaveAttribute(
       'href',
@@ -25,6 +25,53 @@ describe('landing page', () => {
     );
     expect(screen.getByRole('navigation', { name: 'Landing page' })).toBeInTheDocument();
     expect(listApplications).not.toHaveBeenCalled();
+  });
+
+  it('describes the extension and current ATS coverage', () => {
+    window.location.hash = '';
+    renderDashboard();
+
+    expect(screen.getByText('Chrome extension and tracking dashboard')).toBeInTheDocument();
+    const systems = screen.getByRole('list', { name: 'Supported application systems' });
+    expect(within(systems).getByText('Greenhouse')).toBeInTheDocument();
+    expect(within(systems).getByText('Ashby')).toBeInTheDocument();
+    expect(within(systems).getByText('Lever')).toBeInTheDocument();
+    expect(within(systems).getByText('More platforms coming')).toBeInTheDocument();
+    expect(within(systems).queryByText('Workday')).not.toBeInTheDocument();
+  });
+
+  it('moves between current applications, detail, and analytics previews', async () => {
+    window.location.hash = '';
+    const { user } = renderDashboard();
+
+    const preview = screen.getByRole('region', { name: 'djobi dashboard preview' });
+    expect(within(preview).getByText('8 applications · 4 in progress')).toBeInTheDocument();
+    expect(within(preview).getByText('Log application')).toBeInTheDocument();
+    expect(within(preview).getByText('Phone screen 1')).toBeInTheDocument();
+    expect(within(preview).getByText('Member of Technical Staff, Product')).toBeInTheDocument();
+    expect(within(preview).getByText('Rejected (ATS)')).toBeInTheDocument();
+    expect(
+      within(preview).getByText(/move every application through your pipeline/),
+    ).toBeInTheDocument();
+
+    await user.click(within(preview).getByRole('button', { name: 'Next dashboard preview' }));
+    expect(within(preview).getByText('Brex · Infrastructure · Remote (US)')).toBeInTheDocument();
+    expect(
+      within(preview).getByText('5+ years building production React applications'),
+    ).toBeInTheDocument();
+    expect(within(preview).getByText(/Review one role's context/)).toBeInTheDocument();
+
+    await user.click(within(preview).getByRole('button', { name: 'Next dashboard preview' }));
+    const summary = preview.querySelector('.landing-analytics-demo__summary');
+    expect(summary).toHaveTextContent('21 distinct keywords');
+    expect(summary).toHaveTextContent('60% response rate');
+    expect(within(preview).getByText(/Spot recurring keywords/)).toBeInTheDocument();
+
+    await user.click(within(preview).getByRole('button', { name: 'Previous dashboard preview' }));
+    expect(within(preview).getByText('Brex · Infrastructure · Remote (US)')).toBeInTheDocument();
+
+    await user.click(within(preview).getByRole('button', { name: 'Show applications preview' }));
+    expect(within(preview).getByText('8 applications · 4 in progress')).toBeInTheDocument();
   });
 
   it('offers product details in accessible disclosures', async () => {
@@ -37,6 +84,17 @@ describe('landing page', () => {
 
     expect(question.closest('details')).toHaveAttribute('open');
     expect(screen.getByText(/you review the page and submit/)).toBeInTheDocument();
+  });
+
+  it('starts the workflow with a complete candidate profile', () => {
+    window.location.hash = '';
+    renderDashboard();
+
+    expect(screen.getByRole('heading', { name: 'Build your profile' })).toBeInTheDocument();
+    expect(screen.getByText(/Start with a PDF or build your profile by hand/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/screening details, reusable answers, and stories/),
+    ).toBeInTheDocument();
   });
 
   it('switches to the dashboard on a hash-only navigation, with no document reload', async () => {

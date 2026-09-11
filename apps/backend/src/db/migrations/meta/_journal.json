@@ -85,6 +85,13 @@
       "when": 1788318311003,
       "tag": "0011_steep_callisto",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789076801995,
+      "tag": "0012_fixed_arclight",
+      "breakpoints": true
     }
   ]
 }

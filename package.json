@@ -18,7 +18,7 @@
     "typecheck": "pnpm -r --if-present run typecheck",
     "build": "pnpm -w run build:packages && pnpm -r --if-present run build",
     "test": "pnpm -r --if-present run test",
-    "build:packages": "pnpm --filter @djobi/shared build && pnpm --filter @djobi/http-client build && pnpm --filter @djobi/profile-editor build"
+    "build:packages": "pnpm --filter @djobi/shared build && pnpm --filter @djobi/http-client build && pnpm --filter @djobi/profile-editor build && pnpm --filter @djobi/manual-log build"
   },
   "keywords": [],
   "author": "",

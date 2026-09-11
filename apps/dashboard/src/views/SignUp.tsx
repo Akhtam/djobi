@@ -5,7 +5,9 @@
  * auth.ts`), and neither Google nor GitHub has real credentials registered yet.
  */
 import { useState, type FormEvent } from 'react';
-import { failureMessage, SignUpRequestSchema } from '@djobi/shared';
+import { userMessage } from '@djobi/http-client';
+import { SignUpRequestSchema } from '@djobi/shared';
+import { AuthLayout } from '../components/AuthLayout';
 import { loginPath } from '../lib/useHashRoute';
 
 export function SignUp({
@@ -37,15 +39,22 @@ export function SignUp({
       await onSignUp(email, password, name);
       // No `finally`-set `submitting(false)` on the success path — see `Login.tsx`'s identical note.
     } catch (err) {
-      setError(failureMessage(err));
+      setError(userMessage(err));
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="login">
-      <h1>Create an account</h1>
-
+    <AuthLayout
+      eyebrow="Start your workspace"
+      title="Create an account"
+      description="Build a clearer, more connected view of your job search."
+      footer={
+        <p>
+          Already have an account? <a href={loginPath()}>Sign in</a>
+        </p>
+      }
+    >
       {error ? (
         <p className="banner banner--error" role="alert">
           {error}
@@ -58,6 +67,7 @@ export function SignUp({
           <input
             type="text"
             className="search"
+            placeholder="Your name"
             autoComplete="name"
             required
             value={name}
@@ -70,6 +80,7 @@ export function SignUp({
           <input
             type="email"
             className="search"
+            placeholder="you@example.com"
             autoComplete="email"
             required
             value={email}
@@ -82,6 +93,7 @@ export function SignUp({
           <input
             type="password"
             className="search"
+            placeholder="At least 8 characters"
             autoComplete="new-password"
             minLength={8}
             required
@@ -94,10 +106,6 @@ export function SignUp({
           {submitting ? 'Creating account…' : 'Create account'}
         </button>
       </form>
-
-      <p className="login-alt">
-        Already have an account? <a href={loginPath()}>Sign in</a>
-      </p>
-    </div>
+    </AuthLayout>
   );
 }

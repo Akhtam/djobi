@@ -2,8 +2,12 @@
  * What an expired or missing session means to a view, and the one fetch protocol every view that
  * blocks on a Profile used to hand-roll for itself.
  *
- * `isUnauthorized` was defined identically four times — here, `useApplicationStore.ts`, and the
- * `Profile`/`Analytics`/`NewApplication` views — because nothing above any of them owned the rule.
+ * `isUnauthorized` used to be defined identically four times — here, `useApplicationStore.ts`, and
+ * the `Profile`/`Analytics`/`NewApplication` views (and, across the seam, twice more in the
+ * extension) — because nothing above any of them owned the rule. It now lives at `@djobi/http-client`
+ * instead, the module that actually owns `HttpError`'s shape; every former caller of this module's
+ * copy imports it from there directly.
+ *
  * `useRemoteProfile` closes the second half of the same gap: `Analytics` and `NewApplication` both
  * fetch `getProfile()` on mount and branch on the same four outcomes — still loading, a real
  * Profile, no Profile saved yet, or the backend didn't answer — but named the last one differently
@@ -16,14 +20,9 @@
  * forcing it through the same four-outcome shape would cost more than the two views it would save
  * from repeating.
  */
-import { HttpError } from '@djobi/http-client';
-import { failureMessage, type Profile } from '@djobi/shared';
+import { isUnauthorized, userMessage } from '@djobi/http-client';
+import type { Profile } from '@djobi/shared';
 import { useEffect, useState } from 'react';
-
-/** `err` is an `HttpError` reporting the backend's own 401 — an absent or expired session. */
-export function isUnauthorized(err: unknown): boolean {
-  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
-}
 
 /**
  * What fetching the candidate's Profile on mount resolved to.
@@ -68,7 +67,7 @@ export function useRemoteProfile(
           onUnauthorized();
           return;
         }
-        setState({ kind: 'unreachable', message: failureMessage(error) });
+        setState({ kind: 'unreachable', message: userMessage(error) });
       },
     );
     return () => {

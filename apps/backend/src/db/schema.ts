@@ -1,4 +1,13 @@
-import { boolean, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 /**
  * One row per account. Phase A (`docs/multi-tenant-auth.md`) created this with only `id`/`createdAt`
@@ -174,6 +183,17 @@ export const applications = pgTable(
     extractionVersion: text('extraction_version'),
     requirementEvidence: jsonb('requirement_evidence'),
     bulletProvenance: jsonb('bullet_provenance'),
+    /**
+     * A client-chosen token for one create attempt, carried as the `idempotency-key` request
+     * header (`routes/applications.ts`) — not accepted anywhere in the JSON body, so it stays out
+     * of `NewApplicationSchema`/`Application` and can never round-trip back onto a re-save. Null
+     * for every caller that sends none, which is every route but `POST /applications` and every
+     * pre-idempotency-key row.
+     *
+     * Nulls are never equal to one another under a Postgres unique index, so two keyless creates
+     * never collide — this column is additive, not a behavior change for a caller that omits it.
+     */
+    idempotencyKey: text('idempotency_key'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -199,5 +219,11 @@ export const applications = pgTable(
      * and a sort of the whole table.
      */
     index('applications_user_created_at_idx').on(table.userId, table.createdAt.desc()),
+    /**
+     * What makes a same-keyed retry an update instead of a second row — `saveApplication`'s
+     * `ON CONFLICT (user_id, idempotency_key)` targets exactly this index. Scoped to `userId` so
+     * two different candidates can never collide on the same client-generated key.
+     */
+    uniqueIndex('applications_user_idempotency_key_idx').on(table.userId, table.idempotencyKey),
   ],
 );

@@ -1197,21 +1197,26 @@ describe('runFill', () => {
     await runFill(7, profile, deps);
     await runSaveApplication(7, deps);
 
-    expect(deps.backend.saveApplication).toHaveBeenCalledWith({
-      company: 'Acme',
-      roleTitle: 'Senior Engineer',
-      jobUrl: 'https://boards.greenhouse.io/acme/jobs/1',
-      jobInfo,
-      tailoredResume,
-      answers: [],
-      rawDescription: 'Senior Engineer at Acme...',
-      extractionVersion: EXTRACTION_VERSION,
-      // The default fake `getProfile()` answers `null` here, unstubbed by this case — so both
-      // Profile-derived provenance fields go in null, exactly as a save whose Profile lookup failed
-      // would. The case below stubs a real Profile.
-      requirementEvidence: null,
-      bulletProvenance: null,
-    });
+    expect(deps.backend.saveApplication).toHaveBeenCalledWith(
+      {
+        company: 'Acme',
+        roleTitle: 'Senior Engineer',
+        jobUrl: 'https://boards.greenhouse.io/acme/jobs/1',
+        jobInfo,
+        tailoredResume,
+        answers: [],
+        rawDescription: 'Senior Engineer at Acme...',
+        extractionVersion: EXTRACTION_VERSION,
+        // The default fake `getProfile()` answers `null` here, unstubbed by this case — so both
+        // Profile-derived provenance fields go in null, exactly as a save whose Profile lookup failed
+        // would. The case below stubs a real Profile.
+        requirementEvidence: null,
+        bulletProvenance: null,
+      },
+      // The run's own id, standing in as the create's idempotency key — see
+      // `runSaveApplication`'s doc comment for why.
+      expect.any(String),
+    );
     expect(await getPipelineRun(7)).toMatchObject({
       status: 'saved',
       applicationId: 'application-1',
@@ -1271,6 +1276,7 @@ describe('runFill', () => {
 
     expect(deps.backend.saveApplication).toHaveBeenCalledWith(
       expect.objectContaining({ rawDescription: 'Senior Engineer at Acme...' }),
+      expect.any(String),
     );
   });
 
@@ -1290,6 +1296,7 @@ describe('runFill', () => {
     // rather than `null`, skipped, now that a Profile was actually available.
     expect(deps.backend.saveApplication).toHaveBeenCalledWith(
       expect.objectContaining({ requirementEvidence: [], bulletProvenance: [] }),
+      expect.any(String),
     );
   });
 

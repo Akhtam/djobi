@@ -25,7 +25,7 @@ import type { ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { getAuthToken } from './authToken';
 
-export { HttpError, type HttpErrorKind } from '@djobi/http-client';
+export { HttpError, isUnauthorized, userMessage, type HttpErrorKind } from '@djobi/http-client';
 
 /**
  * The backend's origin, absolute and build-time visible.
@@ -63,6 +63,14 @@ const transport = createHttpTransport({
 
 type Method = 'GET' | 'POST' | 'PATCH';
 
+export interface CallBackendOptions {
+  body?: unknown;
+  method?: Method;
+  signal?: AbortSignal;
+  /** Forwarded to the transport as `idempotency-key` — see `BackendClient.saveApplication`. */
+  idempotencyKey?: string;
+}
+
 /**
  * Sends `body` to `path` and resolves with the response decoded through `schema`. `method` defaults
  * to `POST`; `GET` requests are sent bodyless, so `body` may be omitted for them.
@@ -81,14 +89,12 @@ type Method = 'GET' | 'POST' | 'PATCH';
 export function callBackend<Schema extends ZodTypeAny>(
   path: string,
   schema: Schema,
-  body?: unknown,
-  method: Method = 'POST',
-  signal?: AbortSignal,
+  options: CallBackendOptions = {},
 ): Promise<ZodTypeOf<Schema>> {
   // `method` is passed explicitly rather than left to the transport's body-presence default: a
   // bodyless `POST` is a real case here (`saveProfile` sends the profile, `findApplicationDuplicates`
   // sends nothing and is a GET), and inferring it would quietly change one of them.
-  return transport.json(path, schema, { method, body, signal });
+  return transport.json(path, schema, { ...options, method: options.method ?? 'POST' });
 }
 
 /**

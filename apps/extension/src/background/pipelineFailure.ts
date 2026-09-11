@@ -1,4 +1,4 @@
-import { HttpError } from '../lib/callBackend';
+import { HttpError, isUnauthorized } from '../lib/callBackend';
 import { PageResponseError } from '../lib/pageClient';
 import type { PipelineFailure, RunStep } from '../lib/run';
 
@@ -25,7 +25,7 @@ export function pipelineFailure(
     // started — `docs/multi-tenant-auth.md`, Phase D. Distinguished from the generic `'unknown'`
     // below because the fix is specific (sign in again) rather than "try again," and the panel's
     // own `failureReason` says so.
-    if (error.kind === 'http' && error.status === 401) return { step, kind: 'unauthorized' };
+    if (isUnauthorized(error)) return { step, kind: 'unauthorized' };
     if (error.kind === 'network') return { step, kind: 'backend-unreachable' };
     if (error.kind === 'timeout') return { step, kind: 'temporary' };
     if (

@@ -67,14 +67,16 @@ describe('manual application calls', () => {
     });
   });
 
-  it('POSTs a new application and validates the full row response', async () => {
+  it('POSTs a new application with its idempotency key and validates the full row response', async () => {
     const { id: _id, createdAt: _createdAt, ...payload } = sample;
     const fetchMock = stubFetch({ jsonBody: sample });
 
-    await expect(httpDashboardClient.createApplication(payload)).resolves.toEqual(sample);
+    await expect(
+      httpDashboardClient.createApplication(payload, 'idempotency-key-1'),
+    ).resolves.toEqual(sample);
     expect(fetchMock).toHaveBeenCalledWith('/applications', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'idempotency-key-1' },
       body: JSON.stringify(payload),
       signal: expect.any(AbortSignal),
       credentials: 'include',

@@ -11,6 +11,19 @@ function signedOutClient() {
 }
 
 describe('auth', () => {
+  it.each([
+    ['#/login', 'Sign in'],
+    ['#/signup', 'Create an account'],
+  ] as const)('uses the public header on %s', async (hash, heading) => {
+    renderDashboard({ client: signedOutClient(), hash });
+    await screen.findByRole('heading', { name: heading });
+
+    expect(screen.getByRole('link', { name: 'djobi home' })).toHaveAttribute('href', '/');
+    expect(screen.queryByRole('navigation', { name: 'Views' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Applications' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Analytics' })).not.toBeInTheDocument();
+  });
+
   it('redirects to #/login on a 401 rather than showing a generic load error', async () => {
     renderDashboard({ client: signedOutClient() });
 

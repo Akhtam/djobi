@@ -1,0 +1,2 @@
+ALTER TABLE "applications" ADD COLUMN "idempotency_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "applications_user_idempotency_key_idx" ON "applications" USING btree ("user_id","idempotency_key");

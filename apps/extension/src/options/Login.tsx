@@ -5,6 +5,7 @@
  * configured for it. No sign-up form here — an account is created via the dashboard's public
  * sign-up flow (`docs/multi-tenant-auth.md`), not from the extension.
  */
+import { userMessage } from '@djobi/http-client';
 import { useState, type FormEvent } from 'react';
 import icon48 from '../assets/icons/icon48.png';
 
@@ -28,7 +29,7 @@ export function Login({
       // profile editor once it resolves, so this component unmounts. The `catch` below is the only
       // path that leaves it mounted.
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign-in failed.');
+      setError(userMessage(err));
       setSubmitting(false);
     }
   }

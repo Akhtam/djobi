@@ -97,8 +97,19 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     return c.json(application);
   });
 
+  /**
+   * `idempotency-key` is optional and honoured when given — see `applicationStore.ts`'s `create`.
+   * A caller with nothing to retry (nothing today reads it back) never has to send one.
+   */
   route.post('/applications', async (c) =>
-    writeResponse(c, await store.create(c.get('userId'), await parseBody(c, NewApplicationSchema))),
+    writeResponse(
+      c,
+      await store.create(
+        c.get('userId'),
+        await parseBody(c, NewApplicationSchema),
+        c.req.header('idempotency-key'),
+      ),
+    ),
   );
 
   route.patch('/applications/:id', async (c) =>

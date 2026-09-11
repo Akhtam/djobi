@@ -24,7 +24,7 @@
  * its configuration. In particular the **origin is injected, never centralised** — see
  * {@link HttpTransportOptions.baseUrl}.
  */
-import { BackendErrorBodySchema } from '@djobi/shared';
+import { BackendErrorBodySchema, failureMessage } from '@djobi/shared';
 import type { BackendErrorCode, ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 
 /**
@@ -57,15 +57,69 @@ export class HttpError extends Error {
      * `'network'` message written for the common cause, and without the original there is nothing
      * left to tell a genuinely unreachable backend from a request `fetch` refused to construct.
      */
-    options?: { cause?: unknown; backendCode?: BackendErrorCode },
+    options?: {
+      cause?: unknown;
+      backendCode?: BackendErrorCode;
+      /**
+       * The part of `message` fit to show a candidate, when it differs from `message` itself — see
+       * {@link HttpError.reason}. Omitted, `reason` falls back to `message`, which is already clean
+       * enough for `'network'`/`'timeout'` — neither carries the `"$METHOD $path failed ($status):"`
+       * diagnostic prefix `'http'`'s `message` does, or the raw body/zod-issue dump
+       * `'invalid-response'`'s does.
+       */
+      reason?: string;
+    },
   ) {
     super(message, options);
     this.name = 'HttpError';
     this.backendCode = options?.backendCode;
+    this.reason = options?.reason ?? message;
   }
 
   /** A safe semantic classification supplied by the backend, independent of transport kind. */
   readonly backendCode?: BackendErrorCode;
+
+  /**
+   * The text fit to show the candidate who triggered this call — never the diagnostic
+   * `"$METHOD $path failed ($status):"` prefix `message` carries for a `'http'` kind, and never a
+   * zod issue list or a raw non-JSON body for an `'invalid-response'` kind. Every UI surface that
+   * displays a caught error should read this, not `message`/`failureMessage(error)` — those stay
+   * exactly what they were, the fuller string every existing `console.error` and test already reads.
+   */
+  readonly reason: string;
+}
+
+/**
+ * Whether `err` is this transport reporting the backend's own 401 — an absent or expired session.
+ *
+ * Written identically four times across both apps (`apps/extension/src/options/App.tsx`,
+ * `apps/extension/src/lib/authClient.ts`, `apps/extension/src/background/pipelineFailure.ts`,
+ * `apps/dashboard/src/lib/dashboardSession.ts`) before landing here — every caller reached past this
+ * module's own seam to inspect `HttpError`'s shape for itself, which meant the shape could never
+ * change without hunting down four copies.
+ *
+ * Deliberately narrow: it means exactly "an `HttpError` with `kind: 'http'` and `status: 401`," and
+ * nothing about *why* — a wrong password looks the same on the wire as an expired session (both are
+ * a 401 from `requireAuth`), so this cannot tell them apart. Session policy — sign the candidate out,
+ * offer a retry, redirect to sign-in — stays each caller's own call; this only answers the one
+ * question every one of them was asking before doing something about it.
+ */
+export function isUnauthorized(err: unknown): boolean {
+  return err instanceof HttpError && err.kind === 'http' && err.status === 401;
+}
+
+/**
+ * The text fit to show whoever triggered `error` — `HttpError.reason` for one of these, or
+ * `failureMessage`'s generic reading of anything else.
+ *
+ * Every place in either app that turns a caught error into UI text should call this instead of
+ * `failureMessage` directly. `failureMessage(new HttpError(...))` reads the *diagnostic* `message` —
+ * `"POST /api/auth/sign-in/email failed (401): {\"message\":\"Invalid email or password\", …}"` was
+ * a caller doing exactly that — which is correct for a log line and wrong for a banner a candidate
+ * reads.
+ */
+export function userMessage(error: unknown): string {
+  return error instanceof HttpError ? error.reason : failureMessage(error);
 }
 
 export interface HttpTransportOptions {
@@ -130,6 +184,13 @@ export interface RequestOptions {
    * report.
    */
   signal?: AbortSignal;
+  /**
+   * Sent as `idempotency-key`, for a write a caller might resend after a timeout or a lost
+   * response — `POST /applications` is the one route that reads it (see
+   * `applicationStore.ts`'s `create`). The transport only carries it; deduping on it is the
+   * server's job, so a caller that never retries never needs one.
+   */
+  idempotencyKey?: string;
 }
 
 export interface HttpTransport {
@@ -175,7 +236,7 @@ function issuesFrom(error: ZodError): string {
  * text for anything that isn't JSON at all — a crash outside the backend's own error handling, or
  * nothing listening on the port, still produces a readable message.
  */
-function errorBodyFrom(raw: string): { reason: string; backendCode?: BackendErrorCode } {
+export function errorBodyFrom(raw: string): { reason: string; backendCode?: BackendErrorCode } {
   try {
     const parsed: unknown = JSON.parse(raw);
 
@@ -185,6 +246,13 @@ function errorBodyFrom(raw: string): { reason: string; backendCode?: BackendErro
     // A route that put an `Error`-like object under `error` rather than a string.
     const message = (parsed as { error?: { message?: unknown } })?.error?.message;
     if (typeof message === 'string') return { reason: message };
+
+    // Better Auth's own error body (`/api/auth/*` — a pass-through past this app's `{ error }`
+    // convention, see `app.ts`): a top-level `message`, e.g. `{"message":"Invalid email or
+    // password","code":"INVALID_EMAIL_OR_PASSWORD"}`. Without this branch that whole object fell
+    // through to the raw-text case below and was shown to the candidate verbatim, braces and all.
+    const topLevelMessage = (parsed as { message?: unknown })?.message;
+    if (typeof topLevelMessage === 'string') return { reason: topLevelMessage };
   } catch {
     // Not JSON — fall through and use the raw body below.
   }
@@ -243,7 +311,7 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
     requestOptions: RequestOptions,
     read: (response: Response) => Promise<T>,
   ): Promise<T> {
-    const { body, signal } = requestOptions;
+    const { body, signal, idempotencyKey } = requestOptions;
     const method = resolveMethod(requestOptions);
 
     const init: RequestInit =
@@ -295,8 +363,14 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
         ...init,
         signal: deadline,
         ...(options.credentials ? { credentials: options.credentials } : {}),
-        ...(authorization
-          ? { headers: { ...init.headers, authorization: `Bearer ${authorization}` } }
+        ...(authorization || idempotencyKey
+          ? {
+              headers: {
+                ...init.headers,
+                ...(authorization ? { authorization: `Bearer ${authorization}` } : {}),
+                ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+              },
+            }
           : {}),
       });
 
@@ -312,7 +386,7 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
           path,
           `${method} ${path} failed (${response.status}): ${reason}`,
           response.status,
-          { backendCode },
+          { backendCode, reason },
         );
       }
 
@@ -329,6 +403,8 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
           'timeout',
           path,
           `${path} did not respond within ${Math.round(timeoutMs / 1000)}s`,
+          undefined,
+          { reason: 'This is taking longer than expected. Please try again.' },
         );
       }
 
@@ -365,6 +441,11 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
     schema: Schema,
   ): ZodTypeOf<Schema> {
     let parsed: unknown;
+    // Shown to whoever triggered the call that hit either branch below — never the raw body or the
+    // zod issue list `message` carries for the log: that detail is a bug report artifact, not
+    // something a candidate can act on.
+    const unexpectedResponseReason = 'The server sent back something unexpected. Please try again.';
+
     try {
       // An empty body decodes as `undefined` and therefore fails the schema, which is the honest
       // reading: a route that promised JSON and sent nothing did not do what it said.
@@ -375,6 +456,8 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
         'invalid-response',
         path,
         `${method} ${path} returned a body that is not JSON: ${raw.trim().slice(0, 300)}`,
+        undefined,
+        { reason: unexpectedResponseReason },
       );
     }
 
@@ -384,6 +467,8 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
         'invalid-response',
         path,
         `${method} ${path} returned an unexpected response: ${issuesFrom(decoded.error)}`,
+        undefined,
+        { reason: unexpectedResponseReason },
       );
     }
 

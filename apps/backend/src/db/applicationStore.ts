@@ -85,8 +85,20 @@ export interface ApplicationStore {
    * applied to a posting only someone else has ever seen.
    */
   duplicateSummary(userId: string, jobUrl: string): Promise<DuplicateApplicationSummary>;
-  /** Inserts a new Application owned by `userId`, assigning its id and `createdAt`. */
-  create(userId: string, application: NewApplication): Promise<Written<ApplicationWriteResult>>;
+  /**
+   * Inserts a new Application owned by `userId`, assigning its id and `createdAt`.
+   *
+   * `idempotencyKey`, when given, makes a resend safe: a second `create` for the same `userId` and
+   * key returns the row the first call already wrote instead of inserting a duplicate. It exists
+   * because a client cannot tell "the write failed" from "the write succeeded and the response was
+   * lost" — a timeout, a dropped connection — and an unconditional retry after either looks
+   * identical from here. Omitted, `create` always inserts, exactly as it did before this existed.
+   */
+  create(
+    userId: string,
+    application: NewApplication,
+    idempotencyKey?: string,
+  ): Promise<Written<ApplicationWriteResult>>;
   /**
    * Replaces an Application's editable snapshot, leaving Stage, Notes and Application Source
    * untouched. `null` when no row has that id for this user.
@@ -164,6 +176,10 @@ export function inMemoryApplicationStore(
   // Insertion sequence per id, purely for the tie-break above.
   const sequence = new Map<string, number>();
   let nextSequence = 0;
+  // `userId` and the key together, matching the Postgres adapter's `(user_id, idempotency_key)`
+  // unique index — two different candidates may pick the same client-generated key without
+  // colliding.
+  const idempotencyKeys = new Map<string, string>();
 
   function put(userId: string, application: Application): void {
     rows.set(application.id, application);
@@ -224,10 +240,18 @@ export function inMemoryApplicationStore(
       };
     },
 
-    async create(userId, application) {
+    async create(userId, application, idempotencyKey) {
+      if (idempotencyKey) {
+        const dedupeKey = `${userId} ${idempotencyKey}`;
+        const existingId = idempotencyKeys.get(dedupeKey);
+        const existing = existingId ? rows.get(existingId) : undefined;
+        if (existing) return { id: existing.id, application: existing };
+      }
+
       const id = crypto.randomUUID();
       const created: Application = { ...application, id, createdAt: new Date().toISOString() };
       put(userId, created);
+      if (idempotencyKey) idempotencyKeys.set(`${userId} ${idempotencyKey}`, id);
       return { id, application: created };
     },
 

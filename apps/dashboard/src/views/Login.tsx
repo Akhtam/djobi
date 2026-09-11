@@ -6,7 +6,8 @@
  * counterpart — signup is public now, not an operator-only action.
  */
 import { useState, type FormEvent } from 'react';
-import { failureMessage } from '@djobi/shared';
+import { userMessage } from '@djobi/http-client';
+import { AuthLayout } from '../components/AuthLayout';
 import { signUpPath } from '../lib/useHashRoute';
 
 export function Login({
@@ -29,15 +30,22 @@ export function Login({
       // success, and this component unmounts. Setting state after that would be a no-op React
       // would warn about; the `catch` below is the only path that leaves this view mounted.
     } catch (err) {
-      setError(failureMessage(err));
+      setError(userMessage(err));
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="login">
-      <h1>Sign in</h1>
-
+    <AuthLayout
+      eyebrow="Welcome back"
+      title="Sign in"
+      description="Pick up where you left off and keep your search moving."
+      footer={
+        <p>
+          Don’t have an account? <a href={signUpPath()}>Create one</a>
+        </p>
+      }
+    >
       {error ? (
         <p className="banner banner--error" role="alert">
           {error}
@@ -50,6 +58,7 @@ export function Login({
           <input
             type="email"
             className="search"
+            placeholder="you@example.com"
             autoComplete="email"
             required
             value={email}
@@ -62,6 +71,7 @@ export function Login({
           <input
             type="password"
             className="search"
+            placeholder="Enter your password"
             autoComplete="current-password"
             required
             value={password}
@@ -73,10 +83,6 @@ export function Login({
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-
-      <p className="login-alt">
-        Don’t have an account? <a href={signUpPath()}>Create one</a>
-      </p>
-    </div>
+    </AuthLayout>
   );
 }

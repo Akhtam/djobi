@@ -68,8 +68,12 @@ beforeAll(async () => {
       extraction_version text,
       requirement_evidence jsonb,
       bullet_provenance jsonb,
+      idempotency_key text,
       created_at timestamp with time zone NOT NULL DEFAULT now()
     );
+
+    CREATE UNIQUE INDEX applications_user_idempotency_key_idx
+      ON applications (user_id, idempotency_key);
   `);
 });
 
@@ -150,6 +154,52 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
   it('answers null for an id no row has', async () => {
     expect(await store.byId(USER_A, '00000000-0000-4000-8000-0000000000ff')).toBeNull();
+  });
+
+  it('a repeated idempotency key returns the row the first create wrote, not a second one', async () => {
+    const first = await store.create(
+      USER_A,
+      newApplication({ company: 'First attempt' }),
+      'retry-key',
+    );
+    const second = await store.create(
+      USER_A,
+      // A resend after a lost response carries the same payload it sent the first time — this
+      // deliberately varies it anyway, so the test fails loudly if a same-keyed retry ever
+      // overwrote the stored row instead of just handing it back unchanged.
+      newApplication({ company: 'Resent attempt' }),
+      'retry-key',
+    );
+
+    expect(second).toEqual(first);
+    expect((await store.list(USER_A)).map((row) => row.id)).toEqual([first.id]);
+    expect((await store.byId(USER_A, first.id))?.company).toBe('First attempt');
+  });
+
+  it('two keyless creates never collide, matching a caller with nothing to retry', async () => {
+    const first = await store.create(USER_A, newApplication({ company: 'First' }));
+    const second = await store.create(USER_A, newApplication({ company: 'Second' }));
+
+    expect(second.id).not.toBe(first.id);
+    expect((await store.list(USER_A)).map((row) => row.id).sort()).toEqual(
+      [first.id, second.id].sort(),
+    );
+  });
+
+  it('treats an empty idempotency key as absent', async () => {
+    const first = await store.create(USER_A, newApplication({ company: 'First' }), '');
+    const second = await store.create(USER_A, newApplication({ company: 'Second' }), '');
+
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it('the same idempotency key is scoped per user, not shared across accounts', async () => {
+    const forA = await store.create(USER_A, newApplication({ company: 'A' }), 'shared-key');
+    const forB = await store.create(USER_B, newApplication({ company: 'B' }), 'shared-key');
+
+    expect(forB.id).not.toBe(forA.id);
+    expect(await store.byId(USER_A, forA.id)).toMatchObject({ company: 'A' });
+    expect(await store.byId(USER_B, forB.id)).toMatchObject({ company: 'B' });
   });
 
   it('lists every application, most recently created first', async () => {

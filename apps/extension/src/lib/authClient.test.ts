@@ -47,6 +47,23 @@ describe('signIn', () => {
     await expect(getAuthToken()).resolves.toBeUndefined();
   });
 
+  it('reads Better Auth’s own { message, code } body — its real shape, not this app’s { error }', async () => {
+    // What `/api/auth/sign-in/email` actually answers with on a bad credential — Better Auth's own
+    // route, passed straight through by `app.ts`, never this backend's own `{ error }` convention.
+    // Reading only `.error` here left this falling back to the generic "Sign-in failed (401)."
+    // message, past whatever Better Auth had actually said.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({ message: 'Invalid email or password', code: 'INVALID_EMAIL_OR_PASSWORD' }),
+        { status: 401 },
+      ),
+    );
+
+    const rejection = await signIn('jane@example.com', 'wrong').catch((error: unknown) => error);
+
+    expect(rejection).toMatchObject({ message: 'Invalid email or password' });
+  });
+
   it('rejects when the response has no set-auth-token header, even at 200', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ user: { id: 'user-1', email: 'jane@example.com' } }), {

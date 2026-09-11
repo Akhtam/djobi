@@ -23,12 +23,9 @@ import {
 import { countByOption, FilterPills } from '../components/FilterPills';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import {
-  coverageForKeywords,
+  analyticsReport,
   MIN_DECIDED_FOR_RATE,
   RANGES,
-  keywordFrequency,
-  rangeStart,
-  responseRate,
   type Range,
   type ResponseRate,
 } from '../lib/analytics';
@@ -117,45 +114,30 @@ export function Analytics({
     setSelectedKeyword(null);
   }, [range, stage]);
 
-  // Split so the stage pills can count against `inRange` rather than `filtered`: a pill's count is
-  // "how many would this select", which means every filter except the one the pill itself controls.
-  const rangeStartDate = useMemo(() => rangeStart(range, today), [range, today]);
-  const inRange = useMemo(
-    () => applications.filter((application) => new Date(application.createdAt) >= rangeStartDate),
-    [applications, rangeStartDate],
-  );
-
-  const filtered = useMemo(
+  // Keep aggregation independent of the table-only controls below: toggling gaps or the minimum
+  // count should not rescan every application or recompute profile coverage.
+  const report = useMemo(
     () =>
-      inRange.filter((application) => (stage ? stageFilterOf(application.stage) === stage : true)),
-    [inRange, stage],
+      analyticsReport(applications, {
+        range,
+        stage,
+        asOf: today,
+        minAppearances: 0,
+        gapsOnly: false,
+        profile: profileState.kind === 'ready' ? profileState.profile : null,
+      }),
+    [applications, range, stage, today, profileState],
+  );
+  const { rangeStartDate, inRange, filtered, frequency, coverageByTerm, gapCount, baseline } =
+    report;
+  const rows = useMemo(
+    () =>
+      frequency
+        .filter((row) => !gapsOnly || coverageByTerm?.get(row.term) === 'missing')
+        .filter((row) => row.count >= minAppearances),
+    [frequency, coverageByTerm, gapsOnly, minAppearances],
   );
 
-  const frequency = useMemo(() => keywordFrequency(filtered), [filtered]);
-
-  // Over `filtered`, the same set the frequency table counts — so a term's rate and its count are
-  // always drawn from one population, and the baseline below is the rate of the very postings the
-  // page is showing rather than of the whole history.
-  //
-  // **Suppressed entirely while a stage filter is on**, which is the one way this number could lie
-  // outright: filtering to `offer` selects the population on the very variable being measured and
-  // reports 100%, filtering to `rejected` reports 0%, and both look like findings. A response rate
-  // is only a fact about an unselected population, so it disappears with the filter that would
-  // have invalidated it rather than being shown under a caveat nobody reads.
-  const outcomesMeasurable = stage === null;
-  const baseline = useMemo(
-    () => (outcomesMeasurable ? responseRate(filtered) : null),
-    [filtered, outcomesMeasurable],
-  );
-
-  const coverageByTerm = useMemo(() => {
-    if (profileState.kind !== 'ready') return null;
-    return coverageForKeywords(frequency, profileState.profile);
-  }, [frequency, profileState]);
-
-  const rows = frequency
-    .filter((row) => !gapsOnly || coverageByTerm?.get(row.term) === 'missing')
-    .filter((row) => row.count >= minAppearances);
   const {
     visibleCount: visibleKeywordCount,
     scrollRef: keywordScrollRef,
@@ -180,7 +162,6 @@ export function Analytics({
     return [...byCategory.entries()];
   }, [visibleRows]);
 
-  const gapCount = frequency.filter((row) => coverageByTerm?.get(row.term) === 'missing').length;
   const stageCounts = countByOption(STAGE_FILTERS, inRange, (a) => stageFilterOf(a.stage));
 
   return (

@@ -9,6 +9,7 @@ import {
   DEFAULT_RANGE,
   MIN_DECIDED_FOR_RATE,
   RANGES,
+  analyticsReport,
   coverageForKeywords,
   evidenceByRequirement,
   keywordFrequency,
@@ -16,6 +17,7 @@ import {
   rangeStart,
   requirementEvidenceRollup,
   requirementKindCounts,
+  requirementsReport,
   responseRate,
   requirementImportanceCounts,
   yearsOfExperienceDistribution,
@@ -535,6 +537,225 @@ describe('requirementEvidenceRollup', () => {
       scoredPostings: 0,
       unscoredPostings: 0,
     });
+  });
+});
+
+describe('analyticsReport', () => {
+  const today = new Date('2026-03-30T12:00:00.000Z');
+
+  function apps(): Application[] {
+    return [
+      // In range, applied — TypeScript (evidenced in skills) and Rust (missing), asked by 2 postings.
+      application({
+        id: 'a',
+        createdAt: '2026-03-25T00:00:00.000Z',
+        stage: 'applied',
+        jobInfo: {
+          ...application().jobInfo,
+          keywords: [keyword({ term: 'TypeScript' }), keyword({ term: 'Rust' })],
+        },
+      }),
+      // In range, onsite — Rust again (2nd posting) and migration (evidenced in experience).
+      application({
+        id: 'b',
+        createdAt: '2026-03-26T00:00:00.000Z',
+        stage: 'onsite',
+        jobInfo: {
+          ...application().jobInfo,
+          keywords: [keyword({ term: 'Rust' }), keyword({ term: 'migration' })],
+        },
+      }),
+      // Out of range entirely (60 days back), must never surface in a 7-day report.
+      application({
+        id: 'c',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        stage: 'applied',
+        jobInfo: { ...application().jobInfo, keywords: [keyword({ term: 'Go' })] },
+      }),
+    ];
+  }
+
+  it('narrows inRange by range alone, and filtered further by stage', () => {
+    const report = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: null,
+    });
+
+    expect(report.inRange.map((a) => a.id).sort()).toEqual(['a', 'b']);
+    expect(report.filtered.map((a) => a.id).sort()).toEqual(['a', 'b']);
+
+    const staged = analyticsReport(apps(), {
+      range: '7d',
+      stage: 'onsite',
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: null,
+    });
+    // Stage narrows `filtered` but never `inRange` — the stage pills count against `inRange`.
+    expect(staged.inRange.map((a) => a.id).sort()).toEqual(['a', 'b']);
+    expect(staged.filtered.map((a) => a.id)).toEqual(['b']);
+  });
+
+  it('rows applies minAppearances to frequency without changing frequency itself', () => {
+    const report = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 2,
+      gapsOnly: false,
+      profile: null,
+    });
+
+    // Rust was asked by both in-range postings; TypeScript and migration by one each.
+    expect(report.frequency.map((row) => row.term).sort()).toEqual([
+      'Rust',
+      'TypeScript',
+      'migration',
+    ]);
+    expect(report.rows.map((row) => row.term)).toEqual(['Rust']);
+  });
+
+  it('gapsOnly narrows rows to missing terms but leaves gapCount counting the whole frequency', () => {
+    const withGaps = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: true,
+      profile: fixtureProfile,
+    });
+
+    // TypeScript is a skill and migration is evidenced by a bullet — only Rust is a genuine gap.
+    expect(withGaps.rows.map((row) => row.term)).toEqual(['Rust']);
+    expect(withGaps.gapCount).toBe(1);
+
+    const withoutToggle = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: fixtureProfile,
+    });
+    // gapCount is the same whether or not the toggle narrows what's displayed.
+    expect(withoutToggle.gapCount).toBe(1);
+    expect(withoutToggle.rows.map((row) => row.term).sort()).toEqual([
+      'Rust',
+      'TypeScript',
+      'migration',
+    ]);
+  });
+
+  it('coverageByTerm and gapCount stay null/0 without a profile, never throwing', () => {
+    const report = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: null,
+    });
+
+    expect(report.coverageByTerm).toBeNull();
+    expect(report.gapCount).toBe(0);
+    expect(report.rows.map((row) => row.term).sort()).toEqual(['Rust', 'TypeScript', 'migration']);
+  });
+
+  it('a gapsOnly toggle with nothing to score against hides every row rather than guessing', () => {
+    // Unreachable through the UI — `Analytics.tsx` disables the toggle until a Profile has
+    // loaded — but the report itself must still answer sanely: nothing can be confirmed a gap
+    // without something to score against, so nothing is shown as one.
+    const report = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: true,
+      profile: null,
+    });
+
+    expect(report.rows).toEqual([]);
+  });
+
+  it('suppresses baseline entirely once a stage filter narrows the population', () => {
+    const unfiltered = analyticsReport(apps(), {
+      range: '7d',
+      stage: null,
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: null,
+    });
+    expect(unfiltered.baseline).not.toBeNull();
+
+    const staged = analyticsReport(apps(), {
+      range: '7d',
+      stage: 'onsite',
+      asOf: today,
+      minAppearances: 1,
+      gapsOnly: false,
+      profile: null,
+    });
+    expect(staged.baseline).toBeNull();
+  });
+});
+
+describe('requirementsReport', () => {
+  function apps(): Application[] {
+    return [
+      application({
+        id: 'older',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        jobInfo: {
+          ...application().jobInfo,
+          keywords: [keyword({ term: 'React' })],
+          requirements: [requirement({ text: 'React experience', kind: 'required' })],
+        },
+      }),
+      application({
+        id: 'newer',
+        createdAt: '2026-02-01T00:00:00.000Z',
+        jobInfo: {
+          ...application().jobInfo,
+          keywords: [keyword({ term: 'Vue' })],
+          requirements: [requirement({ text: 'Vue experience', kind: 'preferred' })],
+        },
+      }),
+    ];
+  }
+
+  it('matches every application when no keyword is selected, newest first', () => {
+    const report = requirementsReport(apps(), null);
+
+    expect(report.matching).toHaveLength(2);
+    expect(report.sorted.map((a) => a.id)).toEqual(['newer', 'older']);
+    expect(report.requirementCounts.total).toBe(2);
+  });
+
+  it('narrows matching to postings that asked for the selected keyword', () => {
+    const report = requirementsReport(apps(), 'React');
+
+    expect(report.matching.map((a) => a.id)).toEqual(['older']);
+    expect(report.sorted.map((a) => a.id)).toEqual(['older']);
+    expect(report.requirementCounts).toMatchObject({ required: 1, preferred: 0, total: 1 });
+  });
+
+  it('matches case- and spacing-insensitively, via the same normalization the frequency table uses', () => {
+    const report = requirementsReport(apps(), 'react');
+
+    expect(report.matching.map((a) => a.id)).toEqual(['older']);
+  });
+
+  it('reports no requirements banded when nothing in the matched set carries an importance', () => {
+    const report = requirementsReport(apps(), null);
+
+    expect(report.anyBanded).toBe(false);
+    expect(report.bandCounts.unbanded).toBe(2);
   });
 });
 

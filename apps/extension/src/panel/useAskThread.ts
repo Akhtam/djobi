@@ -19,7 +19,7 @@
  * - **Turns have identity.** Copy state was keyed by the answer's *text*, so two turns that produced
  *   the same answer both read "Copied".
  */
-import { failureMessage } from '@djobi/shared';
+import { userMessage } from '@djobi/http-client';
 import type { ChatMessage, JobInfo, Profile } from '@djobi/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackendClient } from '../lib/backendClient';
@@ -179,7 +179,7 @@ export function useAskThread(
       } catch (failure) {
         if (requestToken !== turnRequestRef.current) return;
         // The candidate's turn stays in the transcript: it is what Retry re-sends.
-        setError(failureMessage(failure));
+        setError(userMessage(failure));
       } finally {
         if (requestToken === turnRequestRef.current) setPending(false);
       }

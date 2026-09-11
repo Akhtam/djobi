@@ -2,19 +2,12 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@djobi/http-client';
 import { EMPTY_PROFILE, type Profile } from '@djobi/shared';
-import { isUnauthorized, useRemoteProfile } from './dashboardSession';
+import { useRemoteProfile } from './dashboardSession';
 
 const profile: Profile = { ...EMPTY_PROFILE, fullName: 'Jane Doe' };
 
-describe('isUnauthorized', () => {
-  it('is true only for an HttpError reporting a 401', () => {
-    expect(isUnauthorized(new HttpError('http', '/profile', 'nope', 401))).toBe(true);
-    expect(isUnauthorized(new HttpError('http', '/profile', 'nope', 500))).toBe(false);
-    expect(isUnauthorized(new HttpError('network', '/profile', 'nope'))).toBe(false);
-    expect(isUnauthorized(new Error('401'))).toBe(false);
-    expect(isUnauthorized(null)).toBe(false);
-  });
-});
+// `isUnauthorized`'s own truth table is covered at `@djobi/http-client`'s test suite now — the
+// module that owns it — rather than re-asserted here against a local re-export.
 
 describe('useRemoteProfile', () => {
   it('reports loading, then ready with the fetched profile', async () => {

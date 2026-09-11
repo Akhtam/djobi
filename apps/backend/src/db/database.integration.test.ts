@@ -49,8 +49,12 @@ beforeAll(async () => {
       extraction_version text,
       requirement_evidence jsonb,
       bullet_provenance jsonb,
+      idempotency_key text,
       created_at timestamp with time zone NOT NULL DEFAULT now()
     );
+
+    CREATE UNIQUE INDEX applications_user_idempotency_key_idx
+      ON applications (user_id, idempotency_key);
 
     INSERT INTO applications
       (id, user_id, company, role_title, job_url, job_key, job_info, tailored_resume, answers,
