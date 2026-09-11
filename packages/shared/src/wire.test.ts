@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_PROFILE, ExtractedProfileSchema, ProfileSchema } from './schemas.js';
 import {
+  AnalyzeApplicationRequestSchema,
+  AnalyzeApplicationResponseSchema,
   AnswerChatRequestSchema,
   AnswerChatResponseSchema,
   AnswerQuestionsRequestSchema,
@@ -200,6 +202,105 @@ describe('AnswerQuestionsRequestSchema', () => {
         bullets: ['Published the first algorithm'],
       },
     ]);
+  });
+});
+
+describe('AnalyzeApplicationRequestSchema', () => {
+  it('keeps only what tailorResume and answerQuestions ground themselves in, dropping the rest', () => {
+    const profile = ProfileSchema.parse({
+      ...EMPTY_PROFILE,
+      fullName: 'Ada Lovelace',
+      email: 'ada@example.com',
+      phone: '555-0100',
+      location: 'London',
+      workExperience: [
+        {
+          company: 'Analytical Engines Ltd',
+          title: 'Programmer',
+          startDate: '1842-01',
+          endDate: null,
+          bullets: ['Published the first algorithm'],
+          maxBullets: 1,
+          starredIndices: [0],
+        },
+      ],
+      skills: ['Mathematics'],
+      stories: [
+        {
+          id: 's1',
+          title: 'Shipped the first algorithm',
+          tags: ['algorithms'],
+          situation: 'The Analytical Engine had no worked programs.',
+          task: 'Write one that computed Bernoulli numbers.',
+          action: 'Wrote the sequence of operations by hand.',
+          result: 'The first published computer program.',
+        },
+      ],
+      customAnswers: [{ question: 'Do you need sponsorship?', answer: 'No.' }],
+      screeningAnswers: { sponsorship_required: 'No' },
+    });
+
+    const parsed = AnalyzeApplicationRequestSchema.parse({
+      jobDescription: 'Programmer at Babbage.',
+      profile,
+      questions: [],
+    });
+
+    // Grounds both halves of the Analysis Step's model work — the full work-experience shape,
+    // bullet-selection controls included, since `tailorResume` needs them; `answerQuestions`' own
+    // re-parse strips them back out before they could reach its grounding (see the schema's own
+    // doc comment).
+    expect(parsed.profile.workExperience).toEqual([
+      {
+        company: 'Analytical Engines Ltd',
+        title: 'Programmer',
+        startDate: '1842-01',
+        endDate: null,
+        bullets: ['Published the first algorithm'],
+        maxBullets: 1,
+        starredIndices: [0],
+        suppressIfEmpty: false,
+      },
+    ]);
+    expect(parsed.profile.skills).toEqual(['Mathematics']);
+    expect(parsed.profile.stories).toEqual(profile.stories);
+    expect(parsed.profile.customAnswers).toEqual(profile.customAnswers);
+    expect(parsed.profile.maxBulletsPerRole).toBe(6);
+    // Never a grounding fact for either model call.
+    expect(parsed.profile).not.toHaveProperty('phone');
+    expect(parsed.profile).not.toHaveProperty('location');
+    expect(parsed.profile).not.toHaveProperty('fullName');
+    expect(parsed.profile).not.toHaveProperty('screeningAnswers');
+  });
+
+  it('rejects an empty job description, the same rule extract-job enforces', () => {
+    const result = AnalyzeApplicationRequestSchema.safeParse({
+      jobDescription: '',
+      profile: EMPTY_PROFILE,
+      questions: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('AnalyzeApplicationResponseSchema', () => {
+  it('accepts the Analysis Step output shape', () => {
+    const result = AnalyzeApplicationResponseSchema.safeParse({
+      jobInfo: {
+        company: 'Babbage',
+        team: null,
+        roleTitle: 'Programmer',
+        seniority: null,
+        location: null,
+        requirements: [],
+        keywords: [],
+      },
+      tailoredResume: { skills: ['Mathematics'], workExperience: [] },
+      answers: [{ fieldId: 'f-why', question: 'Why us?', answer: 'Because.', sourceStoryIds: [] }],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

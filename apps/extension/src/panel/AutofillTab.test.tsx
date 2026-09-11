@@ -29,7 +29,7 @@ import {
 } from './panelTestHarness';
 import type { DetectedField } from '@djobi/shared';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
-import type { PostingReadOutcome } from '../lib/postingReader';
+import type { PostingReadOutcome } from '../lib/pageClient';
 import { reportDetectedPage } from '../lib/tabStore/detectedPage';
 import { getJobContext, setJobContext } from '../lib/tabStore/jobContext';
 import { clearTabState } from '../lib/tabStore/lifecycle';

@@ -5,7 +5,14 @@
  * The protocol itself — the deadline, status-before-parse, error-body extraction, schema validation,
  * abort forwarding — lives in the package, because the dashboard talks to the same backend and
  * implemented all of it a second time. What is left here is what is genuinely the extension's: the
- * origin, and the remedy to suggest when nothing answers.
+ * origin, the remedy to suggest when nothing answers, and how the bearer token attaches.
+ * `backendClient.ts` calls {@link transport} directly — `json`/`binary`/`upload` — rather than
+ * through a per-route wrapper: once every route named its own response schema
+ * (`backendClient.ts`'s own doc comment), a `callBackend(path, schema, options)` that only forwarded
+ * its arguments to `transport.json` was a shallow layer between the two, and the divergence its own
+ * comment used to apologize for — `transport.json`'s bodyless-request default is `GET`, not `POST` —
+ * is exactly what naming `method` explicitly at every call site below removes, rather than leaving a
+ * shared default a future bodyless `POST` route could silently fall through.
  *
  * There is deliberately no relay through the service worker for the pages' calls. A relay would rest
  * on the premise that extension pages can't reach the backend themselves, and they can:
@@ -15,13 +22,13 @@
  *
  * The "adopt a shared dashboard session and retry once on a 401" policy does *not* live here, even
  * though every route below sits behind `requireAuth` — it lives at the `BackendClient` boundary in
- * `backendClient.ts` instead. This transport is real-HTTP-only; the fake `BackendClient` the panel
- * and options tests render against never reaches it, so a retry wired in here would be invisible in
- * every test and to any future non-HTTP adapter. `backendClient.ts` wraps the interface both the
- * real and fake clients implement, so it is the one place the policy reaches every caller.
+ * `backendClient.ts`'s `withSessionRecovery` instead. This transport is real-HTTP-only; the fake
+ * `BackendClient` the panel and options tests render against never reaches it, so a retry wired in
+ * here would be invisible in every test and to any future non-HTTP adapter. `withSessionRecovery`
+ * wraps the interface both clients implement, so it is the one place the policy reaches every
+ * caller — see its own doc comment for why `signIn`/`signOut` sit outside it.
  */
 import { createHttpTransport } from '@djobi/http-client';
-import type { ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { getAuthToken } from './authToken';
 
@@ -36,13 +43,22 @@ export { HttpError, isUnauthorized, userMessage, type HttpErrorKind } from '@djo
  * together. The dashboard has the opposite constraint and takes a relative `/api`.
  */
 /**
- * Ninety seconds is well clear of what these calls actually cost (the slowest measured, a cold
- * `/extract-job`, was ~17s) and short enough that a hung one becomes a visible error the candidate
- * can retry.
+ * The default budget for a route that has not asked for its own — see `@djobi/http-client`'s
+ * per-call `timeoutMs` for the one that has (`/analyze`, in `backendClient.ts`).
+ *
+ * Ninety seconds is well clear of what a single call costs: the slowest measured, a cold
+ * `/extract-job`, was ~17s. It stays the default rather than rising to clear the slowest route,
+ * because a route that answers in milliseconds should fail fast when it hangs — a `GET /profile`
+ * left spinning for the chained model work's budget is a bootstrap that looks frozen.
  */
 const REQUEST_TIMEOUT_MS = 90_000;
 
-const transport = createHttpTransport({
+/**
+ * The extension's configured transport — `json`/`binary`/`upload` — called directly by
+ * `backendClient.ts`, which is the one place that names a backend path. See this module's own doc
+ * comment for why there is no per-route wrapper between the two.
+ */
+export const transport = createHttpTransport({
   baseUrl: EXTENSION_BACKEND_ORIGIN,
   timeoutMs: REQUEST_TIMEOUT_MS,
   // Not the dashboard's wording, which sends the reader straight to `pnpm dev:backend`. In the
@@ -60,73 +76,3 @@ const transport = createHttpTransport({
   // and a value captured at that moment would go stale the first time it did.
   getAuthorization: getAuthToken,
 });
-
-type Method = 'GET' | 'POST' | 'PATCH';
-
-export interface CallBackendOptions {
-  body?: unknown;
-  method?: Method;
-  signal?: AbortSignal;
-  /** Forwarded to the transport as `idempotency-key` — see `BackendClient.saveApplication`. */
-  idempotencyKey?: string;
-}
-
-/**
- * Sends `body` to `path` and resolves with the response decoded through `schema`. `method` defaults
- * to `POST`; `GET` requests are sent bodyless, so `body` may be omitted for them.
- *
- * **`schema` is required, and that is the point.** This used to take a type parameter and cast the
- * parsed JSON to it, leaving the response checked only where a caller remembered to check it — which
- * was three routes out of eleven, and the three with the least to get wrong. Every model-written
- * payload arrived unverified, so a `/tailor-resume` response missing `workExperience` type-checked
- * all the way through the Analysis Step and surfaced as an empty PDF with nothing pointing back
- * here. A parameter can't be forgotten the way a convention can, and it mirrors what
- * `backendClient.ts` already does outbound with `satisfies`.
- *
- * @throws {HttpError} `kind: 'http'` for a non-2xx, `'timeout'`, `'network'`, or
- *   `'invalid-response'` for a 2xx whose body isn't what the route promised.
- */
-export function callBackend<Schema extends ZodTypeAny>(
-  path: string,
-  schema: Schema,
-  options: CallBackendOptions = {},
-): Promise<ZodTypeOf<Schema>> {
-  // `method` is passed explicitly rather than left to the transport's body-presence default: a
-  // bodyless `POST` is a real case here (`saveProfile` sends the profile, `findApplicationDuplicates`
-  // sends nothing and is a GET), and inferring it would quietly change one of them.
-  return transport.json(path, schema, { ...options, method: options.method ?? 'POST' });
-}
-
-/**
- * Sends `body` as JSON and resolves with the raw response bytes — for `/render-resume-pdf`, whose
- * response is a PDF that {@link callBackend}'s `JSON.parse` can't read.
- *
- * It takes a `signal` for the same reason every other route does. It used to take none, which made
- * it the one call in the extension that could not be cancelled — and it is a real generation cost
- * inside the Fill Step, not a cheap read. That asymmetry survived because "every call forwards its
- * signal" was a convention re-remembered per function rather than a rule the transport states.
- *
- * @throws {HttpError} As {@link callBackend}, minus `'invalid-response'` — there is no schema to fail.
- */
-export function callBackendBinary(
-  path: string,
-  body: unknown,
-  signal?: AbortSignal,
-): Promise<ArrayBuffer> {
-  return transport.binary(path, { method: 'POST', body, signal });
-}
-
-/**
- * Sends `formData` as a multipart upload and resolves with the response decoded through `schema` —
- * for `POST /profile/extract-resume`, the one route that takes a file. See
- * `@djobi/http-client`'s `upload()` for the CSRF-guard header this attaches on the extension's
- * behalf.
- */
-export function callBackendUpload<Schema extends ZodTypeAny>(
-  path: string,
-  schema: Schema,
-  formData: FormData,
-  signal?: AbortSignal,
-): Promise<ZodTypeOf<Schema>> {
-  return transport.upload(path, schema, formData, { signal });
-}

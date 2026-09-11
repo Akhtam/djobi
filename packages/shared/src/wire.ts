@@ -22,6 +22,7 @@ import {
   NewNoteSchema,
   NoteSchema,
   ProfileSchema,
+  QuestionAnswerSchema,
   ResumeWorkExperienceSchema,
   TailoredResumeSchema,
 } from './schemas.js';
@@ -167,6 +168,61 @@ export const AnswerQuestionsRequestSchema = z.object({
 /** Inferred type of {@link AnswerQuestionsRequestSchema}. */
 export type AnswerQuestionsRequest = z.infer<typeof AnswerQuestionsRequestSchema>;
 
+/**
+ * Profile fields the Analysis Step's own consolidated call grounds *either* half of its work in —
+ * the union of {@link TailorResumeProfileSchema} and {@link AnswerQuestionsProfileSchema}, since one
+ * request now feeds both `tailorResume` and `answerQuestions` on the backend. Not the whole Profile:
+ * a field neither operation picks (a phone number, a screening declaration) must not cross the wire
+ * in the first place, which is what this narrower schema is for.
+ *
+ * `workExperience` keeps the full `WorkExperienceSchema` — including the bullet-selection controls
+ * `AnswerQuestionsProfileSchema` deliberately strips — because `tailorResume` needs them and this is
+ * a union, not an intersection. `tailorResume`/`answerQuestions` each still narrow this down to
+ * their own picks before building a prompt (`TailorResumeProfileSchema.parse`/
+ * `AnswerQuestionsProfileSchema.parse`), so `answerQuestions`' own re-parse strips those controls
+ * back out before they could reach its grounding — nothing added here for one operation's sake
+ * reaches the other's model call.
+ */
+export const AnalyzeApplicationProfileSchema = ProfileSchema.pick({
+  workExperience: true,
+  education: true,
+  maxBulletsPerRole: true,
+  skills: true,
+  stories: true,
+  customAnswers: true,
+});
+export type AnalyzeApplicationProfile = z.infer<typeof AnalyzeApplicationProfileSchema>;
+
+/**
+ * Body of `POST /analyze` — the Analysis Step's own sequencing (extract Job Info, then tailor a
+ * Resume and draft Question Answers from it, the second pair in parallel), moved server-side and
+ * reached in one round trip instead of three. Additive alongside `/extract-job`, `/tailor-resume`
+ * and `/answer-questions` above, which stay: the Log tab's Duplicate Guard needs `extractJob` alone
+ * and never tailors, and an extension build older than this route still needs the three-call
+ * sequence to keep working.
+ *
+ * `questions` is already the extension's own filtered, model-worthy subset — this route knows
+ * nothing about Detected Fields, page order, or which questions are worth a model call, all of
+ * which stay `background/applicationPipeline.ts`'s concern.
+ */
+export const AnalyzeApplicationRequestSchema = z.object({
+  jobDescription: ExtractJobRequestSchema.shape.jobDescription,
+  profile: AnalyzeApplicationProfileSchema,
+  questions: z.array(QuestionForModelSchema),
+});
+/** Inferred type of {@link AnalyzeApplicationRequestSchema}. */
+export type AnalyzeApplicationRequest = z.infer<typeof AnalyzeApplicationRequestSchema>;
+
+/** Response of `POST /analyze`. */
+export const AnalyzeApplicationResponseSchema = z.object({
+  jobInfo: JobInfoSchema,
+  tailoredResume: TailoredResumeSchema,
+  /** In input-question order, the same output contract `answerQuestions` makes on its own route. */
+  answers: z.array(QuestionAnswerSchema),
+});
+/** Inferred type of {@link AnalyzeApplicationResponseSchema}. */
+export type AnalyzeApplicationResponse = z.infer<typeof AnalyzeApplicationResponseSchema>;
+
 /** Profile fields and preferences used to render a PDF. */
 export const RenderResumePdfProfileSchema = ProfileSchema.pick({
   fullName: true,
@@ -282,6 +338,16 @@ export const DeleteApplicationNoteResultSchema = z.object({
   noteId: z.string(),
 });
 export type DeleteApplicationNoteResult = z.infer<typeof DeleteApplicationNoteResultSchema>;
+
+/**
+ * Acknowledgement of `DELETE /applications/:id`.
+ *
+ * The removed row's id, not the row: there is nothing left to return, the same reasoning as
+ * {@link DeleteApplicationNoteResultSchema}. It's what an optimistic client needs to drop the
+ * record it already removed from its own list.
+ */
+export const DeleteApplicationResultSchema = z.object({ id: z.string() });
+export type DeleteApplicationResult = z.infer<typeof DeleteApplicationResultSchema>;
 
 /**
  * Body of `POST /profile` — the whole Profile, which is what the route stores.

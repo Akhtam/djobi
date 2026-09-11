@@ -1,6 +1,6 @@
 /**
- * Talking to a tab's content script: the two request/response messages the background actually
- * waits on, and the transport rules they both have to obey.
+ * Talking to a tab's content script: the three request/response messages the extension waits on,
+ * and the transport rules they have to obey.
  *
  * These live behind an interface because they're the half of the Application Pipeline's outside
  * world that has real behaviour to hide — the `chrome.runtime.lastError` handshake and the
@@ -8,18 +8,24 @@
  * sit inline in a default-parameter object in `background/applicationPipeline.ts`, which meant the
  * only way to exercise them was to run the whole pipeline.
  *
- * Deliberately separate from the notification-only protocol in `lib/messages.ts`: these two are the
- * only messages in the extension where a response exists at all.
+ * Deliberately separate from the notification-only protocol in `lib/messages.ts`: these are the
+ * messages in the extension where a content-script response exists at all.
  */
 import type { DetectedField, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 import {
   FillFormResultSchema,
   JobPageDataSchema,
+  ScrapeJobDescriptionResponseSchema,
   type FillFormResult,
   type JobPageData,
+  type ScrapedJobDescription,
 } from './messages';
 import { autofillSource } from './fieldDisposition';
-import type { FillFormCommandMessage, ScanPageCommandMessage } from './messages';
+import type {
+  FillFormCommandMessage,
+  ScanPageCommandMessage,
+  ScrapeJobDescriptionCommandMessage,
+} from './messages';
 
 /**
  * What the Fill Step asks the page to do, in the pipeline's own terms: the fields, the values to
@@ -51,17 +57,66 @@ export interface PageClient {
   fill(tabId: number, command: FillPageCommand, frameId?: number): Promise<FillFormResult | null>;
   /** Re-scans the tab's live form, or resolves `null` when no frame answers (no content script, no form). */
   scan(tabId: number, frameId?: number): Promise<JobPageData | null>;
+  /** Reads every addressable frame and returns the strongest posting found across them. */
+  readPosting(tabId: number): Promise<PostingReadOutcome>;
 }
+
+export type PostingReadOutcome =
+  | { status: 'success'; candidate: ScrapedJobDescription }
+  | { status: 'not-found' }
+  | { status: 'unavailable' };
+
+type ResponseCommand =
+  FillFormCommandMessage | ScanPageCommandMessage | ScrapeJobDescriptionCommandMessage;
 
 /** A content-script reply arrived but did not match the command's response contract. */
 export class PageResponseError extends Error {
   constructor(
-    readonly command: FillFormCommandMessage['type'] | ScanPageCommandMessage['type'],
+    readonly command: ResponseCommand['type'],
     detail?: string,
   ) {
     super(`${command} returned an invalid response${detail ? `: ${detail}` : ''}`);
     this.name = 'PageResponseError';
   }
+}
+
+type FrameResponse<Value> =
+  | { status: 'unreachable'; frameId?: number }
+  | { status: 'invalid'; frameId?: number; error: PageResponseError }
+  | { status: 'valid'; frameId?: number; value: Value };
+
+function sendToPage<Schema extends ZodTypeAny>(
+  tabId: number,
+  message: ResponseCommand,
+  schema: Schema,
+  frameId?: number,
+): Promise<FrameResponse<ZodTypeOf<Schema>>> {
+  return new Promise((resolve) => {
+    const handle = (response?: unknown): void => {
+      const error = chrome.runtime.lastError;
+      if (error || response == null) {
+        resolve({ status: 'unreachable', frameId });
+        return;
+      }
+      const parsed = schema.safeParse(response);
+      if (!parsed.success) {
+        const detail = parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.') || 'response'} - ${issue.message}`)
+          .join('; ');
+        resolve({
+          status: 'invalid',
+          frameId,
+          error: new PageResponseError(message.type, detail),
+        });
+        return;
+      }
+      resolve({ status: 'valid', frameId, value: parsed.data as ZodTypeOf<Schema> });
+    };
+
+    if (frameId === undefined) chrome.tabs.sendMessage(tabId, message, handle);
+    else chrome.tabs.sendMessage(tabId, message, { frameId }, handle);
+  });
 }
 
 /**
@@ -85,28 +140,87 @@ function ask<Schema extends ZodTypeAny>(
   schema: Schema,
   frameId?: number,
 ): Promise<ZodTypeOf<Schema> | null> {
-  return new Promise((resolve, reject) => {
-    const handle = (response?: unknown): void => {
-      void chrome.runtime.lastError;
-      if (response == null) {
-        resolve(null);
-        return;
-      }
-      const parsed = schema.safeParse(response);
-      if (!parsed.success) {
-        const detail = parsed.error.issues
-          .slice(0, 3)
-          .map((issue) => `${issue.path.join('.') || 'response'} - ${issue.message}`)
-          .join('; ');
-        reject(new PageResponseError(message.type, detail));
-        return;
-      }
-      resolve(parsed.data as ZodTypeOf<Schema>);
-    };
-
-    if (frameId === undefined) chrome.tabs.sendMessage(tabId, message, handle);
-    else chrome.tabs.sendMessage(tabId, message, { frameId }, handle);
+  return sendToPage(tabId, message, schema, frameId).then((response) => {
+    if (response.status === 'invalid') throw response.error;
+    return response.status === 'valid' ? response.value : null;
   });
+}
+
+function frameIdsForTab(tabId: number): Promise<number[]> {
+  return new Promise((resolve) => {
+    chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
+      const error = chrome.runtime.lastError;
+      if (error || !frames?.length) {
+        resolve([0]);
+        return;
+      }
+      resolve([...new Set(frames.map((frame) => frame.frameId))]);
+    });
+  });
+}
+
+/**
+ * One sweep's result. `invalidError` rides alongside an `unavailable` outcome rather than being
+ * thrown from here, because a frame answering with an unexpected shape is most often a *stale*
+ * content script — an orphan left by an extension reload — which is exactly the case
+ * {@link reconnectContentScripts} exists to repair. Throwing at the sweep pre-empted that repair
+ * and told the candidate to reload the tab instead. {@link PageClient.readPosting} raises it only
+ * once reinjection has been tried and the frames still answer with nothing usable.
+ */
+type ScrapeSweep = { outcome: PostingReadOutcome; invalidError?: PageResponseError };
+
+async function scrapeFrames(tabId: number, frameIds: number[]): Promise<ScrapeSweep> {
+  const message: ScrapeJobDescriptionCommandMessage = { type: 'SCRAPE_JOB_DESCRIPTION' };
+  const results = await Promise.all(
+    frameIds.map((frameId) =>
+      sendToPage(tabId, message, ScrapeJobDescriptionResponseSchema, frameId),
+    ),
+  );
+  const candidates = results
+    .flatMap((result) =>
+      result.status === 'valid' && result.value.candidate
+        ? [{ frameId: result.frameId ?? 0, candidate: result.value.candidate }]
+        : [],
+    )
+    .sort(
+      (first, second) =>
+        second.candidate.score - first.candidate.score ||
+        Number(first.frameId !== 0) - Number(second.frameId !== 0),
+    );
+
+  if (candidates[0]) return { outcome: { status: 'success', candidate: candidates[0].candidate } };
+  if (results.some((result) => result.status === 'valid'))
+    return { outcome: { status: 'not-found' } };
+  const invalid = results.find((result) => result.status === 'invalid');
+  return {
+    outcome: { status: 'unavailable' },
+    ...(invalid?.status === 'invalid' ? { invalidError: invalid.error } : {}),
+  };
+}
+
+/** Reinjects content scripts only for the read-only scrape operation. Fill must never be replayed. */
+function reconnectContentScripts(tabId: number): Promise<boolean> {
+  if (!chrome.runtime.getManifest || !chrome.scripting?.executeScript)
+    return Promise.resolve(false);
+
+  const files = [
+    ...new Set(
+      (chrome.runtime.getManifest().content_scripts ?? []).flatMap(
+        (contentScript) => contentScript.js ?? [],
+      ),
+    ),
+  ];
+  if (files.length === 0) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files }, () =>
+      resolve(!chrome.runtime.lastError),
+    );
+  });
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 /** The production adapter: the tab's own content script. */
@@ -148,5 +262,27 @@ export const chromePageClient: PageClient = {
   scan(tabId, frameId) {
     const message: ScanPageCommandMessage = { type: 'SCAN_PAGE' };
     return ask(tabId, message, JobPageDataSchema, frameId);
+  },
+
+  async readPosting(tabId) {
+    const frameIds = await frameIdsForTab(tabId);
+    let sweep = await scrapeFrames(tabId, frameIds);
+    // An invalid reply counts as unavailable here, the same as silence: both describe frames this
+    // build cannot talk to, and both are repaired by the same reinjection. See {@link ScrapeSweep}.
+    if (sweep.outcome.status !== 'unavailable' || !(await reconnectContentScripts(tabId))) {
+      if (sweep.invalidError) throw sweep.invalidError;
+      return sweep.outcome;
+    }
+
+    // CRXJS's manifest entry is a loader whose dynamic import finishes just after reinjection.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await delay(100);
+      sweep = await scrapeFrames(tabId, frameIds);
+      if (sweep.outcome.status !== 'unavailable') return sweep.outcome;
+    }
+    // Still nothing usable after reinjection. A malformed reply is now the more informative answer
+    // than a bare `unavailable`: the frames are reachable and disagree with this build's contract.
+    if (sweep.invalidError) throw sweep.invalidError;
+    return sweep.outcome;
   },
 };

@@ -11,7 +11,11 @@
  * the transition policy then had nowhere to live except the callers, which is how one rule came to
  * be stated in three of them. Persistence is not where a domain belongs.
  */
+import type { TailoredResume } from '@djobi/shared';
 import {
+  canEditRun,
+  hasRecordedFill,
+  panelEditsOf,
   STEP_STATUS,
   type PipelineRunState,
   type PipelineStatus,
@@ -64,6 +68,55 @@ export async function patchPipelineRun(
     if (!state.run || state.run.runId !== expectedRunId) return false;
     await write(tabId, { ...state, run: { ...state.run, ...patch } });
     return true;
+  });
+}
+
+/**
+ * Applies a candidate's edit to the run named `runId`, refusing one the run domain does not allow
+ * right now instead of writing it silently.
+ *
+ * Two checks happen inside the same locked read-modify-write section `transitionPipelineRun` uses,
+ * not after it: `runId` must still name the tab's current run (a re-analysis or navigation may have
+ * replaced it since the edit was drafted, same rule as `patchPipelineRun`), and the run's status
+ * must be `editable` — a save in flight locks the snapshot it is writing (`lib/run/status.ts`), so
+ * an edit that lands mid-save must not be applied to a record the panel already believes was
+ * recorded.
+ *
+ * `saved` → `filled` is decided here, against what is actually stored, rather than trusted from the
+ * caller: the panel used to send `status: 'filled'` as a literal on every edit once a run had been
+ * recorded, so an edit that reproduced the exact answers already on file — an undo, or a duplicate
+ * send — still demoted a `saved` run for no real change. This reverts the status only when the
+ * candidate's fields differ from what is stored.
+ *
+ * Returns whether the edit was written. `false` means nothing changed here, which is what
+ * `panel/usePipelineRun.ts` uses to stop waiting for a storage echo that is never coming — a
+ * refusal writes nothing, so `chrome.storage.onChanged` never fires for it.
+ */
+export async function applyPanelEdit(
+  tabId: number,
+  runId: string,
+  edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
+    tailoredResume?: TailoredResume;
+  },
+): Promise<{ applied: boolean; run: PipelineRunState | null }> {
+  return withTabLock(tabId, async () => {
+    const state = await read(tabId);
+    const run = state.run;
+    if (!run || run.runId !== runId || !canEditRun(run.status)) {
+      return { applied: false, run: null };
+    }
+
+    const before = panelEditsOf(run);
+    const after = { ...before, ...edits };
+    const changed = JSON.stringify(after) !== JSON.stringify(before);
+
+    const updated: PipelineRunState = {
+      ...run,
+      ...after,
+      ...(changed && hasRecordedFill(run.status) ? { status: STEP_STATUS.fill.succeeded } : {}),
+    };
+    await write(tabId, { ...state, run: updated });
+    return { applied: true, run: updated };
   });
 }
 

@@ -75,12 +75,14 @@ describe('analytics', () => {
   it('cannot decrease the minimum below 1, and shows the current value', async () => {
     const { user } = renderDashboard();
 
+    // React tops out at 3 appearances in the default range, so that's the adaptive starting
+    // value — see the `minAppearances` initializer's own comment in `Analytics.tsx`.
     const stepper = await screen.findByRole('group', { name: 'Min. appearances' });
     const decrease = within(stepper).getByRole('button', { name: 'Decrease minimum appearances' });
-    expect(within(stepper).getByText('5')).toBeInTheDocument();
+    expect(within(stepper).getByText('3')).toBeInTheDocument();
     expect(decrease).not.toBeDisabled();
 
-    for (let value = 5; value > 1; value--) await user.click(decrease);
+    for (let value = 3; value > 1; value--) await user.click(decrease);
     expect(decrease).toBeDisabled();
 
     const increase = within(stepper).getByRole('button', { name: 'Increase minimum appearances' });
@@ -93,13 +95,18 @@ describe('analytics', () => {
   });
 
   it('explains an empty keyword table caused by the appearance filter', async () => {
-    renderDashboard();
+    const { user } = renderDashboard();
+
+    // The adaptive default (3, React's own count) shows something by design — see the
+    // `minAppearances` initializer's comment — so reaching the empty state here means raising it
+    // past what the range actually has, the same as a reader turning the stepper up themselves.
+    await screen.findByRole('button', { name: /React/ });
+    const increase = screen.getByRole('button', { name: 'Increase minimum appearances' });
+    await user.click(increase);
 
     expect(await screen.findByText('No keywords match these filters')).toBeInTheDocument();
     // The range/stage controls stay usable — the same rule every other empty state here follows.
-    expect(
-      screen.getByRole('button', { name: 'Increase minimum appearances' }),
-    ).toBeInTheDocument();
+    expect(increase).toBeInTheDocument();
   });
 
   it('shows a summary strip over the filtered range', async () => {
@@ -109,6 +116,10 @@ describe('analytics', () => {
     // Anthropic, Linear and Brex fall within the default seven-day range.
     const summary = container.querySelector('.analytics-summary');
     expect(summary).toHaveTextContent('3 postings');
+    expect(summary).toHaveTextContent(/of \d+ keywords shown/);
+    // 3, not a flat 5: the adaptive default caps at React's own count in this range — see the
+    // `minAppearances` initializer's comment in `Analytics.tsx`.
+    expect(summary).toHaveTextContent('Minimum 3 appearances');
   });
 
   it('highlights the selected keyword inside each requirement’s text', async () => {
@@ -148,14 +159,61 @@ describe('analytics', () => {
     ).toBeInTheDocument();
   });
 
-  it('counts the decisive bands in the summary strip, naming the unassessed rather than hiding them', async () => {
-    renderDashboard();
+  it('separates importance bands and states their classified denominator', async () => {
+    const { user } = renderDashboard();
 
     await screen.findByRole('link', { name: /Brex — Senior Frontend Engineer/ });
 
-    expect(await screen.findByText('1 critical')).toBeInTheDocument();
-    expect(screen.getByText('1 high')).toBeInTheDocument();
-    expect(screen.getByText('4 not assessed')).toBeInTheDocument();
+    const importance = screen.getByRole('region', { name: 'Importance' });
+    await user.click(within(importance).getByRole('button', { name: /Importance/ }));
+    expect(within(importance).getByText('4 of 8 classified')).toBeInTheDocument();
+    expect(within(importance).getByLabelText('1 critical')).toBeInTheDocument();
+    expect(within(importance).getByLabelText('1 high')).toBeInTheDocument();
+    expect(within(importance).getByLabelText('4 not assessed')).toBeInTheDocument();
+  });
+
+  it('collapses and restores the importance breakdown', async () => {
+    const { user } = renderDashboard();
+
+    await screen.findByRole('link', { name: /Brex — Senior Frontend Engineer/ });
+
+    const importance = screen.getByRole('region', { name: 'Importance' });
+    const toggle = within(importance).getByRole('button', { name: /Importance/ });
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(within(importance).queryByLabelText('1 critical')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(within(importance).getByLabelText('1 critical')).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /**
+   * A range of postings extracted before importance bands existed has no classification to report.
+   * Rendering the denominator anyway read "0 of N classified" above a populated kind breakdown —
+   * an absence of decisive requirements where the truth is that none were ever assessed.
+   */
+  it('omits the classified denominator when nothing in range was ever banded', async () => {
+    const applications = structuredClone(fixtureApplications);
+    for (const application of applications) {
+      for (const requirement of application.jobInfo.requirements) {
+        requirement.importance = null;
+        requirement.importanceTier = null;
+      }
+    }
+    const { user } = renderDashboard({ client: createFixtureDashboardClient(applications) });
+
+    await screen.findByRole('group', { name: 'Min. appearances' });
+    const importance = screen.getByRole('region', { name: 'Importance' });
+    await user.click(within(importance).getByRole('button', { name: 'Importance' }));
+
+    expect(within(importance).queryByText(/classified/)).not.toBeInTheDocument();
+    // The kind breakdown still stands in for it, so the card is not left empty.
+    expect(within(importance).queryByLabelText(/not assessed/)).not.toBeInTheDocument();
+    expect(importance).toHaveTextContent(/required|preferred|unspecified/);
   });
 
   it('narrows the range and drops postings outside it', async () => {
@@ -250,6 +308,8 @@ describe('analytics', () => {
 
     await user.click(nextJsRow);
 
+    expect(screen.getByRole('region', { name: 'Evidence for Next.js' })).toBeInTheDocument();
+
     // Next.js is asked for by Anthropic and Vercel; Brex is not.
     expect(
       await screen.findByRole('link', { name: /Anthropic — Member of Technical Staff, Product/ }),
@@ -273,8 +333,12 @@ describe('analytics', () => {
     await screen.findByRole('group', { name: 'Min. appearances' });
     const summary = container.querySelector('.analytics-summary-strip') as HTMLElement;
     const toggle = within(summary).getByRole('button', { name: /^Experience requested/ });
+    const importance = within(summary).getByRole('region', { name: 'Importance' });
 
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle.compareDocumentPosition(importance) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(summary).toHaveTextContent('2 thresholds');
     expect(summary.querySelectorAll('.analytics-summary-strip__year')).toHaveLength(0);
 
@@ -372,15 +436,17 @@ describe('analytics', () => {
 
       const summary = await screen.findByText(/response rate/);
       expect(summary).toHaveTextContent('30% response rate');
-      expect(summary).toHaveTextContent('1 pending');
+      expect(summary.closest('.analytics-summary__card')).toHaveTextContent('1 awaiting response');
     });
 
     it('withholds the rate rather than printing a percentage over too few resolved postings', async () => {
       renderDashboard();
 
       // The default 7-day range holds three fixture postings, only two of them resolved.
-      const summary = await screen.findByText(/response rate/);
-      expect(summary).toHaveTextContent('— response rate');
+      const summary = await screen.findByText('No response rate yet');
+      expect(summary.closest('.analytics-summary__card')).toHaveTextContent(
+        'Available after 5 applications are resolved.',
+      );
       expect(summary).not.toHaveTextContent('%');
     });
 
@@ -400,15 +466,19 @@ describe('analytics', () => {
       renderDashboard();
 
       // Brex is the one scored fixture row; the other two in the default range predate the field.
-      expect(await screen.findByText('1 dropped from resume')).toBeInTheDocument();
-      expect(screen.getByText('2 evidenced')).toBeInTheDocument();
-      expect(screen.getByText(/over 1 of 3 postings/)).toBeInTheDocument();
+      const evidence = await screen.findByRole('region', { name: 'Requirement evidence' });
+      const attention = screen.getByRole('region', { name: 'Needs attention' });
+      expect(
+        within(evidence).getByLabelText('1 in your Profile but left out of this resume'),
+      ).toBeInTheDocument();
+      expect(within(evidence).getByLabelText('2 backed by a resume bullet')).toBeInTheDocument();
+      expect(within(evidence).getByText(/1 of 3 postings scored/)).toBeInTheDocument();
 
       // Every verdict is accounted for, so the strip sums to Brex's four requirements rather than
       // leaving one of them uncounted.
-      expect(screen.getByText('1 unconfirmed')).toBeInTheDocument();
-      expect(screen.getByText('0 skill only')).toBeInTheDocument();
-      expect(screen.getByText('0 unevidenced')).toBeInTheDocument();
+      expect(within(attention).getByLabelText('1 needs confirmation')).toBeInTheDocument();
+      expect(within(evidence).getByLabelText('0 named only in skills')).toBeInTheDocument();
+      expect(within(attention).getByLabelText('0 with no supporting evidence')).toBeInTheDocument();
     });
 
     it('badges a requirement whose evidence the tailored resume dropped, and quotes the bullet', async () => {
@@ -422,7 +492,11 @@ describe('analytics', () => {
       renderDashboard();
 
       await screen.findByText('Dropped from resume');
-      expect(screen.queryByText('Evidenced')).not.toBeInTheDocument();
+      // Scoped to the per-posting requirement list rather than the whole page: the summary strip's
+      // own "Keyword coverage" stat and color legend are both allowed to say "Evidenced" — only a
+      // requirement badge saying so here would be the bug this test guards against.
+      const postings = screen.getByLabelText('Requirements by posting');
+      expect(within(postings).queryByText('Evidenced')).not.toBeInTheDocument();
     });
   });
 });

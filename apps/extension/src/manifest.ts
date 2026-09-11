@@ -4,7 +4,7 @@
  */
 import { defineManifest } from '@crxjs/vite-plugin';
 import pkg from '../package.json' with { type: 'json' };
-import { EXTENSION_BACKEND_ORIGIN } from './extensionConfig.ts';
+import { DASHBOARD_DEV_ORIGINS, EXTENSION_BACKEND_ORIGIN } from './extensionConfig.ts';
 
 export default defineManifest({
   manifest_version: 3,
@@ -55,6 +55,10 @@ export default defineManifest({
   ],
   host_permissions: [
     `${EXTENSION_BACKEND_ORIGIN}/*`,
+    // Empty once a real deployed backend is named — see `DASHBOARD_DEV_ORIGINS`'s own doc comment
+    // for why `chrome.cookies` needs these two in local dev: the dashboard's session cookie doesn't
+    // live on `EXTENSION_BACKEND_ORIGIN` there.
+    ...DASHBOARD_DEV_ORIGINS.map((origin) => `${origin}/*`),
     'https://boards-api.greenhouse.io/*',
     // No `api.ashbyhq.com` — the oracle that used it was removed (it only ever got 401s; see
     // `background/apiDetectors.ts`). The endpoint that does work is on `jobs.ashbyhq.com`, so

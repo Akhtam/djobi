@@ -43,6 +43,7 @@ export function ApplicationDetail({
   onStageChange,
   onAddNote,
   onDeleteNote,
+  onDeleteApplication,
 }: {
   application: Application;
   /**
@@ -55,6 +56,13 @@ export function ApplicationDetail({
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
   onDeleteNote: (id: string, noteId: string) => void;
+  /**
+   * Removes the Application itself. `App` navigates back to `back.href` once this resolves — this
+   * page only asks for the delete and offers the confirmation, the same "delete yes, edit no"
+   * asymmetry the Notes log uses and for the same reason: this record is history, there's nothing
+   * to recover an accidental delete from, and it's a write that can fail.
+   */
+  onDeleteApplication: (id: string) => void;
 }) {
   const { jobInfo, tailoredResume, answers } = application;
   // A manually logged application stores the base profile in `tailoredResume` (see `baseResumeOf`),
@@ -68,6 +76,8 @@ export function ApplicationDetail({
   // Only one drafted answer open at a time, mirroring the mock's accordion: these are read-once
   // reference material, not a list someone scans with several open side by side.
   const [openAnswer, setOpenAnswer] = useState<number | null>(answers.length > 0 ? 0 : null);
+  // Two clicks, never one — see the delete button below.
+  const [deleteArmed, setDeleteArmed] = useState(false);
 
   // Empty for every row saved before the verdicts were computed, which is most of the history and
   // has to render as "nothing to say" rather than as a page of missing badges — see
@@ -81,8 +91,10 @@ export function ApplicationDetail({
       </a>
 
       <header className="detail__header-card">
-        <div>
-          <h1>{companyName}</h1>
+        <div className="detail__header-title">
+          {/* `title` surfaces the untruncated name on hover — the ellipsis clips it visually but
+              leaves the full text in the DOM for anything reading it directly. */}
+          <h1 title={companyName}>{companyName}</h1>
           <p className="detail__subtitle">{application.roleTitle}</p>
           <p className="detail__meta">
             <PostingLink jobUrl={application.jobUrl} company={application.company} />
@@ -102,19 +114,53 @@ export function ApplicationDetail({
         </div>
       </header>
 
-      <div className="detail__tabs" role="tablist" aria-label="Application detail sections">
-        {DETAIL_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.key}
-            className={`detail__tab ${activeTab === tab.key ? 'is-selected' : ''}`}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="detail__tabs-row">
+        <div className="detail__tabs" role="tablist" aria-label="Application detail sections">
+          {DETAIL_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              className={`detail__tab ${activeTab === tab.key ? 'is-selected' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="detail__danger-zone">
+          {deleteArmed ? (
+            <p className="note__confirm detail__delete-confirm" role="alert">
+              Delete this application permanently? This can’t be undone.
+              <button
+                type="button"
+                className="note__delete note__delete--confirm"
+                onClick={() => {
+                  setDeleteArmed(false);
+                  onDeleteApplication(application.id);
+                }}
+              >
+                Yes, delete
+              </button>
+              <button type="button" className="note__delete" onClick={() => setDeleteArmed(false)}>
+                Keep it
+              </button>
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="detail__delete-trigger"
+              aria-label={`Delete application to ${companyName}`}
+              onClick={() => setDeleteArmed(true)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" />
+              </svg>
+              Delete application
+            </button>
+          )}
+        </div>
       </div>
 
       {activeTab === 'jobinfo' && (
@@ -276,6 +322,7 @@ export function ApplicationDetail({
           </div>
         </section>
       )}
+
     </article>
   );
 }

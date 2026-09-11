@@ -191,6 +191,15 @@ export interface RequestOptions {
    * server's job, so a caller that never retries never needs one.
    */
   idempotencyKey?: string;
+  /**
+   * Overrides the transport's `timeoutMs` for this one call.
+   *
+   * The transport-level budget has to clear the *slowest* route it serves, so without this a single
+   * long route drags every fast one up with it: a hung `GET /profile` would sit for the chained
+   * model work's budget rather than its own. Set it only where a route is genuinely slower than the
+   * rest, and leave it unset everywhere else.
+   */
+  timeoutMs?: number;
 }
 
 export interface HttpTransport {
@@ -337,7 +346,8 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
       throw new Error(`GET ${path} was given a body; use POST, or send it in the path.`);
     }
 
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const callTimeoutMs = requestOptions.timeoutMs ?? timeoutMs;
+    const timeoutSignal = AbortSignal.timeout(callTimeoutMs);
     const deadline = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 
     try {
@@ -402,7 +412,7 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
         throw new HttpError(
           'timeout',
           path,
-          `${path} did not respond within ${Math.round(timeoutMs / 1000)}s`,
+          `${path} did not respond within ${Math.round(callTimeoutMs / 1000)}s`,
           undefined,
           { reason: 'This is taking longer than expected. Please try again.' },
         );

@@ -78,6 +78,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     updateStage,
     addNote,
     deleteNote,
+    deleteApplication,
     createApplication,
     reload,
   } = useApplicationStore(client);
@@ -125,6 +126,15 @@ function DashboardApp({ client }: { client: DashboardClient }) {
   const handleUnauthorized = useCallback(() => {
     reportUnauthorized();
   }, [reportUnauthorized]);
+
+  /*
+    Only navigates away on success — a failed delete reports `writeError` and leaves the candidate
+    looking at the row it couldn't remove, rather than bouncing them back to a list that still
+    (correctly) shows it.
+  */
+  async function handleDeleteApplication(id: string) {
+    if (await deleteApplication(id)) replaceRoute(backTarget.current.href);
+  }
 
   const application =
     route.name === 'detail' ? applications.find((a) => a.id === route.id) : undefined;
@@ -276,6 +286,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
               onStageChange={(id, stage) => void updateStage(id, stage)}
               onAddNote={addNote}
               onDeleteNote={(id, noteId) => void deleteNote(id, noteId)}
+              onDeleteApplication={(id) => void handleDeleteApplication(id)}
             />
           ) : (
             <p className="empty-state">

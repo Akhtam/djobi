@@ -149,8 +149,16 @@ function cancellable<T>(value: T) {
  * A fake for each collaborator. Overrides are flat — `makeDeps({ scan: … })` — since a test only
  * ever wants to replace one behaviour, and naming which of the two objects it belongs to is noise.
  *
- * The five calls the pipeline hands a signal to are {@link cancellable}; the two write calls are
+ * The pipeline itself hands a signal to three calls directly — {@link cancellable}'s
+ * `analyzeApplication`, `renderResumePdf` and `findApplicationDuplicates`; the two write calls are
  * not, because the Save Step is deliberately not cancellable (`background/runClaim.ts`).
+ *
+ * `analyzeApplication` composes `extractJob`/`tailorResume`/`answerQuestions` below rather than
+ * resolving on its own, referencing `backend` itself so a test's override of any of the three —
+ * `makeDeps({ extractJob: … })`, or a direct `deps.backend.tailorResume = vi.fn(...)` — still shapes
+ * it, and forwarding the signal to each mirrors `llm/analyzeApplication.ts`'s own sequencing on the
+ * real backend. This is what lets every assertion below written against those three keep asserting
+ * what it always did, even though `runAnalysis` itself now calls only `analyzeApplication`.
  */
 function makeDeps(
   overrides: Partial<BackendClient> & Partial<PageClient> & Partial<DetectedFieldsPort> = {},
@@ -159,6 +167,24 @@ function makeDeps(
     extractJob: vi.fn(cancellable(jobInfo)),
     tailorResume: vi.fn(cancellable(tailoredResume)),
     answerQuestions: vi.fn(cancellable(answers)),
+    analyzeApplication: vi.fn((jobDescription: string, profileArg: Profile, questions, signal) =>
+      backend.extractJob(jobDescription, signal).then(async (resolvedJobInfo) => {
+        const [tailoredResumeResult, answersResult] = await Promise.all([
+          backend.tailorResume(profileArg, resolvedJobInfo, signal),
+          // Mirrors `llm/answerQuestions.ts`'s own short-circuit on the real backend: an empty
+          // question list resolves to `[]` with no call, which is what several tests below assert
+          // by name (a fake that always called through would report a request nothing sent).
+          questions.length > 0
+            ? backend.answerQuestions(profileArg, resolvedJobInfo, questions, signal)
+            : Promise.resolve([]),
+        ]);
+        return {
+          jobInfo: resolvedJobInfo,
+          tailoredResume: tailoredResumeResult,
+          answers: answersResult,
+        };
+      }),
+    ),
     renderResumePdf: vi.fn(cancellable(pdfBytes.buffer)),
     // The Ask tab's route, likewise never reached from the pipeline.
     answerChat: vi.fn().mockResolvedValue({ reply: 'unused' }),
@@ -188,6 +214,8 @@ function makeDeps(
     // own detection while preserving its addressed target. Tests for an absent/stale frame return
     // `null` explicitly.
     scan: vi.fn().mockResolvedValue({ fields: [] }),
+    // Posting extraction belongs to the panel and is never called by the pipeline.
+    readPosting: vi.fn().mockResolvedValue({ status: 'unavailable' }),
   };
   // The real adapter by default — a test that seeds fields via `reportDetectedPage` needs the real
   // read behind it, and this suite has several that address a specific frame or wait on enrichment
@@ -1626,9 +1654,9 @@ describe('the backend adapter', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
-        if (url.endsWith('/extract-job')) return Promise.resolve(Response.json(jobInfo));
-        if (url.endsWith('/tailor-resume')) return Promise.resolve(Response.json(tailoredResume));
-        if (url.endsWith('/answer-questions')) return Promise.resolve(Response.json(answers));
+        if (url.endsWith('/analyze')) {
+          return Promise.resolve(Response.json({ jobInfo, tailoredResume, answers }));
+        }
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );
@@ -1638,10 +1666,25 @@ describe('the backend adapter', () => {
 
     await runAnalysis(7, null, profile, 'Senior Engineer at Acme...');
 
+    // One round trip, not three: `extractJob`/`tailorResume`/`answerQuestions` sequence
+    // server-side now — see `llm/analyzeApplication.ts`. The Profile is narrowed to
+    // `AnalyzeApplicationProfileSchema`'s picks, the same disclosure guarantee
+    // `backendClient.test.ts` asserts for the three-call routes this replaces.
     expect(fetch).toHaveBeenCalledWith(
-      `${EXTENSION_BACKEND_ORIGIN}/extract-job`,
+      `${EXTENSION_BACKEND_ORIGIN}/analyze`,
       expect.objectContaining({
-        body: JSON.stringify({ jobDescription: 'Senior Engineer at Acme...' }),
+        body: JSON.stringify({
+          jobDescription: 'Senior Engineer at Acme...',
+          profile: {
+            workExperience: profile.workExperience,
+            education: profile.education,
+            maxBulletsPerRole: profile.maxBulletsPerRole,
+            skills: profile.skills,
+            stories: profile.stories,
+            customAnswers: profile.customAnswers,
+          },
+          questions: [{ fieldId: 'f-why', question: 'Why do you want to work here?' }],
+        }),
       }),
     );
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review', jobInfo, answers });

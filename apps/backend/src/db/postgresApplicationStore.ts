@@ -15,6 +15,7 @@ import {
   type ApplicationWriteResult,
   type AddApplicationNoteResult,
   type DeleteApplicationNoteResult,
+  type DeleteApplicationResult,
   type DuplicateApplicationSummary,
   type NewApplication,
   type NewNote,
@@ -359,10 +360,27 @@ async function deleteApplicationNote(
 }
 
 /**
- * The routes' view of the nine operations above, under the names `ApplicationStore` states.
+ * Deletes one Application outright. `null` when this user has no row with that id — the delete
+ * clause is the same `(id, userId)` pair every other write here scopes to, so a stranger's id
+ * never matches and never deletes anything.
  *
- * Written as one object rather than eight exports because the seam is the point: a route holding
- * eight loose imports can only be run without Postgres by replacing this module, which is what four
+ * No `RETURNING` payload to parse: unlike every write above, there is no surviving row to carry
+ * back through `toWrittenApplication`, so this answers the bare `{ id }` the interface promises.
+ */
+async function deleteApplication(userId: string, id: string): Promise<DeleteApplicationResult | null> {
+  const [row] = await db
+    .delete(applications)
+    .where(and(eq(applications.id, id), eq(applications.userId, userId)))
+    .returning({ id: applications.id });
+
+  return row ?? null;
+}
+
+/**
+ * The routes' view of the ten operations above, under the names `ApplicationStore` states.
+ *
+ * Written as one object rather than ten exports because the seam is the point: a route holding
+ * ten loose imports can only be run without Postgres by replacing this module, which is what four
  * test files used to do by hand.
  */
 export const postgresApplicationStore: ApplicationStore = {
@@ -375,4 +393,5 @@ export const postgresApplicationStore: ApplicationStore = {
   setStage: updateApplicationStage,
   appendNote: addApplicationNote,
   deleteNote: deleteApplicationNote,
+  deleteApplication,
 };

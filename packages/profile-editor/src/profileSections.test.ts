@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { PROFILE_SECTIONS, scrollToSection, sectionsInGroup } from './profileSections.js';
+import type { ProfileFieldsSectionKey, ProfileListSectionKey } from './profileSectionBodies.js';
 
 describe('PROFILE_SECTIONS', () => {
   it('gives every section a unique anchor', () => {
@@ -33,6 +34,40 @@ describe('PROFILE_SECTIONS', () => {
     const order = PROFILE_SECTIONS.map((section) => section.anchor);
     const profileGroup = sectionsInGroup('profile').map((section) => section.anchor);
     expect(profileGroup).toEqual(order.filter((anchor) => profileGroup.includes(anchor)));
+  });
+
+  it('exhaustively assigns every section to package fields, package list entries, or app composition', () => {
+    const fields = new Set<ProfileFieldsSectionKey>([
+      'contact',
+      'links',
+      'summary',
+      'resume',
+      'screening',
+    ]);
+    const lists = new Set<ProfileListSectionKey>([
+      'work',
+      'projects',
+      'education',
+      'credentials',
+      'answers',
+      'stories',
+    ]);
+
+    expect(
+      PROFILE_SECTIONS.map(({ key, body }) => [
+        key,
+        fields.has(key as ProfileFieldsSectionKey)
+          ? 'fields'
+          : lists.has(key as ProfileListSectionKey)
+            ? 'list'
+            : 'app',
+        body,
+      ]),
+    ).toEqual(PROFILE_SECTIONS.map(({ key, body }) => [key, body, body]));
+    expect(PROFILE_SECTIONS.filter(({ body }) => body === 'app').map(({ key }) => key)).toEqual([
+      'upload',
+      'skills',
+    ]);
   });
 });
 

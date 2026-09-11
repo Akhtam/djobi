@@ -18,7 +18,7 @@ import type { QuestionAnswer, TailoredResume } from '@djobi/shared';
 import { useActiveTab } from './useActiveTab';
 import { usePipelineRun } from './usePipelineRun';
 import type { PipelineRunState, PipelineStatus, RunStep } from '../lib/run';
-import { canEditRun, hasRecordedFill, reviewOf, STEP_STATUS, type RunReview } from '../lib/run';
+import { canEditRun, reviewOf, type RunReview } from '../lib/run';
 import { isSameJobUrl, jobKeyForUrl } from '../lib/jobContext';
 
 export interface ActiveRun {
@@ -51,28 +51,30 @@ export interface ActiveRun {
   beginCommand: (step: RunStep) => (message: string) => void;
   /** Persists the candidate's edits to the run. */
   edit: (
-    edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & { status?: 'filled' },
+    edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
+      tailoredResume?: TailoredResume;
+    },
   ) => void;
   /**
    * Rewrites one drafted Question Answer, on the run the caller means.
    *
    * An operation rather than something each caller assembles from `edit`, because two of them do
    * it — the Autofill Tab's question card and the Ask Tab's "Use this answer" — and both have to
-   * apply the same rules: refuse while a save is in flight, take a `saved` run back to `filled`
-   * (a record whose answers have changed is no longer the record that was saved), and **refuse a
-   * write meant for a run this panel is no longer showing**.
+   * apply the same rule: **refuse a write meant for a run this panel is no longer showing**. The
+   * `canEditRun` check alongside it is a cheap local skip, not the correctness guarantee — the
+   * store enforces the same rule authoritatively and can still refuse a write this passed, see
+   * `lib/tabStore/pipelineRun.ts`'s `applyPanelEdit`.
    *
-   * `runId` is a parameter rather than something read from the current run because of that last
-   * rule. The Ask Tab's answer belongs to the run its thread was seeded from, which may not be the
-   * run in front of the candidate by the time they click; checking it only while rendering — which
-   * is what the tab did — leaves the click itself unguarded.
+   * `runId` is a parameter rather than something read from the current run because of that rule.
+   * The Ask Tab's answer belongs to the run its thread was seeded from, which may not be the run in
+   * front of the candidate by the time they click; checking it only while rendering — which is what
+   * the tab did — leaves the click itself unguarded.
    */
   updateAnswer: (runId: string, fieldId: string, answer: string) => void;
   /**
    * Replaces the run's Tailored Resume with the candidate's reviewed version — accepted, edited or
-   * reordered bullets from `panel/ResumeReview.tsx`. Same rules as {@link updateAnswer}: refused for
-   * a run this panel is no longer showing, and a `saved` run reverts to `filled` since the record on
-   * file no longer matches what was reviewed.
+   * reordered bullets from `panel/ResumeReview.tsx`. Same rule as {@link updateAnswer}: refused for
+   * a run this panel is no longer showing.
    */
   updateTailoredResume: (runId: string, tailoredResume: TailoredResume) => void;
 }
@@ -111,22 +113,13 @@ export function useActiveRun(enabled: boolean): ActiveRun {
     const answers: QuestionAnswer[] = run.answers.map((existing) =>
       existing.fieldId === fieldId ? { ...existing, answer } : existing,
     );
-    edit({
-      answers,
-      jobDescription: run.jobDescription,
-      ...(hasRecordedFill(status) ? { status: STEP_STATUS.fill.succeeded } : {}),
-    });
+    edit({ answers, jobDescription: run.jobDescription });
   }
 
   function updateTailoredResume(runId: string, tailoredResume: TailoredResume) {
     if (!run || run.runId !== runId || !canEditRun(status)) return;
 
-    edit({
-      answers: run.answers,
-      jobDescription: run.jobDescription,
-      tailoredResume,
-      ...(hasRecordedFill(status) ? { status: STEP_STATUS.fill.succeeded } : {}),
-    });
+    edit({ answers: run.answers, jobDescription: run.jobDescription, tailoredResume });
   }
 
   return {

@@ -6,6 +6,7 @@ import { getJobContext, setJobContext } from './jobContext';
 import { clearTabState, registerTabStateCleanup } from './lifecycle';
 import { asAnalyzedRun } from '../run';
 import {
+  applyPanelEdit,
   getPipelineRun,
   patchPipelineRun,
   recoverInterruptedPipelineRuns,
@@ -173,6 +174,99 @@ describe('tabStore', () => {
       expect(await patchPipelineRun(1, 'superseded-run', { status: 'filled' })).toBe(false);
 
       expect(await getPipelineRun(1)).toEqual(run);
+    });
+
+    describe('applyPanelEdit', () => {
+      it('writes an edit against an editable run', async () => {
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'review' });
+
+        const result = await applyPanelEdit(1, run.runId, {
+          answers: [],
+          jobDescription: 'Edited by the panel',
+        });
+
+        expect(result).toEqual({
+          applied: true,
+          run: { ...run, status: 'review', answers: [], jobDescription: 'Edited by the panel' },
+        });
+        expect(await getPipelineRun(1)).toMatchObject({ jobDescription: 'Edited by the panel' });
+      });
+
+      it('refuses an edit while a save is in flight, and writes nothing', async () => {
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'saving' });
+
+        const result = await applyPanelEdit(1, run.runId, {
+          answers: [],
+          jobDescription: 'Too late.',
+        });
+
+        expect(result).toEqual({ applied: false, run: null });
+        expect(await getPipelineRun(1)).toMatchObject({ status: 'saving' });
+      });
+
+      it('refuses an edit meant for a run this tab no longer holds', async () => {
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'review' });
+
+        const result = await applyPanelEdit(1, 'superseded-run', {
+          answers: [],
+          jobDescription: 'Wrong run.',
+        });
+
+        expect(result).toEqual({ applied: false, run: null });
+        expect(await getPipelineRun(1)).toEqual({ ...run, status: 'review' });
+      });
+
+      it('refuses an edit against a tab with no run', async () => {
+        stubChrome();
+
+        const result = await applyPanelEdit(1, run.runId, {
+          answers: [],
+          jobDescription: 'Nothing to edit.',
+        });
+
+        expect(result).toEqual({ applied: false, run: null });
+      });
+
+      it('takes a recorded run back to filled when the edit actually changes it', async () => {
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'saved' });
+
+        const result = await applyPanelEdit(1, run.runId, {
+          answers: [],
+          jobDescription: 'Edited after saving.',
+        });
+
+        expect(result.run).toMatchObject({ status: 'filled' });
+        expect(await getPipelineRun(1)).toMatchObject({ status: 'filled' });
+      });
+
+      it('leaves a recorded run alone when the edit reproduces what is already stored', async () => {
+        // A no-op resend — an undo, or a duplicate send — must not demote a `saved` run for no
+        // real change: the panel used to send `status: 'filled'` unconditionally on every edit,
+        // which did exactly that.
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'saved' });
+
+        const result = await applyPanelEdit(1, run.runId, {
+          answers: run.answers,
+          jobDescription: run.jobDescription,
+        });
+
+        expect(result.run).toMatchObject({ status: 'saved' });
+        expect(await getPipelineRun(1)).toMatchObject({ status: 'saved' });
+      });
+
+      it('leaves the stored resume untouched when tailoredResume is omitted', async () => {
+        stubChrome();
+        await setPipelineRun(1, { ...run, status: 'review' });
+
+        await applyPanelEdit(1, run.runId, { answers: [], jobDescription: 'Edited.' });
+
+        expect(await getPipelineRun(1)).toMatchObject({ tailoredResume: run.tailoredResume });
+      });
     });
 
     it('lets only one concurrent operation claim an allowed status', async () => {

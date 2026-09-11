@@ -439,10 +439,29 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
     });
   });
 
+  describe('deleteApplication', () => {
+    it('removes the row entirely and answers with its id', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+
+      expect(await store.deleteApplication(USER_A, id)).toEqual({ id });
+      expect(await store.byId(USER_A, id)).toBeNull();
+      expect((await store.list(USER_A)).map((row) => row.id)).not.toContain(id);
+    });
+
+    it('answers null for an id no row has, and touches nothing else', async () => {
+      const { id: kept } = await store.create(USER_A, newApplication());
+
+      expect(
+        await store.deleteApplication(USER_A, '00000000-0000-4000-8000-0000000000ff'),
+      ).toBeNull();
+      expect(await store.byId(USER_A, kept)).not.toBeNull();
+    });
+  });
+
   /**
    * The property Phase A (`docs/multi-tenant-auth.md`) exists to guarantee: nothing here is
    * reachable, readable or writable by a `userId` other than the one that created it. Every one of
-   * `ApplicationStore`'s eight methods gets one case, `duplicateSummary` most deliberately of all —
+   * `ApplicationStore`'s ten methods gets one case, `duplicateSummary` most deliberately of all —
    * an unscoped guard would tell USER_B "you already applied" to a posting only USER_A has ever seen.
    */
   describe('user scoping', () => {
@@ -512,6 +531,13 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
 
       expect(await store.deleteNote(USER_B, id, note!.note.id)).toBeNull();
       expect((await store.byId(USER_A, id))?.notes).toHaveLength(1);
+    });
+
+    it('deleteApplication answers null and leaves the row in place for a different user', async () => {
+      const { id } = await store.create(USER_A, newApplication());
+
+      expect(await store.deleteApplication(USER_B, id)).toBeNull();
+      expect(await store.byId(USER_A, id)).not.toBeNull();
     });
 
     it('create assigns the row to the calling user, not whichever user created earlier ones', async () => {

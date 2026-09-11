@@ -1,7 +1,11 @@
 import type { ExtractedProfile, Profile } from '@djobi/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
+import {
+  createFakeBackendClient,
+  withSessionRecovery,
+  type BackendClient,
+} from '../lib/backendClient';
 import { HttpError } from '../lib/callBackend';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import { App } from './App';
@@ -18,7 +22,13 @@ let getProfile: ReturnType<typeof vi.fn>;
 let saveProfile: ReturnType<typeof vi.fn>;
 let client: BackendClient;
 
-/** Builds the fake from the two operations this page uses, and keeps the spies to assert on. */
+/**
+ * Builds the fake from the two operations this page uses, and keeps the spies to assert on.
+ *
+ * Wrapped in `withSessionRecovery`, the same as `main.tsx` wraps the real `httpBackendClient`:
+ * production never hands the options page an undecorated client, and this is what lets the "adopts
+ * a session found in the dashboard's shared cookie" case below exercise the real retry.
+ */
 function fakeBackend(handlers: {
   get: () => unknown;
   save: (profile: unknown) => unknown;
@@ -27,10 +37,12 @@ function fakeBackend(handlers: {
   // rejected promise, which is how the real adapter reports a backend failure.
   getProfile = vi.fn(async () => handlers.get());
   saveProfile = vi.fn(async (profile: unknown) => handlers.save(profile));
-  return createFakeBackendClient({
-    getProfile,
-    saveProfile,
-  } as Partial<BackendClient>);
+  return withSessionRecovery(
+    createFakeBackendClient({
+      getProfile,
+      saveProfile,
+    } as Partial<BackendClient>),
+  );
 }
 
 /**

@@ -1718,10 +1718,22 @@ button.requirement-groups__trimmed {
   box-shadow: var(--shadow-sm);
 }
 
+/* Capped at half the header card's width so a long company name can't push the actions column
+   out of the card or stretch the header past the viewport — the title truncates with an ellipsis
+   instead. `min-width: 0` overrides the flex item default of `auto`, which otherwise refuses to
+   shrink below the title's intrinsic (untruncated) width and defeats the cap. */
+.detail__header-title {
+  min-width: 0;
+  max-width: 50%;
+}
+
 .detail__header-card h1 {
   margin: 0 0 6px;
-  font-size: 24px;
+  overflow: hidden;
+  font-size: 20px;
   letter-spacing: -0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .detail__subtitle {
@@ -1746,6 +1758,95 @@ button.requirement-groups__trimmed {
   flex: none;
 }
 
+.detail__tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  margin-bottom: 20px;
+}
+
+/* Destructive record management sits opposite the detail navigation: visible without competing
+   with the frequently used stage control. The confirmation replaces it in the same stable spot. */
+.detail__danger-zone {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.detail__delete-confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger-bg) 65%, transparent);
+  text-align: right;
+}
+
+.detail__delete-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.detail__delete-trigger svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.detail__delete-trigger:hover {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.detail__delete-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (width <= 560px) {
+  .detail__tabs-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail__tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .detail__danger-zone {
+    flex-basis: 100%;
+  }
+
+  .detail__delete-confirm {
+    width: 100%;
+  }
+}
+
 /*
  * Single-select tab bar — same pill-group shell as `.filter-pills`, but its own class: filter
  * pills carry a per-option count and a null "All" state that tabs have no use for, and the
@@ -1756,7 +1857,6 @@ button.requirement-groups__trimmed {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-bottom: 20px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -2131,8 +2231,15 @@ button.requirement-groups__trimmed {
   box-shadow: var(--shadow-sm);
 }
 
+/* `width: 100%` (`.analytics-controls` sets `align-items: flex-start`, so without this the row
+   sizes to its own content instead of the card) is what makes `min-width: 0` here actually bite,
+   and what gives `.analytics-segmented-filter`'s own `max-width: 100%` + `overflow-x: auto` a
+   boundary to scroll within — without it the pill strip's `width: max-content` grows past the card
+   uncontained, and the whole page scrolls horizontally on a narrow viewport instead of just the
+   strip. */
 .analytics-control-group {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -2333,23 +2440,326 @@ button.requirement-groups__trimmed {
 }
 
 .analytics-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 28px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
   margin-bottom: 18px;
-  padding: 0 4px;
+  padding: 0;
   color: var(--text-muted);
   font-size: 13px;
 }
 
-.analytics-summary b {
+.analytics-summary__context {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px 4px;
+}
+
+.analytics-summary__context > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.analytics-summary__overline {
   color: var(--text);
-  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.analytics-summary__context strong {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.analytics-summary__posting-count {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 600;
 }
 
-.analytics-summary .gap-count {
+.analytics-summary__legend {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 14px;
+  margin: -6px 2px 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.analytics-summary__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.analytics-summary__legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.analytics-summary__legend-dot--good {
+  background: var(--primary);
+}
+
+.analytics-summary__legend-dot--warn {
+  background: var(--warning);
+}
+
+.analytics-summary__legend-dot--bad {
+  background: var(--danger);
+}
+
+.analytics-summary__card {
+  display: grid;
+  grid-template-rows: 20px minmax(32px, auto) 6px minmax(40px, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.analytics-summary__card-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.analytics-summary__eyebrow {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-summary__metric {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.analytics-summary__metric > strong,
+.analytics-summary__metric--rate > span {
+  flex: none;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+}
+
+.analytics-summary__metric > span {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.analytics-summary__metric--copy,
+.analytics-summary__metric--rate {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: normal;
+}
+
+.analytics-summary__metric--rate > span {
+  margin-right: 5px;
+}
+
+.analytics-summary__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.analytics-summary__stats--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.analytics-summary__stats > span {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.analytics-summary__stats b {
+  color: var(--text);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.analytics-summary__stats .gap-count {
   color: var(--danger);
+}
+
+.analytics-summary__stats small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-summary__tooltip-wrap {
+  position: relative;
+  flex: none;
+}
+
+.analytics-summary__tooltip-trigger {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: Georgia, serif;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.analytics-summary__tooltip-trigger:hover,
+.analytics-summary__tooltip-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--text-muted) 55%, var(--border));
+  color: var(--text);
+  outline: none;
+}
+
+.analytics-summary__tooltip {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 10;
+  width: 220px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  box-shadow: var(--shadow-md);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.analytics-summary__tooltip-wrap:hover .analytics-summary__tooltip,
+.analytics-summary__tooltip-wrap:focus-within .analytics-summary__tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.analytics-summary__empty-detail {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.analytics-summary__empty-detail--spanning {
+  grid-row: 2 / 5;
+}
+
+.analytics-summary__empty-detail strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.analytics-summary__meter-placeholder {
+  height: 6px;
+}
+
+.analytics-attention-meter {
+  display: flex;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.analytics-attention-meter .is-confirmation {
+  background: var(--warning);
+}
+
+.analytics-attention-meter .is-unsupported {
+  background: var(--danger);
+}
+
+@media (width <= 1100px) {
+  .analytics-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.analytics-coverage-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-muted));
+}
+
+.analytics-coverage-meter span {
+  display: block;
+  width: calc(var(--analytics-covered) * 100%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+/* For a fill that isn't "good" yet, only "closer to reportable" — progress toward the resolved-
+   application threshold a response rate needs, before there is a rate to color blue. */
+.analytics-coverage-meter--neutral {
+  background: var(--surface-muted);
+}
+
+.analytics-coverage-meter--neutral span {
+  background: var(--text-muted);
 }
 
 .analytics-notice {
@@ -2572,14 +2982,18 @@ button.requirement-groups__trimmed {
   white-space: nowrap;
 }
 
-.analytics-badge--skills {
-  background: var(--success-bg);
-  color: var(--success);
-}
-
+/* `--skills` and `--experience` are both "evidenced" — two different evidence *types*, not two
+   different verdicts — and share one color for it, `--bar`'s own primary tint, rather than the
+   green/blue split they used to carry. That split gave the same underlying concept a third and
+   fourth hue beyond the one the summary strip above already spent on it (`--primary`, in its
+   meters and its color legend), so a reader had four colors to reconcile for two possible
+   readings ("evidenced" or "not") instead of two. The badge text still tells skills and experience
+   apart; color no longer needs to. `--missing` already matched the strip's own red for "no
+   evidence" and is unchanged. */
+.analytics-badge--skills,
 .analytics-badge--experience {
-  background: var(--stage-applied-bg);
-  color: var(--stage-applied-fg);
+  background: var(--bar);
+  color: var(--primary);
 }
 
 .analytics-badge--missing {
@@ -2648,7 +3062,14 @@ button.requirement-groups__trimmed {
 }
 
 .analytics-req-group__title {
-  margin: 0 0 5px;
+  margin: 0;
+}
+
+.analytics-req-group__title-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 5px;
 }
 
 .analytics-reqs {
@@ -2689,27 +3110,205 @@ button.requirement-groups__trimmed {
   font-size: 12px;
 }
 
-.analytics-summary-strip__years {
-  flex-basis: 100%;
+.requirements-overview {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px 0;
 }
 
-/*
- * The requirement-evidence roll-up, one strip under the required/preferred one. `is-actionable`
- * marks the single count that names a fixable mistake rather than a missing skill — the profile had
- * the bullet and the tailored resume dropped it.
- */
-.analytics-summary-strip--evidence {
-  padding-top: 6px;
+.requirements-summary-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
 }
 
-.analytics-summary-strip--evidence .is-actionable {
-  color: var(--warning);
+.requirements-summary-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.requirements-summary-card__head::after {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: -3px 2px 0 1px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  content: '';
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.requirements-summary-card__head[aria-expanded='true']::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
+.requirements-summary-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+.requirements-summary-card__head:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.requirements-summary-card__head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.analytics-summary-strip__caveat {
-  font-style: italic;
-  opacity: 0.8;
+.requirements-summary-card__head span {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.requirements-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.requirements-summary-stat {
+  --summary-accent: var(--border);
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px 8px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--summary-accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
+.requirements-summary-stat b {
+  color: var(--text);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.requirements-summary-stat > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.requirement-tooltip {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+
+.requirement-tooltip > button {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-family: Georgia, serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.72;
+  cursor: help;
+}
+
+.requirement-tooltip > button:hover,
+.requirement-tooltip > button:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.requirement-tooltip__content {
+  position: fixed;
+  z-index: 1000;
+  width: 230px;
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  box-shadow: var(--shadow-md);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: normal;
+  line-height: 1.4;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+.requirement-tooltip__content:not([style]) {
+  visibility: hidden;
+}
+
+.requirements-summary-stat.is-critical,
+.requirements-summary-stat.is-unsupported {
+  --summary-accent: var(--danger);
+}
+
+.requirements-summary-stat.is-high,
+.requirements-summary-stat.is-omitted,
+.requirements-summary-stat.is-confirmation {
+  --summary-accent: var(--warning);
+}
+
+.requirements-summary-stat.is-meaningful,
+.requirements-summary-stat.is-skill-only {
+  --summary-accent: var(--primary);
+}
+
+.requirements-summary-stat.is-preferred,
+.requirements-summary-stat.is-direct-evidence {
+  --summary-accent: var(--success);
+}
+
+.requirements-summary-stat.is-low-signal,
+.requirements-summary-stat.is-unbanded {
+  opacity: 0.72;
+}
+
+@media (width <= 480px) {
+  .requirements-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.analytics-summary-strip__years {
+  width: 100%;
 }
 
 /*
@@ -2772,9 +3371,11 @@ button.requirement-groups__trimmed {
 }
 
 .analytics-summary-strip__years-toggle {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
+  width: 100%;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -3321,6 +3922,13 @@ button.requirement-groups__trimmed {
     padding: 12px 16px;
   }
 
+  /* The 50% cap exists to stop a long title from crowding the actions column on the same row.
+     Below this width `.detail__header-card`'s own `flex-wrap` already puts the title on its own
+     row, so the cap only wastes space here — the title may as well use it. */
+  .detail__header-title {
+    max-width: 100%;
+  }
+
   .add-note__row {
     flex-direction: column;
     align-items: stretch;
@@ -3337,6 +3945,10 @@ button.requirement-groups__trimmed {
   }
 
   .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-summary {
     grid-template-columns: 1fr;
   }
 

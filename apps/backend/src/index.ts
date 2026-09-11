@@ -11,6 +11,14 @@ import { createApp } from './app.js';
 import { requireAuth } from './authMiddleware.js';
 import { postgresApplicationStore } from './db/postgresApplicationStore.js';
 import { postgresProfileStore } from './db/postgresProfileStore.js';
+import { configureOpenRouterKey } from './llm/client.js';
+
+// `llm/client.ts` already defaults to this same lookup, so this line changes nothing about what
+// runs — it exists to say, in the one file that only Node ever runs, which runtime's environment
+// backs `OPENROUTER_API_KEY`. A future Cloudflare Worker entrypoint (docs/adr/0001) reads its key
+// from the request-scoped `env` object `fetch(request, env, ctx)` receives instead, and would call
+// this the same way with a different lookup — see `configureOpenRouterKey`'s own doc comment.
+configureOpenRouterKey(() => process.env.OPENROUTER_API_KEY);
 
 /**
  * The served app: one request-log line (method, path, status, duration) wrapped around the real one.

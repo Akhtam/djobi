@@ -1,7 +1,7 @@
 import { withWorkerKeptAlive } from '../lib/keepAlive';
-import type { TypedMessage } from '../lib/messages';
+import type { TypedMessage, UpdateRunResult } from '../lib/messages';
 import { setJobContext } from '../lib/tabStore/jobContext';
-import { patchPipelineRun } from '../lib/tabStore/pipelineRun';
+import { applyPanelEdit } from '../lib/tabStore/pipelineRun';
 import { recordReport } from './detectedFields';
 import { clearSavedBadge } from './saveBadge';
 import {
@@ -15,9 +15,12 @@ import {
 /**
  * Routes a coordination message, using `lib/tabStore/` as the hand-off point.
  *
- * Returns the routed task so the service worker can observe terminal rejection. The service-worker
- * listener deliberately does not return this promise to Chrome, and this takes no `sendResponse`,
- * so {@link TypedMessage} remains notification-only and never holds a panel's channel open.
+ * Returns the routed task so the service worker can observe terminal rejection. Every case but one
+ * is notification-only: the service-worker listener does not return that promise to Chrome and
+ * takes no `sendResponse`, so {@link TypedMessage} never holds a panel's channel open for these.
+ * `UPDATE_RUN` is the documented exception — its result is a real answer the caller waits on, not
+ * just a completion signal — and `service-worker.ts` is what actually relays it; this function only
+ * has to resolve to the same shape.
  *
  * What this module genuinely owns, and the reason it isn't just inlined into the service worker, is
  * the frame/revision rule below.
@@ -30,11 +33,11 @@ import {
  * adapters now meet at one interface: production from `service-worker.ts`, a fake backend and page
  * from the panel tests.
  */
-export function handleTypedMessage(
+export async function handleTypedMessage(
   message: TypedMessage,
   sender: chrome.runtime.MessageSender,
   deps: PipelineDeps = productionDeps,
-): Promise<void> {
+): Promise<void | UpdateRunResult> {
   switch (message.type) {
     case 'REPORT_JOB_PAGE': {
       const tabId = sender.tab?.id;
@@ -88,8 +91,12 @@ export function handleTypedMessage(
         runSaveApplication(message.tabId, deps, message.expectedRunId),
       );
 
-    case 'UPDATE_RUN':
-      return patchPipelineRun(message.tabId, message.runId, message.updates).then(() => undefined);
+    case 'UPDATE_RUN': {
+      // The run domain's call, made inside the same lock as the write — see `applyPanelEdit`'s own
+      // doc comment for why this can't be a `patchPipelineRun` that always succeeds.
+      const { applied } = await applyPanelEdit(message.tabId, message.runId, message.updates);
+      return { applied };
+    }
 
     case 'UPDATE_JOB_CONTEXT':
       return setJobContext(message.tabId, message.tabUrl, message.jobDescription, message.source);

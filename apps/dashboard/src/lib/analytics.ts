@@ -410,31 +410,20 @@ export function evidenceByRequirement(
   );
 }
 
-/**
- * What `Analytics.tsx` filters `applications` by before reporting anything — range, stage, and the
- * two keyword-table toggles. Grouped into one argument because every field below is drawn from this
- * same filter state; splitting them into separate parameters would just make the call site repeat
- * this list of names as `analyticsReport(applications, range, stage, today, …)`.
- */
+/** Inputs whose changes require rebuilding the application-level report. */
 export interface AnalyticsReportFilters {
   range: Range;
   stage: StageFilter | null;
   /** "Now," as the view pinned it — see {@link rangeStart}'s own note on why the clock isn't read here. */
   asOf: Date;
-  /** Keeps a keyword row only once at least this many postings in range asked for it. */
-  minAppearances: number;
-  /** Narrows `rows` further to keywords `profile` doesn't evidence — a no-op without one. */
-  gapsOnly: boolean;
-  /** `null` while no Profile is available yet; coverage (and so `gapsOnly`) is skipped entirely. */
+  /** `null` while no Profile is available yet; coverage is skipped entirely. */
   profile: Profile | null;
 }
 
 /**
- * Everything the Analytics view renders from one filtered look at `applications` — the range,
- * stage and keyword-table toggle interaction that used to live as eight chained `useMemo` calls in
- * `Analytics.tsx` itself, untested at that boundary because nothing sat behind an interface a test
- * could call directly. One filter argument in, one report out; the view's own `useMemo` wraps this
- * single call instead of each field inside it.
+ * Everything the Analytics view derives from one filtered look at `applications`. Table-only
+ * controls are deliberately handled by {@link keywordRows}, so changing one does not rescan every
+ * application or recompute profile coverage.
  */
 export interface AnalyticsReport {
   rangeStartDate: Date;
@@ -442,13 +431,11 @@ export interface AnalyticsReport {
   inRange: Application[];
   /** In range and matching the stage filter — the population every field below is drawn from. */
   filtered: Application[];
-  /** Every keyword `filtered` asked for, before `minAppearances`/`gapsOnly` narrow it to `rows`. */
+  /** Every keyword `filtered` asked for, before table-only filters narrow what is rendered. */
   frequency: KeywordFrequencyRow[];
-  /** `frequency`, narrowed by `minAppearances` and, when set, `gapsOnly` — what the table renders. */
-  rows: KeywordFrequencyRow[];
   /** `null` until `filters.profile` is given. */
   coverageByTerm: Map<string, CoverageVerdict> | null;
-  /** How many of `frequency` (not `rows`) are gaps — the summary strip's count regardless of the toggle. */
+  /** How many of `frequency` are gaps — the summary strip's count regardless of table filters. */
   gapCount: number;
   /** `null` when `filters.stage` narrows the population — see {@link responseRate}'s own caution. */
   baseline: ResponseRate | null;
@@ -471,19 +458,32 @@ export function analyticsReport(
   const gapCount = coverageByTerm
     ? frequency.filter((row) => coverageByTerm.get(row.term) === 'missing').length
     : 0;
-  // `gapsOnly` with no `coverageByTerm` to check against (the caller has no Profile yet) hides
-  // every row rather than showing all of them — nothing can be confirmed a gap without something
-  // to score it against, so nothing is shown as one. The view keeps this state unreachable by
-  // disabling the toggle until a Profile has loaded; the report still has to answer it sanely.
-  const rows = frequency
-    .filter((row) => !filters.gapsOnly || coverageByTerm?.get(row.term) === 'missing')
-    .filter((row) => row.count >= filters.minAppearances);
 
   // Suppressed entirely while a stage filter is on — see `responseRate`'s own note: a population
   // selected on the outcome being measured reports a rate that isn't one.
   const baseline = filters.stage === null ? responseRate(filtered) : null;
 
-  return { rangeStartDate, inRange, filtered, frequency, rows, coverageByTerm, gapCount, baseline };
+  return { rangeStartDate, inRange, filtered, frequency, coverageByTerm, gapCount, baseline };
+}
+
+export interface KeywordRowsFilters {
+  /** Keeps a keyword row only once at least this many postings asked for it. */
+  minAppearances: number;
+  /** Narrows the rows to keywords the Profile does not evidence. */
+  gapsOnly: boolean;
+}
+
+/** Applies the cheap table-only controls without rebuilding the application-level report. */
+export function keywordRows(
+  frequency: KeywordFrequencyRow[],
+  coverageByTerm: Map<string, CoverageVerdict> | null,
+  filters: KeywordRowsFilters,
+): KeywordFrequencyRow[] {
+  // Nothing can be confirmed as a gap without coverage to score against. The UI keeps this state
+  // unreachable by disabling the toggle until a Profile has loaded, but the selector remains total.
+  return frequency
+    .filter((row) => !filters.gapsOnly || coverageByTerm?.get(row.term) === 'missing')
+    .filter((row) => row.count >= filters.minAppearances);
 }
 
 /**

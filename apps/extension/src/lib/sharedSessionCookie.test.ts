@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+import { DASHBOARD_DEV_ORIGINS, EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
 import { fakeCookies } from './fakeCookies';
 import {
   clearSharedSessionToken,
@@ -40,6 +40,44 @@ describe('getSharedSessionToken', () => {
       name: 'better-auth.session_token',
     });
   });
+
+  it('also checks the dashboard dev-server origins, not the backend origin alone', async () => {
+    // `fakeCookies` keys its store by name only, so it can't tell two origins apart — this asserts
+    // on the calls actually made instead, which is what this test needs to prove.
+    expect(DASHBOARD_DEV_ORIGINS.length).toBeGreaterThan(0);
+    await getSharedSessionToken();
+    for (const url of DASHBOARD_DEV_ORIGINS) {
+      expect(cookies.get).toHaveBeenCalledWith({ url, name: 'better-auth.session_token' });
+    }
+  });
+
+  /**
+   * The gap this whole fallback exists to close: `vite.config.ts`'s dev-server proxy makes a
+   * dashboard sign-in's cookie land on the dashboard's own dev origin, never on
+   * `EXTENSION_BACKEND_ORIGIN` — so a lookup that only ever checked the backend origin would find
+   * nothing no matter how recently the candidate signed in on the dashboard. A per-origin-aware
+   * stub is needed here because `fakeCookies` (used everywhere else in this file) can't represent
+   * "present on one origin, absent on another" at all.
+   */
+  it('finds a token that lives on a dashboard dev origin instead of the backend origin', async () => {
+    const [dashboardOrigin] = DASHBOARD_DEV_ORIGINS;
+    const get = vi.fn(({ url, name }: chrome.cookies.CookieDetails) =>
+      Promise.resolve(
+        url === dashboardOrigin && name === 'better-auth.session_token'
+          ? ({ value: 'from-the-dashboard-tab' } as chrome.cookies.Cookie)
+          : null,
+      ),
+    );
+    vi.stubGlobal('chrome', { cookies: { get } });
+
+    await expect(getSharedSessionToken()).resolves.toBe('from-the-dashboard-tab');
+    // Checked the backend origin first — still the right answer once a real backend is deployed —
+    // before falling through to the dashboard's own.
+    expect(get).toHaveBeenCalledWith({
+      url: EXTENSION_BACKEND_ORIGIN,
+      name: 'better-auth.session_token',
+    });
+  });
 });
 
 describe('setSharedSessionToken', () => {
@@ -62,6 +100,20 @@ describe('setSharedSessionToken', () => {
     await setSharedSessionToken(token);
     await expect(getSharedSessionToken()).resolves.toBe(token);
   });
+
+  it('also writes to the dashboard dev-server origins, so a dashboard tab there adopts it too', async () => {
+    await setSharedSessionToken('the-raw-token.with+specials=');
+
+    for (const url of DASHBOARD_DEV_ORIGINS) {
+      expect(cookies.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url,
+          name: 'better-auth.session_token',
+          value: encodeURIComponent('the-raw-token.with+specials='),
+        }),
+      );
+    }
+  });
 });
 
 describe('clearSharedSessionToken', () => {
@@ -74,6 +126,15 @@ describe('clearSharedSessionToken', () => {
       name: 'better-auth.session_token',
     });
     await expect(getSharedSessionToken()).resolves.toBeUndefined();
+  });
+
+  it('also removes it from the dashboard dev-server origins', async () => {
+    await setSharedSessionToken('the-token');
+    await clearSharedSessionToken();
+
+    for (const url of DASHBOARD_DEV_ORIGINS) {
+      expect(cookies.remove).toHaveBeenCalledWith({ url, name: 'better-auth.session_token' });
+    }
   });
 });
 

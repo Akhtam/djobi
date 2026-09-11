@@ -10,7 +10,7 @@ import {
   STEP_STATUS,
 } from '../lib/run';
 import { getPipelineRun, subscribePipelineRun } from '../lib/tabStore/pipelineRun';
-import { notify } from '../lib/messages';
+import { notify, updateRun } from '../lib/messages';
 
 /**
  * How often an in-progress run is checked on.
@@ -31,9 +31,11 @@ const RUN_CHECK_MS = 15_000;
  * new field costs nothing.
  *
  * Ownership is deliberately lopsided: **the background service worker serializes every persisted
- * mutation and owns operational progress** (Analysis results, failures and fill counts). This hook
- * owns optimistic typed edits and may request the associated `saved` → `filled` reset, but never
- * writes storage directly.
+ * mutation and owns operational progress** (Analysis results, failures and fill counts) — and the
+ * `saved` → `filled` reset an edit can trigger, which is the store's call against what is actually
+ * stored, not this hook's to assert. This hook owns optimistic typed edits and never writes storage
+ * directly; it can also lose that race, since the store may refuse an edit it already applied
+ * locally — see `edit`.
  *
  * `status` is nonetheless computed here rather than in the component, because it is assembled from
  * four sources — the stored run, an optimistic value, a delivery failure, and the fact that a store
@@ -104,12 +106,18 @@ export interface PipelineRunHandle {
    *
    * `tailoredResume` is optional, unlike `answers`/`jobDescription`: an answers-only edit must not
    * resend the whole resume on every keystroke, and omitting the key (never sending it as
-   * `undefined`) is what lets `patchPipelineRun`'s partial merge leave the stored resume alone.
+   * `undefined`) is what lets `applyPanelEdit`'s partial merge leave the stored resume alone. No
+   * `status`: whether a `saved` run reverts to `filled` is `applyPanelEdit`'s call, made against
+   * what is actually stored, not this hook's to assert.
+   *
+   * A save in flight locks the run against edits (`lib/run/status.ts`'s `editable`), and the store
+   * can refuse this write for that reason after it has already been applied optimistically here. On
+   * that refusal this hook drops the edit and re-reads the tab's actual run rather than continuing
+   * to show a value nothing downstream agrees with — see `applyPanelEdit`'s own return value.
    */
   edit: (
     edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
       tailoredResume?: TailoredResume;
-      status?: 'filled';
     },
   ) => void;
 }
@@ -270,7 +278,6 @@ export function usePipelineRun(
     (
       edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
         tailoredResume?: TailoredResume;
-        status?: 'filled';
       },
     ) => {
       if (tabId === null || !run) return;
@@ -285,17 +292,66 @@ export function usePipelineRun(
       // that comparison whenever an answers-only edit omitted it, and the echo for the *next* resume
       // edit would then never be recognized as this hook's own — leaving it "pending" forever.
       const serialized = JSON.stringify(panelEditsOf(merged));
-      // An undo can equal the last server echo while a different local edit is still pending. It
-      // must still be sent, otherwise that older pending edit eventually wins on the server.
-      if (
-        serialized === lastSyncedEditsRef.current &&
-        pendingEditsRef.current.length === 0 &&
-        edits.status === undefined
-      ) {
+      if (serialized === lastSyncedEditsRef.current && pendingEditsRef.current.length === 0) {
         return;
       }
       pendingEditsRef.current = [...pendingEditsRef.current, serialized];
-      notify({ type: 'UPDATE_RUN', tabId, runId: run.runId, updates: edits });
+      const runId = run.runId;
+
+      void updateRun({ type: 'UPDATE_RUN', tabId, runId, updates: edits }).then(
+        ({ applied, delivered }) => {
+          if (applied) return;
+          // The store refused this edit — most often a save that started between the click and the
+          // background answering, which locks the run against edits until it finishes
+          // (`lib/run/status.ts`'s `editable`). Nothing was written, so no echo is ever coming for
+          // it: waiting for one would leave this entry stuck in the queue, and every later echo would
+          // keep losing the "preserve local edits" race against it above — this hook would go on
+          // showing the rejected value indefinitely. Drop it, then re-read the tab's actual run
+          // rather than guess what of the queue survived.
+          //
+          // Only this entry, not the ones before it. An earlier send that the store accepted still
+          // has an echo in flight, and dropping its queue entry here would leave that echo matching
+          // nothing — which reads as "someone else wrote this", the misclassification the queue
+          // exists to prevent: `answersTheCommand(false, false, false)` would then stand down a
+          // command that is still running. Earlier entries drain through their own echo, or through
+          // their own refusal callback.
+          const index = pendingEditsRef.current.indexOf(serialized);
+          if (index !== -1) {
+            pendingEditsRef.current = [
+              ...pendingEditsRef.current.slice(0, index),
+              ...pendingEditsRef.current.slice(index + 1),
+            ];
+          }
+
+          // Nothing answered, so nothing decided this edit: the worker was restarting, the
+          // extension reloading, or the reply unparseable. Keep the optimistic value the user is
+          // looking at and let the next keystroke resend it — `lastSyncedEditsRef` still holds the
+          // last *echoed* value, so the guard above won't swallow that resend. Re-reading the store
+          // here would revert typed text on a transient channel failure, with nothing to tell the
+          // user why.
+          if (!delivered) return;
+
+          const revision = ++revisionRef.current;
+          void getPipelineRun(tabId).then((stored) => {
+            if (revision !== revisionRef.current) return;
+            lastSyncedEditsRef.current = stored ? JSON.stringify(panelEditsOf(stored)) : null;
+            // Same reconciliation as the subscription above: a later edit may still be in flight and
+            // unwritten, and `stored` predates it. Replacing local state wholesale would snap a
+            // controlled field back to the pre-edit text and jump the caret until that edit's echo
+            // lands. Only the refused value is stale — keep the rest of what the user sees.
+            setRun((currentRun) => {
+              if (
+                stored &&
+                currentRun?.runId === stored.runId &&
+                pendingEditsRef.current.length > 0
+              ) {
+                return { ...stored, ...panelEditsOf(currentRun) };
+              }
+              return stored;
+            });
+          });
+        },
+      );
     },
     [run, tabId],
   );

@@ -723,3 +723,45 @@ describe('DELETE /applications/:id/notes/:noteId', () => {
     expect(res.status).toBe(404);
   });
 });
+
+/** Removes the Application itself, not just something on it — see `deleteApplication`. */
+describe('DELETE /applications/:id', () => {
+  it('removes the application and answers with its id', async () => {
+    const { app, applicationStore } = createTestApp({ applications: [sampleApplication] });
+
+    const res = await app.request('/applications/application-1', {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ id: 'application-1' });
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).toBeNull();
+  });
+
+  it('404s for an application that does not exist', async () => {
+    const { app } = createTestApp();
+
+    const res = await app.request('/applications/nope', {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('404s and leaves the row in place for a different user’s application', async () => {
+    const { app, applicationStore } = createTestApp({
+      applications: [sampleApplication],
+      authenticatedAs: 'a-different-user',
+    });
+
+    const res = await app.request('/applications/application-1', {
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+    });
+
+    expect(res.status).toBe(404);
+    expect(await applicationStore.byId(BOOTSTRAP_USER_ID, 'application-1')).not.toBeNull();
+  });
+});

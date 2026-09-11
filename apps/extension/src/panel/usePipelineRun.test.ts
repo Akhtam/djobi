@@ -7,7 +7,12 @@ import { TypedMessageEnvelopeSchema, typedMessageEnvelope } from '../lib/message
 import { type PipelineRunState } from '../lib/run';
 import { reportDetectedPage } from '../lib/tabStore/detectedPage';
 import { clearTabState } from '../lib/tabStore/lifecycle';
-import { getPipelineRun, patchPipelineRun, setPipelineRun } from '../lib/tabStore/pipelineRun';
+import {
+  applyPanelEdit,
+  getPipelineRun,
+  patchPipelineRun,
+  setPipelineRun,
+} from '../lib/tabStore/pipelineRun';
 import { usePipelineRun } from './usePipelineRun';
 import { jobInfo, pipelineRunFixture } from '../lib/testFixtures';
 
@@ -21,11 +26,10 @@ function stubChrome() {
     sendMessage: (message, callback) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
       if (typedMessage.type === 'UPDATE_RUN') {
-        void patchPipelineRun(
-          typedMessage.tabId,
-          typedMessage.runId,
-          typedMessage.updates as Partial<PipelineRunState>,
+        void applyPanelEdit(typedMessage.tabId, typedMessage.runId, typedMessage.updates).then(
+          ({ applied }) => callback({ applied }),
         );
+        return;
       }
       callback(undefined);
     },
@@ -271,9 +275,13 @@ describe('usePipelineRun', () => {
       runId: string;
       updates: Partial<PipelineRunState>;
     }[] = [];
-    const sendMessage = vi.fn((message, callback: () => void) => {
+    const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
-      if (typedMessage.type === 'UPDATE_RUN') queued.push(typedMessage);
+      if (typedMessage.type === 'UPDATE_RUN') {
+        queued.push(typedMessage);
+        callback({ applied: true });
+        return;
+      }
       callback();
     });
     vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
@@ -441,6 +449,122 @@ describe('usePipelineRun', () => {
     expect(result.current.run?.answers[0].answer).toBe('Edited.');
   });
 
+  it('discards an edit the store refuses and re-reads the actual run, rather than showing it forever', async () => {
+    // The store can refuse an edit this hook already applied optimistically — most often a save
+    // that started between the click and the background answering (`lib/run/status.ts`'s
+    // `editable`). A refusal writes nothing, so no `chrome.storage.onChanged` event is ever coming
+    // to stand the optimism down; this is the one case that has to notice on its own.
+    const storage = fakeSessionStorage();
+    const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
+      const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+      if (typedMessage.type === 'UPDATE_RUN') {
+        callback({ applied: false });
+        return;
+      }
+      callback();
+    });
+    vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await settleInitialRead();
+
+    act(() =>
+      result.current.edit({
+        answers: [{ ...run.answers[0], answer: 'Edited.' }],
+        jobDescription: 'edited',
+      }),
+    );
+
+    // Applied locally at once, same as every edit — the refusal hasn't been heard back yet.
+    expect(result.current.run?.jobDescription).toBe('edited');
+
+    // Once the refusal lands, the local value reverts to what the store actually holds instead of
+    // being preserved indefinitely by the "keep local edits over a stale echo" reconciliation.
+    await waitFor(() => expect(result.current.run?.jobDescription).toBe(run.jobDescription));
+    expect(result.current.run?.answers[0].answer).toBe(run.answers[0].answer);
+
+    // The rejected send no longer sits in the pending queue, so it can't swallow a later,
+    // successful edit's echo either — confirm the next edit still resolves normally.
+    const echoed = { ...run, jobDescription: 'second attempt' };
+    act(() => {
+      void setPipelineRun(1, echoed);
+    });
+    await waitFor(() => expect(result.current.run?.jobDescription).toBe('second attempt'));
+  });
+
+  it('keeps a newer in-flight edit when an earlier one is refused, instead of reverting the whole run', async () => {
+    // The refusal is about one send, not about everything typed since. Re-reading the store and
+    // replacing local state wholesale snapped the textarea back to the pre-edit text and jumped the
+    // caret, until the still-unwritten later edit's own echo landed and put it back.
+    const storage = fakeSessionStorage();
+    const held: ((response?: unknown) => void)[] = [];
+    const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
+      const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
+      if (typedMessage.type === 'UPDATE_RUN') {
+        // The first edit is refused; the second is still in flight, answered by nothing yet.
+        if (held.length === 0) {
+          held.push(callback);
+          callback({ applied: false });
+        } else {
+          held.push(callback);
+        }
+        return;
+      }
+      callback();
+    });
+    vi.stubGlobal('chrome', { storage, runtime: { sendMessage, lastError: undefined } });
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await settleInitialRead();
+
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'A' }));
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
+
+    // Let the refusal's store re-read settle — the point at which the old code clobbered 'AB'.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.run?.jobDescription).toBe('AB');
+  });
+
+  /**
+   * A `chrome.runtime.lastError` is not the store speaking: the worker was restarting, or the
+   * extension reloading. Nothing decided the edit, so throwing the candidate's typing away is
+   * wrong — and silent, since no banner explains where the text went.
+   */
+  it('keeps an edit nothing answered, rather than reverting typed text on a delivery failure', async () => {
+    const storage = fakeSessionStorage();
+    const sendMessage = vi.fn((_message, callback: (response?: unknown) => void) => callback());
+    vi.stubGlobal('chrome', {
+      storage,
+      runtime: { sendMessage, lastError: { message: 'Could not establish connection.' } },
+    });
+    await setPipelineRun(1, run);
+    const { result } = renderHook(() => usePipelineRun(1));
+    await settleInitialRead();
+
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'typed while dead' }));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.run?.jobDescription).toBe('typed while dead');
+
+    // And the queue entry is gone, so the next keystroke is sent rather than swallowed as a
+    // duplicate of a send that will never be echoed.
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'typed while dead!' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(callsOfType(sendMessage, 'UPDATE_RUN')).toHaveLength(2);
+    expect(result.current.run?.jobDescription).toBe('typed while dead!');
+  });
+
   it('persists an edit, so a reopened panel restores it', async () => {
     stubChrome();
     await setPipelineRun(1, run);
@@ -492,9 +616,13 @@ describe('usePipelineRun', () => {
       runId: string;
       updates: Partial<PipelineRunState>;
     }[] = [];
-    const sendMessage = vi.fn((message, callback: () => void) => {
+    const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
-      if (typedMessage.type === 'UPDATE_RUN') queued.push(typedMessage);
+      if (typedMessage.type === 'UPDATE_RUN') {
+        queued.push(typedMessage);
+        callback({ applied: true });
+        return;
+      }
       callback();
     });
     vi.stubGlobal('chrome', {

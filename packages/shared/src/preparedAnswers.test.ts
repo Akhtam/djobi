@@ -19,15 +19,30 @@ const profile = {
 };
 
 describe('matchScreeningTopic', () => {
+  // One case per topic `SCREENING_TOPICS` lists, so a hand-written regex with a typo in it — or one
+  // whose alternation drifts while a neighbor's does not — fails here instead of only showing up as
+  // a screening question that silently reaches the model unanswered.
   it.each([
     ['Are you legally authorized to work in the United States?', 'work_authorization'],
     ['Do you have the right to work in the UK?', 'work_authorization'],
     ['Will you now or in the future require visa sponsorship?', 'sponsorship_required'],
     ['Are you willing to relocate to New York?', 'relocation'],
+    ['Are you willing to work onsite?', 'remote_onsite'],
+    ['How long is your daily commute?', 'remote_onsite'],
     ['What is your notice period?', 'notice_period'],
+    ['What is the earliest you would be available to start?', 'start_date'],
+    ['What are your salary expectations?', 'salary_expectation'],
+    ['What is your desired compensation?', 'salary_expectation'],
+    ['Are you at least 18 years old?', 'age_over_18'],
+    ['Have you ever been convicted of a felony?', 'criminal_record'],
+    ['Are you subject to a non-compete agreement?', 'non_compete'],
+    ['Have you previously worked for this company?', 'previously_employed'],
+    ['How did you hear about this role?', 'referral_source'],
+    ['Are you Hispanic or Latino?', 'hispanic_latino'],
+    ['What is your race/ethnicity?', 'race_ethnicity'],
+    ['What is your gender?', 'gender'],
     ['Are you a protected veteran?', 'veteran_status'],
     ['Do you identify as having a disability?', 'disability_status'],
-    ['How did you hear about this role?', 'referral_source'],
   ])('recognizes %j as %s', (question, topic) => {
     expect(matchScreeningTopic(question)).toBe(topic);
   });

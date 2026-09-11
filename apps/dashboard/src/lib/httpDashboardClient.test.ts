@@ -257,6 +257,29 @@ describe('deleteNote', () => {
   });
 });
 
+describe('deleteApplication', () => {
+  it('DELETEs the application route, declaring JSON with nothing to send', async () => {
+    const fetchMock = stubFetch({ jsonBody: { id: 'app-brex' } });
+
+    await httpDashboardClient.deleteApplication('app-brex');
+
+    expect(fetchMock).toHaveBeenCalledWith('/applications/app-brex', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      signal: expect.any(AbortSignal),
+      credentials: 'include',
+    });
+  });
+
+  it('encodes an id with a slash in it, so it cannot reach a route of its own', async () => {
+    const fetchMock = stubFetch({ jsonBody: { id: 'a/b' } });
+
+    await httpDashboardClient.deleteApplication('a/b');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb');
+  });
+});
+
 describe('signIn', () => {
   it('POSTs Better Auth’s sign-in route with credentials included', async () => {
     const fetchMock = stubFetch({

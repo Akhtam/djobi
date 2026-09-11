@@ -15,7 +15,17 @@
  * `EXTENSION_BACKEND_ORIGIN` is one of `manifest.ts`'s `host_permissions` already, for the same
  * reason `callBackend.ts` needs no CORS entry to call it directly.
  */
-import { EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+import { DASHBOARD_DEV_ORIGINS, EXTENSION_BACKEND_ORIGIN } from '../extensionConfig';
+
+/**
+ * Every origin a dashboard tab's own session cookie could actually be scoped to, `EXTENSION_
+ * BACKEND_ORIGIN` first: correct as-is once a real deployed backend is named (a genuinely
+ * cross-origin dashboard, `auth.ts`'s `sameSite: 'none'` cookie policy), and still worth trying
+ * first in local dev, where the dashboard *is* the origin it runs on (`localhost:5174` or
+ * `127.0.0.1:5174`, `DASHBOARD_DEV_ORIGINS`) — see that constant's own doc comment for why the dev
+ * proxy puts it there instead of on `EXTENSION_BACKEND_ORIGIN`.
+ */
+const SHARED_SESSION_ORIGINS = [EXTENSION_BACKEND_ORIGIN, ...DASHBOARD_DEV_ORIGINS];
 
 /**
  * Better Auth's default session-cookie name (`${cookiePrefix}.session_token`, `cookiePrefix`
@@ -54,26 +64,36 @@ function hasCookiesApi(): boolean {
 
 /**
  * The dashboard's session token, read directly from its cookie — or `undefined` if there isn't
- * one, it's expired, or this browser has no access to it (`chrome.cookies.get` can resolve `null`
- * for the first two; {@link hasCookiesApi} covers the third).
+ * one anywhere it could be, it's expired, or this browser has no access to it (`chrome.cookies.get`
+ * can resolve `null` for the first two; {@link hasCookiesApi} covers the third).
+ *
+ * Tries every entry in {@link SHARED_SESSION_ORIGINS} in order rather than just the first: a
+ * `chrome.cookies.get` against an origin this extension has no `host_permissions` for (a stale
+ * build, or `DASHBOARD_DEV_ORIGINS` empty because a real backend is named) resolves `null` the same
+ * as a genuinely absent cookie, so trying the rest costs nothing a single lookup wouldn't already
+ * risk silently missing.
  */
 export async function getSharedSessionToken(): Promise<string | undefined> {
   if (!hasCookiesApi()) return undefined;
-  const cookie = await chrome.cookies.get({
-    url: EXTENSION_BACKEND_ORIGIN,
-    name: SESSION_COOKIE_NAME,
-  });
-  return cookie ? decodeCookieValue(cookie.value) : undefined;
+  for (const url of SHARED_SESSION_ORIGINS) {
+    const cookie = await chrome.cookies.get({ url, name: SESSION_COOKIE_NAME });
+    if (cookie) return decodeCookieValue(cookie.value);
+  }
+  return undefined;
 }
 
 /**
- * Writes `token` as the dashboard's session cookie, so a dashboard tab reaching
- * `EXTENSION_BACKEND_ORIGIN` authenticates as the same session this extension just signed in to —
- * without this, a sign-in here would only ever be visible to this extension.
+ * Writes `token` as the dashboard's session cookie on every origin it might actually read one
+ * from ({@link SHARED_SESSION_ORIGINS}), so a dashboard tab authenticates as the same session this
+ * extension just signed in to — without this, a sign-in here would only ever be visible to this
+ * extension. In local dev that's the dashboard's own dev-server origin, not
+ * `EXTENSION_BACKEND_ORIGIN` — see `DASHBOARD_DEV_ORIGINS`'s doc comment for why one write isn't
+ * enough there. Each write is independent and best-effort (`Promise.allSettled`): a stale build's
+ * missing `host_permissions` for one origin shouldn't cost the others their cookie.
  *
  * Attributes mirror `auth.ts`'s `defaultCookieAttributes` as closely as a `chrome.cookies.set` call
  * can: `httpOnly` (never readable from the dashboard's own `document.cookie`, same as a cookie
- * Better Auth set itself), `secure` derived from the origin's own scheme rather than hardcoded —
+ * Better Auth set itself), `secure` derived from each origin's own scheme rather than hardcoded —
  * `chrome.cookies.set` rejects `secure: true` against a plain `http://` url outright, which is
  * exactly the dev-vs-deployed split `auth.ts`'s own comment walks through. `sameSite: 'lax'`
  * matches the same dev default; a deployed backend on a real origin needs this revisited alongside
@@ -82,26 +102,33 @@ export async function getSharedSessionToken(): Promise<string | undefined> {
  */
 export async function setSharedSessionToken(token: string): Promise<void> {
   if (!hasCookiesApi()) return;
-  const secure = EXTENSION_BACKEND_ORIGIN.startsWith('https://');
-  await chrome.cookies.set({
-    url: EXTENSION_BACKEND_ORIGIN,
-    name: SESSION_COOKIE_NAME,
-    value: encodeURIComponent(token),
-    path: '/',
-    httpOnly: true,
-    secure,
-    sameSite: secure ? 'no_restriction' : 'lax',
-    expirationDate: Date.now() / 1000 + SESSION_MAX_AGE_SECONDS,
-  });
+  await Promise.allSettled(
+    SHARED_SESSION_ORIGINS.map((url) => {
+      const secure = url.startsWith('https://');
+      return chrome.cookies.set({
+        url,
+        name: SESSION_COOKIE_NAME,
+        value: encodeURIComponent(token),
+        path: '/',
+        httpOnly: true,
+        secure,
+        sameSite: secure ? 'no_restriction' : 'lax',
+        expirationDate: Date.now() / 1000 + SESSION_MAX_AGE_SECONDS,
+      });
+    }),
+  );
 }
 
 /**
- * Removes the dashboard's session cookie — the other half of this extension's own sign-out. Without
- * it, signing out here would leave a dashboard tab still holding (and sending) a cookie for a
- * session `POST /api/auth/sign-out` already invalidated server-side; the next authenticated call it
- * makes still 401s and routes to login, just one request later than it could have.
+ * Removes the dashboard's session cookie from every origin {@link setSharedSessionToken} might have
+ * written it to — the other half of this extension's own sign-out. Without it, signing out here
+ * would leave a dashboard tab still holding (and sending) a cookie for a session `POST
+ * /api/auth/sign-out` already invalidated server-side; the next authenticated call it makes still
+ * 401s and routes to login, just one request later than it could have.
  */
 export async function clearSharedSessionToken(): Promise<void> {
   if (!hasCookiesApi()) return;
-  await chrome.cookies.remove({ url: EXTENSION_BACKEND_ORIGIN, name: SESSION_COOKIE_NAME });
+  await Promise.allSettled(
+    SHARED_SESSION_ORIGINS.map((url) => chrome.cookies.remove({ url, name: SESSION_COOKIE_NAME })),
+  );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EXTENSION_BACKEND_ORIGIN, EXTENSION_ID } from './extensionConfig';
+import { DASHBOARD_DEV_ORIGINS, EXTENSION_BACKEND_ORIGIN, EXTENSION_ID } from './extensionConfig';
 import manifestExport from './manifest';
 
 // manifest.ts passes defineManifest a plain object, not a function/Promise, so this is safe.
@@ -37,6 +37,19 @@ describe('manifest', () => {
 
   it('still declares the local backend host permission', () => {
     expect(manifest.host_permissions).toContain(`${EXTENSION_BACKEND_ORIGIN}/*`);
+  });
+
+  /**
+   * `sharedSessionCookie.ts`'s `chrome.cookies` calls against the dashboard's dev-server origins
+   * only resolve real cookies (rather than the `null` a missing `host_permissions` entry produces
+   * indistinguishably from an absent one) when the manifest actually grants them — see
+   * `DASHBOARD_DEV_ORIGINS`'s own doc comment for why local dev needs these at all.
+   */
+  it('grants host permission for the dashboard dev-server origins, for the shared session cookie', () => {
+    expect(DASHBOARD_DEV_ORIGINS.length).toBeGreaterThan(0);
+    for (const origin of DASHBOARD_DEV_ORIGINS) {
+      expect(manifest.host_permissions).toContain(`${origin}/*`);
+    }
   });
 
   it("injects the content script on every http(s) page, not a fixed ATS-domain allowlist, so white-labeled ATS embeds on a company's own domain (e.g. Ashby on superhuman.com) are reachable", () => {

@@ -20,7 +20,11 @@ import { fireEvent, screen } from '@testing-library/react';
 import { vi } from 'vitest';
 import { productionDetection, type PipelineDeps } from '../background/applicationPipeline';
 import { handleTypedMessage } from '../background/router';
-import { createFakeBackendClient, type BackendClient } from '../lib/backendClient';
+import {
+  createFakeBackendClient,
+  withSessionRecovery,
+  type BackendClient,
+} from '../lib/backendClient';
 import { fakeChrome } from '../lib/fakeChrome';
 import { jobInfo, profile, tailoredResume } from '../lib/testFixtures';
 import { type FakeSessionStorage } from '../lib/fakeSessionStorage';
@@ -124,14 +128,30 @@ export function nth<T>(entries: (T | null)[] | undefined, index: number): T | nu
 /**
  * The client the last {@link stubChrome} built. The panel's modules take a `BackendClient` as a
  * prop, so a test hands them this one — the same adapter the Application Pipeline is given below,
- * so one fake answers both halves of a round trip.
+ * so one fake answers both halves of a round trip. Already wrapped in `withSessionRecovery`, the
+ * same as `main.tsx` wraps the real `httpBackendClient` — see {@link stubChrome}.
  */
 let currentClient: BackendClient | null = null;
+
+/**
+ * The plain fake underneath {@link panelClient}, before `withSessionRecovery`. A test asserting on
+ * call *counts* — how many times the underlying operation was actually attempted — wants this one:
+ * `panelClient().getProfile` is a closure the retry wrapper builds fresh, not the `vi.fn` a test can
+ * assert against, and `panelClient()` itself is the object `<App>`/the pipeline are handed, which
+ * has to stay the decorated one to exercise the same retry production does.
+ */
+let currentRawClient: BackendClient | null = null;
 
 /** The `BackendClient` for the case being run. Call {@link stubChrome} first. */
 export function panelClient(): BackendClient {
   if (!currentClient) throw new Error('stubChrome() must run before panelClient()');
   return currentClient;
+}
+
+/** The undecorated fake behind {@link panelClient} — see its own doc comment. */
+export function panelRawClient(): BackendClient {
+  if (!currentRawClient) throw new Error('stubChrome() must run before panelRawClient()');
+  return currentRawClient;
 }
 
 /**
@@ -163,7 +183,13 @@ export async function stubChrome(options: StubOptions) {
   // One adapter, both halves: the panel's modules are handed this client, and it is also the
   // pipeline's `backend`. They used to be two fakes — the UI's transport mock and the pipeline's
   // dependency — which could disagree about the same route without either test noticing.
-  const client: BackendClient = createFakeBackendClient({
+  //
+  // Wrapped in `withSessionRecovery` the same way `main.tsx` wraps the real `httpBackendClient`:
+  // production never hands the panel or the pipeline an undecorated client, so a test built on one
+  // would be exercising a client shape nothing ships. This is what lets `profileFailures`' first
+  // entry be a 401 and its second a success stand in for "the dashboard already has a session" —
+  // see `App.test.tsx`'s `adopts a session found in the dashboard's shared cookie` case.
+  const rawClient: BackendClient = createFakeBackendClient({
     getProfile: vi.fn(() => {
       const failure = nth(options.profileFailures, profileCallIndex++);
       return failure
@@ -195,6 +221,8 @@ export async function stubChrome(options: StubOptions) {
       });
     },
   });
+  currentRawClient = rawClient;
+  const client: BackendClient = withSessionRecovery(rawClient);
   currentClient = client;
 
   const deps: PipelineDeps = {
@@ -215,6 +243,8 @@ export async function stubChrome(options: StubOptions) {
       // The panel's concern is what the Fill Step reports back, not where its fields came from, so
       // these tests leave the live page unreachable and let it fall back to the run's own detection.
       scan: () => Promise.resolve(null),
+      // Posting extraction is injected directly by the Autofill tests that exercise it.
+      readPosting: () => Promise.resolve({ status: 'unavailable' }),
     },
     // The real adapter, reading through `fakeChrome`'s own `chrome.storage.session` — not a second
     // re-implementation of it. Detection is exactly what this harness already relies on: a fill
@@ -249,10 +279,25 @@ export async function stubChrome(options: StubOptions) {
         });
         return;
       }
-      // The service worker's listener, minus Chrome: one dispatch, fire-and-forget, no reply. The
-      // panel is the sender, so it carries no `tab` — only `REPORT_JOB_PAGE` reads one, and the
-      // panel never sends that.
-      void handleTypedMessage(typedMessage, {}, deps);
+      // The service worker's listener, minus Chrome. The panel is the sender, so it carries no
+      // `tab` — only `REPORT_JOB_PAGE` reads one, and the panel never sends that.
+      //
+      // `UPDATE_RUN` is the one message with a real reply — see `background/service-worker.ts` —
+      // so this is the one case that awaits the routed task before calling back. Every other
+      // message stays fire-and-forget, no reply, matching production.
+      if (typedMessage.type === 'UPDATE_RUN') {
+        void handleTypedMessage(typedMessage, {}, deps)
+          .then((result) => callback(result))
+          // Production replies `{ applied: false }` when the routed task rejects, and a test that
+          // makes it reject is testing exactly that. Without this the panel's `updateRun()` promise
+          // never settles and its queue entry is stuck — the one failure the reply channel exists
+          // to carry would be the one failure the harness cannot reproduce.
+          .catch(() => callback({ applied: false }));
+        return;
+      }
+      // Fire-and-forget, as in production — but a rejection here is swallowed deliberately rather
+      // than left unhandled, matching the service worker's `.catch` on the same path.
+      void handleTypedMessage(typedMessage, {}, deps).catch(() => undefined);
       callback(undefined);
     },
   });
@@ -317,6 +362,7 @@ export function deferred<T>() {
 export function resetPanelTestEnv(): void {
   vi.unstubAllGlobals();
   currentClient = null;
+  currentRawClient = null;
   Object.defineProperty(URL, 'createObjectURL', {
     value: vi.fn(() => 'blob:resume-preview'),
     configurable: true,

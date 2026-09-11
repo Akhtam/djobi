@@ -24,8 +24,8 @@ import type { Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
-import { withSharedSessionRetry } from '../lib/authClient';
 import type { BackendClient } from '../lib/backendClient';
+import { isUnauthorized, userMessage } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { AskTab, type AskSeed } from './AskTab';
 import { AutofillTab } from './AutofillTab';
@@ -33,7 +33,16 @@ import { LogApplication } from './LogApplication';
 import { useActiveRun } from './useActiveRun';
 
 /** Where the Profile bootstrap has got to. Everything past it belongs to a tab, not to the shell. */
-type BootstrapStatus = 'loading' | 'profile-error' | 'no-profile' | 'ready';
+type BootstrapStatus = 'loading' | 'unauthorized' | 'profile-error' | 'no-profile' | 'ready';
+
+/**
+ * What `loadProfile`'s catch branch learned about a failed `getProfile` — same split
+ * `options/App.tsx`'s own bootstrap makes, and for the same reason: a 401 that survived
+ * `withSessionRecovery`'s own adopt-and-retry is "go sign in somewhere," not "the backend is
+ * broken," and the two need different copy and a different fix, not one generic banner that always
+ * points at the backend regardless of which one actually happened.
+ */
+type ProfileLoadError = { kind: 'unauthorized' } | { kind: 'other'; message: string };
 
 /**
  * Which of the panel's flows is showing. Tabs rather than modes on one flow: neither Log nor Ask
@@ -54,7 +63,7 @@ export function App({ client }: { client: BackendClient }) {
   const [askSeed, setAskSeed] = useState<AskSeed | null>(null);
   const askSeedTokenRef = useRef(0);
   const [profileLoaded, setProfileLoaded] = useState(false);
-  const [profileError, setProfileError] = useState(false);
+  const [profileError, setProfileError] = useState<ProfileLoadError | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const profileRequestRef = useRef(0);
 
@@ -63,29 +72,36 @@ export function App({ client }: { client: BackendClient }) {
 
   const bootstrap: BootstrapStatus = !profileLoaded
     ? 'loading'
-    : profileError
-      ? 'profile-error'
-      : !profile
-        ? 'no-profile'
-        : 'ready';
+    : profileError?.kind === 'unauthorized'
+      ? 'unauthorized'
+      : profileError
+        ? 'profile-error'
+        : !profile
+          ? 'no-profile'
+          : 'ready';
 
   function loadProfile() {
     const requestToken = ++profileRequestRef.current;
     setProfileLoaded(false);
-    setProfileError(false);
+    setProfileError(null);
 
     void (async () => {
       try {
-        // `withSharedSessionRetry` gives this its one shot at recovery — the dashboard may
-        // already have a session (`authClient.ts`'s `adoptSharedSession`) — before a 401 here
-        // means there really is nothing to sign in with.
-        const loadedProfile = await withSharedSessionRetry(() => client.getProfile());
+        // Session recovery — adopting a shared dashboard session and retrying once on a 401 — is
+        // `client`'s own concern now (`backendClient.ts`'s `withSessionRecovery`), not just this
+        // bootstrap call's. Every route gets the same one shot at recovery before a 401 means
+        // there really is nothing to sign in with.
+        const loadedProfile = await client.getProfile();
         if (requestToken !== profileRequestRef.current) return;
         setProfile(loadedProfile);
         setProfileLoaded(true);
-      } catch {
+      } catch (error: unknown) {
         if (requestToken !== profileRequestRef.current) return;
-        setProfileError(true);
+        setProfileError(
+          isUnauthorized(error)
+            ? { kind: 'unauthorized' }
+            : { kind: 'other', message: userMessage(error) },
+        );
         setProfileLoaded(true);
       }
     })();
@@ -156,11 +172,43 @@ export function App({ client }: { client: BackendClient }) {
         </div>
       )}
 
+      {/*
+        Distinct from `profile-error` below: a 401 that survived `withSessionRecovery`'s own
+        adopt-and-retry means there really is nothing to sign in with here — not this browser's
+        dashboard session (there may be none open, or its cookie may not be reachable from this
+        extension — see `sharedSessionCookie.ts`) and not a token of the extension's own. That's
+        "go sign in," never "the backend is unreachable," so it gets its own copy and its own
+        primary action rather than sharing profile-error's backend-focused one. The options page is
+        where sign-in actually lives (`options/App.tsx`'s own `Login`) — the panel has no sign-in
+        form of its own to render here.
+      */}
+      {bootstrap === 'unauthorized' && (
+        <div className="panel-body">
+          <div className="state error" role="alert">
+            <span className="state-icon error">🔒</span>
+            <p>You're not signed in. Sign in from profile settings to load your Profile here.</p>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => chrome.runtime.openOptionsPage()}
+            >
+              Open profile settings
+            </button>
+            <button type="button" className="btn-secondary" onClick={loadProfile}>
+              Retry loading profile
+            </button>
+          </div>
+        </div>
+      )}
+
       {bootstrap === 'profile-error' && (
         <div className="panel-body">
           <div className="state error" role="alert">
             <span className="state-icon error">⚠️</span>
-            <p>Couldn't load your profile. Check that the djobi backend is running, then retry.</p>
+            <p>
+              Couldn't load your profile
+              {profileError?.kind === 'other' ? `: ${profileError.message}` : '.'}
+            </p>
             <button type="button" className="btn-primary" onClick={loadProfile}>
               Retry loading profile
             </button>

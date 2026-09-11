@@ -36,6 +36,8 @@
  * call sites that go through it, so the Profile routes live here too and the claim above holds.
  */
 import {
+  AnalyzeApplicationRequestSchema,
+  AnalyzeApplicationResponseSchema,
   AnswerChatRequestSchema,
   AnswerChatResponseSchema,
   AnswerQuestionsRequestSchema,
@@ -64,8 +66,8 @@ import {
   type SaveProfileRequest,
   type TailoredResume,
 } from '@djobi/shared';
-import { signIn as authSignIn, signOut as authSignOut } from './authClient';
-import { callBackend, callBackendBinary, callBackendUpload, HttpError } from './callBackend';
+import { signIn as authSignIn, signOut as authSignOut, withSharedSessionRetry } from './authClient';
+import { HttpError, transport } from './callBackend';
 
 /**
  * What the Ask tab has to say to ask one turn. `jobInfo` is nullable rather than optional because
@@ -89,6 +91,13 @@ export interface AnswerChatTurn {
  */
 const MaybeProfileSchema = ProfileSchema.nullable();
 
+/** What {@link BackendClient.analyzeApplication} resolves with. */
+export interface AnalyzeApplicationResult {
+  jobInfo: JobInfo;
+  tailoredResume: TailoredResume;
+  answers: QuestionAnswer[];
+}
+
 /** The backend-facing half of the Application Pipeline's outside world. */
 export interface BackendClient {
   extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo>;
@@ -99,6 +108,20 @@ export interface BackendClient {
     questions: QuestionForModel[],
     signal?: AbortSignal,
   ): Promise<QuestionAnswer[]>;
+  /**
+   * The Analysis Step's own consolidated call: `extractJob`, then `tailorResume` and
+   * `answerQuestions` from it in parallel, in one round trip against `POST /analyze` — see
+   * `apps/backend/src/llm/analyzeApplication.ts`. `background/applicationPipeline.ts`'s
+   * `analysisStep` is the one caller; `extractJob`/`tailorResume`/`answerQuestions` above stay on
+   * this interface for the Log tab's `extractJob`-only call (`panel/LogApplication.tsx`), which
+   * never tailors.
+   */
+  analyzeApplication(
+    jobDescription: string,
+    profile: Profile,
+    questions: QuestionForModel[],
+    signal?: AbortSignal,
+  ): Promise<AnalyzeApplicationResult>;
   /** One turn of the Ask tab's conversation — cold ask and refinement alike. */
   answerChat(turn: AnswerChatTurn): Promise<AnswerChatResponse>;
   renderResumePdf(
@@ -138,28 +161,51 @@ export interface BackendClient {
   signOut(): Promise<void>;
 }
 
-/** The production adapter: the local Hono server on `127.0.0.1:5391`. */
-export const httpBackendClient: BackendClient = {
+/**
+ * The plain HTTP adapter, before session recovery — see {@link withSessionRecovery}. Each method
+ * calls `callBackend.ts`'s `transport` directly, stating `method` explicitly even where it agrees
+ * with the transport's own bodyless-request default (`GET`) — see that module's own doc comment for
+ * why a divergence-prone default has no place at this seam.
+ */
+const rawHttpBackendClient: BackendClient = {
   extractJob: (jobDescription, signal) =>
-    callBackend('/extract-job', JobInfoSchema, {
+    transport.json('/extract-job', JobInfoSchema, {
+      method: 'POST',
       body: ExtractJobRequestSchema.parse({ jobDescription }),
       signal,
     }),
 
   tailorResume: (profile, jobInfo, signal) =>
-    callBackend('/tailor-resume', TailoredResumeSchema, {
+    transport.json('/tailor-resume', TailoredResumeSchema, {
+      method: 'POST',
       body: TailorResumeRequestSchema.parse({ profile, jobInfo }),
       signal,
     }),
 
   answerQuestions: (profile, jobInfo, questions, signal) =>
-    callBackend('/answer-questions', QuestionAnswerSchema.array(), {
+    transport.json('/answer-questions', QuestionAnswerSchema.array(), {
+      method: 'POST',
       body: AnswerQuestionsRequestSchema.parse({ profile, jobInfo, questions }),
       signal,
     }),
 
+  analyzeApplication: (jobDescription, profile, questions, signal) =>
+    transport.json('/analyze', AnalyzeApplicationResponseSchema, {
+      method: 'POST',
+      body: AnalyzeApplicationRequestSchema.parse({ jobDescription, profile, questions }),
+      signal,
+      // The one route that outlives the transport's default. `llm/analyzeApplication.ts` chains
+      // what used to be two separate requests — extract, then tailor/draft — inside this one, so
+      // the budget has to clear that sequential worst case rather than a single leg's. 150s gives
+      // real headroom above the ~34s a doubling of the measured cold figure suggests, while keeping
+      // the "a hung call becomes a visible, retryable error" property the deadline exists for.
+      // Revisit once `/analyze` has its own measured worst case, the way `/extract-job` did.
+      timeoutMs: 150_000,
+    }),
+
   answerChat: ({ profile, question, jobInfo, currentAnswer, messages }) =>
-    callBackend('/answer-chat', AnswerChatResponseSchema, {
+    transport.json('/answer-chat', AnswerChatResponseSchema, {
+      method: 'POST',
       body: AnswerChatRequestSchema.parse({
         profile,
         question,
@@ -172,46 +218,44 @@ export const httpBackendClient: BackendClient = {
     }),
 
   renderResumePdf: (profile, tailoredResume, signal) =>
-    callBackendBinary(
-      '/render-resume-pdf',
-      RenderResumePdfRequestSchema.parse({ profile, tailoredResume }),
+    transport.binary('/render-resume-pdf', {
+      method: 'POST',
+      body: RenderResumePdfRequestSchema.parse({ profile, tailoredResume }),
       signal,
-    ),
+    }),
 
-  getProfile: () => callBackend('/profile', MaybeProfileSchema, { method: 'GET' }),
+  getProfile: () => transport.json('/profile', MaybeProfileSchema, { method: 'GET' }),
 
   saveProfile: (profile) =>
-    callBackend('/profile', ProfileSchema, { body: profile satisfies SaveProfileRequest }),
+    transport.json('/profile', ProfileSchema, {
+      method: 'POST',
+      body: profile satisfies SaveProfileRequest,
+    }),
 
   extractResume: (file, signal) => {
     const formData = new FormData();
     formData.set('resume', file);
-    return callBackendUpload(
-      '/profile/extract-resume',
-      ExtractResumeResponseSchema,
-      formData,
+    return transport.upload('/profile/extract-resume', ExtractResumeResponseSchema, formData, {
       signal,
-    );
+    });
   },
 
   saveApplication: (payload, idempotencyKey) =>
-    callBackend('/applications?response=compact', ApplicationWriteResultSchema, {
+    transport.json('/applications?response=compact', ApplicationWriteResultSchema, {
+      method: 'POST',
       body: payload,
       idempotencyKey,
     }),
 
   updateApplication: (id, payload) =>
-    callBackend(
+    transport.json(
       `/applications/${encodeURIComponent(id)}?response=compact`,
       ApplicationWriteResultSchema,
-      {
-        body: payload,
-        method: 'PATCH',
-      },
+      { method: 'PATCH', body: payload },
     ),
 
   findApplicationDuplicates: (jobUrl, signal) =>
-    callBackend(
+    transport.json(
       `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
       DuplicateApplicationSummarySchema,
       { method: 'GET', signal },
@@ -220,6 +264,102 @@ export const httpBackendClient: BackendClient = {
   signIn: authSignIn,
   signOut: authSignOut,
 };
+
+/**
+ * Wraps every method but `signIn`/`signOut` in `retry` — `lib/authClient.ts`'s
+ * `withSharedSessionRetry` by default, the "adopt a shared dashboard session and retry once on a
+ * 401" policy `callBackend.ts`'s own doc comment names as living here.
+ *
+ * This is the whole `BackendClient` interface, not `callBackend.ts`'s transport underneath it,
+ * because that transport is real-HTTP-only: the fake `BackendClient` the panel and options tests
+ * render against never reaches it, so a retry wired in there would be invisible to every test and
+ * to any future non-HTTP adapter. Wrapping the interface reaches every caller — the panel, the
+ * options page and the background service worker alike — through the one seam all three already
+ * share.
+ *
+ * `signIn`/`signOut` are excluded because they are what establishes and ends a session in the
+ * first place. Retrying `signIn` after adopting a *different* session would substitute session
+ * adoption for the credentials the candidate actually typed; retrying `signOut` after a 401 would
+ * paper over what is often a session that is already gone, the exact state `signOut` exists to
+ * leave the extension in regardless.
+ *
+ * `retry` is a parameter, not a hardcoded call to `withSharedSessionRetry`, so a test can exercise
+ * this wrapper's shape — which methods it covers, which it doesn't — without going through the real
+ * `chrome.cookies` lookup `adoptSharedSession` makes.
+ *
+ * Each wrapped method forwards `...args` rather than naming its parameters, so a caller that omits
+ * a trailing optional one (most call `renderResumePdf` and friends with no `signal`) reaches the
+ * wrapped client with exactly the arguments it sent — not that count topped up with an explicit
+ * `undefined`, which is a different call as far as a test's spy assertion is concerned.
+ */
+/** Every `BackendClient` method {@link withSessionRecovery} wraps: all of them but the two it can't. */
+type RecoveredMethod = Exclude<keyof BackendClient, 'signIn' | 'signOut'>;
+
+/**
+ * The wrapped set, named once.
+ *
+ * Spelled out rather than derived from the object at runtime, because `keyof` exists only in the
+ * type system — but spelled out *checked*: `satisfies` rejects a name that isn't a method, and
+ * `AllRecoveredMethodsListed` below rejects a method that isn't named. Without the second half a
+ * newly added method would ship unwrapped and silently — `withSessionRecovery` spreads the client,
+ * so the method is still present and callable, just without session recovery, which is neither a
+ * type error nor a test failure, only a route that 401s where it should have adopted the dashboard
+ * session. `analyzeApplication` had to be remembered in two places when it was added; now it has to
+ * be remembered in one, and the compiler remembers for you.
+ */
+const RECOVERED_METHODS = [
+  'extractJob',
+  'tailorResume',
+  'answerQuestions',
+  'analyzeApplication',
+  'answerChat',
+  'renderResumePdf',
+  'getProfile',
+  'saveProfile',
+  'extractResume',
+  'saveApplication',
+  'updateApplication',
+  'findApplicationDuplicates',
+] as const satisfies readonly RecoveredMethod[];
+
+/**
+ * `never` exactly when every {@link RecoveredMethod} appears in {@link RECOVERED_METHODS}. Assigning
+ * it below turns an omission into a compile error naming the method left out.
+ */
+type AllRecoveredMethodsListed = Exclude<RecoveredMethod, (typeof RECOVERED_METHODS)[number]>;
+const _allRecoveredMethodsListed: AllRecoveredMethodsListed[] = [];
+void _allRecoveredMethodsListed;
+
+export function withSessionRecovery(
+  client: BackendClient,
+  retry: <T>(attempt: () => Promise<T>) => Promise<T> = withSharedSessionRetry,
+): BackendClient {
+  /**
+   * Wraps one method by name, forwarding whatever arguments the caller actually passed.
+   *
+   * `client[method]` is read at call time, not captured when the wrapper is built, so a test that
+   * reassigns a method on the client it already handed to this function — the override
+   * `createFakeBackendClient.analyzeApplication` documents, `deps.backend.tailorResume = vi.fn(…)`
+   * — reaches the wrapped client too. Capturing it eagerly would leave the composed
+   * `analyzeApplication` (which reads its pieces at call time) and the wrapped method calling two
+   * different fakes for the same override.
+   */
+  function recovered<Method extends keyof BackendClient>(method: Method): BackendClient[Method] {
+    return ((...args: unknown[]) => {
+      const call = client[method] as (...callArgs: unknown[]) => Promise<unknown>;
+      return retry(() => call(...args));
+    }) as BackendClient[Method];
+  }
+
+  const wrapped = Object.fromEntries(
+    RECOVERED_METHODS.map((method) => [method, recovered(method)]),
+  ) as Pick<BackendClient, RecoveredMethod>;
+
+  return { ...client, ...wrapped };
+}
+
+/** The production adapter: the local Hono server on `127.0.0.1:5391`, with session recovery. */
+export const httpBackendClient: BackendClient = withSessionRecovery(rawHttpBackendClient);
 
 /** What `signIn` accepts against a fake client that was never given its own credentials. */
 const FAKE_EMAIL = 'jane@example.com';
@@ -307,6 +447,19 @@ export function createFakeBackendClient(
           })),
         ),
     ),
+    // Composes `merged.extractJob`/`tailorResume`/`answerQuestions` — not `fake`'s own — so a test
+    // that overrides one of those three (`panelTestHarness.ts`'s `analysisFailures`, most often)
+    // still shapes this call, exactly as overriding `httpBackendClient`'s underlying routes would
+    // shape the real `/analyze`. `merged` isn't assigned until after this object literal finishes,
+    // but nothing here reads it before this method is actually invoked, by which point it is.
+    analyzeApplication: (jobDescription, profile, questions, signal) =>
+      merged.extractJob(jobDescription, signal).then(async (jobInfo) => {
+        const [tailoredResume, answers] = await Promise.all([
+          merged.tailorResume(profile, jobInfo, signal),
+          merged.answerQuestions(profile, jobInfo, questions, signal),
+        ]);
+        return { jobInfo, tailoredResume, answers };
+      }),
     answerChat: guarded('/answer-chat', () => Promise.resolve({ reply: 'Here you go.' })),
     // Four bytes of `%PDF`, which is all any caller here does anything with.
     renderResumePdf: guarded('/render-resume-pdf', () =>
@@ -355,5 +508,6 @@ export function createFakeBackendClient(
     },
   };
 
-  return { ...fake, ...overrides };
+  const merged: BackendClient = { ...fake, ...overrides };
+  return merged;
 }

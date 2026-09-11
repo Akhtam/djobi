@@ -9,10 +9,11 @@
  * where they can be read as a set.
  *
  * `routes/applications.ts` and `routes/render-resume-pdf.ts` stay as they are, and the difference is
- * the point rather than an inconsistency: one holds a REST resource's worth of handlers, the other a
- * render cache and PDF response headers. Both have implementation to hide. These did not.
+ * the point rather than an inconsistency: one holds a REST resource's worth of handlers, while the
+ * other returns binary data with PDF-specific response headers. These routes return JSON.
  */
 import {
+  AnalyzeApplicationRequestSchema,
   AnswerChatRequestSchema,
   AnswerQuestionsRequestSchema,
   ExtractJobRequestSchema,
@@ -21,6 +22,7 @@ import {
 import { Hono } from 'hono';
 import type { z } from 'zod';
 import { parseBody } from '../requestBody.js';
+import { analyzeApplication } from '../llm/analyzeApplication.js';
 import { answerChat } from '../llm/answerChat.js';
 import { answerQuestions } from '../llm/answerQuestions.js';
 import { extractJob } from '../llm/extractJob.js';
@@ -64,6 +66,16 @@ post('/tailor-resume', TailorResumeRequestSchema, (body, signal) =>
 /** Drafts answers to a form's freeform application questions. */
 post('/answer-questions', AnswerQuestionsRequestSchema, (body, signal) =>
   answerQuestions(body.profile, body.jobInfo, body.questions, signal),
+);
+
+/**
+ * The Analysis Step's own consolidated call — `extractJob`, then `tailorResume` and
+ * `answerQuestions` from it in parallel, in one round trip. Additive alongside the three routes
+ * above, which stay: the Log tab's Duplicate Guard needs `extractJob` alone, and an extension build
+ * older than this route still needs the three-call sequence. See `llm/analyzeApplication.ts`.
+ */
+post('/analyze', AnalyzeApplicationRequestSchema, (body, signal) =>
+  analyzeApplication(body.jobDescription, body.profile, body.questions, signal),
 );
 
 /**

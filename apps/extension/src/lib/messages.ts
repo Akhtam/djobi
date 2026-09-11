@@ -94,13 +94,28 @@ export const UpdateRunMessageSchema = z
          * here, and the background leaves the stored resume untouched rather than overwriting it
          * with `undefined`. */
         tailoredResume: TailoredResumeSchema.optional(),
-        /** Editing a saved snapshot makes it pending until it is saved again. */
-        status: z.literal('filled').optional(),
       })
       .strict(),
+    // No `status` field: whether a saved run reverts to `filled` is the run domain's call, not the
+    // panel's — `lib/tabStore/pipelineRun.ts`'s `applyPanelEdit` derives it from what actually
+    // changed. A panel-supplied literal was applied unconditionally, so a no-op resend (an undo, or
+    // a duplicate send) demoted a `saved` run for no real change.
   })
   .strict();
 export type UpdateRunMessage = ZodTypeOf<typeof UpdateRunMessageSchema>;
+
+/** Background -> panel: whether an `UPDATE_RUN` edit was actually written. */
+export const UpdateRunResultSchema = z.object({ applied: z.boolean() }).strict();
+export type UpdateRunResult = ZodTypeOf<typeof UpdateRunResultSchema>;
+
+/**
+ * What {@link updateRun} learned about one edit. `delivered` separates "the store answered, and
+ * said no" from "nothing answered at all" — a worker restarting, an extension reload, a listener
+ * not yet registered, or a reply this build cannot parse. Both leave nothing written, but only the
+ * first is a decision about the edit: an undelivered edit is retryable, and the caller should keep
+ * its optimistic copy rather than throw the user's typing away on a transient channel failure.
+ */
+export type UpdateRunOutcome = UpdateRunResult & { delivered: boolean };
 
 /** Panel -> background: retain the editable pre-analysis description for this job. */
 export const UpdateJobContextMessageSchema = z
@@ -167,12 +182,15 @@ export interface ScanPageCommandMessage {
 }
 
 /** A focused posting candidate extracted from one frame. */
-export interface ScrapedJobDescription {
-  text: string;
-  /** Comparable within this extractor; the frame reader uses it to select the best candidate. */
-  score: number;
-  source: 'structured-data' | 'dom';
-}
+export const ScrapedJobDescriptionSchema = z
+  .object({
+    text: z.string(),
+    /** Comparable within this extractor; the frame reader uses it to select the best candidate. */
+    score: z.number(),
+    source: z.enum(['structured-data', 'dom']),
+  })
+  .strict();
+export type ScrapedJobDescription = ZodTypeOf<typeof ScrapedJobDescriptionSchema>;
 
 /** Panel -> content: find the Job Description visible in this frame. */
 export interface ScrapeJobDescriptionCommandMessage {
@@ -180,9 +198,10 @@ export interface ScrapeJobDescriptionCommandMessage {
 }
 
 /** An explicit reply lets the caller distinguish "no posting here" from an unreachable frame. */
-export interface ScrapeJobDescriptionResponse {
-  candidate: ScrapedJobDescription | null;
-}
+export const ScrapeJobDescriptionResponseSchema = z
+  .object({ candidate: ScrapedJobDescriptionSchema.nullable() })
+  .strict();
+export type ScrapeJobDescriptionResponse = ZodTypeOf<typeof ScrapeJobDescriptionResponseSchema>;
 
 /**
  * Background -> content: tell the candidate, on the page itself, that their application was
@@ -216,8 +235,8 @@ export type ContentCommandMessage =
  * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
  * panel that opened it. Progress is read from `lib/tabStore/pipelineRun.ts` instead.
  *
- * The messages that *do* have responses are not in this union: `SCAN_PAGE` and `FILL_FORM` live in
- * `lib/pageClient.ts`, while `SCRAPE_JOB_DESCRIPTION` lives in `lib/postingReader.ts`.
+ * The messages that *do* have responses are not in this union: `SCAN_PAGE`, `FILL_FORM`, and
+ * `SCRAPE_JOB_DESCRIPTION` live in `lib/pageClient.ts`.
  *
  * This used to be typed as request/response on both ends — a `sendMessage<TReq, TRes>` generic over
  * a response nothing ever sent, and a handler taking `sendResponse` it never called and returning a
@@ -301,5 +320,37 @@ export function notify(message: TypedMessage, onDispatchError?: (message: string
     const error = chrome.runtime.lastError;
     if (error)
       onDispatchError?.(error.message || 'The background worker did not receive the command.');
+  });
+}
+
+/**
+ * Sends `UPDATE_RUN` and waits for the store's answer to it — the one panel -> background message
+ * on a real request/response, the way `lib/pageClient.ts`'s messages are for the background ->
+ * content-script direction.
+ *
+ * Every other coordination message here is `notify`'s fire-and-forget: those operations are
+ * long-running and observed through `chrome.storage.onChanged` instead, which is what lets a panel
+ * close mid-operation without losing anything. An edit is neither. It is one fast store write, and
+ * the run domain can refuse it outright — a save in flight locks the snapshot it is writing, see
+ * `lib/run/status.ts`'s `editable` — with no write to observe when it does. Without an answer,
+ * `panel/usePipelineRun.ts` has no way to learn a queued edit was never applied, and keeps
+ * preferring its own copy of it over the store's forever.
+ *
+ * Undelivered (no listener yet, e.g. the worker restarting) and a reply this build can't parse are
+ * both `applied: false`: nothing is known to have been written, so the caller should not keep
+ * waiting for a storage echo that this file cannot promise is coming. They carry `delivered: false`
+ * to mark them apart from the store's own refusal — see {@link UpdateRunOutcome}.
+ */
+export function updateRun(message: UpdateRunMessage): Promise<UpdateRunOutcome> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(typedMessageEnvelope(message), (response: unknown) => {
+      const error = chrome.runtime.lastError;
+      const parsed = UpdateRunResultSchema.safeParse(response);
+      resolve(
+        error || !parsed.success
+          ? { applied: false, delivered: false }
+          : { ...parsed.data, delivered: true },
+      );
+    });
   });
 }

@@ -10,7 +10,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeChrome } from '../lib/fakeChrome';
 import { TypedMessageEnvelopeSchema } from '../lib/messages';
-import type { PostingReadOutcome } from '../lib/postingReader';
+import type { PostingReadOutcome } from '../lib/pageClient';
 import { getJobContext, setJobContext } from '../lib/tabStore/jobContext';
 import type { ActiveRun } from './useActiveRun';
 import { useJobDescription } from './useJobDescription';

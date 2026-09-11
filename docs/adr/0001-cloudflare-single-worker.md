@@ -54,13 +54,29 @@ but not to the deployed Worker. One deploy, one URL, no preflights.
 
 ### Known porting items
 
-1. **Module-scope LLM client.** `apps/backend/src/llm/client.ts` does
-   `export const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })` at
+1. ~~**Module-scope LLM client.**~~ **Done (2026-09-11).** `apps/backend/src/llm/client.ts` used to
+   do `export const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })` at
    module scope, reading the key at import time. (This item originally named `new Anthropic()`; the
    provider changed, the hazard did not.) Workers evaluate module scope on cold start, where
-   bindings aren't reliably available. Reuse the lazy `Proxy` pattern already written and documented
-   in `apps/backend/src/db/client.ts`, which solves exactly this problem for `DATABASE_URL`.
-   **Still open.**
+   bindings aren't reliably available — the same hazard `apps/backend/src/db/client.ts`'s lazy
+   `Proxy` exists to avoid for `DATABASE_URL`.
+
+   `openrouter` is now that same lazy `Proxy`, resolved on first use rather than at import — but the
+   key lookup itself is an injected resolver (`configureOpenRouterKey`), not a hardcoded
+   `process.env` read, because closing this item exposed a second, narrower claim underneath the
+   first one. **Avoiding module-scope binding access** (the hazard above) is not the same claim as
+   **avoiding a dependence on the `process.env` compatibility bridge**: Workers can read `env`
+   through `process.env` when `nodejs_compat` and a recent compatibility date are both set, but
+   nothing in this repository's tree sets them — there is no `wrangler.toml` yet. Copying the
+   `Proxy` verbatim would have fixed the first hazard while quietly taking on the second as an
+   unstated dependency. `index.ts` calls `configureOpenRouterKey(() => process.env.OPENROUTER_API_KEY)`
+   explicitly instead, so the deployed Worker entrypoint this ADR describes can call the same
+   function with its own `env.OPENROUTER_API_KEY` lookup when it exists, rather than inheriting a
+   Node-only default it never opted into.
+
+   A workerd/Wrangler smoke test for this — the way porting item 2 below was actually verified — is
+   still open, and can't run until a `wrangler.toml` exists to run it against.
+
 2. ~~**PDF rendering needs `nodejs_compat`.**~~ **Done (2026-09-04) — and it needed a renderer
    change, not a compatibility flag.** The workerd smoke test this item asked for was run, and
    `@react-pdf/renderer` failed it three separate ways: `createRequire(import.meta.url)` at module

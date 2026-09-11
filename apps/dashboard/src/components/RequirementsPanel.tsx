@@ -14,14 +14,100 @@
  * full-height panel would swallow the page's own scroll. Revealing more as the reader approaches
  * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
  */
-import { useState, type ReactNode } from 'react';
-import { IMPORTANCE_BANDS, type Application } from '@djobi/shared';
-import { evidenceByRequirement, requirementsReport } from '../lib/analytics';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  IMPORTANCE_BANDS,
+  type RequirementEvidenceVerdict,
+  type RequirementImportance,
+} from '@djobi/shared';
+import { evidenceByRequirement, type RequirementsReport } from '../lib/analytics';
 import { BAND_LABELS, groupByImportance, UNBANDED } from '../lib/requirementGroups';
 import { applicationPath, PAGE_SIZE } from '../lib/useHashRoute';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 import { formatDate } from '../lib/format';
 import { EVIDENCE_LABELS } from '../lib/stages';
+
+const IMPORTANCE_HELP: Record<RequirementImportance, string> = {
+  critical:
+    'An explicit must-have, the job title itself, a core daily responsibility, or a legal, language, or work-authorization gate.',
+  high: 'A central requirement likely to be assessed during an interview.',
+  meaningful: 'A real requirement that matters, but is not clearly decisive for the application.',
+  preferred: 'A nice-to-have that the posting does not present as required.',
+  'low-signal': 'Generic or boilerplate wording that provides little signal about candidate fit.',
+};
+
+const EVIDENCE_HELP: Record<RequirementEvidenceVerdict, string> = {
+  'direct-evidence': 'A resume bullet or stated experience directly supports this requirement.',
+  'skill-only': 'Your skills list names it, but no resume bullet demonstrates how you used it.',
+  'omitted-profile-evidence':
+    'Your profile contains supporting experience, but that evidence was left out of this resume.',
+  'needs-confirmation':
+    'Some supporting signal exists, but there is not enough information to confirm the requirement is met.',
+  unsupported: 'Nothing in your profile provides evidence for this requirement.',
+};
+
+const LEGACY_REQUIREMENT_HELP: Record<string, string> = {
+  required: 'The posting explicitly presents these requirements as required.',
+  preferred: 'The posting presents these requirements as preferred or nice-to-have.',
+  unspecified: 'The posting does not clearly state whether these requirements are required or preferred.',
+};
+
+function RequirementTooltip({ label, text }: { label: string; text: string }) {
+  const id = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current || !tooltipRef.current) return;
+
+    const trigger = buttonRef.current.getBoundingClientRect();
+    const tooltip = tooltipRef.current.getBoundingClientRect();
+    const margin = 8;
+    const gap = 7;
+    const centeredLeft = trigger.left + trigger.width / 2 - tooltip.width / 2;
+    const left = Math.min(
+      window.innerWidth - tooltip.width - margin,
+      Math.max(margin, centeredLeft),
+    );
+    const top =
+      trigger.top >= tooltip.height + gap + margin
+        ? trigger.top - tooltip.height - gap
+        : Math.min(window.innerHeight - tooltip.height - margin, trigger.bottom + gap);
+
+    setPosition({ left, top: Math.max(margin, top) });
+  }, [open]);
+
+  return (
+    <span
+      className="requirement-tooltip"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <button ref={buttonRef} type="button" aria-label={label} aria-describedby={id}>
+        i
+      </button>
+      {open
+        ? createPortal(
+            <span
+              ref={tooltipRef}
+              className="requirement-tooltip__content"
+              id={id}
+              role="tooltip"
+              style={position ?? undefined}
+            >
+              {text}
+            </span>,
+            document.body,
+          )
+        : null}
+    </span>
+  );
+}
 
 /**
  * Splits `text` on a case-insensitive match of `term`, wrapping each match in `<mark>`. Built with
@@ -45,16 +131,12 @@ function highlightTerm(text: string, term: string | null): ReactNode {
 }
 
 export function RequirementsPanel({
-  applications,
+  report,
   selectedKeyword,
   resetKey,
 }: {
-  /**
-   * Already scoped to the selected range and stage — this component filters only by keyword.
-   * Always non-empty: `Analytics` renders its own empty state instead of this component when its
-   * range/stage filter matches nothing.
-   */
-  applications: Application[];
+  /** Already scoped to range, stage, and keyword by the Analytics view. */
+  report: RequirementsReport;
   /**
    * The term selected from the keyword frequency table, or `null` for every posting in range.
    * Matched via `normalizeKeyword` — the same grouping the frequency table itself uses — so
@@ -70,8 +152,9 @@ export function RequirementsPanel({
   resetKey: string;
 }) {
   const [showExperience, setShowExperience] = useState(false);
-  const { sorted, requirementCounts, bandCounts, anyBanded, yearsDistribution, evidence } =
-    requirementsReport(applications, selectedKeyword);
+  const [showImportance, setShowImportance] = useState(false);
+  const { sorted, requirementCounts, bandCounts, anyBanded, yearsDistribution } = report;
+  const classifiedRequirements = bandCounts.total - bandCounts.unbanded;
 
   const { visibleCount, scrollRef, sentinelRef } = useRevealOnScroll(
     sorted.length,
@@ -95,30 +178,7 @@ export function RequirementsPanel({
       </div>
 
       {requirementCounts.total > 0 ? (
-        <div className="analytics-summary-strip">
-          {/*
-            One ordering at a time, matching the list below. Bands are the stronger signal and
-            replace the kind counts wherever anything carries one; a range made entirely of
-            postings extracted before importance existed has no bands to show, so it keeps the
-            kind counts rather than reading "0 critical · 0 high" — which would report an absence
-            of decisive requirements where the truth is that none were ever assessed.
-          */}
-          {anyBanded
-            ? IMPORTANCE_BANDS.map((band) => (
-                <span key={band} className="analytics-summary-strip__band">
-                  {bandCounts[band]} {BAND_LABELS[band]}
-                </span>
-              ))
-            : [
-                `${requirementCounts.required} required`,
-                `${requirementCounts.preferred} preferred`,
-                `${requirementCounts.unspecified} unspecified`,
-              ].map((label) => <span key={label}>{label}</span>)}
-          {anyBanded && bandCounts.unbanded > 0 ? (
-            <span className="analytics-summary-strip__band">
-              {bandCounts.unbanded} {BAND_LABELS[UNBANDED]}
-            </span>
-          ) : null}
+        <div className="analytics-summary-strip requirements-overview">
           {yearsDistribution.length > 0 ? (
             <div className="analytics-summary-strip__years">
               <button
@@ -152,40 +212,83 @@ export function RequirementsPanel({
               ) : null}
             </div>
           ) : null}
-        </div>
-      ) : null}
 
-      {/*
-        The verdicts already computed and stored at each save, read back in aggregate. All five are
-        shown, so the strip always sums to the requirements it was drawn from — dropping the one
-        that reads as least interesting (`needs-confirmation`, which every unparsable years figure
-        lands on) would leave a strip of zeros standing over rows visibly badged "Unconfirmed".
-        Rendered only when at least one posting carries evidence: `requirementEvidence` is null for every row
-        written before the field existed, and a strip of zeros over those would read as "nothing
-        was dropped" when the truth is "nothing was checked". `unscoredPostings` states that
-        denominator out loud for the mixed history that is the normal case.
-      */}
-      {evidence.total > 0 ? (
-        <div className="analytics-summary-strip analytics-summary-strip--evidence">
-          <span>{evidence['direct-evidence']} evidenced</span>
-          <span
-            className={evidence['omitted-profile-evidence'] > 0 ? 'is-actionable' : undefined}
-            title="Your profile had a bullet for these, and the tailored resume dropped it — a selection you can fix, not a skill you lack."
-          >
-            {evidence['omitted-profile-evidence']} dropped from resume
-          </span>
-          <span>{evidence['skill-only']} skill only</span>
-          <span>{evidence['needs-confirmation']} unconfirmed</span>
-          <span>{evidence.unsupported} unevidenced</span>
-          {evidence.unscoredPostings > 0 ? (
-            <span
-              className="analytics-summary-strip__caveat"
-              title="These predate requirement matching, or their profile could not be read when they were saved. Nothing backfills them."
+          <section className="requirements-summary-card" aria-labelledby="importance-summary-title">
+            <button
+              type="button"
+              className="requirements-summary-card__head"
+              aria-expanded={showImportance}
+              aria-controls="importance-summary-breakdown"
+              onClick={() => setShowImportance((shown) => !shown)}
             >
-              over {evidence.scoredPostings} of{' '}
-              {evidence.scoredPostings + evidence.unscoredPostings} postings
-            </span>
-          ) : null}
+              <h3 id="importance-summary-title">Importance</h3>
+              {/* Only where bands actually exist. For a range of postings extracted before
+                  importance bands, every requirement is unbanded and this would read "0 of 87
+                  classified" above a populated kind breakdown — reporting an absence of decisive
+                  requirements where the truth is that none were ever assessed. */}
+              {anyBanded ? (
+                <span>
+                  {classifiedRequirements} of {bandCounts.total} classified
+                </span>
+              ) : null}
+            </button>
+            {showImportance ? (
+              <div className="requirements-summary-grid" id="importance-summary-breakdown">
+              {anyBanded
+                ? IMPORTANCE_BANDS.map((band) => (
+                    <span
+                      key={band}
+                      className={`requirements-summary-stat is-${band}`}
+                      aria-label={`${bandCounts[band]} ${BAND_LABELS[band]}`}
+                    >
+                      <b>{bandCounts[band]}</b>
+                      <span>
+                        {BAND_LABELS[band]}
+                        <RequirementTooltip
+                          label={`About ${BAND_LABELS[band]} importance`}
+                          text={IMPORTANCE_HELP[band]}
+                        />
+                      </span>
+                    </span>
+                  ))
+                : ([
+                    [requirementCounts.required, 'required'],
+                    [requirementCounts.preferred, 'preferred'],
+                    [requirementCounts.unspecified, 'unspecified'],
+                  ] as const).map(([count, label]) => (
+                    <span
+                      key={label}
+                      className="requirements-summary-stat"
+                      aria-label={`${count} ${label}`}
+                    >
+                      <b>{count}</b>
+                      <span>
+                        {label}
+                        <RequirementTooltip
+                          label={`About ${label} requirements`}
+                          text={LEGACY_REQUIREMENT_HELP[label]}
+                        />
+                      </span>
+                    </span>
+                  ))}
+              {anyBanded && bandCounts.unbanded > 0 ? (
+                <span
+                  className="requirements-summary-stat is-unbanded"
+                  aria-label={`${bandCounts.unbanded} ${BAND_LABELS[UNBANDED]}`}
+                >
+                  <b>{bandCounts.unbanded}</b>
+                  <span>
+                    {BAND_LABELS[UNBANDED]}
+                    <RequirementTooltip
+                      label="About not assessed"
+                      text="No importance band was assigned to these requirements."
+                    />
+                  </span>
+                </span>
+              ) : null}
+              </div>
+            ) : null}
+          </section>
         </div>
       ) : null}
 
@@ -219,11 +322,24 @@ export function RequirementsPanel({
                         key={key}
                         className={`analytics-req-group analytics-req-group--${key}`}
                       >
-                        <h3
-                          className={`analytics-req-group__title requirement-band requirement-band--${key}`}
-                        >
-                          {BAND_LABELS[key]}
-                        </h3>
+                        <div className="analytics-req-group__title-row">
+                          <h3
+                            className={`analytics-req-group__title requirement-band requirement-band--${key}`}
+                          >
+                            {BAND_LABELS[key]}
+                          </h3>
+                          {key !== UNBANDED ? (
+                            <RequirementTooltip
+                              label={`About ${BAND_LABELS[key]} importance`}
+                              text={IMPORTANCE_HELP[key]}
+                            />
+                          ) : (
+                            <RequirementTooltip
+                              label="About not assessed"
+                              text="No importance band was assigned to these requirements."
+                            />
+                          )}
+                        </div>
                         <ul className="analytics-reqs">
                           {requirements.map((requirement) => {
                             const verdict = verdicts.get(requirement.text);
@@ -242,6 +358,10 @@ export function RequirementsPanel({
                                       className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
                                     >
                                       {EVIDENCE_LABELS[verdict.verdict]}
+                                      <RequirementTooltip
+                                        label={`About ${EVIDENCE_LABELS[verdict.verdict]}`}
+                                        text={EVIDENCE_HELP[verdict.verdict]}
+                                      />
                                     </span>
                                   ) : null}
                                   {verdict?.verdict === 'omitted-profile-evidence' &&

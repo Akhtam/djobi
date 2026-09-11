@@ -54,6 +54,32 @@ describe('application detail', () => {
     expect(select).toHaveValue('rejected');
   });
 
+  it('deletes an application once the confirmation is given, and returns to the list', async () => {
+    const { user } = renderDashboard();
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+
+    await user.click(screen.getByRole('button', { name: /^Delete application to/ }));
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+
+    await screen.findByRole('heading', { level: 1, name: 'Applications' });
+    expect(
+      screen.queryByRole('combobox', { name: /Stage for Senior Frontend Engineer/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('asks first, and leaves the application in place when the ask is declined', async () => {
+    const { user } = renderDashboard();
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+
+    await user.click(screen.getByRole('button', { name: /^Delete application to/ }));
+    await user.click(screen.getByRole('button', { name: 'Keep it' }));
+
+    expect(screen.queryByRole('button', { name: 'Yes, delete' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' }),
+    ).toBeInTheDocument();
+  });
+
   it('lists notes newest first', async () => {
     const { user } = renderDashboard();
     await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });

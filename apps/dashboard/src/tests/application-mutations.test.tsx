@@ -133,6 +133,30 @@ describe('failures', () => {
     expect(screen.getByText(/disagreed with a technical decision/)).toBeInTheDocument();
   });
 
+  it('puts a deleted application back and says why, rather than leaving the detail page it navigated away from', async () => {
+    const fixture = createFixtureDashboardClient(fixtureApplications);
+    const failing: DashboardClient = {
+      ...fixture,
+      deleteApplication: () => Promise.reject(new Error('Backend unreachable')),
+    };
+
+    const { user } = renderDashboard({ client: failing, hash: '#/applications/app-brex' });
+    await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
+    await user.click(screen.getByRole('button', { name: /^Delete application to/ }));
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Backend unreachable');
+    // Still on the detail page for the row the backend refused to delete, not bounced to the list.
+    expect(
+      screen.getByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: '← Applications' }));
+    expect(
+      await screen.findByRole('combobox', { name: /Stage for Senior Frontend Engineer/ }),
+    ).toBeInTheDocument();
+  });
+
   it('does not undo a different write that already succeeded', async () => {
     const fixture = createFixtureDashboardClient(fixtureApplications);
     type StageResult = Awaited<ReturnType<DashboardClient['updateStage']>>;
@@ -201,6 +225,7 @@ describe('failures', () => {
         updateStage: () => Promise.reject(new Error('unused')),
         addNote: () => Promise.reject(new Error('unused')),
         deleteNote: () => Promise.reject(new Error('unused')),
+        deleteApplication: () => Promise.reject(new Error('unused')),
         getProfile: () => Promise.reject(new Error('unused')),
         saveProfile: () => Promise.reject(new Error('unused')),
         extractResume: () => Promise.reject(new Error('unused')),

@@ -24,8 +24,10 @@ import { countByOption, FilterPills } from '../components/FilterPills';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import {
   analyticsReport,
+  keywordRows,
   MIN_DECIDED_FOR_RATE,
   RANGES,
+  requirementsReport,
   type Range,
   type ResponseRate,
 } from '../lib/analytics';
@@ -82,6 +84,24 @@ function rateTitle(rate: ResponseRate): string {
     : `${resolved}${pending}`;
 }
 
+function SummaryTooltip({ id, label, text }: { id: string; label: string; text: string }) {
+  return (
+    <span className="analytics-summary__tooltip-wrap">
+      <button
+        type="button"
+        className="analytics-summary__tooltip-trigger"
+        aria-label={label}
+        aria-describedby={id}
+      >
+        i
+      </button>
+      <span className="analytics-summary__tooltip" id={id} role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
 export function Analytics({
   applications,
   range,
@@ -104,7 +124,19 @@ export function Analytics({
   const [today] = useState(() => new Date());
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
-  const [minAppearances, setMinAppearances] = useState<number>(5);
+  // 5 is a reasonable floor for a range with dozens of postings, but a personal-scale dataset's
+  // typical default range (7 days) usually holds a handful — a default that ignores that lands a
+  // first visit on "No keywords match these filters," with only a stepper the reader hasn't been
+  // introduced to yet as the way out. Scaling the *initial* value down to what this range's own
+  // most-repeated keyword actually reaches means a first visit shows something. It's still only a
+  // starting point: raising it from here to the signal-only view of a bigger range works exactly
+  // as before, and switching ranges later doesn't re-run this — a value the reader set themselves
+  // should never reset silently under them.
+  const [minAppearances, setMinAppearances] = useState<number>(() => {
+    const topCount = analyticsReport(applications, { range, stage, asOf: today, profile: null })
+      .frequency[0]?.count;
+    return Math.max(1, Math.min(5, topCount ?? 1));
+  });
 
   const profileState = useRemoteProfile(getProfile, onUnauthorized);
 
@@ -122,8 +154,6 @@ export function Analytics({
         range,
         stage,
         asOf: today,
-        minAppearances: 0,
-        gapsOnly: false,
         profile: profileState.kind === 'ready' ? profileState.profile : null,
       }),
     [applications, range, stage, today, profileState],
@@ -132,9 +162,10 @@ export function Analytics({
     report;
   const rows = useMemo(
     () =>
-      frequency
-        .filter((row) => !gapsOnly || coverageByTerm?.get(row.term) === 'missing')
-        .filter((row) => row.count >= minAppearances),
+      keywordRows(frequency, coverageByTerm, {
+        gapsOnly,
+        minAppearances,
+      }),
     [frequency, coverageByTerm, gapsOnly, minAppearances],
   );
 
@@ -151,6 +182,22 @@ export function Analytics({
   // per category, so a category can show fewer than its full count once the cutoff lands mid-group.
   const visibleRows = rows.slice(0, visibleKeywordCount);
   const maxCount = frequency[0]?.count ?? 0;
+  const shownGapCount = coverageByTerm
+    ? rows.filter((row) => coverageByTerm.get(row.term) === 'missing').length
+    : 0;
+  const shownEvidencedCount = rows.length - shownGapCount;
+  const shownGapPercent = rows.length > 0 ? Math.round((shownGapCount / rows.length) * 100) : 0;
+  const requirements = useMemo(
+    () => requirementsReport(filtered, selectedKeyword),
+    [filtered, selectedKeyword],
+  );
+  const requirementEvidence = requirements.evidence;
+  const supportedRequirementCount =
+    requirementEvidence['direct-evidence'] +
+    requirementEvidence['skill-only'] +
+    requirementEvidence['omitted-profile-evidence'];
+  const attentionRequirementCount =
+    requirementEvidence['needs-confirmation'] + requirementEvidence.unsupported;
   const groups = useMemo(() => {
     const byCategory = new Map<string, typeof visibleRows>();
     for (const row of visibleRows) {
@@ -237,28 +284,277 @@ export function Analytics({
           <span>Widen the range or change the stage filter to see more.</span>
         </p>
       ) : (
-        <p className="analytics-summary">
-          <span>
-            <b>{filtered.length}</b> {filtered.length === 1 ? 'posting' : 'postings'}
-          </span>
-          <span>
-            <b>{frequency.length}</b> distinct {frequency.length === 1 ? 'keyword' : 'keywords'}
-          </span>
-          {profileState.kind === 'ready' ? (
-            <span className="gap-count">
-              <b>{gapCount}</b> not evidenced by your profile
+        <section className="analytics-summary" aria-label="Analytics overview">
+          <div className="analytics-summary__context">
+            <div>
+              <span className="analytics-summary__overline">Overview</span>
+              <strong>
+                {formatShortDate(rangeStartDate)} – {formatShortDate(today)}
+              </strong>
+            </div>
+            <span className="analytics-summary__posting-count">
+              {filtered.length} {filtered.length === 1 ? 'posting' : 'postings'}
             </span>
+          </div>
+
+          {/* States once, for every meter below, what each color means — rather than leaving a
+              reader to infer it from four separate bars, or repeating it in every tooltip. The
+              meters' own `aria-label`s already carry the counts a screen reader needs, so this is
+              hidden from one rather than read as a fifth, redundant color-only description. */}
+          <div className="analytics-summary__legend" aria-hidden="true">
+            <span>
+              <i className="analytics-summary__legend-dot analytics-summary__legend-dot--good" />
+              Evidenced
+            </span>
+            <span>
+              <i className="analytics-summary__legend-dot analytics-summary__legend-dot--warn" />
+              Needs confirming
+            </span>
+            <span>
+              <i className="analytics-summary__legend-dot analytics-summary__legend-dot--bad" />
+              No evidence
+            </span>
+          </div>
+
+          <div className="analytics-summary__card">
+            <header className="analytics-summary__card-head">
+              <span className="analytics-summary__eyebrow">Keyword coverage</span>
+              <SummaryTooltip
+                id="keyword-coverage-help"
+                label="About keyword coverage"
+                text={`Minimum ${minAppearances} ${minAppearances === 1 ? 'appearance' : 'appearances'} · ${gapsOnly ? 'Showing gaps only' : `${gapCount} total gaps`}`}
+              />
+            </header>
+            <div className="analytics-summary__metric">
+              <strong>{rows.length}</strong>
+              <span>
+                of {frequency.length} {frequency.length === 1 ? 'keyword' : 'keywords'} shown
+              </span>
+            </div>
+            {profileState.kind === 'ready' ? (
+              <>
+                <div
+                  className="analytics-coverage-meter"
+                  role="img"
+                  aria-label={`${shownEvidencedCount} of ${rows.length} shown keywords evidenced by your profile`}
+                  style={
+                    {
+                      '--analytics-covered':
+                        rows.length > 0 ? shownEvidencedCount / rows.length : 0,
+                    } as CSSProperties
+                  }
+                >
+                  <span />
+                </div>
+                <div className="analytics-summary__stats">
+                  <span>
+                    <b>{shownEvidencedCount}</b>
+                    <small>Evidenced</small>
+                  </span>
+                  <span>
+                    <b className="gap-count">{shownGapCount}</b>
+                    <small>Gaps · {shownGapPercent}%</small>
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="analytics-summary__meter-placeholder" aria-hidden="true" />
+                <div className="analytics-summary__empty-detail">Coverage unavailable</div>
+              </>
+            )}
+          </div>
+
+          <section className="analytics-summary__card" aria-labelledby="analytics-evidence-title">
+            <header className="analytics-summary__card-head">
+              <span className="analytics-summary__eyebrow" id="analytics-evidence-title">
+                {selectedKeyword ? `Evidence for ${selectedKeyword}` : 'Requirement evidence'}
+              </span>
+              <SummaryTooltip
+                id="requirement-evidence-help"
+                label="About requirement evidence"
+                text={`${requirementEvidence.scoredPostings} of ${requirementEvidence.scoredPostings + requirementEvidence.unscoredPostings} postings scored. In resume = a resume bullet backs it. In skills = only your skills list does. Left out = your Profile backs it, but this resume dropped it.`}
+              />
+            </header>
+            {requirementEvidence.total > 0 ? (
+              <>
+                <div className="analytics-summary__metric">
+                  <strong>{supportedRequirementCount}</strong>
+                  <span>of {requirementEvidence.total} supported</span>
+                </div>
+                <div
+                  className="analytics-coverage-meter analytics-coverage-meter--evidence"
+                  role="img"
+                  aria-label={`${supportedRequirementCount} of ${requirementEvidence.total} requirements supported by your profile`}
+                  style={
+                    {
+                      '--analytics-covered': supportedRequirementCount / requirementEvidence.total,
+                    } as CSSProperties
+                  }
+                >
+                  <span />
+                </div>
+                {/* "In skills" reuses the keyword table's own wording (`COVERAGE_LABELS`) for the
+                    same concept — only the skills list names it — instead of introducing separate
+                    jargon for something a reader already learned reading the keyword rows below.
+                    The table's parallel term for this stat, "In experience", doesn't fit this box
+                    at three columns wide (it truncated to "In experi…"); "In resume" says the same
+                    thing — a resume bullet backs it — in a width that survives narrower viewports
+                    too. "Left out" has no keyword-table counterpart: it names the one verdict
+                    unique to a scored application, a fixable resume mistake rather than a missing
+                    profile fact. */}
+                <div className="analytics-summary__stats analytics-summary__stats--three">
+                  <span
+                    aria-label={`${requirementEvidence['direct-evidence']} backed by a resume bullet`}
+                  >
+                    <b>{requirementEvidence['direct-evidence']}</b>
+                    <small>In resume</small>
+                  </span>
+                  <span aria-label={`${requirementEvidence['skill-only']} named only in skills`}>
+                    <b>{requirementEvidence['skill-only']}</b>
+                    <small>In skills</small>
+                  </span>
+                  <span
+                    aria-label={`${requirementEvidence['omitted-profile-evidence']} in your Profile but left out of this resume`}
+                  >
+                    <b>{requirementEvidence['omitted-profile-evidence']}</b>
+                    <small>Left out</small>
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="analytics-summary__empty-detail analytics-summary__empty-detail--spanning">
+                <strong>No evidence scored yet</strong>
+                <span>New saved applications will add evidence here.</span>
+              </div>
+            )}
+          </section>
+
+          {requirementEvidence.total > 0 ? (
+            <section
+              className="analytics-summary__card"
+              aria-labelledby="analytics-attention-title"
+            >
+              <header className="analytics-summary__card-head">
+                <span className="analytics-summary__eyebrow" id="analytics-attention-title">
+                  {selectedKeyword ? `Needs attention for ${selectedKeyword}` : 'Needs attention'}
+                </span>
+                <SummaryTooltip
+                  id="attention-help"
+                  label="About requirements needing attention"
+                  text="Requirements to prioritize because they need confirmation or have no supporting evidence."
+                />
+              </header>
+              <div className="analytics-summary__metric">
+                <strong>{attentionRequirementCount}</strong>
+                <span>of {requirementEvidence.total} requirements</span>
+              </div>
+              <div
+                className="analytics-attention-meter"
+                role="img"
+                aria-label={`${requirementEvidence['needs-confirmation']} needs confirmation, ${requirementEvidence.unsupported} no supporting evidence`}
+              >
+                {requirementEvidence['needs-confirmation'] > 0 ? (
+                  <span
+                    className="is-confirmation"
+                    style={{ flexGrow: requirementEvidence['needs-confirmation'] }}
+                  />
+                ) : null}
+                {requirementEvidence.unsupported > 0 ? (
+                  <span
+                    className="is-unsupported"
+                    style={{ flexGrow: requirementEvidence.unsupported }}
+                  />
+                ) : null}
+              </div>
+              <div className="analytics-summary__stats">
+                <span
+                  aria-label={`${requirementEvidence['needs-confirmation']} needs confirmation`}
+                >
+                  <b>{requirementEvidence['needs-confirmation']}</b>
+                  <small>Confirm</small>
+                </span>
+                <span aria-label={`${requirementEvidence.unsupported} with no supporting evidence`}>
+                  <b className="gap-count">{requirementEvidence.unsupported}</b>
+                  <small>No evidence</small>
+                </span>
+              </div>
+            </section>
           ) : null}
+
           {baseline ? (
-            <span title={rateTitle(baseline)}>
-              <b>{formatRate(baseline.rate)}</b> response rate
-              {baseline.pending > 0 ? ` · ${baseline.pending} pending` : ''}
-            </span>
+            <div className="analytics-summary__card">
+              <header className="analytics-summary__card-head">
+                <span className="analytics-summary__eyebrow">Application outcomes</span>
+                <SummaryTooltip
+                  id="application-outcomes-help"
+                  label="About application outcomes"
+                  text={
+                    baseline.rate === null
+                      ? `Available after ${MIN_DECIDED_FOR_RATE} applications are resolved. ${rateTitle(baseline)}`
+                      : `${rateTitle(baseline)}${baseline.pending > 0 ? ` · ${baseline.pending} awaiting response` : ''}`
+                  }
+                />
+              </header>
+              {baseline.rate === null ? (
+                <>
+                  <strong className="analytics-summary__metric analytics-summary__metric--copy">
+                    No response rate yet
+                  </strong>
+                  {/* Not the rate meter's blue: nothing here is "good" yet, only "closer to
+                      reportable" — a neutral fill keeps that distinct from the real rate below,
+                      and replaces the empty placeholder that used to sit here looking unfinished. */}
+                  <div
+                    className="analytics-coverage-meter analytics-coverage-meter--neutral"
+                    role="img"
+                    aria-label={`${baseline.decided} of ${MIN_DECIDED_FOR_RATE} resolved applications needed before a response rate can be reported`}
+                    style={
+                      {
+                        '--analytics-covered': Math.min(baseline.decided / MIN_DECIDED_FOR_RATE, 1),
+                      } as CSSProperties
+                    }
+                  >
+                    <span />
+                  </div>
+                  <div className="analytics-summary__stats">
+                    <span>
+                      <b>{baseline.decided}</b>
+                      <small>Resolved</small>
+                    </span>
+                    <span>
+                      <b>{baseline.pending}</b>
+                      <small>Awaiting</small>
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <strong className="analytics-summary__metric analytics-summary__metric--rate">
+                    <span>{formatRate(baseline.rate)}</span> response rate
+                  </strong>
+                  <div
+                    className="analytics-coverage-meter"
+                    role="img"
+                    aria-label={`${formatRate(baseline.rate)} response rate — ${baseline.responded} of ${baseline.decided} resolved postings responded`}
+                    style={{ '--analytics-covered': baseline.rate } as CSSProperties}
+                  >
+                    <span />
+                  </div>
+                  <div className="analytics-summary__stats">
+                    <span>
+                      <b>{baseline.responded}</b>
+                      <small>Responded</small>
+                    </span>
+                    <span>
+                      <b>{baseline.pending}</b>
+                      <small>Awaiting</small>
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
           ) : null}
-          <span>
-            {formatShortDate(rangeStartDate)} – {formatShortDate(today)}
-          </span>
-        </p>
+        </section>
       )}
 
       {profileState.kind === 'none' ? (
@@ -405,7 +701,7 @@ export function Analytics({
           </section>
 
           <RequirementsPanel
-            applications={filtered}
+            report={requirements}
             selectedKeyword={selectedKeyword}
             resetKey={`${range}|${stage ?? ''}|${selectedKeyword ?? ''}`}
           />

@@ -15,6 +15,7 @@ import {
   clickAnalyze,
   jobPageData,
   panelClient,
+  panelRawClient,
   profile,
   resetPanelTestEnv,
   stubChrome,
@@ -56,7 +57,7 @@ describe('panel App', () => {
     expect(await screen.findByRole('button', { name: 'Analyze' })).toBeInTheDocument();
     // Two asks, not two requests: the retry is the shell asking the client again, which is the
     // only fact this module owns.
-    expect(panelClient().getProfile).toHaveBeenCalledTimes(2);
+    expect(panelRawClient().getProfile).toHaveBeenCalledTimes(2);
   });
 
   it('adopts a session found in the dashboard’s shared cookie instead of asking to sign in', async () => {
@@ -77,11 +78,11 @@ describe('panel App', () => {
 
     expect(await screen.findByRole('button', { name: 'Analyze' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(panelClient().getProfile).toHaveBeenCalledTimes(2);
+    expect(panelRawClient().getProfile).toHaveBeenCalledTimes(2);
   });
 
-  it('still shows the profile error when there is no local session and no shared one to adopt', async () => {
-    await stubChrome({
+  it('asks to sign in, not to check the backend, when there is no local session and no shared one to adopt', async () => {
+    const { openOptionsPage } = await stubChrome({
       tabUrl: 'https://boards.greenhouse.io/acme/jobs/1',
       profile,
       profileFailures: [
@@ -91,8 +92,14 @@ describe('panel App', () => {
 
     render(<App client={panelClient()} />);
 
+    // A 401 that survives `withSessionRecovery`'s own adopt-and-retry means there is genuinely
+    // nothing to sign in with here — not the backend being unreachable, which is a different
+    // failure with a different fix and used to get the same generic copy regardless.
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/couldn't load your profile/i);
+    expect(alert).toHaveTextContent(/not signed in/i);
+    expect(alert).not.toHaveTextContent(/backend/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile settings' }));
+    expect(openOptionsPage).toHaveBeenCalled();
   });
 
   it('offers no tabs until a profile exists', async () => {

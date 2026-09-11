@@ -11,6 +11,11 @@
  * This module owns the two things that only exist because Chrome can stop a worker mid-operation:
  * the one-time recovery sweep every message waits behind, and the `.catch` that is the single place
  * a routed task's terminal rejection is logged.
+ *
+ * Every message but one is acknowledged synchronously with an empty reply and then routed as a
+ * fire-and-forget task — see the listener below. `UPDATE_RUN` is the documented exception: it holds
+ * the channel open and replies with whether the store actually wrote the edit, because a refusal
+ * there produces no `chrome.storage.onChanged` event for the panel to learn it from otherwise.
  */
 import { registerTabStateCleanup } from '../lib/tabStore/lifecycle';
 import { recoverInterruptedPipelineRuns } from '../lib/tabStore/pipelineRun';
@@ -31,13 +36,12 @@ function tabIdOf(message: TypedMessage, sender: chrome.runtime.MessageSender): n
   return 'tabId' in message ? message.tabId : sender.tab?.id;
 }
 
-// Acknowledge receipt synchronously, with no payload, so a sender callback does not mistake the
-// intentionally short-lived response channel for a delivery failure. The routed task remains
-// fire-and-forget and outlives the panel — see `lib/messages.ts`.
 chrome.runtime.onMessage.addListener((input: unknown, sender, sendResponse) => {
-  sendResponse();
   const parsed = TypedMessageEnvelopeSchema.safeParse(input);
   if (!parsed.success) {
+    // Malformed input gets the same short-lived, empty acknowledgement every valid notification
+    // does below — there is nothing to route, so nothing to wait for.
+    sendResponse();
     console.warn('[djobi] dropped invalid background message', {
       tabId: sender.tab?.id,
       frameId: sender.frameId,
@@ -47,6 +51,45 @@ chrome.runtime.onMessage.addListener((input: unknown, sender, sendResponse) => {
   }
 
   const message = parsed.data.payload;
+
+  // `UPDATE_RUN` is the one message on this channel with a real reply — see `lib/messages.ts`'s
+  // `updateRun` for why a store refusal has to reach the panel this way. Chrome only keeps a
+  // channel open past this listener's return for a message this callback claims with `true`, so
+  // this is the one case that does not acknowledge synchronously below.
+  if (message.type === 'UPDATE_RUN') {
+    // Answering a channel the panel has already closed throws ("Attempting to use a disconnected
+    // port"). That is a benign close, not a failure: swallowing it here keeps it out of the
+    // `.catch` below, which would otherwise log a routing error for it and then call
+    // `sendResponse` a second time — throwing again, inside the catch handler, with nothing left
+    // downstream to catch it.
+    const answer = (result: void | { applied: boolean }) => {
+      try {
+        sendResponse(result);
+      } catch {
+        // The panel closed while the write was in flight. Nobody is waiting for this answer.
+      }
+    };
+
+    void recoveryReady
+      .then(() => handleTypedMessage(message, sender))
+      .then(answer)
+      .catch((error: unknown) => {
+        console.error('[djobi] background message failed', {
+          type: message.type,
+          tabId: tabIdOf(message, sender),
+          runId: message.runId,
+          error,
+        });
+        // No confirmed write, so the caller treats this exactly like a refusal.
+        answer({ applied: false });
+      });
+    return true;
+  }
+
+  // Acknowledge receipt synchronously, with no payload, so a sender callback does not mistake the
+  // intentionally short-lived response channel for a delivery failure. The routed task remains
+  // fire-and-forget and outlives the panel — see `lib/messages.ts`.
+  sendResponse();
   void recoveryReady
     .then(() => handleTypedMessage(message, sender))
     .catch((error: unknown) => {

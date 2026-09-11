@@ -25,6 +25,8 @@ import {
   type AddApplicationNoteResult,
   DeleteApplicationNoteResultSchema,
   type DeleteApplicationNoteResult,
+  DeleteApplicationResultSchema,
+  type DeleteApplicationResult,
   type Application,
   ApplicationSchema,
   type ApplicationStage,
@@ -85,6 +87,12 @@ export interface DashboardClient {
    * delete that worked.
    */
   deleteNote(id: string, noteId: string): Promise<DeleteApplicationNoteResult>;
+  /**
+   * Deletes an Application outright. Rejects when there's no such row — the route 404s the same
+   * way it does for a note it can't find, and an optimistic caller has to be able to tell that
+   * apart from a delete that worked.
+   */
+  deleteApplication(id: string): Promise<DeleteApplicationResult>;
   /**
    * The single stored Profile, or `null` before the candidate has saved one.
    *
@@ -202,6 +210,11 @@ export const httpDashboardClient: DashboardClient = {
       DeleteApplicationNoteResultSchema,
       { method: 'DELETE' },
     ),
+
+  deleteApplication: (id) =>
+    transport.json(`/applications/${encodeURIComponent(id)}`, DeleteApplicationResultSchema, {
+      method: 'DELETE',
+    }),
 
   getProfile: () => transport.json('/profile', MaybeProfileSchema),
 
@@ -433,6 +446,13 @@ export function createFixtureDashboardClient(
       }
       replace({ ...application, notes: remaining });
       return Promise.resolve({ id, noteId });
+    },
+
+    deleteApplication: (id) => {
+      if (!hasSession) return unauthorized(`/applications/${id}`);
+      mustFind(id);
+      applications = applications.filter((application) => application.id !== id);
+      return Promise.resolve({ id });
     },
 
     getProfile: () => {

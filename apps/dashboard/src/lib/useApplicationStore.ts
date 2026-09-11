@@ -45,6 +45,11 @@ export interface ApplicationStore {
   /** Resolves `true` if the note was removed; a failure puts it back and reports `writeError`. */
   deleteNote(id: string, noteId: string): Promise<boolean>;
   /**
+   * Removes an Application outright. Resolves `true` if it landed; a failure puts the row back
+   * where it was and reports `writeError`.
+   */
+  deleteApplication(id: string): Promise<boolean>;
+  /**
    * Creates and inserts a full row, or resolves null after reporting the failed write.
    *
    * `idempotencyKey` passes straight through to `DashboardClient.createApplication` — see its own
@@ -322,6 +327,43 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     [client, mutate],
   );
 
+  /**
+   * Removes a row outright rather than a field on one, so it doesn't fit `mutate` above (which
+   * maps `apply`/`reconcile`/`rollback` over the *same* record by id). Optimistic the same way:
+   * gone from the list immediately, put back at its original index on failure so a reload doesn't
+   * reorder the rest of the history around the restored row.
+   */
+  const deleteApplication = useCallback(
+    async (id: string): Promise<boolean> => {
+      const index = applications.findIndex((a) => a.id === id);
+      if (index === -1) return false;
+      const previous = applications[index];
+
+      setWriteError(null);
+      setApplications((current) => current.filter((a) => a.id !== id));
+
+      try {
+        await client.deleteApplication(id);
+        return true;
+      } catch (err: unknown) {
+        if (isUnauthorized(err)) {
+          setApplications([]);
+          setUnauthorized(true);
+        } else {
+          setApplications((current) => {
+            if (current.some((a) => a.id === id)) return current;
+            const restored = [...current];
+            restored.splice(Math.min(index, restored.length), 0, previous);
+            return restored;
+          });
+          setWriteError(userMessage(err));
+        }
+        return false;
+      }
+    },
+    [applications, client],
+  );
+
   const createApplication = useCallback(
     async (payload: NewApplicationRequest, idempotencyKey: string): Promise<Application | null> => {
       setWriteError(null);
@@ -355,6 +397,7 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
     updateStage,
     addNote,
     deleteNote,
+    deleteApplication,
     createApplication,
     reload,
   };

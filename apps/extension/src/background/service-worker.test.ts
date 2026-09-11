@@ -91,6 +91,64 @@ describe('service worker dispatch', () => {
     );
   });
 
+  describe('UPDATE_RUN, the one message with a real reply', () => {
+    const edit = {
+      type: 'UPDATE_RUN' as const,
+      tabId: 3,
+      runId: 'run-3',
+      updates: { answers: [], jobDescription: 'edited' },
+    };
+
+    it("keeps the channel open and answers with the store's own verdict", async () => {
+      mockHandleTypedMessage.mockResolvedValue({ applied: false });
+      resolveRecovery();
+      const sendResponse = vi.fn();
+
+      // `true` is what tells Chrome not to tear the channel down at this listener's return.
+      expect(
+        listener(typedMessageEnvelope(edit), {} as chrome.runtime.MessageSender, sendResponse),
+      ).toBe(true);
+
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ applied: false }));
+    });
+
+    /**
+     * Answering a channel the panel already closed throws ("Attempting to use a disconnected
+     * port"). That is a benign close, not a routing failure: letting it reach the `.catch` logged an
+     * error for it and then called `sendResponse` a second time — throwing again, inside the catch
+     * handler, with nothing left downstream to catch it.
+     */
+    it('swallows the throw from a panel that closed while the write was in flight', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockHandleTypedMessage.mockResolvedValue({ applied: true });
+      resolveRecovery();
+      const sendResponse = vi.fn(() => {
+        throw new Error('Attempting to use a disconnected port object');
+      });
+
+      listener(typedMessageEnvelope(edit), {} as chrome.runtime.MessageSender, sendResponse);
+
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledOnce());
+      // Answered once, not twice, and a closed panel is not reported as a failure.
+      expect(sendResponse).toHaveBeenCalledOnce();
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('reports a refusal after a routing failure, and survives a closed channel there too', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockHandleTypedMessage.mockRejectedValue(new Error('storage write failed'));
+      resolveRecovery();
+      const sendResponse = vi.fn(() => {
+        throw new Error('Attempting to use a disconnected port object');
+      });
+
+      listener(typedMessageEnvelope(edit), {} as chrome.runtime.MessageSender, sendResponse);
+
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ applied: false }));
+      expect(error).toHaveBeenCalledOnce();
+    });
+  });
+
   it.each([
     null,
     { type: 'CHECK_RUN', tabId: 7 },

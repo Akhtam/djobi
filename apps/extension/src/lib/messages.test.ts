@@ -6,7 +6,9 @@ import {
   TypedMessageSchema,
   notify,
   typedMessageEnvelope,
+  updateRun,
   type TypedMessage,
+  type UpdateRunMessage,
 } from './messages';
 import { profile } from './testFixtures';
 
@@ -87,6 +89,82 @@ describe('notify', () => {
     expect(
       notify({ type: 'START_FILL', tabId: 1, profile, expectedRunId: 'run-1' }),
     ).toBeUndefined();
+  });
+});
+
+describe('updateRun', () => {
+  const message: UpdateRunMessage = {
+    type: 'UPDATE_RUN',
+    tabId: 1,
+    runId: 'run-1',
+    updates: { answers: [], jobDescription: 'edited' },
+  };
+
+  function stubSendMessage(
+    reply: unknown,
+    lastError?: { message: string },
+  ): ReturnType<typeof vi.fn> {
+    const sendMessage = vi.fn((_message: unknown, callback: (response?: unknown) => void) =>
+      callback(reply),
+    );
+    vi.stubGlobal('chrome', { runtime: { sendMessage, lastError } });
+    return sendMessage;
+  }
+
+  it("resolves with the store's own answer when it applied the edit", async () => {
+    stubSendMessage({ applied: true });
+
+    await expect(updateRun(message)).resolves.toEqual({ applied: true, delivered: true });
+  });
+
+  /**
+   * The refusal the whole request/response shape exists for: a save in flight locks the run
+   * (`lib/run/status.ts`'s `editable`), nothing is written, and no storage echo is ever coming.
+   * `delivered` is true because the store did answer — this is a decision about the edit, not a
+   * lost message, and `panel/usePipelineRun.ts` reverts the local value only in this case.
+   */
+  it('reports a store refusal as delivered, so the caller knows the edit was decided and declined', async () => {
+    stubSendMessage({ applied: false });
+
+    await expect(updateRun(message)).resolves.toEqual({ applied: false, delivered: true });
+  });
+
+  /**
+   * A worker restarting, an extension reloading, a listener not yet registered. Nothing decided the
+   * edit, so the caller keeps its optimistic copy and the next keystroke resends — reverting the
+   * candidate's typing on a transient channel failure is the bug `delivered` exists to prevent.
+   */
+  it('marks an undelivered edit apart from a refusal, since nothing decided it', async () => {
+    stubSendMessage(undefined, { message: 'Could not establish connection.' });
+
+    await expect(updateRun(message)).resolves.toEqual({ applied: false, delivered: false });
+  });
+
+  it('treats a reply it cannot parse as undelivered too, since nothing is known to have been written', async () => {
+    stubSendMessage({ appliedd: true });
+
+    await expect(updateRun(message)).resolves.toEqual({ applied: false, delivered: false });
+  });
+
+  it('reads runtime.lastError, so an unanswered edit is not an unchecked runtime error', async () => {
+    const read = vi.fn(() => undefined);
+    const sendMessage = vi.fn((_message: unknown, callback: (response?: unknown) => void) =>
+      callback({ applied: true }),
+    );
+    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    Object.defineProperty(chrome.runtime, 'lastError', { get: read, configurable: true });
+
+    await updateRun(message);
+
+    expect(read).toHaveBeenCalled();
+  });
+
+  it('sends the edit inside the same versioned envelope every other message uses', async () => {
+    const sendMessage = stubSendMessage({ applied: true });
+
+    await updateRun(message);
+
+    expect(sendMessage).toHaveBeenCalledWith(typedMessageEnvelope(message), expect.any(Function));
   });
 });
 

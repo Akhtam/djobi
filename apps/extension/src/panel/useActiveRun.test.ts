@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeChrome } from '../lib/fakeChrome';
 import { TypedMessageEnvelopeSchema } from '../lib/messages';
 import { type PipelineRunState } from '../lib/run';
-import { getPipelineRun, patchPipelineRun, setPipelineRun } from '../lib/tabStore/pipelineRun';
+import { applyPanelEdit, getPipelineRun, setPipelineRun } from '../lib/tabStore/pipelineRun';
 import { useActiveRun } from './useActiveRun';
 import { pipelineRunFixture } from '../lib/testFixtures';
 
@@ -34,11 +34,10 @@ function stubChrome() {
     sendMessage: (message, callback) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
       if (typedMessage.type === 'UPDATE_RUN') {
-        void patchPipelineRun(
-          typedMessage.tabId,
-          typedMessage.runId,
-          typedMessage.updates as Partial<PipelineRunState>,
+        void applyPanelEdit(typedMessage.tabId, typedMessage.runId, typedMessage.updates).then(
+          ({ applied }) => callback({ applied }),
         );
+        return;
       }
       callback(undefined);
     },

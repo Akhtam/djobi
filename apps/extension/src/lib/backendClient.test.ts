@@ -14,13 +14,16 @@
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { callBackend, callBackendBinary, callBackendUpload } from './callBackend';
-import { httpBackendClient } from './backendClient';
+import { transport } from './callBackend';
+import { createFakeBackendClient, httpBackendClient, withSessionRecovery } from './backendClient';
 
-vi.mock('./callBackend', () => ({
-  callBackend: vi.fn(),
-  callBackendBinary: vi.fn(),
-  callBackendUpload: vi.fn(),
+// `transport` is the only export worth faking; the rest is passed through because
+// `backendClient.ts` also imports `HttpError` from here, and `createFakeBackendClient`'s
+// signed-out path constructs one. A factory returning `transport` alone turns that into
+// "No \"HttpError\" export is defined on the mock" instead of the 401 the test asserts.
+vi.mock('./callBackend', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./callBackend')>()),
+  transport: { json: vi.fn(), binary: vi.fn(), upload: vi.fn() },
 }));
 
 const profile: Profile = {
@@ -58,30 +61,35 @@ const jobInfo: JobInfo = {
 
 /**
  * Answers the next call the way the backend would, decoded through whichever schema the client
- * handed the transport. Mocking `callBackend` to resolve a raw value instead would skip the
+ * handed the transport. Mocking `transport.json` to resolve a raw value instead would skip the
  * response contract, which is half of what each route declares.
  */
 function respondWith(body: unknown) {
-  vi.mocked(callBackend).mockImplementation(async (_path, schema) => schema.parse(body));
+  vi.mocked(transport.json).mockImplementation(async (_path, schema) => schema.parse(body));
 }
 
 beforeEach(() => {
-  vi.mocked(callBackend).mockReset().mockResolvedValue(undefined);
-  vi.mocked(callBackendBinary).mockReset().mockResolvedValue(new ArrayBuffer(0));
-  vi.mocked(callBackendUpload).mockReset().mockResolvedValue(undefined);
+  vi.mocked(transport.json).mockReset().mockResolvedValue(undefined);
+  vi.mocked(transport.binary).mockReset().mockResolvedValue(new ArrayBuffer(0));
+  vi.mocked(transport.upload).mockReset().mockResolvedValue(undefined);
 });
 
 describe('httpBackendClient', () => {
   it('reads the profile bodyless, over GET', async () => {
     await httpBackendClient.getProfile();
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), { method: 'GET' });
+    expect(transport.json).toHaveBeenCalledWith('/profile', expect.anything(), {
+      method: 'GET',
+    });
   });
 
   it('saves the profile as the whole body', async () => {
     await httpBackendClient.saveProfile(profile);
 
-    expect(callBackend).toHaveBeenCalledWith('/profile', expect.anything(), { body: profile });
+    expect(transport.json).toHaveBeenCalledWith('/profile', expect.anything(), {
+      method: 'POST',
+      body: profile,
+    });
   });
 
   it('uploads the resume through the multipart transport, under the "resume" field', async () => {
@@ -90,13 +98,13 @@ describe('httpBackendClient', () => {
 
     await httpBackendClient.extractResume(file, signal);
 
-    expect(callBackendUpload).toHaveBeenCalledWith(
+    expect(transport.upload).toHaveBeenCalledWith(
       '/profile/extract-resume',
       expect.anything(),
       expect.any(FormData),
-      signal,
+      { signal },
     );
-    const formData = vi.mocked(callBackendUpload).mock.calls[0][2];
+    const formData = vi.mocked(transport.upload).mock.calls[0][2];
     expect(formData.get('resume')).toBe(file);
   });
 
@@ -106,9 +114,9 @@ describe('httpBackendClient', () => {
     const signal = new AbortController().signal;
     await httpBackendClient.renderResumePdf(profile, tailoredResume, signal);
 
-    expect(callBackendBinary).toHaveBeenCalledWith(
-      '/render-resume-pdf',
-      {
+    expect(transport.binary).toHaveBeenCalledWith('/render-resume-pdf', {
+      method: 'POST',
+      body: {
         profile: {
           fullName: profile.fullName,
           email: profile.email,
@@ -122,14 +130,15 @@ describe('httpBackendClient', () => {
         tailoredResume,
       },
       signal,
-    );
-    expect(callBackend).not.toHaveBeenCalled();
+    });
+    expect(transport.json).not.toHaveBeenCalled();
   });
 
   it('extracts job info from the pasted description', async () => {
     await httpBackendClient.extractJob('a posting');
 
-    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+    expect(transport.json).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+      method: 'POST',
       body: { jobDescription: 'a posting' },
       signal: undefined,
     });
@@ -138,7 +147,8 @@ describe('httpBackendClient', () => {
   it('sends only resume fields to tailoring', async () => {
     await httpBackendClient.tailorResume(profile, jobInfo);
 
-    expect(callBackend).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
+    expect(transport.json).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
+      method: 'POST',
       body: {
         profile: {
           workExperience: profile.workExperience,
@@ -154,7 +164,8 @@ describe('httpBackendClient', () => {
   it('sends only grounding fields to question drafting', async () => {
     await httpBackendClient.answerQuestions(profile, jobInfo, []);
 
-    expect(callBackend).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
+    expect(transport.json).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
+      method: 'POST',
       body: {
         profile: {
           workExperience: profile.workExperience,
@@ -173,8 +184,31 @@ describe('httpBackendClient', () => {
     });
   });
 
+  it('sends the union of tailoring and drafting fields to the consolidated Analysis Step call', async () => {
+    await httpBackendClient.analyzeApplication('A posting.', profile, []);
+
+    expect(transport.json).toHaveBeenCalledWith('/analyze', expect.anything(), {
+      method: 'POST',
+      body: {
+        jobDescription: 'A posting.',
+        profile: {
+          workExperience: profile.workExperience,
+          education: profile.education,
+          maxBulletsPerRole: profile.maxBulletsPerRole,
+          skills: profile.skills,
+          stories: profile.stories,
+          customAnswers: profile.customAnswers,
+        },
+        questions: [],
+      },
+      signal: undefined,
+      // The one route with a deadline of its own: it chains what were two model calls.
+      timeoutMs: 150_000,
+    });
+  });
+
   it('encodes the id into the update path', async () => {
-    vi.mocked(callBackend).mockResolvedValue({ id: 'application-1' });
+    vi.mocked(transport.json).mockResolvedValue({ id: 'application-1' });
     await httpBackendClient.updateApplication('a b/c', {
       company: 'Acme',
       roleTitle: 'Engineer',
@@ -188,7 +222,7 @@ describe('httpBackendClient', () => {
       bulletProvenance: null,
     });
 
-    expect(callBackend).toHaveBeenCalledWith(
+    expect(transport.json).toHaveBeenCalledWith(
       '/applications/a%20b%2Fc?response=compact',
       expect.anything(),
       expect.objectContaining({ method: 'PATCH' }),
@@ -196,12 +230,12 @@ describe('httpBackendClient', () => {
   });
 
   it('encodes the job URL into the duplicate-lookup query', async () => {
-    vi.mocked(callBackend).mockResolvedValue({ count: 0, latest: null });
+    vi.mocked(transport.json).mockResolvedValue({ count: 0, latest: null });
     await expect(
       httpBackendClient.findApplicationDuplicates('https://boards.example.com/j?id=1'),
     ).resolves.toEqual({ count: 0, latest: null });
 
-    expect(callBackend).toHaveBeenCalledWith(
+    expect(transport.json).toHaveBeenCalledWith(
       '/applications?jobUrl=https%3A%2F%2Fboards.example.com%2Fj%3Fid%3D1&response=compact',
       expect.anything(),
       { method: 'GET', signal: undefined },
@@ -213,7 +247,8 @@ describe('httpBackendClient', () => {
 
     await httpBackendClient.extractJob('a posting', signal);
 
-    expect(callBackend).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+    expect(transport.json).toHaveBeenCalledWith('/extract-job', expect.anything(), {
+      method: 'POST',
       body: { jobDescription: 'a posting' },
       signal,
     });
@@ -309,7 +344,7 @@ describe('httpBackendClient', () => {
       ),
     ).rejects.toThrow();
 
-    expect(callBackend).toHaveBeenCalledWith(
+    expect(transport.json).toHaveBeenCalledWith(
       '/applications?response=compact',
       expect.anything(),
       expect.objectContaining({ idempotencyKey: 'idempotency-key-1' }),
@@ -325,7 +360,8 @@ describe('httpBackendClient.answerChat', () => {
       messages: [],
     });
 
-    expect(callBackend).toHaveBeenCalledWith('/answer-chat', expect.anything(), {
+    expect(transport.json).toHaveBeenCalledWith('/answer-chat', expect.anything(), {
+      method: 'POST',
       body: {
         profile: {
           workExperience: profile.workExperience,
@@ -349,7 +385,7 @@ describe('httpBackendClient.answerChat', () => {
       messages: [{ role: 'user', content: 'Make it shorter.' }],
     });
 
-    expect(callBackend).toHaveBeenCalledWith(
+    expect(transport.json).toHaveBeenCalledWith(
       '/answer-chat',
       expect.anything(),
       expect.objectContaining({
@@ -372,7 +408,7 @@ describe('httpBackendClient.answerChat', () => {
       messages: [],
     });
 
-    expect(vi.mocked(callBackend).mock.calls[0][2]?.body).not.toHaveProperty('jobInfo');
+    expect(vi.mocked(transport.json).mock.calls[0][2]?.body).not.toHaveProperty('jobInfo');
   });
 });
 
@@ -415,10 +451,9 @@ describe('Profile projections', () => {
    */
   async function profileSentBy(send: () => Promise<unknown>, binary = false): Promise<unknown> {
     await send();
-    const call = binary
-      ? vi.mocked(callBackendBinary).mock.calls[0]
-      : vi.mocked(callBackend).mock.calls[0];
-    const body = binary ? call[1] : (call[2] as { body: unknown }).body;
+    const body = binary
+      ? (vi.mocked(transport.binary).mock.calls[0][1] as { body: unknown }).body
+      : (vi.mocked(transport.json).mock.calls[0][2] as { body: unknown }).body;
     return (body as { profile: unknown }).profile;
   }
 
@@ -437,6 +472,10 @@ describe('Profile projections', () => {
     [
       'answerChat',
       () => httpBackendClient.answerChat({ profile: disclosing, question: 'Why?', messages: [] }),
+    ],
+    [
+      'analyzeApplication',
+      () => httpBackendClient.analyzeApplication('A posting.', disclosing, []),
     ],
   ])('keeps contact details and screening declarations out of %s', async (_name, send) => {
     const sent = await profileSentBy(send);
@@ -461,5 +500,125 @@ describe('Profile projections', () => {
     expect(keysIn(sent)).toContain('location');
     expect(keysIn(sent)).not.toContain('stories');
     expect(keysIn(sent)).not.toContain('screeningAnswers');
+  });
+});
+
+describe('withSessionRecovery', () => {
+  // An injected `retry` rather than the real `withSharedSessionRetry`, per the module's own doc
+  // comment: what this suite is asserting is which methods the wrapper covers and how it forwards
+  // to them, not the adoption policy itself — that has its own coverage at the retry function's own
+  // seam. A fake here also means no real `chrome.cookies` lookup to stub.
+  function identityRetry<T>(attempt: () => Promise<T>): Promise<T> {
+    return attempt();
+  }
+
+  it('routes a call through retry to the wrapped method, and back with its result', async () => {
+    // Not `vi.fn(identityRetry)`: `vi.fn` collapses a generic call signature to one concrete type,
+    // which `withSessionRecovery`'s own `<T>` parameter then fails to accept. Counting calls by
+    // hand keeps `retry` genuinely generic.
+    let retryCalls = 0;
+    function retry<T>(attempt: () => Promise<T>): Promise<T> {
+      retryCalls += 1;
+      return identityRetry(attempt);
+    }
+    const client = createFakeBackendClient({
+      getProfile: vi.fn().mockResolvedValue(profile),
+    });
+
+    const result = await withSessionRecovery(client, retry).getProfile();
+
+    expect(result).toEqual(profile);
+    expect(retryCalls).toBe(1);
+    expect(client.getProfile).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The hazard the wrapped-method list exists to close: `withSessionRecovery` spreads the client, so
+   * a method left off that list is still present and callable — just unwrapped. That is neither a
+   * type error nor a failure in any other test, only a route that 401s where it should have adopted
+   * the dashboard session. The list is checked for exhaustiveness at compile time; this walks every
+   * method at runtime so the guarantee is visible here too.
+   */
+  it('routes every method but signIn and signOut through retry, with none left unwrapped', async () => {
+    const client = createFakeBackendClient();
+    const wrapped = new Set<string>();
+    function retry<T>(attempt: () => Promise<T>): Promise<T> {
+      return attempt();
+    }
+
+    const methods = (Object.keys(client) as (keyof typeof client)[]).filter(
+      (method) => method !== 'signIn' && method !== 'signOut',
+    );
+    expect(methods.length).toBeGreaterThan(0);
+
+    for (const method of methods) {
+      const spy = vi.fn().mockResolvedValue(undefined);
+      (client as unknown as Record<string, unknown>)[method] = spy;
+      const recoveredClient = withSessionRecovery(client, (attempt) => {
+        wrapped.add(method);
+        return retry(attempt);
+      });
+      await (recoveredClient[method] as () => Promise<unknown>)();
+      expect(spy).toHaveBeenCalledOnce();
+    }
+
+    expect([...wrapped].sort()).toEqual([...methods].sort());
+  });
+
+  it('forwards exactly the arguments the caller passed, not a topped-up arity', async () => {
+    const renderResumePdf = vi.fn().mockResolvedValue(new ArrayBuffer(0));
+    const client = createFakeBackendClient({ renderResumePdf });
+
+    // No `signal` — the common case, since most callers don't cancel a preview render.
+    await withSessionRecovery(client, identityRetry).renderResumePdf(profile, tailoredResume);
+
+    expect(renderResumePdf).toHaveBeenCalledWith(profile, tailoredResume);
+  });
+
+  it('retries a call the wrapped retry function decides to retry', async () => {
+    let calls = 0;
+    const getProfile = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('first attempt fails');
+      return profile;
+    });
+    const client = createFakeBackendClient({ getProfile });
+    // A minimal stand-in for `withSharedSessionRetry`'s own shape: one retry on failure.
+    const retryOnce = <T>(attempt: () => Promise<T>): Promise<T> =>
+      attempt().catch(() => attempt());
+
+    const result = await withSessionRecovery(client, retryOnce).getProfile();
+
+    expect(result).toEqual(profile);
+    expect(getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets a retry function reject propagate to the caller', async () => {
+    const client = createFakeBackendClient({
+      getProfile: vi.fn().mockRejectedValue(new Error('still unauthorized')),
+    });
+
+    await expect(withSessionRecovery(client, identityRetry).getProfile()).rejects.toThrow(
+      'still unauthorized',
+    );
+  });
+
+  it('passes signIn and signOut through untouched, so a session change is never retried', async () => {
+    let retryCalls = 0;
+    function retry<T>(attempt: () => Promise<T>): Promise<T> {
+      retryCalls += 1;
+      return identityRetry(attempt);
+    }
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    const signOut = vi.fn().mockResolvedValue(undefined);
+    const client = createFakeBackendClient({ signIn, signOut });
+
+    const recovered = withSessionRecovery(client, retry);
+    await recovered.signIn('jane@example.com', 'correct horse battery staple');
+    await recovered.signOut();
+
+    expect(signIn).toHaveBeenCalledWith('jane@example.com', 'correct horse battery staple');
+    expect(signOut).toHaveBeenCalledOnce();
+    expect(retryCalls).toBe(0);
   });
 });

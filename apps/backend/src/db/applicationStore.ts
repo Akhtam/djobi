@@ -33,6 +33,7 @@ import {
   type ApplicationStage,
   type ApplicationWriteResult,
   type DeleteApplicationNoteResult,
+  type DeleteApplicationResult,
   type DuplicateApplicationSummary,
   type NewApplication,
   type NewNote,
@@ -137,6 +138,14 @@ export interface ApplicationStore {
     id: string,
     noteId: string,
   ): Promise<Written<DeleteApplicationNoteResult> | null>;
+  /**
+   * Removes an Application entirely. `null` when this user has no such row — the same
+   * indistinguishable "not yours or not there" as every other method here.
+   *
+   * Unlike every write above, there is no row left to carry back — nothing to spread into
+   * `Written`, so this answers the bare compact result on success.
+   */
+  deleteApplication(userId: string, id: string): Promise<DeleteApplicationResult | null>;
 }
 
 /**
@@ -302,6 +311,15 @@ export function inMemoryApplicationStore(
       const trimmed: Application = { ...existing, notes: remaining };
       rows.set(id, trimmed);
       return { id, noteId, application: trimmed };
+    },
+
+    async deleteApplication(userId, id) {
+      if (!ownedRow(userId, id)) return null;
+
+      rows.delete(id);
+      owners.delete(id);
+      sequence.delete(id);
+      return { id };
     },
   };
 }

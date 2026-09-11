@@ -28,22 +28,14 @@ import { isUnauthorized, userMessage } from '@djobi/http-client';
 import { EMPTY_PROFILE, parseProfile, type ExtractedProfile, type Profile } from '@djobi/shared';
 import {
   addSkill,
-  ContactFields,
-  CredentialEntryFields,
-  CustomAnswerEntryFields,
-  EducationEntryFields,
-  LinksFields,
   profileListEditors,
+  profileListSectionEntry,
+  PROFILE_SECTION_BY_KEY,
   PROFILE_SECTIONS,
-  ProjectEntryFields,
+  ProfileSectionFields,
   removeSkill,
-  ResumeSettingsFields,
-  ScreeningAnswerFields,
   scrollToSection,
-  StoryEntryFields,
-  SummaryField,
   useProfileDraft,
-  WorkExperienceEntryFields,
   type BulletListClassNames,
   type CheckboxFieldRenderer,
   type CredentialItem,
@@ -221,10 +213,9 @@ export function Profile({
     return <p className="empty-state">Loading profile…</p>;
   }
 
-  const { work, education, stories, customAnswers, projects, credentials } = profileListEditors(
-    profile,
-    setProfile,
-  );
+  const editors = profileListEditors(profile, setProfile);
+  const { work, education, stories, customAnswers, projects, credentials } = editors;
+  const section = PROFILE_SECTION_BY_KEY;
 
   /**
    * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
@@ -306,7 +297,7 @@ export function Profile({
       ) : null}
 
       <section className="detail__panel">
-        <PanelHead id="section-upload" legend="Upload resume" />
+        <PanelHead id={section.upload.anchor} legend={section.upload.title} />
         <div className="detail__panel-body">
           <div className="upload-resume-card">
             <button
@@ -400,43 +391,11 @@ export function Profile({
         {activeTab === 'profile' && (
           <>
             <section className="detail__panel">
-              <PanelHead id="section-contact" legend="Contact details" />
+              <PanelHead id={section.contact.anchor} legend={section.contact.title} />
               <div className="detail__panel-body">
                 <div className="profile-field-grid">
-                  <ContactFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
-                </div>
-              </div>
-            </section>
-
-            <section className="detail__panel">
-              <PanelHead id="section-links" legend="Links" />
-              <div className="detail__panel-body">
-                <div className="profile-field-grid">
-                  <LinksFields chrome={fieldChrome} profile={profile} onChange={setProfile} />
-                </div>
-              </div>
-            </section>
-
-            <section className="detail__panel">
-              <PanelHead
-                id="section-summary"
-                legend="Summary"
-                hint="A short intro paragraph, shown near the top of the resume."
-              />
-              <div className="detail__panel-body">
-                <SummaryField chrome={fieldChrome} profile={profile} onChange={setProfile} />
-              </div>
-            </section>
-
-            <section className="detail__panel">
-              <PanelHead
-                id="section-resume"
-                legend="Resume PDF"
-                hint="Formatting used for both resume previews and attachments."
-              />
-              <div className="detail__panel-body">
-                <div className="profile-field-grid">
-                  <ResumeSettingsFields
+                  <ProfileSectionFields
+                    section="contact"
                     chrome={fieldChrome}
                     profile={profile}
                     onChange={setProfile}
@@ -446,7 +405,55 @@ export function Profile({
             </section>
 
             <section className="detail__panel">
-              <PanelHead id="section-skills" legend="Skills" />
+              <PanelHead id={section.links.anchor} legend={section.links.title} />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  <ProfileSectionFields
+                    section="links"
+                    chrome={fieldChrome}
+                    profile={profile}
+                    onChange={setProfile}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="detail__panel">
+              <PanelHead
+                id={section.summary.anchor}
+                legend={section.summary.title}
+                hint={section.summary.hint}
+              />
+              <div className="detail__panel-body">
+                <ProfileSectionFields
+                  section="summary"
+                  chrome={fieldChrome}
+                  profile={profile}
+                  onChange={setProfile}
+                />
+              </div>
+            </section>
+
+            <section className="detail__panel">
+              <PanelHead
+                id={section.resume.anchor}
+                legend={section.resume.title}
+                hint={section.resume.hint}
+              />
+              <div className="detail__panel-body">
+                <div className="profile-field-grid">
+                  <ProfileSectionFields
+                    section="resume"
+                    chrome={fieldChrome}
+                    profile={profile}
+                    onChange={setProfile}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="detail__panel">
+              <PanelHead id={section.skills.anchor} legend={section.skills.title} />
               <div className="detail__panel-body">
                 <ul className="profile-skills">
                   {profile.skills.map((skill) => (
@@ -486,11 +493,11 @@ export function Profile({
             </section>
 
             <ListSection
-              id="section-work"
-              legend="Work experience"
-              noun="work experience"
-              addLabel="Add work experience"
-              hint="Keep the full bullet bank for each role. Star must-keep evidence; tailoring selects the rest up to the cap."
+              id={section.work.anchor}
+              legend={section.work.title}
+              noun={section.work.noun}
+              addLabel={section.work.addLabel}
+              hint={section.work.hint}
               items={profile.workExperience}
               editor={work}
               controls={
@@ -522,82 +529,64 @@ export function Profile({
                   : null;
               }}
             >
-              {(entry, index) => (
-                <div className="profile-field-grid">
-                  <WorkExperienceEntryFields
-                    chrome={fieldChrome}
-                    bulletListClassNames={workBulletListClassNames}
-                    entry={entry}
-                    index={index}
-                    maxBulletsPerRole={profile.maxBulletsPerRole}
-                    work={work}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('work', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                bulletListClassNames: workBulletListClassNames,
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
 
             <ListSection
-              id="section-projects"
-              legend="Projects"
-              noun="project"
-              addLabel="Add project"
-              hint="Personal, open-source or freelance work — anything not covered by Work experience above."
+              id={section.projects.anchor}
+              legend={section.projects.title}
+              noun={section.projects.noun}
+              addLabel={section.projects.addLabel}
+              hint={section.projects.hint}
               items={profile.projects}
               editor={projects}
             >
-              {(entry, index) => (
-                <div className="profile-field-grid">
-                  <ProjectEntryFields
-                    chrome={fieldChrome}
-                    bulletListClassNames={projectBulletListClassNames}
-                    entry={entry}
-                    index={index}
-                    projects={projects}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('projects', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                bulletListClassNames: projectBulletListClassNames,
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
 
             <ListSection
-              id="section-education"
-              legend="Education"
-              noun="education"
-              addLabel="Add education"
+              id={section.education.anchor}
+              legend={section.education.title}
+              noun={section.education.noun}
+              addLabel={section.education.addLabel}
               items={profile.education}
               editor={education}
             >
-              {(entry, index) => (
-                <div className="profile-field-grid">
-                  <EducationEntryFields
-                    chrome={fieldChrome}
-                    entry={entry}
-                    index={index}
-                    education={education}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('education', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
 
             <ListSection
-              id="section-credentials"
-              legend="Certifications & Awards"
-              noun="certification or award"
-              addLabel="Add certification or award"
-              hint="Pick which each row is — the fields shown adjust to match."
+              id={section.credentials.anchor}
+              legend={section.credentials.title}
+              noun={section.credentials.noun}
+              addLabel={section.credentials.addLabel}
+              hint={section.credentials.hint}
               items={credentials.items}
               editor={credentials.editor}
             >
-              {(item, index) => (
-                <div className="profile-field-grid">
-                  <CredentialEntryFields
-                    chrome={fieldChrome}
-                    item={item}
-                    index={index}
-                    editor={credentials.editor}
-                    changeKind={credentials.changeKind}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('credentials', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
           </>
         )}
@@ -606,13 +595,14 @@ export function Profile({
           <>
             <section className="detail__panel">
               <PanelHead
-                id="section-screening"
-                legend="Screening answers"
-                hint="The questions almost every application asks. Anything answered here is filled in directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as usual."
+                id={section.screening.anchor}
+                legend={section.screening.title}
+                hint={section.screening.hint}
               />
               <div className="detail__panel-body">
                 <div className="profile-field-grid">
-                  <ScreeningAnswerFields
+                  <ProfileSectionFields
+                    section="screening"
                     chrome={fieldChrome}
                     profile={profile}
                     onChange={setProfile}
@@ -622,44 +612,36 @@ export function Profile({
             </section>
 
             <ListSection
-              id="section-answers"
-              legend="Other prepared answers"
-              noun="prepared answer"
-              addLabel="Add prepared answer"
-              hint="Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically."
+              id={section.answers.anchor}
+              legend={section.answers.title}
+              noun={section.answers.noun}
+              addLabel={section.answers.addLabel}
+              hint={section.answers.hint}
               items={profile.customAnswers}
               editor={customAnswers}
             >
-              {(entry, index) => (
-                <div className="profile-field-grid">
-                  <CustomAnswerEntryFields
-                    chrome={fieldChrome}
-                    entry={entry}
-                    index={index}
-                    customAnswers={customAnswers}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('answers', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
 
             <ListSection
-              id="section-stories"
-              legend="Stories"
-              noun="story"
-              addLabel="Add story"
+              id={section.stories.anchor}
+              legend={section.stories.title}
+              noun={section.stories.noun}
+              addLabel={section.stories.addLabel}
               items={profile.stories}
               editor={stories}
             >
-              {(entry, index) => (
-                <div className="profile-field-grid">
-                  <StoryEntryFields
-                    chrome={fieldChrome}
-                    entry={entry}
-                    index={index}
-                    stories={stories}
-                  />
-                </div>
-              )}
+              {profileListSectionEntry('stories', {
+                chrome: fieldChrome,
+                editors,
+                wrapperClassName: 'profile-field-grid',
+                maxBulletsPerRole: profile.maxBulletsPerRole,
+              })}
             </ListSection>
           </>
         )}

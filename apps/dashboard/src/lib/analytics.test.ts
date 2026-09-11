@@ -13,6 +13,7 @@ import {
   coverageForKeywords,
   evidenceByRequirement,
   keywordFrequency,
+  keywordRows,
   outcomeOf,
   rangeStart,
   requirementEvidenceRollup,
@@ -580,8 +581,6 @@ describe('analyticsReport', () => {
       range: '7d',
       stage: null,
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
       profile: null,
     });
 
@@ -592,8 +591,6 @@ describe('analyticsReport', () => {
       range: '7d',
       stage: 'onsite',
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
       profile: null,
     });
     // Stage narrows `filtered` but never `inRange` — the stage pills count against `inRange`.
@@ -601,13 +598,11 @@ describe('analyticsReport', () => {
     expect(staged.filtered.map((a) => a.id)).toEqual(['b']);
   });
 
-  it('rows applies minAppearances to frequency without changing frequency itself', () => {
+  it('computes frequency before any table-only filtering', () => {
     const report = analyticsReport(apps(), {
       range: '7d',
       stage: null,
       asOf: today,
-      minAppearances: 2,
-      gapsOnly: false,
       profile: null,
     });
 
@@ -617,38 +612,19 @@ describe('analyticsReport', () => {
       'TypeScript',
       'migration',
     ]);
-    expect(report.rows.map((row) => row.term)).toEqual(['Rust']);
   });
 
-  it('gapsOnly narrows rows to missing terms but leaves gapCount counting the whole frequency', () => {
+  it('computes coverage and gapCount across the whole frequency', () => {
     const withGaps = analyticsReport(apps(), {
       range: '7d',
       stage: null,
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: true,
       profile: fixtureProfile,
     });
 
     // TypeScript is a skill and migration is evidenced by a bullet — only Rust is a genuine gap.
-    expect(withGaps.rows.map((row) => row.term)).toEqual(['Rust']);
+    expect(withGaps.coverageByTerm?.get('Rust')).toBe('missing');
     expect(withGaps.gapCount).toBe(1);
-
-    const withoutToggle = analyticsReport(apps(), {
-      range: '7d',
-      stage: null,
-      asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
-      profile: fixtureProfile,
-    });
-    // gapCount is the same whether or not the toggle narrows what's displayed.
-    expect(withoutToggle.gapCount).toBe(1);
-    expect(withoutToggle.rows.map((row) => row.term).sort()).toEqual([
-      'Rust',
-      'TypeScript',
-      'migration',
-    ]);
   });
 
   it('coverageByTerm and gapCount stay null/0 without a profile, never throwing', () => {
@@ -656,30 +632,11 @@ describe('analyticsReport', () => {
       range: '7d',
       stage: null,
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
       profile: null,
     });
 
     expect(report.coverageByTerm).toBeNull();
     expect(report.gapCount).toBe(0);
-    expect(report.rows.map((row) => row.term).sort()).toEqual(['Rust', 'TypeScript', 'migration']);
-  });
-
-  it('a gapsOnly toggle with nothing to score against hides every row rather than guessing', () => {
-    // Unreachable through the UI — `Analytics.tsx` disables the toggle until a Profile has
-    // loaded — but the report itself must still answer sanely: nothing can be confirmed a gap
-    // without something to score against, so nothing is shown as one.
-    const report = analyticsReport(apps(), {
-      range: '7d',
-      stage: null,
-      asOf: today,
-      minAppearances: 1,
-      gapsOnly: true,
-      profile: null,
-    });
-
-    expect(report.rows).toEqual([]);
   });
 
   it('suppresses baseline entirely once a stage filter narrows the population', () => {
@@ -687,8 +644,6 @@ describe('analyticsReport', () => {
       range: '7d',
       stage: null,
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
       profile: null,
     });
     expect(unfiltered.baseline).not.toBeNull();
@@ -697,11 +652,43 @@ describe('analyticsReport', () => {
       range: '7d',
       stage: 'onsite',
       asOf: today,
-      minAppearances: 1,
-      gapsOnly: false,
       profile: null,
     });
     expect(staged.baseline).toBeNull();
+  });
+});
+
+describe('keywordRows', () => {
+  const frequency = [
+    frequencyRow({ term: 'Rust', count: 2 }),
+    frequencyRow({ term: 'TypeScript', count: 1 }),
+    frequencyRow({ term: 'migration', count: 1 }),
+  ];
+  const coverage = new Map<string, 'skills' | 'experience' | 'missing'>([
+    ['Rust', 'missing'],
+    ['TypeScript', 'skills'],
+    ['migration', 'experience'],
+  ]);
+
+  it('applies minAppearances without changing frequency itself', () => {
+    expect(keywordRows(frequency, null, { minAppearances: 2, gapsOnly: false })).toEqual([
+      frequency[0],
+    ]);
+    expect(frequency).toHaveLength(3);
+  });
+
+  it('narrows rows to missing terms when gapsOnly is set', () => {
+    expect(keywordRows(frequency, coverage, { minAppearances: 1, gapsOnly: true })).toEqual([
+      frequency[0],
+    ]);
+  });
+
+  it('composes gapsOnly with minAppearances', () => {
+    expect(keywordRows(frequency, coverage, { minAppearances: 3, gapsOnly: true })).toEqual([]);
+  });
+
+  it('hides every row when gapsOnly has no coverage to score against', () => {
+    expect(keywordRows(frequency, null, { minAppearances: 1, gapsOnly: true })).toEqual([]);
   });
 });
 

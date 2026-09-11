@@ -16,6 +16,18 @@ function respondWith(build: () => Response) {
   return { fetchImpl, calls };
 }
 
+/** A `fetch` that settles only by rejecting when the call's deadline aborts it. */
+function neverAnswers(): typeof globalThis.fetch {
+  return vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('Aborted', 'AbortError')),
+        );
+      }),
+  ) as unknown as typeof globalThis.fetch;
+}
+
 describe('createHttpTransport', () => {
   it('prefixes the injected baseUrl, so each app names its own origin', async () => {
     // The reason the origin is a parameter: once deployed the dashboard is same-origin and wants a
@@ -280,6 +292,32 @@ describe('createHttpTransport', () => {
 
     expect(error).toBeInstanceOf(HttpError);
     expect(error).toMatchObject({ kind: 'timeout', path: '/extract-job' });
+  });
+
+  /**
+   * The transport budget has to clear the slowest route it serves, so without a per-call override a
+   * single long route drags every fast one up with it — a hung `GET /profile` waiting out the
+   * chained model work's deadline instead of its own.
+   */
+  it("lets one call set its own deadline, so a slow route's budget is not every route's", async () => {
+    const fetchImpl = neverAnswers();
+    const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl, timeoutMs: 10_000 });
+
+    const error = await client
+      .json('/analyze', Schema, { method: 'POST', body: {}, timeoutMs: 20 })
+      .catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ kind: 'timeout', path: '/analyze' });
+    // Named in the message too, so a log says which deadline was actually in force.
+    expect((error as HttpError).message).toContain('within 0s');
+  });
+
+  it("leaves a call that asked for nothing on the transport's own deadline", async () => {
+    const client = createHttpTransport({ baseUrl: '', fetch: neverAnswers(), timeoutMs: 20 });
+
+    const error = await client.json('/profile', Schema).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ kind: 'timeout', path: '/profile' });
   });
 
   it("lets the caller's own cancellation propagate as itself, rather than reporting a timeout", async () => {

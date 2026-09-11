@@ -132,7 +132,17 @@ type AnalysisResult = Pick<
   'status' | 'tailoredResume' | 'answers' | 'coverage'
 > & { jobInfo: JobInfo };
 
-/** The Analysis Step: Job Info, then a Tailored Resume and Question Answers drafted from it. */
+/**
+ * The Analysis Step: Job Info, then a Tailored Resume and Question Answers drafted from it.
+ *
+ * The three model calls this used to make one after another — `extractJob`, then
+ * `Promise.all([tailorResume, answerQuestions])` — are now one round trip against
+ * `BackendClient.analyzeApplication` (`POST /analyze`, see `apps/backend/src/llm/analyzeApplication.ts`),
+ * with the same sequencing run server-side. Everything below stays here regardless: which fields on
+ * the page are questions, the prepared-answer split, which questions are worth a model call at all,
+ * reconstructing the page's own answer order, and measuring Keyword Coverage all depend on Detected
+ * Fields or the full Profile, neither of which the backend endpoint receives or needs.
+ */
 async function analysisStep(
   jobDescription: string,
   jobPageData: JobPageData,
@@ -140,8 +150,6 @@ async function analysisStep(
   deps: PipelineDeps,
   signal: AbortSignal,
 ): Promise<AnalysisResult> {
-  const jobInfo = await deps.backend.extractJob(jobDescription, signal);
-
   const questions = jobPageData.fields
     .filter((field) => autofillSource(field.category) === 'question')
     // Only the labels cross to the backend — a choice's DOM selector is meaningless there, and
@@ -173,15 +181,14 @@ async function analysisStep(
     (question) => question.knownAnswer !== undefined || requiredFieldIds.has(question.fieldId),
   );
 
-  const [tailoredResume, drafted] = await Promise.all([
-    deps.backend.tailorResume(profile, jobInfo, signal),
-    // Not even a round trip when the profile answered everything the form asks: the backend would
-    // return `[]` without a model call, and the Analysis Step is the wrong place to spend a request
-    // establishing that.
-    toDraft.length > 0
-      ? deps.backend.answerQuestions(profile, jobInfo, toDraft, signal)
-      : Promise.resolve([]),
-  ]);
+  // Not even a round trip's worth of drafting when the profile answered everything the form asks:
+  // `toDraft` can be empty, and `answerQuestions` returns `[]` on the backend with no model call —
+  // the Analysis Step is the wrong place to spend a request establishing that itself.
+  const {
+    jobInfo,
+    tailoredResume,
+    answers: drafted,
+  } = await deps.backend.analyzeApplication(jobDescription, profile, toDraft, signal);
 
   const prepared: QuestionAnswer[] = resolved.map((question) => ({
     fieldId: question.fieldId,

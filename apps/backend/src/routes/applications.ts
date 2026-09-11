@@ -157,5 +157,16 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     ),
   );
 
+  /**
+   * Deletes the Application itself, not just a note on it. Answers the same shape `writeResponse`
+   * would for a compact caller (`{ id }`) or a 404 for a row this user doesn't own — there's no
+   * full-row case to fall back to, since a delete leaves nothing to read back.
+   */
+  route.delete('/applications/:id', async (c) => {
+    const result = await store.deleteApplication(c.get('userId'), c.req.param('id'));
+    if (!result) return c.json({ error: 'Application not found' }, 404);
+    return c.json(result);
+  });
+
   return route;
 }

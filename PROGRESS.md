@@ -1695,10 +1695,12 @@ Decisions:
   its query and its response shape are written up in `background/apiDetectors.ts`'s own comment;
   rebuilding it needs `jobs.ashbyhq.com` in `host_permissions` and a POST body, which
   `AtsOracle.request` would have to start returning an `init` for again.
-- **`packages/shared/src/screeningAnswers.ts` has no test file** — the only module in that package
-  without one. `matchScreeningTopic`'s order-dependent matching (a question naming both work
-  authorization and sponsorship must resolve to the former) is covered only indirectly, through
-  `preparedAnswers`.
+- ~~**`packages/shared/src/screeningAnswers.ts` has no test file.**~~ Stale: `matchScreeningTopic`
+  is directly tested in `preparedAnswers.test.ts`'s own `describe('matchScreeningTopic', …)` block,
+  order-dependent overlap case included (a question naming both work authorization and sponsorship
+  resolves to the former). Extended to one case per `SCREENING_TOPICS` entry — the topics it had not
+  named were exercised only by whichever topic they happened to fall through to, which would not
+  have caught a typo in one of their own patterns.
 - ~~**A second non-autofilling form was mentioned but never supplied.**~~ Supplied and fixed: a
   Lever posting (`jobs.lever.co/sonarsource/…/apply`) that filled nothing at all. Detection was
   never the problem — `content/leverForm.test.ts` runs against the captured live form and finds and

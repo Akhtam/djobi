@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { jobKeyForUrl, type JobDescriptionSource } from '../lib/jobContext';
 import { notify } from '../lib/messages';
-import { readPostingFromTab, type PostingReadOutcome } from '../lib/postingReader';
+import { chromePageClient, type PostingReadOutcome } from '../lib/pageClient';
 import { canEditRun } from '../lib/run';
 import { getJobContext } from '../lib/tabStore/jobContext';
 import type { ActiveRun } from './useActiveRun';
@@ -63,7 +63,7 @@ export interface JobDescription {
 
 export function useJobDescription(
   activeRun: ActiveRun,
-  readPosting: (tabId: number) => Promise<PostingReadOutcome> = readPostingFromTab,
+  readPosting: (tabId: number) => Promise<PostingReadOutcome> = chromePageClient.readPosting,
 ): JobDescription {
   const { tabId, tabUrl, changeToken, run, status, edit: editRun } = activeRun;
 

@@ -38,6 +38,7 @@ function client(overrides: Partial<DashboardClient> = {}): DashboardClient {
     findApplicationDuplicates: () => Promise.resolve({ count: 0, latest: null }),
     updateStage: (id, stage) => Promise.resolve({ id, stage }),
     deleteNote: (id, noteId) => Promise.resolve({ id, noteId }),
+    deleteApplication: (id) => Promise.resolve({ id }),
     addNote: (id, appended) =>
       Promise.resolve({
         id,
@@ -282,6 +283,32 @@ describe('useApplicationStore', () => {
     });
 
     expect(store.current.applications[0].notes.map((n) => n.text)).toEqual([doomed.text, 'Later.']);
+  });
+
+  it('removes an Application optimistically and keeps it gone once the write lands', async () => {
+    const store = await loadedStore(client());
+
+    await act(async () => {
+      expect(await store.current.deleteApplication('app-1')).toBe(true);
+    });
+
+    expect(store.current.applications).toEqual([]);
+  });
+
+  it('puts a deleted Application back at its original index when the write fails', async () => {
+    const second = { ...structuredClone(application), id: 'app-2', company: 'Second' };
+    const store = await loadedStore(
+      client({
+        listApplications: () => Promise.resolve([structuredClone(application), second]),
+        deleteApplication: () => Promise.reject(new Error('Backend unreachable')),
+      }),
+    );
+
+    await act(async () => {
+      expect(await store.current.deleteApplication('app-1')).toBe(false);
+    });
+
+    expect(store.current.applications.map((a) => a.id)).toEqual(['app-1', 'app-2']);
   });
 
   /**

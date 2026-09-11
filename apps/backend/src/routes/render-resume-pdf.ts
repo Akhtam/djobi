@@ -6,23 +6,11 @@ import { renderResumePdf } from '../pdf/renderResume.js';
 /** `POST /render-resume-pdf` — renders a tailored resume to PDF bytes. */
 export const renderResumePdfRoute = new Hono();
 
-let cachedRender: { key: string; promise: Promise<Uint8Array> } | undefined;
-
 renderResumePdfRoute.post('/render-resume-pdf', async (c) => {
   const parsed = await parseBody(c, RenderResumePdfRequestSchema);
 
   const { profile, tailoredResume } = parsed;
-  const key = JSON.stringify([profile, tailoredResume]);
-
-  if (cachedRender?.key !== key) {
-    const promise = renderResumePdf(profile, tailoredResume);
-    cachedRender = { key, promise };
-    void promise.catch(() => {
-      if (cachedRender?.promise === promise) cachedRender = undefined;
-    });
-  }
-
-  const pdfBytes = await cachedRender.promise;
+  const pdfBytes = await renderResumePdf(profile, tailoredResume);
   return new Response(pdfBytes, {
     headers: {
       'content-type': 'application/pdf',

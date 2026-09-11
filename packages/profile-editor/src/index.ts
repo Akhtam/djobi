@@ -30,3 +30,4 @@ export * from './profileDraft.js';
 export * from './profileSections.js';
 export * from './fieldChrome.js';
 export * from './profileFieldBodies.js';
+export * from './profileSectionBodies.js';

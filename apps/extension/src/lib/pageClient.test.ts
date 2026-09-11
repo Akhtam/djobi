@@ -1,5 +1,6 @@
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ScrapeJobDescriptionResponse } from './messages';
 import { chromePageClient, PageResponseError } from './pageClient';
 
 /**
@@ -172,6 +173,16 @@ describe('chromePageClient.fill', () => {
     ).resolves.toBeNull();
   });
 
+  it('never reinjects and retries a fill that may already have clicked or uploaded', async () => {
+    stubTabs(undefined);
+    const executeScript = vi.fn();
+    Object.assign(chrome, { scripting: { executeScript } });
+
+    await chromePageClient.fill(7, { runId: 'run-1', fields: [], values: {} });
+
+    expect(executeScript).not.toHaveBeenCalled();
+  });
+
   it('rejects a malformed fill reply at the content-script boundary', async () => {
     stubTabs({ ok: true, filledFieldIds: 'not-an-array', resumeAttached: false });
 
@@ -212,5 +223,231 @@ describe('chromePageClient.fill', () => {
       name: 'PageResponseError',
       message: expect.stringContaining('unrequested field'),
     } satisfies Partial<PageResponseError>);
+  });
+});
+
+function stubPostingChrome(frames: number[], responses: Record<number, unknown>) {
+  const sendMessage = vi.fn(
+    (
+      _tabId: number,
+      _message: unknown,
+      options: { frameId: number },
+      callback: (response?: unknown) => void,
+    ) => callback(responses[options.frameId]),
+  );
+  vi.stubGlobal('chrome', {
+    webNavigation: {
+      getAllFrames: vi.fn((_details: unknown, callback: (result: { frameId: number }[]) => void) =>
+        callback(frames.map((frameId) => ({ frameId }))),
+      ),
+    },
+    tabs: { sendMessage },
+    runtime: { lastError: undefined },
+  });
+  return sendMessage;
+}
+
+describe('chromePageClient.readPosting', () => {
+  beforeEach(() => vi.unstubAllGlobals());
+
+  it('addresses every frame and selects the highest-scoring result rather than the first reply', async () => {
+    const sendMessage = stubPostingChrome([0, 4], {
+      0: { candidate: { text: 'Top frame', score: 50, source: 'dom' } },
+      4: { candidate: { text: 'Embedded posting', score: 90, source: 'structured-data' } },
+    });
+
+    await expect(chromePageClient.readPosting(7)).resolves.toEqual({
+      status: 'success',
+      candidate: { text: 'Embedded posting', score: 90, source: 'structured-data' },
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledWith(
+      7,
+      { type: 'SCRAPE_JOB_DESCRIPTION' },
+      { frameId: 4 },
+      expect.any(Function),
+    );
+  });
+
+  it('prefers the top frame when scores tie', async () => {
+    stubPostingChrome([3, 0], {
+      0: { candidate: { text: 'Top frame', score: 70, source: 'dom' } },
+      3: { candidate: { text: 'Iframe', score: 70, source: 'dom' } },
+    });
+
+    await expect(chromePageClient.readPosting(7)).resolves.toMatchObject({
+      status: 'success',
+      candidate: { text: 'Top frame' },
+    });
+  });
+
+  it('distinguishes a reachable page with no posting from unreachable content scripts', async () => {
+    stubPostingChrome([0], { 0: { candidate: null } });
+    await expect(chromePageClient.readPosting(7)).resolves.toEqual({ status: 'not-found' });
+
+    stubPostingChrome([0], { 0: undefined });
+    await expect(chromePageClient.readPosting(7)).resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it('keeps a valid candidate when another frame returns a malformed response', async () => {
+    stubPostingChrome([0, 4], {
+      0: { candidate: { text: 'Valid posting', score: 50, source: 'dom' } },
+      4: { candidate: { text: 42, score: 'high', source: 'dom' } },
+    });
+
+    await expect(chromePageClient.readPosting(7)).resolves.toMatchObject({
+      status: 'success',
+      candidate: { text: 'Valid posting' },
+    });
+  });
+
+  it('rejects malformed scrape replies when no frame returns a valid response', async () => {
+    stubPostingChrome([0, 4], {
+      0: { candidate: { text: 42, score: 50, source: 'dom' } },
+      4: undefined,
+    });
+
+    await expect(chromePageClient.readPosting(7)).rejects.toMatchObject({
+      name: 'PageResponseError',
+      command: 'SCRAPE_JOB_DESCRIPTION',
+    } satisfies Partial<PageResponseError>);
+  });
+
+  it('reinjects and retries only when every frame is unreachable', async () => {
+    let reconnected = false;
+    const candidate = { text: 'Anthropic job description', score: 90, source: 'dom' as const };
+    const sendMessage = vi.fn(
+      (
+        _tabId: number,
+        _message: unknown,
+        _options: { frameId: number },
+        callback: (response?: ScrapeJobDescriptionResponse) => void,
+      ) => callback(reconnected ? { candidate } : undefined),
+    );
+    const executeScript = vi.fn(
+      (
+        _details: chrome.scripting.ScriptInjection<unknown[], unknown>,
+        callback: (results: chrome.scripting.InjectionResult[]) => void,
+      ) => {
+        reconnected = true;
+        callback([]);
+      },
+    );
+    vi.stubGlobal('chrome', {
+      webNavigation: {
+        getAllFrames: vi.fn(
+          (_details: unknown, callback: (result: { frameId: number }[]) => void) =>
+            callback([{ frameId: 0 }]),
+        ),
+      },
+      tabs: { sendMessage },
+      scripting: { executeScript },
+      runtime: {
+        lastError: undefined,
+        getManifest: () => ({
+          content_scripts: [{ matches: ['https://*/*'], js: ['content.js'] }],
+        }),
+      },
+    });
+
+    await expect(chromePageClient.readPosting(7)).resolves.toEqual({
+      status: 'success',
+      candidate,
+    });
+    expect(executeScript).toHaveBeenCalledWith(
+      { target: { tabId: 7, allFrames: true }, files: ['content.js'] },
+      expect.any(Function),
+    );
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * A frame answering with an unexpected shape is most often a *stale* content script — an orphan
+   * left by an extension reload — which is the case reinjection exists to repair. Throwing at the
+   * first sweep pre-empted that repair and told the candidate to reload the tab instead.
+   */
+  it('reinjects for a malformed reply too, since a stale content script answers with one', async () => {
+    let reconnected = false;
+    const candidate = { text: 'Anthropic job description', score: 90, source: 'dom' as const };
+    const sendMessage = vi.fn(
+      (
+        _tabId: number,
+        _message: unknown,
+        _options: { frameId: number },
+        callback: (response?: unknown) => void,
+      ) => callback(reconnected ? { candidate } : { candidate: { text: 42, score: 'high' } }),
+    );
+    const executeScript = vi.fn(
+      (
+        _details: chrome.scripting.ScriptInjection<unknown[], unknown>,
+        callback: (results: chrome.scripting.InjectionResult[]) => void,
+      ) => {
+        reconnected = true;
+        callback([]);
+      },
+    );
+    vi.stubGlobal('chrome', {
+      webNavigation: {
+        getAllFrames: vi.fn(
+          (_details: unknown, callback: (result: { frameId: number }[]) => void) =>
+            callback([{ frameId: 0 }]),
+        ),
+      },
+      tabs: { sendMessage },
+      scripting: { executeScript },
+      runtime: {
+        lastError: undefined,
+        getManifest: () => ({
+          content_scripts: [{ matches: ['https://*/*'], js: ['content.js'] }],
+        }),
+      },
+    });
+
+    await expect(chromePageClient.readPosting(7)).resolves.toEqual({
+      status: 'success',
+      candidate,
+    });
+    expect(executeScript).toHaveBeenCalledOnce();
+  });
+
+  it('still raises the malformed reply when reinjection does not fix it', async () => {
+    // Reachable frames that disagree with this build\'s contract are more informative than a bare
+    // "unavailable": the fix is a rebuild, not a tab reload.
+    const executeScript = vi.fn(
+      (
+        _details: chrome.scripting.ScriptInjection<unknown[], unknown>,
+        callback: (results: chrome.scripting.InjectionResult[]) => void,
+      ) => callback([]),
+    );
+    const sendMessage = vi.fn(
+      (
+        _tabId: number,
+        _message: unknown,
+        _options: { frameId: number },
+        callback: (response?: unknown) => void,
+      ) => callback({ candidate: { text: 42, score: 'high' } }),
+    );
+    vi.stubGlobal('chrome', {
+      webNavigation: {
+        getAllFrames: vi.fn(
+          (_details: unknown, callback: (result: { frameId: number }[]) => void) =>
+            callback([{ frameId: 0 }]),
+        ),
+      },
+      tabs: { sendMessage },
+      scripting: { executeScript },
+      runtime: {
+        lastError: undefined,
+        getManifest: () => ({
+          content_scripts: [{ matches: ['https://*/*'], js: ['content.js'] }],
+        }),
+      },
+    });
+
+    await expect(chromePageClient.readPosting(7)).rejects.toMatchObject({
+      name: 'PageResponseError',
+      command: 'SCRAPE_JOB_DESCRIPTION',
+    } satisfies Partial<PageResponseError>);
+    expect(executeScript).toHaveBeenCalledOnce();
   });
 });
