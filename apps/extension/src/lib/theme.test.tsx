@@ -57,20 +57,20 @@ beforeEach(() => {
 });
 
 describe('useThemePreference', () => {
-  it('starts light and applies the stored preference once it has been read', async () => {
-    stubChromeWithLocal({ theme: 'dark' });
+  it('starts dark and applies the stored preference once it has been read', async () => {
+    stubChromeWithLocal({ theme: 'light' });
     const { result } = renderHook(() => useThemePreference());
 
-    await waitFor(() => expect(result.current.theme).toBe('dark'));
-    expect(document.documentElement.dataset.theme).toBe('dark');
+    await waitFor(() => expect(result.current.theme).toBe('light'));
+    expect(document.documentElement.dataset.theme).toBe('light');
   });
 
-  it('reads anything that is not "dark" as light, including nothing stored at all', async () => {
+  it('reads anything that is not "light" as dark, including nothing stored at all', async () => {
     stubChromeWithLocal({ theme: 'solarized' });
     const { result } = renderHook(() => useThemePreference());
 
-    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
-    expect(result.current.theme).toBe('light');
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+    expect(result.current.theme).toBe('dark');
   });
 
   it('persists a toggle and applies it at once, rather than waiting for the store', async () => {
@@ -112,7 +112,7 @@ describe('useThemePreference', () => {
 
     renderHook(() => useThemePreference());
 
-    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('dark');
   });
 });
 

@@ -1,7 +1,8 @@
 import type { BackendErrorBody } from '@djobi/shared';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { MiddlewareHandler } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import type { ErrorHandler, MiddlewareHandler } from 'hono';
 import { auth } from './auth.js';
 import type { AuthEnv } from './authMiddleware.js';
 import { StructuredCallError } from './llm/structuredCall.js';
@@ -35,6 +36,67 @@ export interface AppDependencies {
   profileStore: ProfileStore;
   requireAuth: MiddlewareHandler<AuthEnv>;
 }
+
+/**
+ * The one place a thrown error becomes a response. No route has its own `try/catch`, so without
+ * this every throw from `llm/` — the model not returning a tool call, or its input failing schema
+ * validation (`structuredCall.ts`), or an SDK/network failure — fell through to Hono's default
+ * handler and became a *plain-text* `Internal Server Error`. That body isn't JSON, so the
+ * extension's `callBackend` blew up parsing it and the real cause was destroyed before anyone
+ * could read it. Failures now use the same `{ error }` shape the routes' validation errors
+ * already return, so one client-side branch handles both.
+ *
+ * Exported (rather than an inline `app.onError` closure) so it can be driven directly against a
+ * throwing route in a test, without needing `createApp`'s full dependencies.
+ */
+export const handleError: ErrorHandler<AuthEnv> = (err, c) => {
+  const context = `${c.req.method} ${c.req.path}`;
+
+  // The candidate closed the panel, navigated away, or hit Re-analyze — the request was abandoned
+  // and every model call under it was aborted on purpose. Nothing failed, so nothing is logged and
+  // no 500 is recorded: the same judgement the rejected-body branch below makes, for the same
+  // reason. Putting an ordinary user action through the channel that means "the backend is broken"
+  // is what makes that channel worth ignoring. The response goes nowhere; the status is for the log.
+  // 499 is the "client closed request" convention; Hono's `StatusCode` union is IANA-only, so the
+  // number is set on a plain `Response` rather than through `c.body`.
+  if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
+
+  // A rejected body is the client's fault, so it is a 400 and it is not logged. Logging it would
+  // put "the request was bad" through the same channel as "the backend is broken", which is the
+  // channel someone reads when deciding whether to go looking at the backend.
+  if (err instanceof RequestValidationError) {
+    const body: BackendErrorBody = { error: err.message };
+    return c.json(body, 400);
+  }
+
+  // Hono's own middleware (`hono/body-limit`, `hono/validator`, …) signals an expected, client-side
+  // rejection this way — its own status and body are already the right response, not a fault of
+  // this backend's to log. `getResponse()` is unaware of anything this app's own middleware already
+  // set on `c` (headers, etc.), which is fine here: nothing upstream of `onError` sets any.
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
+
+  if (err instanceof StructuredCallError) {
+    console.error(`[djobi] ${context} failed`, {
+      name: err.name,
+      message: err.message,
+      kind: err.kind,
+      toolName: err.toolName,
+      requestId: err.requestId,
+      stopReason: err.stopReason,
+    });
+  } else {
+    console.error(`[djobi] ${context} failed:`, err);
+  }
+
+  const body: BackendErrorBody = {
+    error: 'Internal server error',
+    ...(err instanceof StructuredCallError ? { code: 'invalid-model-output' as const } : {}),
+  };
+
+  return c.json(body, 500);
+};
 
 /**
  * Builds the Hono app over its dependencies — separated from `index.ts` (which calls `serve()`) so
@@ -89,7 +151,7 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
       // the same `publicOrigins()`, so the two allowlists (this one for the browser's CORS check,
       // that one for Better Auth's own origin check) can't drift out of sync on a real deploy.
       origin: ['http://localhost:5174', 'http://127.0.0.1:5174', ...publicOrigins()],
-      allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
       // `x-djobi-upload` exists purely to force a preflight — see the content-type middleware below
       // for why `POST /profile/extract-resume` needs one despite not sending JSON.
       // `idempotency-key` is `routes/applications.ts`'s dedupe token for `POST /applications` — see
@@ -145,54 +207,15 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
     return next();
   });
 
-  /**
-   * The one place a thrown error becomes a response. No route has its own `try/catch`, so without
-   * this every throw from `llm/` — the model not returning a tool call, or its input failing schema
-   * validation (`structuredCall.ts`), or an SDK/network failure — fell through to Hono's default
-   * handler and became a *plain-text* `Internal Server Error`. That body isn't JSON, so the
-   * extension's `callBackend` blew up parsing it and the real cause was destroyed before anyone
-   * could read it. Failures now use the same `{ error }` shape the routes' validation errors
-   * already return, so one client-side branch handles both.
-   */
-  app.onError((err, c) => {
-    const context = `${c.req.method} ${c.req.path}`;
-
-    // The candidate closed the panel, navigated away, or hit Re-analyze — the request was abandoned
-    // and every model call under it was aborted on purpose. Nothing failed, so nothing is logged and
-    // no 500 is recorded: the same judgement the rejected-body branch below makes, for the same
-    // reason. Putting an ordinary user action through the channel that means "the backend is broken"
-    // is what makes that channel worth ignoring. The response goes nowhere; the status is for the log.
-    // 499 is the "client closed request" convention; Hono's `StatusCode` union is IANA-only, so the
-    // number is set on a plain `Response` rather than through `c.body`.
-    if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
-
-    // A rejected body is the client's fault, so it is a 400 and it is not logged. Logging it would
-    // put "the request was bad" through the same channel as "the backend is broken", which is the
-    // channel someone reads when deciding whether to go looking at the backend.
-    if (err instanceof RequestValidationError) {
-      const body: BackendErrorBody = { error: err.message };
-      return c.json(body, 400);
-    }
-
-    if (err instanceof StructuredCallError) {
-      console.error(`[djobi] ${context} failed`, {
-        name: err.name,
-        message: err.message,
-        kind: err.kind,
-        toolName: err.toolName,
-        requestId: err.requestId,
-        stopReason: err.stopReason,
-      });
-    } else {
-      console.error(`[djobi] ${context} failed:`, err);
-    }
-
-    const body: BackendErrorBody = {
-      error: 'Internal server error',
-      ...(err instanceof StructuredCallError ? { code: 'invalid-model-output' as const } : {}),
-    };
-
-    return c.json(body, 500);
+  // Unlike the middleware above, registration order doesn't matter for these two: Hono calls
+  // `onError`/`notFound` on a throw or an unmatched route regardless of where they're registered.
+  app.onError(handleError);
+  app.notFound((c) => {
+    // The same `{ error }` shape every other rejected request already answers with, so an unknown
+    // path (a stale extension build hitting a route this backend has since removed, say) is still
+    // JSON `userMessage(error)` can read, not Hono's plain-text default.
+    const body: BackendErrorBody = { error: 'Not found' };
+    return c.json(body, 404);
   });
 
   /**

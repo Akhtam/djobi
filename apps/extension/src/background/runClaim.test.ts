@@ -7,6 +7,9 @@ import { type ClaimSpec, withRunClaim } from './runClaim';
 
 const run = pipelineRunFixture();
 
+/** The `'transition'` half of {@link ClaimSpec} — what `onClaimed` is only ever offered on. */
+type TransitionClaimSpec = Extract<ClaimSpec<PipelineRunState>, { mode: 'transition' }>;
+
 function analysisSpec(): ClaimSpec<PipelineRunState> {
   return {
     step: 'analysis',
@@ -16,7 +19,7 @@ function analysisSpec(): ClaimSpec<PipelineRunState> {
   };
 }
 
-function fillSpec(): ClaimSpec<PipelineRunState> {
+function fillSpec(): TransitionClaimSpec {
   return {
     step: 'fill',
     mode: 'transition',
@@ -26,7 +29,7 @@ function fillSpec(): ClaimSpec<PipelineRunState> {
   };
 }
 
-function saveSpec(): ClaimSpec<PipelineRunState> {
+function saveSpec(): TransitionClaimSpec {
   return {
     step: 'save',
     mode: 'transition',
@@ -146,5 +149,44 @@ describe('withRunClaim', () => {
       failure: { step: 'fill', kind: 'unknown' },
     });
     expect(log).toHaveBeenCalledOnce();
+  });
+
+  describe('onClaimed', () => {
+    it('reports a win synchronously, before body runs', async () => {
+      await setPipelineRun(1, run);
+      const onClaimed = vi.fn();
+      const order: string[] = [];
+      onClaimed.mockImplementation(() => order.push('claimed'));
+
+      await withRunClaim(1, { ...fillSpec(), onClaimed }, async () => {
+        order.push('body');
+        return null;
+      });
+
+      expect(onClaimed).toHaveBeenCalledWith({ claimed: true });
+      expect(order).toEqual(['claimed', 'body']);
+    });
+
+    it("reports 'busy' when the named run is already mid-step, and never calls body", async () => {
+      // Same identity as `fillSpec()`'s `expectedRunId` — the refusal here is about status, not
+      // which run this is.
+      await setPipelineRun(1, { ...run, status: 'saving' });
+      const onClaimed = vi.fn();
+      const body = vi.fn();
+
+      await withRunClaim(1, { ...fillSpec(), onClaimed }, body);
+
+      expect(onClaimed).toHaveBeenCalledWith({ claimed: false, reason: 'busy' });
+      expect(body).not.toHaveBeenCalled();
+    });
+
+    it("reports 'stale-run' when expectedRunId no longer names the tab's current run", async () => {
+      await setPipelineRun(1, { ...run, runId: 'a-different-run', status: 'review' });
+      const onClaimed = vi.fn();
+
+      await withRunClaim(1, { ...fillSpec(), onClaimed }, vi.fn());
+
+      expect(onClaimed).toHaveBeenCalledWith({ claimed: false, reason: 'stale-run' });
+    });
   });
 });

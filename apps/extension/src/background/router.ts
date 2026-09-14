@@ -1,5 +1,5 @@
 import { withWorkerKeptAlive } from '../lib/keepAlive';
-import type { TypedMessage, UpdateRunResult } from '../lib/messages';
+import type { ClaimResult, TypedMessage, UpdateRunResult } from '../lib/messages';
 import { setJobContext } from '../lib/tabStore/jobContext';
 import { applyPanelEdit } from '../lib/tabStore/pipelineRun';
 import { recordReport } from './detectedFields';
@@ -15,12 +15,20 @@ import {
 /**
  * Routes a coordination message, using `lib/tabStore/` as the hand-off point.
  *
- * Returns the routed task so the service worker can observe terminal rejection. Every case but one
- * is notification-only: the service-worker listener does not return that promise to Chrome and
- * takes no `sendResponse`, so {@link TypedMessage} never holds a panel's channel open for these.
- * `UPDATE_RUN` is the documented exception — its result is a real answer the caller waits on, not
- * just a completion signal — and `service-worker.ts` is what actually relays it; this function only
- * has to resolve to the same shape.
+ * Returns the routed task so the service worker can observe terminal rejection. Most cases are
+ * notification-only: the service-worker listener does not return that promise to Chrome and takes
+ * no `sendResponse`, so {@link TypedMessage} never holds a panel's channel open for these. `UPDATE_RUN`,
+ * `START_FILL` and `START_SAVE_APPLICATION` are the documented exceptions — each answers something
+ * the caller genuinely waits on — and `service-worker.ts` is what actually relays them; this function
+ * only has to resolve to the right shape.
+ *
+ * `START_FILL`/`START_SAVE_APPLICATION` resolve as soon as `background/runClaim.ts` knows whether
+ * the claim was won — not when the step finishes. The step itself keeps running underneath, exactly
+ * as it did when this was fire-and-forget; the `.catch` below is what replaces the service worker's
+ * own top-level one for that detached tail, which this function's returned promise no longer covers
+ * once it resolves early. These two therefore never reject: a fault reaching that `.catch` before
+ * the claim was decided still resolves with a refusal, since a caller waiting on this promise has no
+ * better answer to fall back on than the one a losing claim already reports.
  *
  * What this module genuinely owns, and the reason it isn't just inlined into the service worker, is
  * the frame/revision rule below.
@@ -37,7 +45,7 @@ export async function handleTypedMessage(
   message: TypedMessage,
   sender: chrome.runtime.MessageSender,
   deps: PipelineDeps = productionDeps,
-): Promise<void | UpdateRunResult> {
+): Promise<void | UpdateRunResult | ClaimResult> {
   switch (message.type) {
     case 'REPORT_JOB_PAGE': {
       const tabId = sender.tab?.id;
@@ -82,14 +90,27 @@ export async function handleTypedMessage(
       );
 
     case 'START_FILL':
-      return withWorkerKeptAlive(() =>
-        runFill(message.tabId, message.profile, deps, message.expectedRunId),
-      );
+      return new Promise<ClaimResult>((resolve) => {
+        void withWorkerKeptAlive(() =>
+          runFill(message.tabId, message.profile, deps, message.expectedRunId, resolve),
+        ).catch((error: unknown) => {
+          console.error('[djobi] fill step failed', error);
+          // A no-op if `onClaimed` above already settled this promise — a fault reaching here
+          // instead means the claim itself was never decided, so there is nothing better to answer
+          // with than the same refusal a losing claim reports.
+          resolve({ claimed: false, reason: 'busy' });
+        });
+      });
 
     case 'START_SAVE_APPLICATION':
-      return withWorkerKeptAlive(() =>
-        runSaveApplication(message.tabId, deps, message.expectedRunId),
-      );
+      return new Promise<ClaimResult>((resolve) => {
+        void withWorkerKeptAlive(() =>
+          runSaveApplication(message.tabId, deps, message.expectedRunId, resolve),
+        ).catch((error: unknown) => {
+          console.error('[djobi] save step failed', error);
+          resolve({ claimed: false, reason: 'busy' });
+        });
+      });
 
     case 'UPDATE_RUN': {
       // The run domain's call, made inside the same lock as the write — see `applyPanelEdit`'s own

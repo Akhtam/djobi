@@ -199,8 +199,8 @@ export function LogApplication({
         <h2>Log an application</h2>
       </div>
       <p className="hint">
-        For jobs you applied to yourself — your own resume, or LinkedIn Easy Apply. Paste the
-        posting and djobi will extract the details and file it alongside the ones it filled for you.
+        For jobs you sent yourself, with your own resume or LinkedIn Easy Apply. Paste the posting
+        and djobi files it next to the ones it filled for you.
       </p>
 
       <label className="question-card">
@@ -215,7 +215,7 @@ export function LogApplication({
         />
       </label>
       {jobUrl.trim() !== '' && !urlValid && (
-        <p className="failure-detail">That doesn't look like a URL — it needs the https:// too.</p>
+        <p className="failure-detail">That doesn't look like a link. Include the https:// too.</p>
       )}
 
       <label className="field-label" htmlFor="manual-job-description">
@@ -232,7 +232,7 @@ export function LogApplication({
       {state.kind === 'extract-error' && (
         <div className="inline-error" role="alert">
           <div className="inline-error-body">
-            <p>Something went wrong reading this job posting.</p>
+            <p>djobi couldn't read this job posting.</p>
             <p className="failure-detail">{state.message}</p>
           </div>
         </div>

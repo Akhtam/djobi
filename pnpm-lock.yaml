@@ -434,6 +434,9 @@ importers:
 
   packages/profile-editor:
     dependencies:
+      '@djobi/http-client':
+        specifier: workspace:*
+        version: link:../http-client
       '@djobi/shared':
         specifier: workspace:*
         version: link:../shared

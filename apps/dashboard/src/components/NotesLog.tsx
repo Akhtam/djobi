@@ -57,7 +57,7 @@ export function NotesLog({
 
       {notes.length === 0 ? (
         <p className="empty-hint">
-          No notes yet. Record what they asked you — it is the reference for the next application.
+          No notes yet. Write down what they asked you — it's what you'll want before the next one.
         </p>
       ) : visible.length === 0 ? (
         <p className="empty-hint">No {NOTE_CATEGORY_LABELS[category!].toLowerCase()} notes.</p>

@@ -129,7 +129,7 @@ describe('log application', () => {
     const { user } = renderDashboard({ client: createFixtureDashboardClient(fixtureApplications) });
     await user.click(await screen.findByRole('button', { name: 'Log application' }));
 
-    expect(await screen.findByText('A profile is required first')).toBeInTheDocument();
+    expect(await screen.findByText('You need a profile first')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Extract job details' })).not.toBeInTheDocument();
   });
 

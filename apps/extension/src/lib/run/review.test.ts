@@ -169,7 +169,7 @@ describe('reviewOf', () => {
   it('reads a completed run through its own outcome even when the status is optimistic', () => {
     const stored = filled({ filledFieldCount: 0, fillOutcome: 'nothing-filled' });
 
-    expect(reviewOf(stored, 'saving', null).pill).toEqual({ label: 'Saving...', tone: 'busy' });
+    expect(reviewOf(stored, 'saving', null).pill).toEqual({ label: 'Saving…', tone: 'busy' });
     expect(reviewOf(stored, 'saving', null).outcome).toBe('nothing-filled');
   });
   it('raises no notice for a run that has nothing to report yet', () => {

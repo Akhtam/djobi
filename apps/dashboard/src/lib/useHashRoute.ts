@@ -40,6 +40,8 @@ export interface ListFilters {
   stage: StageFilter | null;
   /** An exact rejection outcome, used only while the combined Rejected stage is selected. */
   rejection?: RejectionFilter | null;
+  /** Applied-date order. Newest-first is the default and is omitted from the URL. */
+  sort?: 'oldest';
 }
 
 /**
@@ -150,6 +152,7 @@ export function parseHash(hash: string): Route {
       query: params.get('q') ?? '',
       stage,
       ...(rejection ? { rejection } : {}),
+      ...(params.get('sort') === 'oldest' ? { sort: 'oldest' as const } : {}),
     },
     shown: Number.isInteger(shown) && shown > PAGE_SIZE ? shown : PAGE_SIZE,
   };
@@ -174,6 +177,7 @@ export function listPath(filters: ListFilters, shown: number = PAGE_SIZE): strin
   if (filters.stage === 'rejected' && filters.rejection) {
     params.set('rejection', filters.rejection);
   }
+  if (filters.sort === 'oldest') params.set('sort', 'oldest');
   if (shown > PAGE_SIZE) params.set('show', String(shown));
   const search = params.toString();
   return search ? `#/?${search}` : '#/';
@@ -182,7 +186,7 @@ export function listPath(filters: ListFilters, shown: number = PAGE_SIZE): strin
 /**
  * The path for the Analytics view under `range` and `stage` — the inverse of {@link parseHash}'s
  * `#/analytics` branch. `range` is omitted at its default for the same reason `listPath` omits an
- * empty filter: `#/analytics` and `#/analytics?range=7d` render identically, and only the shorter
+ * empty filter: `#/analytics` and `#/analytics?range=14d` render identically, and only the shorter
  * one is a URL worth keeping.
  */
 export function analyticsPath(range: Range, stage: StageFilter | null): string {

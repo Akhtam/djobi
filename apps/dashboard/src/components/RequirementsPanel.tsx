@@ -32,25 +32,24 @@ const IMPORTANCE_HELP: Record<RequirementImportance, string> = {
   critical:
     'An explicit must-have, the job title itself, a core daily responsibility, or a legal, language, or work-authorization gate.',
   high: 'A central requirement likely to be assessed during an interview.',
-  meaningful: 'A real requirement that matters, but is not clearly decisive for the application.',
-  preferred: 'A nice-to-have that the posting does not present as required.',
-  'low-signal': 'Generic or boilerplate wording that provides little signal about candidate fit.',
+  meaningful: 'A real requirement that matters, though probably not the one that decides it.',
+  preferred: "A nice-to-have the posting doesn't present as required.",
+  'low-signal': 'Generic boilerplate that says little about whether you fit.',
 };
 
 const EVIDENCE_HELP: Record<RequirementEvidenceVerdict, string> = {
   'direct-evidence': 'A resume bullet or stated experience directly supports this requirement.',
-  'skill-only': 'Your skills list names it, but no resume bullet demonstrates how you used it.',
-  'omitted-profile-evidence':
-    'Your profile contains supporting experience, but that evidence was left out of this resume.',
+  'skill-only': 'Your skills list names it, but no resume bullet shows how you used it.',
+  'omitted-profile-evidence': 'Your profile has the experience, but this resume left it out.',
   'needs-confirmation':
-    'Some supporting signal exists, but there is not enough information to confirm the requirement is met.',
-  unsupported: 'Nothing in your profile provides evidence for this requirement.',
+    "There's something suggestive in your profile, but not enough to say you meet this.",
+  unsupported: 'Nothing in your profile backs this up.',
 };
 
 const LEGACY_REQUIREMENT_HELP: Record<string, string> = {
   required: 'The posting explicitly presents these requirements as required.',
   preferred: 'The posting presents these requirements as preferred or nice-to-have.',
-  unspecified: 'The posting does not clearly state whether these requirements are required or preferred.',
+  unspecified: "The posting doesn't say whether these are required or just preferred.",
 };
 
 function RequirementTooltip({ label, text }: { label: string; text: string }) {
@@ -234,58 +233,60 @@ export function RequirementsPanel({
             </button>
             {showImportance ? (
               <div className="requirements-summary-grid" id="importance-summary-breakdown">
-              {anyBanded
-                ? IMPORTANCE_BANDS.map((band) => (
-                    <span
-                      key={band}
-                      className={`requirements-summary-stat is-${band}`}
-                      aria-label={`${bandCounts[band]} ${BAND_LABELS[band]}`}
-                    >
-                      <b>{bandCounts[band]}</b>
-                      <span>
-                        {BAND_LABELS[band]}
-                        <RequirementTooltip
-                          label={`About ${BAND_LABELS[band]} importance`}
-                          text={IMPORTANCE_HELP[band]}
-                        />
+                {anyBanded
+                  ? IMPORTANCE_BANDS.map((band) => (
+                      <span
+                        key={band}
+                        className={`requirements-summary-stat is-${band}`}
+                        aria-label={`${bandCounts[band]} ${BAND_LABELS[band]}`}
+                      >
+                        <b>{bandCounts[band]}</b>
+                        <span>
+                          {BAND_LABELS[band]}
+                          <RequirementTooltip
+                            label={`About ${BAND_LABELS[band]} importance`}
+                            text={IMPORTANCE_HELP[band]}
+                          />
+                        </span>
                       </span>
-                    </span>
-                  ))
-                : ([
-                    [requirementCounts.required, 'required'],
-                    [requirementCounts.preferred, 'preferred'],
-                    [requirementCounts.unspecified, 'unspecified'],
-                  ] as const).map(([count, label]) => (
-                    <span
-                      key={label}
-                      className="requirements-summary-stat"
-                      aria-label={`${count} ${label}`}
-                    >
-                      <b>{count}</b>
-                      <span>
-                        {label}
-                        <RequirementTooltip
-                          label={`About ${label} requirements`}
-                          text={LEGACY_REQUIREMENT_HELP[label]}
-                        />
+                    ))
+                  : (
+                      [
+                        [requirementCounts.required, 'required'],
+                        [requirementCounts.preferred, 'preferred'],
+                        [requirementCounts.unspecified, 'unspecified'],
+                      ] as const
+                    ).map(([count, label]) => (
+                      <span
+                        key={label}
+                        className="requirements-summary-stat"
+                        aria-label={`${count} ${label}`}
+                      >
+                        <b>{count}</b>
+                        <span>
+                          {label}
+                          <RequirementTooltip
+                            label={`About ${label} requirements`}
+                            text={LEGACY_REQUIREMENT_HELP[label]}
+                          />
+                        </span>
                       </span>
+                    ))}
+                {anyBanded && bandCounts.unbanded > 0 ? (
+                  <span
+                    className="requirements-summary-stat is-unbanded"
+                    aria-label={`${bandCounts.unbanded} ${BAND_LABELS[UNBANDED]}`}
+                  >
+                    <b>{bandCounts.unbanded}</b>
+                    <span>
+                      {BAND_LABELS[UNBANDED]}
+                      <RequirementTooltip
+                        label="About not assessed"
+                        text="These requirements weren't sorted into an importance band."
+                      />
                     </span>
-                  ))}
-              {anyBanded && bandCounts.unbanded > 0 ? (
-                <span
-                  className="requirements-summary-stat is-unbanded"
-                  aria-label={`${bandCounts.unbanded} ${BAND_LABELS[UNBANDED]}`}
-                >
-                  <b>{bandCounts.unbanded}</b>
-                  <span>
-                    {BAND_LABELS[UNBANDED]}
-                    <RequirementTooltip
-                      label="About not assessed"
-                      text="No importance band was assigned to these requirements."
-                    />
                   </span>
-                </span>
-              ) : null}
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -325,20 +326,21 @@ export function RequirementsPanel({
                         <div className="analytics-req-group__title-row">
                           <h3
                             className={`analytics-req-group__title requirement-band requirement-band--${key}`}
+                            // `title` rather than a `RequirementTooltip` per group: this heading
+                            // repeats once per band *per posting* (a busy range can hold 100-200),
+                            // and the popover's own explanation already lives once in the
+                            // "Importance" summary card above. No `tabIndex` to go with it — a
+                            // browser renders `title` on hover only, never on keyboard focus, so
+                            // making a non-interactive heading focusable would buy a tab stop per
+                            // band per posting and show the reader nothing when they landed on it.
+                            title={
+                              key !== UNBANDED
+                                ? IMPORTANCE_HELP[key]
+                                : 'No importance band was assigned to these requirements.'
+                            }
                           >
                             {BAND_LABELS[key]}
                           </h3>
-                          {key !== UNBANDED ? (
-                            <RequirementTooltip
-                              label={`About ${BAND_LABELS[key]} importance`}
-                              text={IMPORTANCE_HELP[key]}
-                            />
-                          ) : (
-                            <RequirementTooltip
-                              label="About not assessed"
-                              text="No importance band was assigned to these requirements."
-                            />
-                          )}
                         </div>
                         <ul className="analytics-reqs">
                           {requirements.map((requirement) => {
@@ -356,12 +358,12 @@ export function RequirementsPanel({
                                   {verdict && verdict.verdict !== 'direct-evidence' ? (
                                     <span
                                       className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
+                                      // See the group heading above — same reasoning, and the badge
+                                      // label ("Skill only", "Unsupported") carries the meaning on
+                                      // its own. `RequirementList` renders this badge bare.
+                                      title={EVIDENCE_HELP[verdict.verdict]}
                                     >
                                       {EVIDENCE_LABELS[verdict.verdict]}
-                                      <RequirementTooltip
-                                        label={`About ${EVIDENCE_LABELS[verdict.verdict]}`}
-                                        text={EVIDENCE_HELP[verdict.verdict]}
-                                      />
                                     </span>
                                   ) : null}
                                   {verdict?.verdict === 'omitted-profile-evidence' &&

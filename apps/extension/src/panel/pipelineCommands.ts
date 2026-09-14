@@ -18,7 +18,7 @@
  * at all — Chrome has named a tab, there is a run to name, an analysis URL exists.
  */
 import type { Profile } from '@djobi/shared';
-import { notify } from '../lib/messages';
+import { notify, startFill, startSaveApplication } from '../lib/messages';
 import type { RunStep } from '../lib/run';
 import type { ActiveRun } from './useActiveRun';
 import type { JobDescription } from './useJobDescription';
@@ -66,14 +66,28 @@ export function pipelineCommands(
       if (tabId === null || !run) return;
 
       const undelivered = beginCommand('fill');
-      notify({ type: 'START_FILL', tabId, profile, expectedRunId: run.runId }, undelivered);
+      // `startFill` waits for whether the claim was actually won — an undelivered command and a
+      // refused one (another panel already running this step, or a stale `expectedRunId`) both
+      // stand the optimistic status down the same way, since neither leaves anything checkpointed
+      // for `usePipelineRun.ts` to observe.
+      void startFill({ type: 'START_FILL', tabId, profile, expectedRunId: run.runId }).then(
+        (outcome) => {
+          if (!outcome.claimed) undelivered('');
+        },
+      );
     },
 
     save() {
       if (tabId === null || !run) return;
 
       const undelivered = beginCommand('save');
-      notify({ type: 'START_SAVE_APPLICATION', tabId, expectedRunId: run.runId }, undelivered);
+      void startSaveApplication({
+        type: 'START_SAVE_APPLICATION',
+        tabId,
+        expectedRunId: run.runId,
+      }).then((outcome) => {
+        if (!outcome.claimed) undelivered('');
+      });
     },
   };
 }

@@ -4,7 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import type { AuthEnv } from '../authMiddleware.js';
 import type { ProfileStore } from '../db/profileStore.js';
 import { extractResume, NoResumeTextError } from '../llm/extractResume.js';
-import { parseBody, RequestValidationError } from '../requestBody.js';
+import { jsonBody, RequestValidationError } from '../requestBody.js';
 
 /**
  * Hono's multipart parser has no built-in size limit — it buffers the whole body regardless. The
@@ -34,10 +34,8 @@ export function profileRoute(store: ProfileStore): Hono<AuthEnv> {
     return c.json(profile);
   });
 
-  route.post('/profile', async (c) => {
-    const parsed = await parseBody(c, ProfileSchema);
-
-    const saved = await store.save(c.get('userId'), parsed);
+  route.post('/profile', jsonBody(ProfileSchema), async (c) => {
+    const saved = await store.save(c.get('userId'), c.req.valid('json'));
     return c.json(saved);
   });
 

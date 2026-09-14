@@ -358,7 +358,7 @@ export function LandingPage() {
 
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = 'djobi - Tailored applications, organized';
+    document.title = 'djobi — Tailored applications, tracked in one place';
     return () => {
       document.title = previousTitle;
     };
@@ -401,11 +401,11 @@ export function LandingPage() {
                 <span /> Chrome extension and tracking dashboard
               </p>
               <h1 id="landing-title">
-                Apply with context. <span>Track outcomes with clarity.</span>
+                Every application tailored. <span>Every outcome tracked.</span>
               </h1>
               <p className="landing-hero__lede">
-                Use the Chrome extension to tailor your resume, review drafted answers, and fill the
-                form. Save each application to the dashboard to track what happens next.
+                The Chrome extension tailors your resume, drafts the freeform answers, and fills the
+                form. Save it to the dashboard and you keep a record of what happened next.
               </p>
               <div className="landing-hero__actions">
                 <a className="landing-button landing-button--primary" href={DASHBOARD_PATH}>
@@ -488,12 +488,12 @@ export function LandingPage() {
           </div>
 
           <div className="landing-shell landing-ats">
-            <p>Designed for the places you already apply</p>
+            <p>Works where you already apply</p>
             <ul aria-label="Supported application systems">
               <li>Greenhouse</li>
               <li>Ashby</li>
               <li>Lever</li>
-              <li>More platforms coming</li>
+              <li>More coming</li>
             </ul>
           </div>
         </section>
@@ -505,11 +505,12 @@ export function LandingPage() {
         >
           <div className="landing-shell">
             <div className="landing-section__intro">
-              <p className="landing-kicker">One continuous workspace</p>
-              <h2 id="product-title">The application does not end at autofill.</h2>
+              <p className="landing-kicker">One place for the whole search</p>
+              <h2 id="product-title">Applying is the easy part. Keeping track isn't.</h2>
               <p>
-                Keep your profile, the analyzed posting, tailored materials, and application history
-                together instead of rebuilding the story across tabs and spreadsheets.
+                Your profile, the posting, the materials you sent, and everything that happened
+                after all live in one place. No more piecing the story back together from tabs and
+                spreadsheets.
               </p>
             </div>
 
@@ -517,11 +518,11 @@ export function LandingPage() {
               <article className="landing-feature landing-feature--wide">
                 <div className="landing-feature__copy">
                   <span className="landing-feature__number">01</span>
-                  <h3>Tailoring with a memory</h3>
+                  <h3>Tailored from what you've actually done</h3>
                   <p>
-                    Upload a PDF or build your profile by hand. djobi extracts what matters in the
-                    posting, refines relevant experience bullets, and drafts answers from evidence
-                    you already have.
+                    Upload a PDF or fill in your profile by hand. djobi picks out what the posting
+                    is really asking for, sharpens the experience that matches, and drafts answers
+                    from evidence you already gave it.
                   </p>
                 </div>
                 <div className="landing-resume-demo" aria-hidden="true">
@@ -547,8 +548,8 @@ export function LandingPage() {
                 </div>
                 <h3>Review before fill</h3>
                 <p>
-                  Edit every drafted answer, refine it in Ask, and see which required questions
-                  still need attention before or after fill. You keep the final say.
+                  Edit any drafted answer, rework it in Ask, and see which required questions still
+                  need you before or after the fill. Nothing goes in without your say-so.
                 </p>
               </article>
 
@@ -561,8 +562,9 @@ export function LandingPage() {
                 </div>
                 <h3>See the pattern</h3>
                 <p>
-                  Track extension and manually logged applications, categorized notes, recurring
-                  keywords, requirement evidence, profile gaps, and response rate.
+                  Track everything you applied to, whether djobi filled it or you did. See which
+                  keywords keep coming up, where your profile falls short, and how often you hear
+                  back.
                 </p>
               </article>
             </div>
@@ -576,11 +578,9 @@ export function LandingPage() {
         >
           <div className="landing-shell landing-workflow__grid">
             <div className="landing-workflow__intro">
-              <p className="landing-kicker">A calmer way from profile to form</p>
-              <h2 id="workflow-title">From your experience to the next conversation.</h2>
-              <p>
-                The repetitive parts move faster. The decisions that should stay yours remain yours.
-              </p>
+              <p className="landing-kicker">From profile to filled form</p>
+              <h2 id="workflow-title">Set it up once, then apply.</h2>
+              <p>The repetitive parts get faster. The decisions that should be yours stay yours.</p>
               <a href={DASHBOARD_PATH} className="landing-text-link">
                 Go to your dashboard <ArrowIcon />
               </a>
@@ -590,44 +590,46 @@ export function LandingPage() {
               <li>
                 <span>1</span>
                 <div>
-                  <p>Create your source of truth</p>
+                  <p>Start here</p>
                   <h3>Build your profile</h3>
                   <p>
-                    Start with a PDF or build your profile by hand, then add screening details,
-                    reusable answers, and stories.
+                    Start from a PDF or fill it in by hand, then add your screening details, the
+                    answers you reuse, and the stories you tell.
                   </p>
                 </div>
               </li>
               <li>
                 <span>2</span>
                 <div>
-                  <p>Bring the posting into focus</p>
+                  <p>Grab the posting</p>
                   <h3>Capture the role</h3>
                   <p>
-                    Open the Chrome side panel, scrape or paste the job description, and review the
-                    exact context djobi will use. A duplicate check warns if it is already saved.
+                    Open the Chrome side panel, pull in or paste the job description, and check the
+                    exact text djobi will work from. If you have applied here before, it says so
+                    first.
                   </p>
                 </div>
               </li>
               <li>
                 <span>3</span>
                 <div>
-                  <p>Tailor for this opportunity</p>
+                  <p>Make it fit the role</p>
                   <h3>Analyze, tailor, review</h3>
                   <p>
-                    Generate a focused resume and required answer drafts, edit or refine them with
-                    Ask, then fill the detected form when you are ready.
+                    Generate a focused resume and drafts for the required questions, edit or rework
+                    them in Ask, then fill the form when you're ready.
                   </p>
                 </div>
               </li>
               <li>
                 <span>4</span>
                 <div>
-                  <p>Keep the opportunity moving</p>
+                  <p>Don't lose the thread</p>
                   <h3>Save, track, learn</h3>
                   <p>
-                    Save the extension run or log another application manually. Update its stage,
-                    keep notes, and use evidence and response analytics to learn from your search.
+                    Save what the extension filled, or log an application you sent yourself. Move it
+                    through the stages, keep notes as you go, and let the analytics show you what to
+                    fix.
                   </p>
                 </div>
               </li>
@@ -642,11 +644,12 @@ export function LandingPage() {
         >
           <div className="landing-shell landing-principles__card">
             <div className="landing-principles__copy">
-              <p className="landing-kicker">Automation with boundaries</p>
-              <h2 id="principles-title">Faster does not have to mean careless.</h2>
+              <p className="landing-kicker">Where the automation stops</p>
+              <h2 id="principles-title">Fast, without being careless.</h2>
               <p>
-                djobi is built around deliberate checkpoints. It helps prepare and fill your work;
-                it does not impersonate your judgment or click Submit behind your back.
+                djobi is built around checkpoints you control. It prepares and fills the
+                application. It doesn't stand in for your judgment, and it never clicks Submit on
+                your behalf.
               </p>
             </div>
             <ul>
@@ -654,7 +657,7 @@ export function LandingPage() {
                 <CheckIcon />
                 <span>
                   <strong>Reviewable by default</strong>
-                  Answers stay editable before fill.
+                  Every answer stays editable before the fill.
                 </span>
               </li>
               <li>
@@ -668,7 +671,7 @@ export function LandingPage() {
                 <CheckIcon />
                 <span>
                   <strong>No automatic submission</strong>
-                  The employer receives the form only when you send it.
+                  The employer sees the form only when you send it.
                 </span>
               </li>
             </ul>
@@ -679,44 +682,45 @@ export function LandingPage() {
           <div className="landing-shell landing-faq__grid">
             <div>
               <p className="landing-kicker">Good to know</p>
-              <h2 id="faq-title">Questions before you begin.</h2>
+              <h2 id="faq-title">Questions you probably have.</h2>
             </div>
             <div className="landing-faq__list">
               <details>
                 <summary>Does djobi submit applications for me?</summary>
                 <p>
-                  No. djobi can prepare materials and fill detected fields, but you review the page
-                  and submit the employer's form yourself.
+                  No. djobi prepares your materials and fills the fields it finds, but you review
+                  the page and submit the employer's form yourself.
                 </p>
               </details>
               <details>
                 <summary>Can I edit the generated answers?</summary>
                 <p>
-                  Yes. Every drafted freeform answer is reviewable and editable before fill. You can
-                  also use Ask to refine a draft or answer a question the extension did not detect.
+                  Yes. Every drafted answer is yours to review and edit before the fill. You can
+                  also use Ask to rework a draft, or to answer a question the extension didn't pick
+                  up.
                 </p>
               </details>
               <details>
                 <summary>How do the extension and dashboard work together?</summary>
                 <p>
-                  Autofill runs in the Chrome extension's side panel. The dashboard manages the same
-                  profile and saved applications, including manually logged applications, stages,
-                  materials, notes, and analytics.
+                  Autofill runs in the extension's side panel. The dashboard works from the same
+                  profile and the same saved applications, including the ones you logged yourself,
+                  plus stages, materials, notes, and analytics.
                 </p>
               </details>
               <details>
                 <summary>What can I track in the dashboard?</summary>
                 <p>
-                  Search by company or role, filter and update pipeline stages, keep categorized
-                  notes, review saved postings and materials, and explore keywords, evidence gaps,
-                  and response rate in Analytics.
+                  Search by company or role, move applications through your stages, keep notes by
+                  category, and reread any saved posting or resume. Analytics covers recurring
+                  keywords, gaps in your profile, and how often you hear back.
                 </p>
               </details>
               <details>
                 <summary>Which application systems does it support?</summary>
                 <p>
-                  djobi is designed for Greenhouse, Ashby, and Lever, with verification when fields
-                  cannot be filled confidently. Support for more application systems is coming.
+                  djobi is built for Greenhouse, Ashby, and Lever. When it can't fill a field
+                  confidently, it says so instead of guessing. More platforms are on the way.
                 </p>
               </details>
             </div>
@@ -729,7 +733,8 @@ export function LandingPage() {
             <p className="landing-kicker">Start with your experience</p>
             <h2 id="landing-final-title">Build your profile, then take it to every application.</h2>
             <p>
-              Upload a resume or enter your profile, then keep every saved opportunity connected.
+              Upload a resume or fill in your profile, and every application after it starts from
+              there.
             </p>
             <a className="landing-button landing-button--primary" href={DASHBOARD_PATH}>
               Open dashboard
@@ -745,7 +750,7 @@ export function LandingPage() {
             <img src={logoUrl} alt="" width={26} height={26} />
             <span>djobi</span>
           </a>
-          <p>Thoughtful automation for a more focused job search.</p>
+          <p>Tailored applications, tracked in one place.</p>
           <a href={DASHBOARD_PATH}>Dashboard</a>
         </div>
       </footer>

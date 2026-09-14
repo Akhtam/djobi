@@ -142,12 +142,11 @@ export function AskTab({
           <div className="ask-intro">
             <span className="state-icon">💬</span>
             <p>
-              Ask about a question djobi didn't find on the page — or one from a form somewhere
-              else.
+              Ask about a question djobi didn't find on the page, or one from a form somewhere else.
             </p>
             <p className="hint">
-              Answers are grounded in your profile{jobInfo ? ' and this job posting' : ''}, and
-              nothing here is written to the page.
+              Answers come from your profile{jobInfo ? ' and this job posting' : ''}. Nothing here
+              is written to the page.
             </p>
           </div>
         )}

@@ -93,6 +93,21 @@ describe('armSubmitWatch', () => {
     stop();
   });
 
+  // The accessible way to block a submit button is `aria-disabled`, which — unlike the `disabled`
+  // attribute — leaves the browser dispatching the click. An ATS puts it on its real
+  // `<button type="submit">` while required fields are still empty, which is precisely the state a
+  // djobi fill can leave a form in, so this click must not be reported as a submission.
+  it('ignores an aria-disabled native submit button, whose click the browser still dispatches', () => {
+    document.body.innerHTML = `<button type="submit" aria-disabled="true">Submit application</button>`;
+    const onSubmit = vi.fn();
+    const stop = armSubmitWatch(document, onSubmit);
+
+    document.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    stop();
+  });
+
   it('reports nothing after it is stopped, so a re-fill cannot leave an old run reporting', () => {
     document.body.innerHTML = `<form><button type="submit">Submit</button></form>`;
     const onSubmit = vi.fn();

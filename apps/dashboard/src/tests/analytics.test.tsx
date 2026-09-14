@@ -40,13 +40,13 @@ describe('analytics', () => {
     expect(screen.getByRole('link', { name: 'Applications' })).not.toHaveAttribute('aria-current');
   });
 
-  it('shows a keyword frequency table over the default 7-day range', async () => {
+  it('shows a keyword frequency table over the default 14-day range', async () => {
     const { user } = renderDashboard();
     await lowerAnalyticsMinimumToOne(user);
 
-    // React is asked for by Anthropic, Brex and Linear within seven days of the fixed clock.
+    // React is asked for by Anthropic, Brex, Ramp and Linear within fourteen days of the fixed clock.
     const reactRow = await screen.findByRole('button', { name: /React/ });
-    expect(within(reactRow).getByText('3')).toBeInTheDocument();
+    expect(within(reactRow).getByText('4')).toBeInTheDocument();
   });
 
   it('groups the keyword table into category sections', async () => {
@@ -66,7 +66,7 @@ describe('analytics', () => {
     const increase = screen.getByRole('button', { name: 'Increase minimum appearances' });
     await user.click(increase);
 
-    // React (3) and TypeScript (2) cleared the bar; GraphQL and Next.js (1 each) did not.
+    // React (4) and TypeScript (2) cleared the bar; GraphQL and Next.js (1 each) did not.
     expect(screen.getByRole('button', { name: /React/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /TypeScript/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /GraphQL/ })).not.toBeInTheDocument();
@@ -75,23 +75,23 @@ describe('analytics', () => {
   it('cannot decrease the minimum below 1, and shows the current value', async () => {
     const { user } = renderDashboard();
 
-    // React tops out at 3 appearances in the default range, so that's the adaptive starting
+    // React tops out at 4 appearances in the default range, so that's the adaptive starting
     // value — see the `minAppearances` initializer's own comment in `Analytics.tsx`.
+    const START = 4;
     const stepper = await screen.findByRole('group', { name: 'Min. appearances' });
     const decrease = within(stepper).getByRole('button', { name: 'Decrease minimum appearances' });
-    expect(within(stepper).getByText('3')).toBeInTheDocument();
+    expect(within(stepper).getByText(String(START))).toBeInTheDocument();
     expect(decrease).not.toBeDisabled();
 
-    for (let value = 3; value > 1; value--) await user.click(decrease);
+    for (let value = START; value > 1; value--) await user.click(decrease);
     expect(decrease).toBeDisabled();
 
     const increase = within(stepper).getByRole('button', { name: 'Increase minimum appearances' });
-    await user.click(increase);
-    await user.click(increase);
-    expect(within(stepper).getByText('3')).toBeInTheDocument();
+    for (let value = 1; value < START; value++) await user.click(increase);
+    expect(within(stepper).getByText(String(START))).toBeInTheDocument();
 
     await user.click(decrease);
-    expect(within(stepper).getByText('2')).toBeInTheDocument();
+    expect(within(stepper).getByText(String(START - 1))).toBeInTheDocument();
   });
 
   it('explains an empty keyword table caused by the appearance filter', async () => {
@@ -113,13 +113,13 @@ describe('analytics', () => {
     const { container } = renderDashboard();
 
     await screen.findByRole('group', { name: 'Min. appearances' });
-    // Anthropic, Linear and Brex fall within the default seven-day range.
+    // Anthropic, Brex, Sonar, Ramp and Linear fall within the default fourteen-day range.
     const summary = container.querySelector('.analytics-summary');
-    expect(summary).toHaveTextContent('3 postings');
+    expect(summary).toHaveTextContent('5 postings');
     expect(summary).toHaveTextContent(/of \d+ keywords shown/);
-    // 3, not a flat 5: the adaptive default caps at React's own count in this range — see the
+    // 4, not a flat 5: the adaptive default caps at React's own count in this range — see the
     // `minAppearances` initializer's comment in `Analytics.tsx`.
-    expect(summary).toHaveTextContent('Minimum 3 appearances');
+    expect(summary).toHaveTextContent('Minimum 4 appearances');
   });
 
   it('highlights the selected keyword inside each requirement’s text', async () => {
@@ -166,10 +166,10 @@ describe('analytics', () => {
 
     const importance = screen.getByRole('region', { name: 'Importance' });
     await user.click(within(importance).getByRole('button', { name: /Importance/ }));
-    expect(within(importance).getByText('4 of 8 classified')).toBeInTheDocument();
+    expect(within(importance).getByText('4 of 12 classified')).toBeInTheDocument();
     expect(within(importance).getByLabelText('1 critical')).toBeInTheDocument();
     expect(within(importance).getByLabelText('1 high')).toBeInTheDocument();
-    expect(within(importance).getByLabelText('4 not assessed')).toBeInTheDocument();
+    expect(within(importance).getByLabelText('8 not assessed')).toBeInTheDocument();
   });
 
   it('collapses and restores the importance breakdown', async () => {
@@ -221,11 +221,51 @@ describe('analytics', () => {
     await lowerAnalyticsMinimumToOne(user);
     await screen.findByRole('button', { name: /React/ });
 
-    await user.click(screen.getByRole('button', { name: '7 days' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Date range' }), '7 days');
 
     // Only Anthropic (3/19), Linear (3/16) and Brex (3/14) fall within 7 days of 3/20.
     const reactRow = await screen.findByRole('button', { name: /React/ });
     expect(within(reactRow).getByText('3')).toBeInTheDocument();
+  });
+
+  // The longest bounded preset is 60 days, so a search older than that has no way to see itself.
+  it('widens to every saved application, however old, on the all-time range', async () => {
+    const { user } = renderDashboard();
+    await lowerAnalyticsMinimumToOne(user);
+    await screen.findByRole('button', { name: /React/ });
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Date range' }), 'All time');
+
+    // Every fixture posting that asked for React, including the ones outside every bounded range.
+    const reactRow = await screen.findByRole('button', { name: /React/ });
+    expect(within(reactRow).getByText('5')).toBeInTheDocument();
+  });
+
+  // There is no left-hand boundary to print, and an epoch in its place would read as a claim that
+  // the search began in 1970.
+  it('heads the all-time overview with no date boundary', async () => {
+    const { user } = renderDashboard();
+    await user.selectOptions(
+      await screen.findByRole('combobox', { name: 'Date range' }),
+      'All time',
+    );
+
+    const overview = await screen.findByRole('region', { name: 'Analytics overview' });
+    expect(within(overview).getByText('All time')).toBeInTheDocument();
+  });
+
+  // "Widen the date range" stops being advice once the range is already every application there
+  // is, and the stage filter is then the only thing left to change.
+  it('stops advising a wider range once the range is already every application', async () => {
+    const applied = fixtureApplications.filter((application) => application.stage === 'applied');
+    const { user } = renderDashboard({ client: createFixtureDashboardClient(applied) });
+    await screen.findByRole('combobox', { name: 'Date range' });
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Date range' }), 'All time');
+    await user.click(screen.getByRole('button', { name: /^Offer/ }));
+
+    expect(await screen.findByText('Change the stage filter to see more.')).toBeInTheDocument();
+    expect(screen.queryByText(/Widen the date range/)).not.toBeInTheDocument();
   });
 
   it('filters by stage using the same pills the applications list uses', async () => {
@@ -368,7 +408,10 @@ describe('analytics', () => {
 
   it('returns to Analytics with its filters intact from a posting opened in the requirements panel', async () => {
     const { user } = renderDashboard();
-    await user.click(await screen.findByRole('button', { name: '30 days' }));
+    await user.selectOptions(
+      await screen.findByRole('combobox', { name: 'Date range' }),
+      '30 days',
+    );
     const link = await screen.findByRole('link', {
       name: /Anthropic — Member of Technical Staff, Product/,
     });
@@ -382,14 +425,14 @@ describe('analytics', () => {
   it('keeps the range and stage controls visible when nothing is in range', async () => {
     const { user } = renderDashboard();
     await screen.findByRole('group', { name: 'Min. appearances' });
-    // Ramp (3/8) is the only phone_screen-stage posting, and it falls outside 7 days of 3/20.
-    await user.click(screen.getByRole('button', { name: /^Phone screen/ }));
+    // Notion (1/5) is the only offer-stage posting, and it falls outside 14 days of 3/20.
+    await user.click(screen.getByRole('button', { name: /^Offer/ }));
 
     expect(
-      await screen.findByText(/Widen the range or change the stage filter/),
+      await screen.findByText(/Widen the date range or change the stage filter/),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '7 days' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Phone screen/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '14 days', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Offer/ })).toBeInTheDocument();
   });
 
   it('shows the empty state with no applications at all', async () => {
@@ -442,7 +485,7 @@ describe('analytics', () => {
     it('withholds the rate rather than printing a percentage over too few resolved postings', async () => {
       renderDashboard();
 
-      // The default 7-day range holds three fixture postings, only two of them resolved.
+      // The default 14-day range holds five fixture postings, three of them resolved.
       const summary = await screen.findByText('No response rate yet');
       expect(summary.closest('.analytics-summary__card')).toHaveTextContent(
         'Available after 5 applications are resolved.',
@@ -452,7 +495,10 @@ describe('analytics', () => {
 
     it('hides the rate entirely while a stage filter selects on the outcome being measured', async () => {
       const { user } = renderDashboard();
-      await user.click(await screen.findByRole('button', { name: '60 days' }));
+      await user.selectOptions(
+        await screen.findByRole('combobox', { name: 'Date range' }),
+        '60 days',
+      );
       await screen.findByText(/response rate/);
 
       await user.click(screen.getByRole('button', { name: /^Onsite/ }));
@@ -465,14 +511,14 @@ describe('analytics', () => {
     it('rolls up the stored verdicts and states how many postings carry none', async () => {
       renderDashboard();
 
-      // Brex is the one scored fixture row; the other two in the default range predate the field.
+      // Brex is the one scored fixture row; the other four in the default range predate the field.
       const evidence = await screen.findByRole('region', { name: 'Requirement evidence' });
       const attention = screen.getByRole('region', { name: 'Needs attention' });
       expect(
         within(evidence).getByLabelText('1 in your Profile but left out of this resume'),
       ).toBeInTheDocument();
       expect(within(evidence).getByLabelText('2 backed by a resume bullet')).toBeInTheDocument();
-      expect(within(evidence).getByText(/1 of 3 postings scored/)).toBeInTheDocument();
+      expect(within(evidence).getByText(/1 of 5 postings scored/)).toBeInTheDocument();
 
       // Every verdict is accounted for, so the strip sums to Brex's four requirements rather than
       // leaving one of them uncounted.

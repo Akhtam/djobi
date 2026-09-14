@@ -52,12 +52,20 @@ function isSubmitClick(doc: Document, target: EventTarget | null): boolean {
   const control = submitControlFor(target);
   if (!control) return false;
 
+  // A control the page has disabled cannot have submitted anything, whatever its `type` says — and
+  // this has to be asked *before* the native-submit branch below, not after it. `aria-disabled` is
+  // the accessible way to block a submit button while keeping it focusable, so it is exactly what
+  // an ATS puts on `<button type="submit">Submit application</button>` while the form is still
+  // incomplete — and unlike the `disabled` attribute, it does not stop the browser dispatching the
+  // click. Asking afterwards meant that click reported a submission, and the Save Step recorded an
+  // Application for a form the employer never received.
+  if (control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true')
+    return false;
+
   const type = control.getAttribute('type');
   if (type === 'submit') return true;
   // An explicit non-submit type is the author saying it isn't one; don't second-guess it by label.
   if (type !== null && type !== 'button') return false;
-  if (control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true')
-    return false;
 
   return SUBMIT_SIGNAL.test(buttonLabel(doc, control));
 }

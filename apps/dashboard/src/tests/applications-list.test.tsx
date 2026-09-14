@@ -37,6 +37,26 @@ describe('applications list', () => {
     expect(within(row).getByText('Greenhouse')).toBeInTheDocument();
   });
 
+  it('sorts by applied date in either direction', async () => {
+    const { user } = renderDashboard();
+    await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
+
+    const heading = screen.getByRole('columnheader', { name: /Applied/ });
+    expect(heading).toHaveAttribute('aria-sort', 'descending');
+
+    await user.click(screen.getByRole('button', { name: 'Sort by applied date, oldest first' }));
+
+    expect(heading).toHaveAttribute('aria-sort', 'ascending');
+    expect(window.location.hash).toBe('#/?sort=oldest');
+    expect(
+      within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Frontend Engineer' }),
+    ).toHaveAttribute('href', '#/applications/app-notion');
+
+    await user.click(screen.getByRole('button', { name: 'Sort by applied date, newest first' }));
+    expect(heading).toHaveAttribute('aria-sort', 'descending');
+    expect(window.location.hash).toBe('#/');
+  });
+
   it('filters by stage', async () => {
     const { user } = renderDashboard();
     await screen.findByRole('link', { name: 'Senior Frontend Engineer' });
@@ -283,6 +303,25 @@ describe('applications list', () => {
     );
     // Rewritten in place, so the dropped count is not left one Back away.
     expect(window.location.hash).toBe('#/?q=engineer');
+  });
+
+  // Sorting reorders the same rows; it does not narrow which ones qualify, so `Load more`'d rows
+  // must survive it — unlike an actual filter change, which does collapse `shown` (see the test
+  // below).
+  it('keeps the revealed rows through a re-sort', async () => {
+    const { user } = renderDashboard({
+      client: createFixtureDashboardClient(manyApplications(PAGE_SIZE + 5)),
+    });
+    await screen.findByRole('link', { name: 'Engineer 0' });
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(screen.getByRole('link', { name: `Engineer ${PAGE_SIZE}` })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Sort by applied date, oldest first' }));
+
+    expect(screen.getByRole('link', { name: 'Engineer 0' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: `Engineer ${PAGE_SIZE}` })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Load/ })).not.toBeInTheDocument();
   });
 
   it('collapses back to one batch when the filter changes', async () => {

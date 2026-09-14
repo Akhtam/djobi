@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { typedMessageEnvelope } from '../lib/messages';
+import { profile } from '../lib/testFixtures';
 
 const { mockHandleTypedMessage, mockRecover, mockRegisterCleanup } = vi.hoisted(() => ({
   mockHandleTypedMessage: vi.fn(),
@@ -52,7 +53,7 @@ describe('service worker dispatch', () => {
   });
 
   it('registers synchronously but gates a waking message behind the one-time recovery sweep', async () => {
-    const message = { type: 'START_SAVE_APPLICATION' as const, tabId: 7, expectedRunId: 'run-7' };
+    const message = { type: 'CHECK_RUN' as const, tabId: 7 };
     const sendResponse = vi.fn();
 
     expect(
@@ -73,11 +74,7 @@ describe('service worker dispatch', () => {
     await Promise.resolve();
 
     const returned = listener(
-      typedMessageEnvelope({
-        type: 'START_SAVE_APPLICATION',
-        tabId: 9,
-        expectedRunId: 'run-9',
-      }),
+      typedMessageEnvelope({ type: 'CHECK_RUN', tabId: 9 }),
       {} as chrome.runtime.MessageSender,
       vi.fn(),
     );
@@ -86,12 +83,44 @@ describe('service worker dispatch', () => {
     await vi.waitFor(() =>
       expect(error).toHaveBeenCalledWith(
         '[djobi] background message failed',
-        expect.objectContaining({ type: 'START_SAVE_APPLICATION', tabId: 9, error: failure }),
+        expect.objectContaining({ type: 'CHECK_RUN', tabId: 9, error: failure }),
       ),
     );
   });
 
-  describe('UPDATE_RUN, the one message with a real reply', () => {
+  describe('START_FILL and START_SAVE_APPLICATION, the other messages with a real reply', () => {
+    const fill = { type: 'START_FILL' as const, tabId: 5, profile, expectedRunId: 'run-5' };
+
+    it("keeps the channel open and answers with the claim's own verdict", async () => {
+      mockHandleTypedMessage.mockResolvedValue({ claimed: false, reason: 'busy' });
+      resolveRecovery();
+      const sendResponse = vi.fn();
+
+      expect(
+        listener(typedMessageEnvelope(fill), {} as chrome.runtime.MessageSender, sendResponse),
+      ).toBe(true);
+
+      await vi.waitFor(() =>
+        expect(sendResponse).toHaveBeenCalledWith({ claimed: false, reason: 'busy' }),
+      );
+    });
+
+    it('reports a refusal after a routing failure, same as UPDATE_RUN does', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockHandleTypedMessage.mockRejectedValue(new Error('storage write failed'));
+      resolveRecovery();
+      const sendResponse = vi.fn();
+
+      listener(typedMessageEnvelope(fill), {} as chrome.runtime.MessageSender, sendResponse);
+
+      await vi.waitFor(() =>
+        expect(sendResponse).toHaveBeenCalledWith({ claimed: false, reason: 'busy' }),
+      );
+      expect(error).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('UPDATE_RUN', () => {
     const edit = {
       type: 'UPDATE_RUN' as const,
       tabId: 3,

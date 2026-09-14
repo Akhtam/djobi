@@ -367,7 +367,10 @@ async function deleteApplicationNote(
  * No `RETURNING` payload to parse: unlike every write above, there is no surviving row to carry
  * back through `toWrittenApplication`, so this answers the bare `{ id }` the interface promises.
  */
-async function deleteApplication(userId: string, id: string): Promise<DeleteApplicationResult | null> {
+async function deleteApplication(
+  userId: string,
+  id: string,
+): Promise<DeleteApplicationResult | null> {
   const [row] = await db
     .delete(applications)
     .where(and(eq(applications.id, id), eq(applications.userId, userId)))

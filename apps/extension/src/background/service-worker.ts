@@ -12,14 +12,23 @@
  * the one-time recovery sweep every message waits behind, and the `.catch` that is the single place
  * a routed task's terminal rejection is logged.
  *
- * Every message but one is acknowledged synchronously with an empty reply and then routed as a
- * fire-and-forget task — see the listener below. `UPDATE_RUN` is the documented exception: it holds
- * the channel open and replies with whether the store actually wrote the edit, because a refusal
- * there produces no `chrome.storage.onChanged` event for the panel to learn it from otherwise.
+ * Most messages are acknowledged synchronously with an empty reply and then routed as a
+ * fire-and-forget task — see the listener below. `UPDATE_RUN`, `START_FILL` and
+ * `START_SAVE_APPLICATION` are the documented exceptions: each holds the channel open and replies
+ * with a real answer — whether the store actually wrote the edit, or whether the claim was won —
+ * because a refusal to any of them produces no `chrome.storage.onChanged` event for the panel to
+ * learn it from otherwise. `START_FILL`/`START_SAVE_APPLICATION`'s reply is about the claim only;
+ * the step itself keeps running underneath exactly as it always did, checkpointing its own progress
+ * into the store — see `background/router.ts`.
  */
 import { registerTabStateCleanup } from '../lib/tabStore/lifecycle';
 import { recoverInterruptedPipelineRuns } from '../lib/tabStore/pipelineRun';
-import { TypedMessageEnvelopeSchema, type TypedMessage } from '../lib/messages';
+import {
+  TypedMessageEnvelopeSchema,
+  type ClaimResult,
+  type TypedMessage,
+  type UpdateRunResult,
+} from '../lib/messages';
 import { handleTypedMessage } from './router';
 
 registerTabStateCleanup();
@@ -52,21 +61,25 @@ chrome.runtime.onMessage.addListener((input: unknown, sender, sendResponse) => {
 
   const message = parsed.data.payload;
 
-  // `UPDATE_RUN` is the one message on this channel with a real reply — see `lib/messages.ts`'s
-  // `updateRun` for why a store refusal has to reach the panel this way. Chrome only keeps a
-  // channel open past this listener's return for a message this callback claims with `true`, so
-  // this is the one case that does not acknowledge synchronously below.
-  if (message.type === 'UPDATE_RUN') {
+  // These three are the only messages on this channel with a real reply — see `lib/messages.ts`'s
+  // `updateRun`/`startFill`/`startSaveApplication` for why a refusal has to reach the panel this
+  // way. Chrome only keeps a channel open past this listener's return for a message this callback
+  // claims with `true`, so this is the one branch that does not acknowledge synchronously below.
+  if (
+    message.type === 'UPDATE_RUN' ||
+    message.type === 'START_FILL' ||
+    message.type === 'START_SAVE_APPLICATION'
+  ) {
     // Answering a channel the panel has already closed throws ("Attempting to use a disconnected
     // port"). That is a benign close, not a failure: swallowing it here keeps it out of the
     // `.catch` below, which would otherwise log a routing error for it and then call
     // `sendResponse` a second time — throwing again, inside the catch handler, with nothing left
     // downstream to catch it.
-    const answer = (result: void | { applied: boolean }) => {
+    const answer = (result: void | UpdateRunResult | ClaimResult) => {
       try {
         sendResponse(result);
       } catch {
-        // The panel closed while the write was in flight. Nobody is waiting for this answer.
+        // The panel closed while the operation was in flight. Nobody is waiting for this answer.
       }
     };
 
@@ -77,11 +90,14 @@ chrome.runtime.onMessage.addListener((input: unknown, sender, sendResponse) => {
         console.error('[djobi] background message failed', {
           type: message.type,
           tabId: tabIdOf(message, sender),
-          runId: message.runId,
+          ...('runId' in message ? { runId: message.runId } : {}),
+          ...('expectedRunId' in message ? { expectedRunId: message.expectedRunId } : {}),
           error,
         });
-        // No confirmed write, so the caller treats this exactly like a refusal.
-        answer({ applied: false });
+        // No confirmed answer, so the caller treats this exactly like a refusal.
+        answer(
+          message.type === 'UPDATE_RUN' ? { applied: false } : { claimed: false, reason: 'busy' },
+        );
       });
     return true;
   }

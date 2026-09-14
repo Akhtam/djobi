@@ -21,7 +21,7 @@ import {
 } from '@djobi/shared';
 import { Hono } from 'hono';
 import type { z } from 'zod';
-import { parseBody } from '../requestBody.js';
+import { jsonBody } from '../requestBody.js';
 import { analyzeApplication } from '../llm/analyzeApplication.js';
 import { answerChat } from '../llm/answerChat.js';
 import { answerQuestions } from '../llm/answerQuestions.js';
@@ -31,10 +31,11 @@ import { tailorResume } from '../llm/tailorResume.js';
 export const llmRoutes = new Hono();
 
 /**
- * Registers one `POST` that validates against `schema` and answers with `respond`'s result as JSON.
+ * Registers one `POST` behind {@link jsonBody}'s validation, and answers with `respond`'s result as
+ * JSON.
  *
- * Nothing here catches: a throw from `parseBody` is the client's 400 and a throw from the operation
- * is a 500, both decided in one place by `app.onError`. A `try/catch` per route is exactly what that
+ * Nothing here catches: a rejected body is the client's 400 and a throw from the operation is a
+ * 500, both decided in one place by `app.onError`. A `try/catch` per route is exactly what that
  * handler exists to make unnecessary.
  *
  * `respond` is handed the request's own `AbortSignal`, which fires when the candidate's browser
@@ -48,8 +49,8 @@ function post<Schema extends z.ZodTypeAny>(
   schema: Schema,
   respond: (body: z.infer<Schema>, signal: AbortSignal) => Promise<unknown>,
 ): void {
-  llmRoutes.post(path, async (c) =>
-    c.json(await respond(await parseBody(c, schema), c.req.raw.signal)),
+  llmRoutes.post(path, jsonBody(schema), async (c) =>
+    c.json(await respond(c.req.valid('json'), c.req.raw.signal)),
   );
 }
 

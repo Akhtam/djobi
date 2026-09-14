@@ -64,14 +64,15 @@ export function ResumeReview({
       <div className="resume-review-content">
         {totalBullets === 0 ? (
           <p className="hint">
-            No resume bullets remain for this posting — Fill will attach a resume with no experience
-            bullets. Check your Profile's bullets for this job, or the per-role bullet limit.
+            No resume bullets remain for this posting, so Fill will attach a resume with no
+            experience on it. Check the bullets on your profile for this job, and your per-role
+            bullet limit.
           </p>
         ) : (
           <p className="hint">
-            Edit, reorder or remove any bullet below — Fill uses exactly what's here. A rewrite that
-            named a number or a technology your Profile doesn't already say has already been swapped
-            back to your own wording.
+            Edit, reorder, or remove any bullet below — Fill uses exactly what's here. If a rewrite
+            claimed a number or a technology your profile doesn't mention, djobi already put your
+            own wording back.
           </p>
         )}
         {tailoredResume.workExperience.map((role, roleIndex) => {

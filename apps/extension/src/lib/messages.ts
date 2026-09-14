@@ -109,6 +109,23 @@ export const UpdateRunResultSchema = z.object({ applied: z.boolean() }).strict()
 export type UpdateRunResult = ZodTypeOf<typeof UpdateRunResultSchema>;
 
 /**
+ * Background -> panel: whether a `START_FILL`/`START_SAVE_APPLICATION` actually claimed the run,
+ * replied the moment `background/runClaim.ts` knows — before the step itself has run, let alone
+ * finished.
+ *
+ * `'busy'` means another step is already claiming this run (a second panel, most often — a single
+ * panel's own buttons are disabled while its own command is in flight). `'stale-run'` means the
+ * command named a run that is no longer the tab's current one, e.g. a re-analysis landed between
+ * the panel rendering and this command arriving. Both stand the caller's optimistic status down the
+ * same way a delivery failure already does — see `panel/pipelineCommands.ts`.
+ */
+export const ClaimResultSchema = z.discriminatedUnion('claimed', [
+  z.object({ claimed: z.literal(true) }).strict(),
+  z.object({ claimed: z.literal(false), reason: z.enum(['busy', 'stale-run']) }).strict(),
+]);
+export type ClaimResult = ZodTypeOf<typeof ClaimResultSchema>;
+
+/**
  * What {@link updateRun} learned about one edit. `delivered` separates "the store answered, and
  * said no" from "nothing answered at all" — a worker restarting, an extension reload, a listener
  * not yet registered, or a reply this build cannot parse. Both leave nothing written, but only the
@@ -227,16 +244,23 @@ export type ContentCommandMessage =
 
 /**
  * The coordination protocol: content script and panel telling the background that something
- * happened. **Notification-only — none of these has an operation response.**
+ * happened. **Notification-only by default — most of these have no operation response.**
  *
- * That's a real design decision, not an omission. Reports and edits have nothing to return, while
- * START messages kick off work whose whole point is outliving the sender. The service worker sends
- * only an immediate empty receipt acknowledgement; holding the channel open until an Analysis Step
+ * That's a real design decision, not an omission. Reports have nothing to return, and starting a
+ * step kicks off work whose whole point is outliving the sender: the service worker sends only an
+ * immediate empty receipt acknowledgement, and holding the channel open until an Analysis Step
  * resolves is exactly the failure this protocol was built to avoid, since the channel dies with the
  * panel that opened it. Progress is read from `lib/tabStore/pipelineRun.ts` instead.
  *
- * The messages that *do* have responses are not in this union: `SCAN_PAGE`, `FILL_FORM`, and
- * `SCRAPE_JOB_DESCRIPTION` live in `lib/pageClient.ts`.
+ * Three messages are the documented exception, each for the same reason: a refusal produces no
+ * `chrome.storage.onChanged` event for the caller to learn it from, so it has to be a real answer
+ * instead. `UPDATE_RUN` answers whether the store actually wrote the edit ({@link UpdateRunResult}).
+ * `START_FILL`/`START_SAVE_APPLICATION` answer whether the claim was won ({@link ClaimResult}) —
+ * before the step itself runs, let alone finishes; that part stays notification-shaped. Every other
+ * message here still has none.
+ *
+ * The messages that *do* have responses are not otherwise in this union: `SCAN_PAGE`, `FILL_FORM`,
+ * and `SCRAPE_JOB_DESCRIPTION` live in `lib/pageClient.ts`.
  *
  * This used to be typed as request/response on both ends — a `sendMessage<TReq, TRes>` generic over
  * a response nothing ever sent, and a handler taking `sendResponse` it never called and returning a
@@ -353,4 +377,43 @@ export function updateRun(message: UpdateRunMessage): Promise<UpdateRunOutcome> 
       );
     });
   });
+}
+
+/**
+ * What {@link startFill}/{@link startSaveApplication} learned about a claim attempt. `delivered`
+ * carries the same meaning {@link UpdateRunOutcome}'s does — Chrome never got the message to the
+ * background at all — and is reported as `{ claimed: false, reason: 'busy' }` so a caller that only
+ * checks `claimed` treats the two the same way `panel/pipelineCommands.ts` already treats a plain
+ * delivery failure: stand the optimistic status down and let the candidate retry.
+ */
+export type ClaimOutcome = ClaimResult & { delivered: boolean };
+
+/**
+ * Sends `START_FILL` or `START_SAVE_APPLICATION` and waits for the claim's outcome — a real
+ * request/response, the same reasoning as {@link updateRun}: a claim that loses produces no
+ * `chrome.storage.onChanged` event for the panel to learn it from, so without an answer the caller
+ * has no way to tell a refused command from one still running.
+ */
+function sendClaimCommand(message: StartFillMessage | StartSaveApplicationMessage) {
+  return new Promise<ClaimOutcome>((resolve) => {
+    chrome.runtime.sendMessage(typedMessageEnvelope(message), (response: unknown) => {
+      const error = chrome.runtime.lastError;
+      const parsed = ClaimResultSchema.safeParse(response);
+      resolve(
+        error || !parsed.success
+          ? { claimed: false, reason: 'busy', delivered: false }
+          : { ...parsed.data, delivered: true },
+      );
+    });
+  });
+}
+
+/** Panel -> background: start the Fill Step, waiting for whether it actually claimed the run. */
+export function startFill(message: StartFillMessage): Promise<ClaimOutcome> {
+  return sendClaimCommand(message);
+}
+
+/** Panel -> background: start the Save Step, waiting for whether it actually claimed the run. */
+export function startSaveApplication(message: StartSaveApplicationMessage): Promise<ClaimOutcome> {
+  return sendClaimCommand(message);
 }

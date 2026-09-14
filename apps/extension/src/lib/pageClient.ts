@@ -1,15 +1,18 @@
 /**
  * Talking to a tab's content script: the three request/response messages the extension waits on,
- * and the transport rules they have to obey.
+ * and the transport rules they have to obey. {@link notifyPage} is the one exception — a
+ * fire-and-forget broadcast with no response to wait on, the page-facing counterpart of
+ * `lib/messages.ts`'s `notify()` — kept here rather than there because every other message to a
+ * content script already is.
  *
- * These live behind an interface because they're the half of the Application Pipeline's outside
- * world that has real behaviour to hide — the `chrome.runtime.lastError` handshake and the
- * `ArrayBuffer` encoding below are both easy to get wrong and invisible when you do. They used to
- * sit inline in a default-parameter object in `background/applicationPipeline.ts`, which meant the
- * only way to exercise them was to run the whole pipeline.
+ * The request/response three live behind an interface because they're the half of the Application
+ * Pipeline's outside world that has real behaviour to hide — the `chrome.runtime.lastError`
+ * handshake and the `ArrayBuffer` encoding below are both easy to get wrong and invisible when you
+ * do. They used to sit inline in a default-parameter object in `background/applicationPipeline.ts`,
+ * which meant the only way to exercise them was to run the whole pipeline.
  *
- * Deliberately separate from the notification-only protocol in `lib/messages.ts`: these are the
- * messages in the extension where a content-script response exists at all.
+ * Deliberately separate from the coordination protocol in `lib/messages.ts`: that module is
+ * panel/content-script -> background; everything here is background -> content script.
  */
 import type { DetectedField, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
 import {
@@ -25,6 +28,7 @@ import type {
   FillFormCommandMessage,
   ScanPageCommandMessage,
   ScrapeJobDescriptionCommandMessage,
+  ShowSavedToastCommandMessage,
 } from './messages';
 
 /**
@@ -144,6 +148,19 @@ function ask<Schema extends ZodTypeAny>(
     if (response.status === 'invalid') throw response.error;
     return response.status === 'valid' ? response.value : null;
   });
+}
+
+/**
+ * Broadcasts a fire-and-forget command to a tab's content script — the page-facing equivalent of
+ * `lib/messages.ts`'s `notify()`. Not addressed to a frame: `SHOW_SAVED_TOAST`, its only caller, is
+ * sent after a submission that has usually already navigated the tab, so the frame that was filled
+ * may no longer exist and the top frame is as good a place as any to show it.
+ *
+ * Reading `chrome.runtime.lastError` is what marks the callback handled; nothing here reads the
+ * value or retries; there is no response to validate.
+ */
+export function notifyPage(tabId: number, message: ShowSavedToastCommandMessage): void {
+  chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
 }
 
 function frameIdsForTab(tabId: number): Promise<number[]> {

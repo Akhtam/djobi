@@ -1475,7 +1475,9 @@ describe('runFill', () => {
     expect(await getPipelineRun(7)).toMatchObject({ status: 'review' });
   });
 
-  it('stops a Fill superseded during its scan before rendering or touching the page', async () => {
+  // The resume render now starts alongside the scan, so a superseded run may already have begun
+  // one — what it must not do is keep it alive or act on the page.
+  it('stops a Fill superseded during its scan, cancelling its render, before touching the page', async () => {
     stubChrome();
     await seedReviewRun(7, [resumeField]);
     let resolveScan!: (value: JobPageData) => void;
@@ -1490,7 +1492,9 @@ describe('runFill', () => {
     resolveScan({ fields: [resumeField] });
     await staleFill;
 
-    expect(staleDeps.backend.renderResumePdf).not.toHaveBeenCalled();
+    for (const [, , signal] of vi.mocked(staleDeps.backend.renderResumePdf).mock.calls) {
+      expect(signal?.aborted).toBe(true);
+    }
     expect(staleDeps.page.fill).not.toHaveBeenCalled();
   });
 

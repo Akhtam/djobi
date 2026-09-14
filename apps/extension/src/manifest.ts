@@ -10,7 +10,8 @@ export default defineManifest({
   manifest_version: 3,
   name: 'djobi — Job Application Autofill',
   version: pkg.version,
-  description: 'Autofills job applications with an AI-tailored resume and drafted answers.',
+  description:
+    'Fills job applications with a resume tailored to the posting, then tracks every one you send.',
   // Pins this extension's id to `EXTENSION_ID` regardless of load order or machine — an unpinned
   // dev build gets a fresh random id every reload, which `apps/backend/src/auth.ts`'s
   // `trustedOrigins` can't whitelist (`docs/multi-tenant-auth.md`, Phase D). Only the *public* half

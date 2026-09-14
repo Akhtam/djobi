@@ -322,7 +322,6 @@ export function ApplicationDetail({
           </div>
         </section>
       )}
-
     </article>
   );
 }

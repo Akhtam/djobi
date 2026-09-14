@@ -83,17 +83,36 @@ type ProfileBackedCategory = {
  * optional as `null` (see `orNull` in `options/App.tsx`), and writing an empty string would overwrite
  * whatever the ATS had already put in the box.
  */
+/**
+ * A stored value as something worth writing, or `undefined` when there is nothing there.
+ *
+ * Every projection below goes through this, because the rule above — blank means "leave the box
+ * alone", never "write an empty string over it" — was implemented on `last_name` alone. `fullName`
+ * and `email` are plain `z.string()` with no minimum (`EMPTY_PROFILE` starts both at `''`, and the
+ * profile form marks neither required), so a profile saved without a name filled `first_name` and
+ * `full_name` with `''` and wiped whatever the ATS had already prefilled into them.
+ */
+function filled(value: string | null | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
+/** The name's parts, split on any run of whitespace so a double space doesn't yield a blank part. */
+function nameParts(profile: Profile): string[] {
+  const name = profile.fullName.trim();
+  return name ? name.split(/\s+/) : [];
+}
+
 const PROFILE_VALUE: Record<ProfileBackedCategory, (profile: Profile) => string | undefined> = {
   // A mononym has no surname to give, so `last_name` is empty rather than a repeat of the first.
-  first_name: (profile) => profile.fullName.split(' ')[0],
-  last_name: (profile) => profile.fullName.split(' ').slice(1).join(' ') || undefined,
-  full_name: (profile) => profile.fullName,
-  email: (profile) => profile.email,
-  phone: (profile) => profile.phone ?? undefined,
-  location: (profile) => profile.location ?? undefined,
-  linkedin_url: (profile) => profile.links.linkedin ?? undefined,
-  portfolio_url: (profile) => profile.links.portfolio ?? undefined,
-  github_url: (profile) => profile.links.github ?? undefined,
+  first_name: (profile) => filled(nameParts(profile)[0]),
+  last_name: (profile) => filled(nameParts(profile).slice(1).join(' ')),
+  full_name: (profile) => filled(profile.fullName),
+  email: (profile) => filled(profile.email),
+  phone: (profile) => filled(profile.phone),
+  location: (profile) => filled(profile.location),
+  linkedin_url: (profile) => filled(profile.links.linkedin),
+  portfolio_url: (profile) => filled(profile.links.portfolio),
+  github_url: (profile) => filled(profile.links.github),
 };
 
 /**

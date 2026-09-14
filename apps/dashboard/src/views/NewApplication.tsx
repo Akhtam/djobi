@@ -149,8 +149,8 @@ export function NewApplication({
           <p className="new-application__eyebrow">Applied manually</p>
           <h1 id="new-application-title">Log an application</h1>
           <p>
-            Paste the posting and djobi will extract its details, then file it alongside
-            applications logged from the extension.
+            Paste the posting. djobi pulls out the details and files it next to everything the
+            extension saved for you.
           </p>
         </div>
 
@@ -160,9 +160,9 @@ export function NewApplication({
           </p>
         ) : profileState.kind === 'none' ? (
           <div className="new-application__state">
-            <strong>A profile is required first</strong>
+            <strong>You need a profile first</strong>
             <p>
-              Save your base resume in the extension’s Profile settings, then return here to log
+              Save your base resume in the extension’s profile settings, then come back here to log
               this application.
             </p>
           </div>
@@ -260,7 +260,7 @@ export function NewApplication({
                   onChange={(event) => setJobUrl(event.target.value)}
                 />
                 {jobUrl && !isHttpUrl(jobUrl) ? (
-                  <small>Enter a complete http:// or https:// URL.</small>
+                  <small>Needs the full address, starting with http:// or https://.</small>
                 ) : null}
               </label>
               <label>

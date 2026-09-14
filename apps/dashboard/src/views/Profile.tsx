@@ -3,31 +3,25 @@
  *
  * The same Profile the extension's options page edits (`apps/extension/src/options/App.tsx`), and
  * deliberately built the same way: everything that is not markup comes from `@djobi/profile-editor`
- * rather than being re-implemented here — the draft (`useProfileDraft`), every list section's
- * editor (`profileListEditors`), the per-field operations (`spliceWorkBullets`, `commaList`,
- * `addSkill`, …), the section inventory (`PROFILE_SECTIONS`), and the save and resume-upload
- * protocols, which are `draft.save`/`draft.applyResume` rather than sequences this view repeats.
+ * rather than being re-implemented here — the load/upload/save workflow (`useProfileWorkflow`),
+ * every list section's editor (`profileListEditors`), the per-field operations
+ * (`spliceWorkBullets`, `commaList`, …), and the section inventory (`PROFILE_SECTIONS`).
  * "Star a bullet" and "drop a blank story id" therefore behave identically in both places by
  * construction rather than by both being written the same way twice.
  *
- * What stays here is the chrome: `ListSection`'s panel shell, the tab bar, the quick-nav's
- * rendering (the *order* is the package's), the save affordance, and how a 401 is reported — the
- * `onUnauthorized` convention `Analytics.tsx` uses, rather than the options page's own
- * `unauthorized`-state-and-`<Login>` one, since the dashboard already redirects to `#/login`
+ * What stays here is the chrome: the `FieldChrome`/`ListSectionChrome` this page renders through
+ * (`ListSection` itself is `@djobi/profile-editor`'s now — see its own doc comment), the tab bar,
+ * the quick-nav's rendering (the *order* is the package's), the save affordance, and how a 401 is
+ * reported — the `onUnauthorized` convention `Analytics.tsx` uses, rather than the options page's
+ * own `unauthorized`-state-and-`<Login>` one, since the dashboard already redirects to `#/login`
  * centrally in `App.tsx`.
  */
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { userMessage } from '@djobi/http-client';
+import type { ExtractedProfile, Profile } from '@djobi/shared';
 import {
-  useEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type FormEvent,
-  type ReactNode,
-} from 'react';
-import { isUnauthorized, userMessage } from '@djobi/http-client';
-import { EMPTY_PROFILE, parseProfile, type ExtractedProfile, type Profile } from '@djobi/shared';
-import {
-  addSkill,
+  ListSection,
+  profileOutcomeMessage,
   profileListEditors,
   profileListSectionEntry,
   PROFILE_SECTION_BY_KEY,
@@ -35,13 +29,14 @@ import {
   ProfileSectionFields,
   removeSkill,
   scrollToSection,
-  useProfileDraft,
+  useProfileWorkflow,
   type BulletListClassNames,
   type CheckboxFieldRenderer,
   type CredentialItem,
   type FieldChrome,
   type FieldRenderer,
-  type ListEditor,
+  type ListSectionChrome,
+  type ProfilePagePort,
 } from '@djobi/profile-editor';
 
 /**
@@ -91,60 +86,39 @@ function PanelHead({ id, legend, hint }: { id: string; legend: string; hint?: st
   );
 }
 
-/** The chrome around one editable list: the panel, its hint, a numbered removable entry, and Add. */
-function ListSection<T>({
-  id,
-  legend,
-  noun,
-  addLabel,
-  hint,
-  items,
-  editor,
-  controls,
-  summary,
-  children,
-}: {
-  id: string;
-  legend: string;
-  noun: string;
-  addLabel: string;
-  hint?: string;
-  items: T[];
-  editor: ListEditor<T>;
-  controls?: ReactNode;
-  summary?: (entry: T, index: number) => ReactNode;
-  children: (entry: T, index: number) => ReactNode;
-}) {
-  return (
+/**
+ * This page's `ListSectionChrome`: a plain `<section>` with `PanelHead` and no item count, and an
+ * entry whose `summary` renders as an always-visible paragraph, never collapsing. The extension's
+ * own renderer instead shows a count and collapses behind a native `<details>` — see
+ * `apps/extension/src/options/App.tsx`.
+ */
+const listSectionChrome: ListSectionChrome = {
+  emptyClassName: 'profile-empty',
+  addButtonClassName: 'button',
+  Section: ({ id, legend, hint, children }) => (
     <section className="detail__panel">
       <PanelHead id={id} legend={legend} hint={hint} />
-      <div className="detail__panel-body">
-        {controls}
-        {items.length === 0 && <p className="profile-empty">No {noun} added yet.</p>}
-        {items.map((entry, index) => (
-          <div key={index} className="profile-entry">
-            <div className="profile-entry__head">
-              <span>{`Entry ${index + 1}`}</span>
-              <button
-                type="button"
-                className="button profile-remove"
-                aria-label={`Remove ${noun} ${index + 1}`}
-                onClick={() => editor.remove(index)}
-              >
-                Remove
-              </button>
-            </div>
-            {summary ? <p className="profile-entry__summary">{summary(entry, index)}</p> : null}
-            {children(entry, index)}
-          </div>
-        ))}
-        <button type="button" className="button" onClick={editor.add}>
-          {addLabel}
+      <div className="detail__panel-body">{children}</div>
+    </section>
+  ),
+  Entry: ({ index, noun, onRemove, summary, children }) => (
+    <div className="profile-entry">
+      <div className="profile-entry__head">
+        <span>{`Entry ${index + 1}`}</span>
+        <button
+          type="button"
+          className="button profile-remove"
+          aria-label={`Remove ${noun} ${index + 1}`}
+          onClick={onRemove}
+        >
+          Remove
         </button>
       </div>
-    </section>
-  );
-}
+      {summary ? <p className="profile-entry__summary">{summary}</p> : null}
+      {children}
+    </div>
+  ),
+};
 
 /** The page's two tabs — everything resume-shaped, versus everything asked at application time. */
 type ProfileTab = 'profile' | 'prep';
@@ -160,54 +134,31 @@ export function Profile({
   extractResume: (file: File) => Promise<ExtractedProfile>;
   onUnauthorized: () => void;
 }) {
-  const draft = useProfileDraft();
-  const profile = draft.profile;
-  const dirty = draft.dirty;
-  const extracting = draft.extracting;
+  const port = useMemo<ProfilePagePort>(
+    () => ({ loadProfile: getProfile, saveProfile, extractResume }),
+    [getProfile, saveProfile, extractResume],
+  );
+  const workflow = useProfileWorkflow(port, onUnauthorized);
+  const { draft, setProfile, newSkill, setNewSkill, saveResult, uploadResult, loadError } =
+    workflow;
+  const { profile, dirty, extracting } = draft;
   const [activeTab, setActiveTab] = useState<ProfileTab>('profile');
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
-  const [newSkill, setNewSkill] = useState('');
-  // Separate from `status` above: that means "the save you just asked for landed or didn't," and
-  // an extraction is neither — nothing is saved until the candidate reviews the pre-filled fields
-  // and clicks Save themselves.
-  const [extraction, setExtraction] = useState<{
-    kind: 'notice' | 'error';
-    message: string;
-  } | null>(null);
   // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
   // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
-  function setProfile(next: Profile) {
-    draft.setProfile(next);
-    if (status?.kind === 'saved') setStatus(null);
-  }
-
-  useEffect(() => {
-    let current = true;
-    getProfile().then(
-      (loaded) => {
-        if (!current) return;
-        draft.load(parseProfile(loaded));
-      },
-      (error: unknown) => {
-        if (!current) return;
-        if (isUnauthorized(error)) {
-          onUnauthorized();
-          return;
-        }
-        draft.load(EMPTY_PROFILE);
-        setLoadError(userMessage(error));
-      },
-    );
-    return () => {
-      current = false;
-    };
-    // `draft` is a fresh object every render — depending on it would re-run this on every render.
-    // `getProfile`/`onUnauthorized` are this effect's real inputs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getProfile, onUnauthorized]);
+  const status = saveResult
+    ? {
+        kind: saveResult.kind === 'saved' ? 'saved' : 'error',
+        message: profileOutcomeMessage(saveResult),
+      }
+    : null;
+  const extraction = uploadResult
+    ? {
+        kind: uploadResult.kind === 'parsed' ? 'notice' : 'error',
+        message: profileOutcomeMessage(uploadResult),
+      }
+    : null;
 
   if (!profile) {
     return <p className="empty-state">Loading profile…</p>;
@@ -217,61 +168,16 @@ export function Profile({
   const { work, education, stories, customAnswers, projects, credentials } = editors;
   const section = PROFILE_SECTION_BY_KEY;
 
-  /**
-   * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
-   * own. `setProfile` marks the form `dirty`, so "You have unsaved changes" already says nothing
-   * has been persisted yet; `extraction` here is only the upload's own success/failure message.
-   */
   async function handleResumeUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     // Cleared immediately so re-selecting the same file still fires a change event.
     event.target.value = '';
-    if (!file) return;
-
-    setExtraction(null);
-    // `draft.applyResume` owns the protocol — parse, apply field by field onto the draft as it
-    // stands when the parse returns, mark it dirty. What's left here is what only this view can
-    // answer: how a 401 is reported, and the wording of the result.
-    const outcome = await draft.applyResume(file, extractResume);
-    if (outcome.kind === 'stale') return;
-    if (outcome.kind === 'error') {
-      if (isUnauthorized(outcome.error)) {
-        onUnauthorized();
-        return;
-      }
-      setExtraction({
-        kind: 'error',
-        message: `Couldn't parse this resume: ${userMessage(outcome.error)}`,
-      });
-      return;
-    }
-    // A parse is an edit, and `applyResume` writes through the draft rather than the `setProfile`
-    // wrapper above, so the stale "Profile saved." banner is cleared here instead.
-    if (status?.kind === 'saved') setStatus(null);
-    setExtraction({
-      kind: 'notice',
-      message: 'Resume parsed. Review the pre-filled fields below, then save.',
-    });
+    if (file) await workflow.uploadResume(file);
   }
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
-    if (!profile) return;
-    setStatus(null);
-    // `draft.save` owns the whole protocol — normalize, persist, drop a response a later edit has
-    // superseded, load what came back. What's left here is what only this view can answer: how a
-    // 401 is reported, and the wording of the result.
-    const outcome = await draft.save(saveProfile);
-    if (outcome.kind === 'stale') return;
-    if (outcome.kind === 'error') {
-      if (isUnauthorized(outcome.error)) {
-        onUnauthorized();
-        return;
-      }
-      setStatus({ kind: 'error', message: userMessage(outcome.error) });
-      return;
-    }
-    setStatus({ kind: 'saved', message: 'Profile saved.' });
+    await workflow.save();
   }
 
   return (
@@ -284,15 +190,15 @@ export function Profile({
         <div>
           <h1>Your profile</h1>
           <p className="detail__subtitle">
-            Djobi uses this to tailor resumes and prepare application answers without inventing
-            details.
+            djobi tailors your resume and drafts your answers from what's here, and only from what's
+            here — it won't make anything up.
           </p>
         </div>
       </header>
 
-      {loadError ? (
+      {loadError !== null ? (
         <p className="banner banner--error" role="alert">
-          Couldn’t load your profile. {loadError}
+          Couldn’t load your profile. {userMessage(loadError)}
         </p>
       ) : null}
 
@@ -328,7 +234,7 @@ export function Profile({
               <p className="upload-resume-card__hint">
                 {extracting
                   ? 'Parsing…'
-                  : "PDF — we'll pull contact info, work history, and skills automatically."}
+                  : "Drop in a PDF and we'll pull out your contact details, work history, and skills."}
               </p>
             </div>
             <input
@@ -478,14 +384,7 @@ export function Profile({
                       onChange={(e) => setNewSkill(e.target.value)}
                     />
                   </label>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => {
-                      setProfile(addSkill(profile, newSkill));
-                      setNewSkill('');
-                    }}
-                  >
+                  <button type="button" className="button" onClick={workflow.addNewSkill}>
                     Add skill
                   </button>
                 </div>
@@ -493,6 +392,7 @@ export function Profile({
             </section>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.work.anchor}
               legend={section.work.title}
               noun={section.work.noun}
@@ -539,6 +439,7 @@ export function Profile({
             </ListSection>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.projects.anchor}
               legend={section.projects.title}
               noun={section.projects.noun}
@@ -557,6 +458,7 @@ export function Profile({
             </ListSection>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.education.anchor}
               legend={section.education.title}
               noun={section.education.noun}
@@ -573,6 +475,7 @@ export function Profile({
             </ListSection>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.credentials.anchor}
               legend={section.credentials.title}
               noun={section.credentials.noun}
@@ -612,6 +515,7 @@ export function Profile({
             </section>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.answers.anchor}
               legend={section.answers.title}
               noun={section.answers.noun}
@@ -629,6 +533,7 @@ export function Profile({
             </ListSection>
 
             <ListSection
+              chrome={listSectionChrome}
               id={section.stories.anchor}
               legend={section.stories.title}
               noun={section.stories.noun}

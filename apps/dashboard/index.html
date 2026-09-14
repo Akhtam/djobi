@@ -11,6 +11,20 @@
     <link rel="alternate icon" href="/src/assets/icons/icon32.png" />
     <link rel="apple-touch-icon" href="/src/assets/icons/icon256.png" />
     <title>djobi — Applications</title>
+    <!-- Matches src/lib/themeConstants.ts, kept as a literal rather than an import: this has to run
+         synchronously, inline, before anything else — a `type="module"` import is deferred by spec
+         and would let the page paint before it resolves, reintroducing the exact flash this exists
+         to prevent. src/lib/themeConstants.test.ts is what keeps the two from drifting instead. -->
+    <script>
+      (function () {
+        var theme = 'dark';
+        try {
+          var stored = localStorage.getItem('djobi-dashboard-theme');
+          if (stored === 'light' || stored === 'dark') theme = stored;
+        } catch (e) {}
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

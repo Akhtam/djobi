@@ -12,6 +12,8 @@ import {
   analyticsReport,
   coverageForKeywords,
   evidenceByRequirement,
+  groupByKeywordCategory,
+  keywordCoverageSummary,
   keywordFrequency,
   keywordRows,
   outcomeOf,
@@ -77,21 +79,27 @@ function application(overrides: Partial<Application> = {}): Application {
 
 describe('RANGES / DEFAULT_RANGE', () => {
   it('is the closed set the URL and the range control both read from', () => {
-    expect(RANGES).toEqual(['7d', '14d', '30d', '60d']);
+    expect(RANGES).toEqual(['7d', '14d', '30d', '60d', 'all']);
   });
 
-  it('defaults to 7 days', () => {
-    expect(DEFAULT_RANGE).toBe('7d');
+  it('defaults to 14 days', () => {
+    expect(DEFAULT_RANGE).toBe('14d');
   });
 });
 
 describe('rangeStart', () => {
   it('returns local midnight of today for a 1-day-equivalent boundary check', () => {
     const today = new Date(2026, 2, 15, 14, 30); // 2026-03-15 14:30 local
-    const start = rangeStart('7d', today);
+    const start = rangeStart('7d', today)!;
 
     expect(start.getHours()).toBe(0);
     expect(start.getMinutes()).toBe(0);
+  });
+
+  // `null`, not a date far enough back to include everything: the view renders this boundary, so a
+  // sentinel would print as a claim that the search began then.
+  it('names no boundary at all for the all-time range', () => {
+    expect(rangeStart('all', new Date(2026, 2, 15))).toBeNull();
   });
 
   it('is inclusive of today, so a 7-day range spans seven calendar days total', () => {
@@ -692,6 +700,85 @@ describe('keywordRows', () => {
   });
 });
 
+describe('keywordCoverageSummary', () => {
+  it('splits rows into evidenced and gap counts, and rounds the gap percentage', () => {
+    const rows = [
+      frequencyRow({ term: 'Rust' }),
+      frequencyRow({ term: 'TypeScript' }),
+      frequencyRow({ term: 'migration' }),
+    ];
+    const coverage = new Map<string, 'skills' | 'experience' | 'missing'>([
+      ['Rust', 'missing'],
+      ['TypeScript', 'skills'],
+      ['migration', 'experience'],
+    ]);
+
+    expect(keywordCoverageSummary(rows, coverage)).toEqual({
+      evidenced: 2,
+      gaps: 1,
+      gapPercent: 33,
+    });
+  });
+
+  it('reads every row as evidenced without coverage to score against, the same rule keywordRows follows', () => {
+    const rows = [frequencyRow({ term: 'Rust' })];
+
+    expect(keywordCoverageSummary(rows, null)).toEqual({ evidenced: 1, gaps: 0, gapPercent: 0 });
+  });
+
+  it('reports zero rather than NaN for an empty row set', () => {
+    expect(keywordCoverageSummary([], null)).toEqual({ evidenced: 0, gaps: 0, gapPercent: 0 });
+  });
+
+  it('describes rows over any slice a caller passes, not a fixed population', () => {
+    // The summary strip and the on-screen category groups read different slices of the same
+    // table (see the function's own doc comment) — this is what makes that possible.
+    const rows = [frequencyRow({ term: 'Rust' }), frequencyRow({ term: 'TypeScript' })];
+    const coverage = new Map<string, 'skills' | 'experience' | 'missing'>([['Rust', 'missing']]);
+
+    expect(keywordCoverageSummary(rows, coverage).gaps).toBe(1);
+    expect(keywordCoverageSummary(rows.slice(0, 1), coverage).gaps).toBe(1);
+    expect(keywordCoverageSummary(rows.slice(1), coverage).gaps).toBe(0);
+  });
+});
+
+describe('groupByKeywordCategory', () => {
+  it('groups rows by category, keeping each group in arrival order', () => {
+    const rows = [
+      frequencyRow({ term: 'React', category: 'framework' }),
+      frequencyRow({ term: 'TypeScript', category: 'language' }),
+      frequencyRow({ term: 'Next.js', category: 'framework' }),
+    ];
+
+    expect(groupByKeywordCategory(rows)).toEqual([
+      { category: 'framework', items: [rows[0], rows[2]] },
+      { category: 'language', items: [rows[1]] },
+    ]);
+  });
+
+  it('groups every uncategorized row under a null category rather than a display label', () => {
+    const rows = [frequencyRow({ term: 'react', category: null })];
+
+    expect(groupByKeywordCategory(rows)).toEqual([{ category: null, items: rows }]);
+  });
+
+  it('returns nothing for no rows', () => {
+    expect(groupByKeywordCategory([])).toEqual([]);
+  });
+
+  it('puts categories in first-appearance order, not a fixed sequence', () => {
+    const rows = [
+      frequencyRow({ term: 'a', category: 'tool' }),
+      frequencyRow({ term: 'b', category: 'language' }),
+    ];
+
+    expect(groupByKeywordCategory(rows).map((group) => group.category)).toEqual([
+      'tool',
+      'language',
+    ]);
+  });
+});
+
 describe('requirementsReport', () => {
   function apps(): Application[] {
     return [
@@ -743,6 +830,35 @@ describe('requirementsReport', () => {
 
     expect(report.anyBanded).toBe(false);
     expect(report.bandCounts.unbanded).toBe(2);
+  });
+
+  it('sums supportedCount and attentionCount from the evidence rollup, exhaustively over every verdict', () => {
+    const scored: Application[] = [
+      application({
+        requirementEvidence: [
+          { requirement: requirement({ text: 'a' }), verdict: 'direct-evidence', evidence: null },
+          { requirement: requirement({ text: 'b' }), verdict: 'skill-only', evidence: null },
+          {
+            requirement: requirement({ text: 'c' }),
+            verdict: 'omitted-profile-evidence',
+            evidence: null,
+          },
+          {
+            requirement: requirement({ text: 'd' }),
+            verdict: 'needs-confirmation',
+            evidence: null,
+          },
+          { requirement: requirement({ text: 'e' }), verdict: 'unsupported', evidence: null },
+        ],
+      }),
+    ];
+
+    const report = requirementsReport(scored, null);
+
+    expect(report.supportedCount).toBe(3);
+    expect(report.attentionCount).toBe(2);
+    // Every verdict lands in exactly one bucket — nothing double-counted, nothing dropped.
+    expect(report.supportedCount + report.attentionCount).toBe(report.evidence.total);
   });
 });
 

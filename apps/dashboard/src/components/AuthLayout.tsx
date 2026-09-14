@@ -25,11 +25,11 @@ export function AuthLayout({
     <div className="auth-layout">
       <aside className="auth-story" aria-label="About djobi">
         <div className="auth-story__glow" />
-        <p className="auth-story__eyebrow">A calmer job search</p>
-        <h2>Keep every opportunity moving forward.</h2>
+        <p className="auth-story__eyebrow">Your whole job search</p>
+        <h2>Nothing falls through the cracks.</h2>
         <p className="auth-story__copy">
-          Tailor your materials, save the context, and learn from every application in one focused
-          workspace.
+          Tailor your materials, keep the posting that went with them, and learn something from
+          every application you send.
         </p>
 
         <div className="auth-story__preview" aria-hidden="true">

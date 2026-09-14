@@ -8,87 +8,89 @@
  */
 :root {
   color-scheme: light;
-  /* Palette anchored to the extension icon's blue-violet gradient (assets/icons), sampled
-     directly from the PNG: top-left #425BD8 -> bottom-right #8450D8, ~135deg. */
-  --bg: #f6f7fb;
+  /* Palette inspired by a Bay Area sunrise: warm terracotta and gold breaking through the marine
+     layer, cream sky, sandstone hills. All fg/bg text pairs below are checked to WCAG AA (>=4.5:1
+     for text, >=3:1 for the icon-only filter accents). */
+  --bg: #f8f5f2;
   --surface: #ffffff;
-  --surface-muted: #f1f2f8;
-  --border: #e3e5ef;
-  --text: #14151f;
-  --text-muted: #6b6f80;
-  --primary: #6356d8;
-  --primary-hover: #5245c4;
+  --surface-muted: #f7ebdc;
+  --border: #eddcc4;
+  --text: #2b1f16;
+  --text-muted: #7d6a58;
+  --primary: #c2410c;
+  --primary-hover: #9a3412;
   --primary-contrast: #ffffff;
-  --primary-gradient: linear-gradient(135deg, #425bd8, #8450d8);
-  --danger: #e0435c;
-  --danger-hover: #c92e48;
-  --danger-bg: #fdeced;
-  --success: #1a9d6c;
-  --success-bg: #e7f7f0;
+  --primary-gradient: linear-gradient(135deg, #d1541f, #b8355f);
+  --danger: #c62839;
+  --danger-hover: #a81f2e;
+  --danger-bg: #fbe6e5;
+  --success: #3f8f5f;
+  --success-bg: #e6f4ea;
   /* Between `--success` and `--danger`: "look at this", not "this is wrong". Its first uses are the
      analytics response rate that trails the baseline and the requirement a resume dropped — both
      things to investigate, neither a failure the way a missing skill is. */
-  --warning: #b4630a;
-  --ring: rgb(99 86 216 / 32%);
+  --warning: #a3690a;
+  --ring: rgb(194 65 12 / 32%);
   /* The two anchors of the brand gradient, used to colour the two live-but-early stages. Applied
-     takes the blue end, phone screen the violet, so both read as djobi without reading as each
-     other. Onsite and both rejections keep the semantic green/red they share with the rest of
-     the UI. Offer gets its own gold — a positive outcome, but not the same "still going" green as
-     onsite. */
-  --stage-applied-fg: #3b5cd8;
-  --stage-applied-bg: rgb(59 92 216 / 12%);
-  --stage-phone-fg: #8450d8;
-  --stage-phone-bg: rgb(132 80 216 / 12%);
-  --stage-offer-fg: #b8860b;
-  --stage-offer-bg: rgb(184 134 11 / 12%);
-  --stage-filter-bg: #efeeff;
-  --stage-filter-applied: #747684;
-  --stage-filter-phone: #df7800;
-  --stage-filter-onsite: #8045ed;
-  --stage-filter-offer: #14863f;
-  /* The Analytics keyword bar's fill — a tint of `--primary`/`--danger` rather than a flat colour,
+     takes the cool bay-water blue, phone screen the sunrise orchid, so both read as djobi without
+     reading as each other. Onsite and both rejections keep the semantic green/red they share with
+     the rest of the UI. Offer gets its own gold — a positive outcome, but not the same "still
+     going" green as onsite. */
+  --stage-applied-fg: #3f7ab0;
+  --stage-applied-bg: rgb(63 122 176 / 12%);
+  --stage-phone-fg: #a34fb0;
+  --stage-phone-bg: rgb(163 79 176 / 12%);
+  --stage-offer-fg: #96610a;
+  --stage-offer-bg: rgb(150 97 10 / 12%);
+  --stage-filter-bg: #f5e9d8;
+  --stage-filter-applied: #8a7a6a;
+  --stage-filter-phone: #c2541f;
+  --stage-filter-onsite: #7a5fb8;
+  --stage-filter-offer: #3f8f5f;
+  /* The Analytics keyword bar's fill — a tint of `--success`/`--danger` rather than a flat colour,
      since the bar sits behind the row's own text and a saturated fill would fight it for contrast. */
-  --bar: rgb(99 86 216 / 14%);
-  --bar-gap: rgb(224 67 92 / 14%);
+  --bar: rgb(63 143 95 / 14%);
+  --bar-gap: rgb(198 40 57 / 14%);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --shadow-sm: 0 1px 2px rgb(20 21 31 / 5%);
-  --shadow-md: 0 4px 16px rgb(20 21 31 / 6%);
+  --shadow-sm: 0 1px 2px rgb(43 31 22 / 5%);
+  --shadow-md: 0 4px 16px rgb(43 31 22 / 6%);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #101117;
-  --surface: #191a22;
-  --surface-muted: #21222c;
-  --border: #2c2e3a;
-  --text: #f0f1f6;
-  --text-muted: #a7aabd;
-  --primary: #8f83f2;
-  --primary-hover: #a79cff;
-  --primary-contrast: #101117;
-  --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
-  --danger: #ff7890;
-  --danger-hover: #ff98a8;
-  --danger-bg: rgb(255 107 131 / 14%);
-  --success: #46dc9e;
-  --success-bg: rgb(61 219 155 / 14%);
-  --warning: #f0ae52;
-  --ring: rgb(143 131 242 / 38%);
-  --stage-applied-fg: #8ea3f7;
-  --stage-applied-bg: rgb(109 127 240 / 16%);
-  --stage-phone-fg: #bd97f5;
-  --stage-phone-bg: rgb(166 132 240 / 16%);
-  --stage-offer-fg: #e0b84a;
-  --stage-offer-bg: rgb(224 184 74 / 16%);
-  --stage-filter-bg: #232135;
-  --stage-filter-applied: #b5b7c2;
-  --stage-filter-phone: #f3a43f;
-  --stage-filter-onsite: #a986ff;
-  --stage-filter-offer: #58cf80;
-  --bar: rgb(143 131 242 / 18%);
-  --bar-gap: rgb(255 120 144 / 16%);
+  /* Dawn: the sky before sunrise — deep indigo giving way to a warm coral glow at the horizon. */
+  --bg: #14131f;
+  --surface: #1e1a2b;
+  --surface-muted: #262035;
+  --border: #362c44;
+  --text: #f5ece3;
+  --text-muted: #b3a3a8;
+  --primary: #ff9166;
+  --primary-hover: #ffab8c;
+  --primary-contrast: #14131f;
+  --primary-gradient: linear-gradient(135deg, #ff8a5c, #ff5c8a);
+  --danger: #ff5468;
+  --danger-hover: #ff7a8a;
+  --danger-bg: rgb(255 84 104 / 14%);
+  --success: #4fd88a;
+  --success-bg: rgb(79 216 138 / 14%);
+  --warning: #f0b84a;
+  --ring: rgb(255 145 102 / 38%);
+  --stage-applied-fg: #6fa8d8;
+  --stage-applied-bg: rgb(111 168 216 / 16%);
+  --stage-phone-fg: #d391e0;
+  --stage-phone-bg: rgb(211 145 224 / 16%);
+  --stage-offer-fg: #f0b84a;
+  --stage-offer-bg: rgb(240 184 74 / 16%);
+  --stage-filter-bg: #241d33;
+  --stage-filter-applied: #b8a9ae;
+  --stage-filter-phone: #ff9d5c;
+  --stage-filter-onsite: #a68cf0;
+  --stage-filter-offer: #4fd88a;
+  --bar: rgb(79 216 138 / 18%);
+  --bar-gap: rgb(255 84 104 / 16%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
 }
@@ -108,7 +110,7 @@ body {
     ),
     radial-gradient(
       circle at 88% 18%,
-      color-mix(in srgb, #8450d8 6%, transparent),
+      color-mix(in srgb, #b8355f 6%, transparent),
       transparent 24rem
     );
   background-attachment: fixed;
@@ -321,7 +323,7 @@ h3 {
   justify-content: center;
   overflow: hidden;
   padding: 54px;
-  background: linear-gradient(145deg, rgb(66 91 216 / 96%), rgb(108 76 203 / 96%)), var(--primary);
+  background: linear-gradient(145deg, rgb(209 84 31 / 96%), rgb(184 53 95 / 96%)), var(--primary);
   color: #fff;
 }
 
@@ -409,13 +411,13 @@ h3 {
 }
 
 .auth-story__stage--applied {
-  background: rgb(132 165 255 / 24%);
+  background: rgb(111 168 216 / 24%);
 }
 .auth-story__stage--screen {
-  background: rgb(217 165 255 / 22%);
+  background: rgb(211 145 224 / 22%);
 }
 .auth-story__stage--onsite {
-  background: rgb(109 231 183 / 19%);
+  background: rgb(79 216 138 / 19%);
 }
 
 .auth-story__application {
@@ -430,13 +432,13 @@ h3 {
   height: 28px;
   place-items: center;
   border-radius: 8px;
-  background: #4f7de8;
+  background: #3f7ab0;
   font-size: 11px;
   font-weight: 700;
 }
 
 .auth-story__company--violet {
-  background: #9368dc;
+  background: #a34fb0;
 }
 
 .auth-story__application > span:nth-child(2) {
@@ -457,10 +459,10 @@ h3 {
   width: 35px;
   height: 5px;
   border-radius: 5px;
-  background: #75e0b4;
+  background: #4fd88a;
 }
 .auth-story__application i.is-violet {
-  background: #e1b2ff;
+  background: #d391e0;
 }
 
 .auth-story__note {
@@ -717,18 +719,18 @@ h3 {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   vertical-align: middle;
-  background: rgba(148, 163, 184, 0.15);
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
   color: var(--text-muted);
 }
 
 .requirement-band--critical {
-  background: rgba(244, 63, 94, 0.15);
-  color: #f43f5e;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .requirement-band--high {
-  background: rgba(139, 92, 246, 0.15);
-  color: #8b5cf6;
+  background: color-mix(in srgb, var(--stage-filter-onsite) 15%, transparent);
+  color: var(--stage-filter-onsite);
 }
 
 .requirement-groups__trimmed,
@@ -845,7 +847,8 @@ button.requirement-groups__trimmed {
   height: 15px;
 }
 
-.stage-badge__caret {
+.stage-badge__caret,
+.analytics-range-select__caret {
   flex: none;
   width: 13px;
   height: 13px;
@@ -1283,6 +1286,25 @@ button.requirement-groups__trimmed {
   display: table-cell;
 }
 
+.application-table__date-heading button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.application-table__date-heading button:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
 .application-table__date-heading svg {
   width: 12px;
   height: 12px;
@@ -1292,7 +1314,6 @@ button.requirement-groups__trimmed {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.5;
-  vertical-align: -2px;
 }
 
 .application-table td {
@@ -1792,10 +1813,10 @@ button.requirement-groups__trimmed {
   align-items: center;
   gap: 6px;
   padding: 7px 10px;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--danger);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -1817,7 +1838,6 @@ button.requirement-groups__trimmed {
 }
 
 .detail__delete-trigger:hover {
-  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
   background: var(--danger-bg);
   color: var(--danger);
 }
@@ -2217,12 +2237,16 @@ button.requirement-groups__trimmed {
 }
 
 /* A card, not a bare row of controls — the same `--shadow-sm`/`--border` treatment `.search` and
-   `.list-filters` sit in, so the filters read as one control surface. */
+   `.list-filters` sit in, so the filters read as one control surface. Stage and the secondary
+   group (the date range and Gaps only) are the row's two real flex items, matching the two-region
+   shape `.page--applications .list-filters` already uses for search-plus-stage-filters — Saved and
+   Gaps only wrap together as a unit rather than splitting unpredictably between the two rows. */
 .analytics-controls {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px 16px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
   margin-bottom: 14px;
   padding: 14px 16px;
   border: 1px solid var(--border);
@@ -2231,36 +2255,61 @@ button.requirement-groups__trimmed {
   box-shadow: var(--shadow-sm);
 }
 
-/* `width: 100%` (`.analytics-controls` sets `align-items: flex-start`, so without this the row
-   sizes to its own content instead of the card) is what makes `min-width: 0` here actually bite,
-   and what gives `.analytics-segmented-filter`'s own `max-width: 100%` + `overflow-x: auto` a
-   boundary to scroll within — without it the pill strip's `width: max-content` grows past the card
-   uncontained, and the whole page scrolls horizontally on a narrow viewport instead of just the
-   strip. */
+/*
+ * No `min-width: 0` here, and that is the fix rather than an oversight. A flex item's default
+ * minimum size is its content's own min-content width, and this group's content is now
+ * `.list-stage-filters`'s grid of six pills — so left at the default, the browser refuses to
+ * shrink Stage below whatever six real pills actually need, and wraps the *other* row content
+ * instead once that no longer fits. `min-width: 0` used to override that and let Stage get
+ * squeezed arbitrarily thin, relying on horizontal scroll to hide the difference — which is what
+ * made the row look clipped at ordinary desktop widths instead of simply reflowing.
+ *
+ * A genuinely narrow phone needs no override here either: below `list-stage-filters`'s own
+ * `width <= 720px`, the pills switch to a horizontally scrollable strip, and a scroll container's
+ * content stops counting toward its ancestor's intrinsic width per the flexbox spec — so this
+ * group's min-content collapses to near-zero right where it needs to, without a media query of
+ * its own restating a breakpoint that already lives with the rule it belongs to.
+ */
 .analytics-control-group {
   display: flex;
-  width: 100%;
-  min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
 }
 
+/* Lighter than the stage filters' own track: this one sits on a white card (`.analytics-controls`),
+   where the stage filters' full-strength `--stage-filter-bg` reads as too heavy/saturated a block
+   next to the card's white. Blending it toward `--surface` settles it into the card instead.
+   Sizing and overflow are deliberately absent here: `list-stage-filters` on the same element (see
+   `Analytics.tsx`) already owns both, and this app has exactly one correct answer for "how does
+   this six-pill row behave" — restating it here is how the two came to disagree in the first
+   place. */
 .analytics-segmented-filter {
-  max-width: 100%;
   padding: 2px;
   border-radius: 8px;
-  overflow-x: auto;
+  background: color-mix(in srgb, var(--stage-filter-bg) 55%, var(--surface));
 }
 
-.analytics-segmented-filter .filter-pills {
-  width: max-content;
-  flex-wrap: nowrap;
-  gap: 2px;
-}
-
+/*
+ * A narrower pill than `.list-stage-filters` renders elsewhere: this row already shares the card
+ * with the date range and Gaps only, where the applications list's own stage filter has a whole
+ * row of its own. Every dimension here is the base `.segmented-filter .filter-pill` value trimmed
+ * down a size, not a different look — same icons, same colors, same shape, just less of each.
+ */
 .analytics-segmented-filter .filter-pill {
-  padding: 3px 9px;
-  border-radius: 6px;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.analytics-segmented-filter .filter-pill__icon {
+  width: 13px;
+  height: 13px;
+}
+
+.analytics-segmented-filter .filter-pill__count {
+  font-size: 11px;
 }
 
 .analytics-control-label {
@@ -2271,11 +2320,72 @@ button.requirement-groups__trimmed {
   text-transform: uppercase;
 }
 
-.analytics-toggle-row {
-  flex: 1 0 100%;
-  padding-top: 14px;
-  margin-top: 4px;
-  border-top: 1px solid var(--border);
+/* Saved and Gaps only, moving as one unit: whichever of the two rows above doesn't have room for
+   both keeps them together rather than splitting Gaps only onto a row of its own while Saved
+   stays put, which read as arbitrary rather than a deliberate two-region layout. Wraps internally,
+   as a last resort, if even this pair doesn't fit the width it's given. */
+.analytics-controls__secondary {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 24px;
+}
+
+/* The date-range filter, demoted from a pill group to a plain `<select>`: five mutually exclusive
+   options that don't need a segmented control's screen space, and a dropdown reads as secondary to
+   the Stage pills across the row from it. */
+.analytics-range-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * The visible half of the control — a `StageSelect`-style fake select: a bordered pill showing the
+ * current value and a caret, with the real `<select>` (`.analytics-range-select__input`) laid over
+ * it invisibly so the browser's own picker, keyboard support and focus handling all still work.
+ * Reskinning it here rather than living with the native chrome is what keeps it looking like the
+ * rest of this app's controls instead of whatever the platform's default select renders as.
+ */
+.analytics-range-select__control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 84px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.analytics-range-select__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-range-select__caret {
+  color: var(--text-muted);
+}
+
+.analytics-range-select__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.analytics-range-select__control:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-color: var(--primary);
 }
 
 /*
@@ -2361,7 +2471,7 @@ button.requirement-groups__trimmed {
  */
 .analytics-toggle {
   display: inline-flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   cursor: pointer;
   user-select: none;
@@ -2391,20 +2501,15 @@ button.requirement-groups__trimmed {
 }
 
 .analytics-toggle__copy {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
 }
 
 .analytics-toggle__label {
   color: var(--text);
   font-size: 13px;
   font-weight: 650;
-}
-
-.analytics-toggle__description {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 .analytics-toggle__track::after {
@@ -2423,7 +2528,8 @@ button.requirement-groups__trimmed {
 }
 
 /* Checked state reads danger-red rather than primary: "Gaps only" is a filter onto problems, and
-   the on-state should look like a warning light, not like the rest of the app's affirmative blue. */
+   the on-state should look like a warning light, not like the rest of the app's affirmative brand
+   colour. */
 .analytics-toggle input:checked + .analytics-toggle__track {
   background: var(--danger);
   box-shadow: none;
@@ -2437,6 +2543,19 @@ button.requirement-groups__trimmed {
 .analytics-toggle input:focus-visible + .analytics-toggle__track {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* `--surface`/`--surface-muted` sit too close together in the dawn palette for the off-state track
+   and its card backdrop to read as distinct — the switch nearly disappears. Mixing `--text` in
+   lifts both the track and its knob to a visible grey against the dark card. */
+:root[data-theme='dark'] .analytics-toggle__track {
+  background: color-mix(in srgb, var(--text) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, var(--border));
+}
+
+:root[data-theme='dark'] .analytics-toggle__track::after {
+  background: color-mix(in srgb, var(--text) 55%, var(--surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, var(--border));
 }
 
 .analytics-summary {
@@ -2512,7 +2631,7 @@ button.requirement-groups__trimmed {
 }
 
 .analytics-summary__legend-dot--good {
-  background: var(--primary);
+  background: var(--success);
 }
 
 .analytics-summary__legend-dot--warn {
@@ -2741,7 +2860,7 @@ button.requirement-groups__trimmed {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface-muted));
+  background: color-mix(in srgb, var(--success) 10%, var(--surface-muted));
 }
 
 .analytics-coverage-meter span {
@@ -2749,11 +2868,11 @@ button.requirement-groups__trimmed {
   width: calc(var(--analytics-covered) * 100%);
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--success);
 }
 
 /* For a fill that isn't "good" yet, only "closer to reportable" — progress toward the resolved-
-   application threshold a response rate needs, before there is a rate to color blue. */
+   application threshold a response rate needs, before there is a rate to color green. */
 .analytics-coverage-meter--neutral {
   background: var(--surface-muted);
 }
@@ -2983,17 +3102,21 @@ button.requirement-groups__trimmed {
 }
 
 /* `--skills` and `--experience` are both "evidenced" — two different evidence *types*, not two
-   different verdicts — and share one color for it, `--bar`'s own primary tint, rather than the
+   different verdicts — and share one color for it, `--bar`'s own success tint, rather than the
    green/blue split they used to carry. That split gave the same underlying concept a third and
-   fourth hue beyond the one the summary strip above already spent on it (`--primary`, in its
+   fourth hue beyond the one the summary strip above already spent on it (`--success`, in its
    meters and its color legend), so a reader had four colors to reconcile for two possible
    readings ("evidenced" or "not") instead of two. The badge text still tells skills and experience
    apart; color no longer needs to. `--missing` already matched the strip's own red for "no
    evidence" and is unchanged. */
+/* Pulled toward `--text` rather than used flat: `--success` is tuned to clear AA against a full
+   `--surface`, and this badge sits on `--bar` — a 14% tint of that same green — where it only
+   reaches ~3.4:1 at 11px/600. Mixing toward the theme's own text colour darkens it in light mode
+   and lightens it in dark, so both land above 4.5:1 without a second green token. */
 .analytics-badge--skills,
 .analytics-badge--experience {
   background: var(--bar);
-  color: var(--primary);
+  color: color-mix(in srgb, var(--success) 75%, var(--text));
 }
 
 .analytics-badge--missing {
@@ -3092,7 +3215,7 @@ button.requirement-groups__trimmed {
 .analytics-req__text mark {
   padding: 0 2px;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  background: color-mix(in srgb, var(--success) 22%, transparent);
   color: inherit;
 }
 
@@ -4275,7 +4398,7 @@ button.requirement-groups__trimmed {
   height: 540px;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, #425bd8 16%, transparent),
+    color-mix(in srgb, #d1541f 16%, transparent),
     transparent 68%
   );
 }
@@ -4287,7 +4410,7 @@ button.requirement-groups__trimmed {
   height: 620px;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, #8450d8 14%, transparent),
+    color-mix(in srgb, #b8355f 14%, transparent),
     transparent 67%
   );
 }
@@ -5020,13 +5143,13 @@ button.requirement-groups__trimmed {
 }
 
 .landing-detail-demo__requirements span.is-critical {
-  background: rgb(244 63 94 / 15%);
-  color: #f43f5e;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .landing-detail-demo__requirements span.is-high {
-  background: rgb(139 92 246 / 15%);
-  color: #8b5cf6;
+  background: color-mix(in srgb, var(--stage-filter-onsite) 15%, transparent);
+  color: var(--stage-filter-onsite);
 }
 
 .landing-detail-demo__requirements p {
@@ -5623,7 +5746,7 @@ button.requirement-groups__trimmed {
   border-radius: 26px;
   background:
     radial-gradient(circle at 90% 10%, rgb(255 255 255 / 12%), transparent 26%),
-    linear-gradient(135deg, #313f9f, #7444bd);
+    linear-gradient(135deg, #5c1f42, #7a2a12);
   color: #fff;
   box-shadow: 0 35px 80px color-mix(in srgb, var(--primary) 24%, transparent);
 }

@@ -48,6 +48,7 @@ export function ApplicationsList({
   filters,
   shown,
   onFiltersChange,
+  onSortChange,
   onShowMore,
   onStageChange,
   onCreateApplication,
@@ -64,6 +65,16 @@ export function ApplicationsList({
   /** How many matching rows to reveal. Held above for the same reason `filters` is. */
   shown: number;
   onFiltersChange: (filters: ListFilters) => void;
+  /**
+   * Flips the applied-date order, separately from {@link onFiltersChange}.
+   *
+   * A sort is not a filter: `query`/`stage`/`rejection` each narrow *which* rows qualify, which is
+   * why changing one collapses `shown` back to the first batch (see `App`'s own comment on that
+   * call) — the revealed rows belonged to a population that no longer exists. Reordering the same
+   * population doesn't do that, and routing it through `onFiltersChange` used to collapse a
+   * `Load more`d list back to twenty rows on nothing but a re-sort.
+   */
+  onSortChange: (sort: 'oldest' | undefined) => void;
   onShowMore: (shown: number) => void;
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onCreateApplication: (
@@ -72,7 +83,7 @@ export function ApplicationsList({
   ) => Promise<Application | null>;
   onUnauthorized: () => void;
 }) {
-  const { query, stage, rejection } = filters;
+  const { query, stage, rejection, sort } = filters;
   const [loggingApplication, setLoggingApplication] = useState(false);
   const logButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -99,8 +110,12 @@ export function ApplicationsList({
           if (stage === 'rejected' && rejection) return application.stage === rejection;
           return stageFilterOf(application.stage) === stage;
         })
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [rejection, searchMatches, stage],
+        .sort((a, b) =>
+          sort === 'oldest'
+            ? a.createdAt.localeCompare(b.createdAt)
+            : b.createdAt.localeCompare(a.createdAt),
+        ),
+    [rejection, searchMatches, sort, stage],
   );
 
   /*
@@ -114,18 +129,28 @@ export function ApplicationsList({
   const visibleNow = visible.slice(0, Math.min(shown, visible.length));
   const remaining = visible.length - visibleNow.length;
 
-  const inProgress = applications.filter((a) => IN_PROGRESS_STAGES.includes(a.stage)).length;
+  const inProgress = useMemo(
+    () => applications.filter((a) => IN_PROGRESS_STAGES.includes(a.stage)).length,
+    [applications],
+  );
   // Built as one string rather than interleaved JSX expressions: a sentence split across text nodes
   // is one the DOM can render correctly but nothing can match as a whole.
   const summary =
     `${applications.length} ${applications.length === 1 ? 'application' : 'applications'}` +
     (inProgress > 0 ? ` · ${inProgress} in progress` : '');
 
-  const counts = countByOption(STAGE_FILTERS, searchMatches, (a) => stageFilterOf(a.stage));
-  const rejectionCounts = {
-    rejected_ats: searchMatches.filter((a) => a.stage === 'rejected_ats').length,
-    rejected: searchMatches.filter((a) => a.stage === 'rejected').length,
-  };
+  // Memoized on the search results alone, so changing the stage filter, sort or page size doesn't
+  // recount them.
+  const { counts, rejectionCounts } = useMemo(() => {
+    const rejectionCounts = { rejected_ats: 0, rejected: 0 };
+    for (const a of searchMatches) {
+      if (a.stage === 'rejected_ats' || a.stage === 'rejected') rejectionCounts[a.stage] += 1;
+    }
+    return {
+      counts: countByOption(STAGE_FILTERS, searchMatches, (a) => stageFilterOf(a.stage)),
+      rejectionCounts,
+    };
+  }, [searchMatches]);
   const rejectedCount = rejectionCounts.rejected_ats + rejectionCounts.rejected;
 
   return (
@@ -215,11 +240,23 @@ export function ApplicationsList({
                 <th scope="col">Role</th>
                 <th scope="col">Source</th>
                 <th scope="col">Status</th>
-                <th scope="col" className="application-table__date-heading">
-                  Applied
-                  <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="m5 6 3-3 3 3M11 10l-3 3-3-3" />
-                  </svg>
+                <th
+                  scope="col"
+                  className="application-table__date-heading"
+                  aria-sort={sort === 'oldest' ? 'ascending' : 'descending'}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Sort by applied date, ${sort === 'oldest' ? 'newest first' : 'oldest first'}`}
+                    onClick={() => onSortChange(sort === 'oldest' ? undefined : 'oldest')}
+                  >
+                    Applied
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path
+                        d={sort === 'oldest' ? 'm4 6 4-4 4 4M8 2v12' : 'M8 2v12m-4-4 4 4 4-4'}
+                      />
+                    </svg>
+                  </button>
                 </th>
               </tr>
             </thead>

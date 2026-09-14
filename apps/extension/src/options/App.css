@@ -1,48 +1,50 @@
 :root {
   color-scheme: light;
-  /* Palette anchored to the extension icon's blue-violet gradient (assets/icons), sampled
-     directly from the PNG: top-left #425BD8 -> bottom-right #8450D8, ~135deg. */
-  --bg: #f6f7fb;
+  /* Palette inspired by a Bay Area sunrise: warm terracotta and gold breaking through the marine
+     layer, cream sky, sandstone hills. */
+  --bg: #ffffff;
   --surface: #ffffff;
-  --surface-muted: #f1f2f8;
-  --border: #e3e5ef;
-  --text: #14151f;
-  --text-muted: #6b6f80;
-  --primary: #6356d8;
-  --primary-hover: #5245c4;
+  --surface-muted: #f7ebdc;
+  --surface-field: color-mix(in srgb, var(--surface-muted) 45%, var(--surface));
+  --border: #eddcc4;
+  --text: #2b1f16;
+  --text-muted: #7d6a58;
+  --primary: #c2410c;
+  --primary-hover: #9a3412;
   --primary-contrast: #ffffff;
-  --primary-gradient: linear-gradient(135deg, #425bd8, #8450d8);
-  --danger: #e0435c;
-  --danger-hover: #c92e48;
-  --danger-bg: #fdeced;
-  --success: #1a9d6c;
-  --success-bg: #e7f7f0;
-  --ring: rgb(99 86 216 / 32%);
+  --primary-gradient: linear-gradient(135deg, #d1541f, #b8355f);
+  --danger: #c62839;
+  --danger-hover: #a81f2e;
+  --danger-bg: #fbe6e5;
+  --success: #3f8f5f;
+  --success-bg: #e6f4ea;
+  --ring: rgb(194 65 12 / 32%);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --shadow-sm: 0 1px 2px rgb(20 21 31 / 5%);
-  --shadow-md: 0 4px 16px rgb(20 21 31 / 6%);
+  --shadow-sm: 0 1px 2px rgb(43 31 22 / 5%);
+  --shadow-md: 0 4px 16px rgb(43 31 22 / 6%);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #101117;
-  --surface: #191a22;
-  --surface-muted: #21222c;
-  --border: #2c2e3a;
-  --text: #f0f1f6;
-  --text-muted: #a7aabd;
-  --primary: #8f83f2;
-  --primary-hover: #a79cff;
-  --primary-contrast: #101117;
-  --primary-gradient: linear-gradient(135deg, #6d7ff0, #a684f0);
-  --danger: #ff7890;
-  --danger-hover: #ff98a8;
-  --danger-bg: rgb(255 107 131 / 14%);
-  --success: #46dc9e;
-  --success-bg: rgb(61 219 155 / 14%);
-  --ring: rgb(143 131 242 / 38%);
+  /* Dawn: the sky before sunrise — deep indigo giving way to a warm coral glow at the horizon. */
+  --bg: #14131f;
+  --surface: #1e1a2b;
+  --surface-muted: #262035;
+  --border: #362c44;
+  --text: #f5ece3;
+  --text-muted: #b3a3a8;
+  --primary: #ff9166;
+  --primary-hover: #ffab8c;
+  --primary-contrast: #14131f;
+  --primary-gradient: linear-gradient(135deg, #ff8a5c, #ff5c8a);
+  --danger: #ff5468;
+  --danger-hover: #ff7a8a;
+  --danger-bg: rgb(255 84 104 / 14%);
+  --success: #4fd88a;
+  --success-bg: rgb(79 216 138 / 14%);
+  --ring: rgb(255 145 102 / 38%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-md: 0 8px 24px rgb(0 0 0 / 35%);
 }
@@ -73,7 +75,7 @@ body {
     ),
     radial-gradient(
       circle at 88% 18%,
-      color-mix(in srgb, #8450d8 6%, transparent),
+      color-mix(in srgb, #b8355f 6%, transparent),
       transparent 24rem
     );
   background-attachment: fixed;
@@ -512,7 +514,9 @@ textarea {
   width: 100%;
   font: inherit;
   color: var(--text);
-  background: var(--surface-muted);
+  /* Lighter than the flat `--surface-muted` chips/cards use: against the now-white page and card
+     backgrounds, the full-strength tint read as noticeably darker than everything around it. */
+  background: var(--surface-field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 9px 11px;

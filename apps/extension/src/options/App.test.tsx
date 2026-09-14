@@ -346,6 +346,11 @@ describe('options App', () => {
     });
   });
 
+  // The Remove mechanic itself — one click removes the right entry — is `ListSection`'s own
+  // concern now, tested once at its interface in `@djobi/profile-editor`'s `listSection.test.tsx`.
+  // This is the one representative check left here confirming this page is actually wired to it;
+  // `removes a certification-or-award row` below stays too, since it exercises the combined
+  // certifications/awards dispatcher's own index mapping, not just the mechanic.
   it('removes a work experience entry', async () => {
     const loaded: Profile = {
       ...emptyProfile,
@@ -515,23 +520,6 @@ describe('options App', () => {
         { school: 'State U', degree: 'BSc', field: 'Computer Science', graduationYear: '2020' },
       ],
     });
-  });
-
-  it('removes an education entry', async () => {
-    const loaded: Profile = {
-      ...emptyProfile,
-      education: [{ school: 'State U', degree: 'BSc', field: null, graduationYear: null }],
-    };
-    stubBackend({ get: () => loaded });
-
-    render(<App client={client} />);
-    await screen.findByLabelText('Full name');
-
-    expect(screen.getByLabelText('School 1')).toHaveValue('State U');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Remove education 1' }));
-
-    expect(screen.queryByLabelText('School 1')).not.toBeInTheDocument();
   });
 
   it('adds a certification-or-award row, defaults it to a certification, and saves it', async () => {
@@ -797,33 +785,6 @@ describe('options App', () => {
       const fieldset = screen.getByRole('group', { name });
       expect(fieldset.firstElementChild).toHaveProperty('tagName', 'LEGEND');
     }
-  });
-
-  it('removes a story entry', async () => {
-    const loaded: Profile = {
-      ...emptyProfile,
-      stories: [
-        {
-          id: 'billing-migration',
-          title: 'Migrated the billing service',
-          tags: [],
-          situation: '',
-          task: '',
-          action: '',
-          result: '',
-        },
-      ],
-    };
-    stubBackend({ get: () => loaded });
-
-    render(<App client={client} />);
-    await screen.findByLabelText('Full name');
-
-    expect(screen.getByLabelText('Story id 1')).toHaveValue('billing-migration');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Remove story 1' }));
-
-    expect(screen.queryByLabelText('Story id 1')).not.toBeInTheDocument();
   });
 
   it('renders a profile stored before prepared answers existed, rather than crashing on the missing keys', async () => {

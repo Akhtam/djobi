@@ -10,7 +10,11 @@
  * Asserted against a real route rather than a stub app, since the whole point is how `parseBody`
  * and `app.onError` compose in the app the server actually runs.
  */
+import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+import { handleError } from './app.js';
+import { pathParams, queryParams } from './requestBody.js';
 
 const mockExtractJob = vi.fn();
 vi.mock('./llm/extractJob.js', () => ({
@@ -79,5 +83,62 @@ describe('request body validation', () => {
 
     expect(errorLog).toHaveBeenCalled();
     errorLog.mockRestore();
+  });
+});
+
+/**
+ * `queryParams`/`pathParams` on a throwaway app rather than a real route: every schema this backend
+ * actually registers them with (`routes/applications.ts`) is deliberately permissive enough that no
+ * real request can fail it — the point there is stating a route's shape, not rejecting anything new.
+ * These prove the mechanism itself — reject-before-handler, expose after — with a schema strict
+ * enough to exercise both paths.
+ */
+describe('queryParams', () => {
+  const app = new Hono();
+  app.onError(handleError);
+  app.get('/items', queryParams(z.object({ limit: z.coerce.number().int().positive() })), (c) =>
+    c.json(c.req.valid('query')),
+  );
+
+  it('answers 400, unlogged, and never reaches the handler when the query fails the schema', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const res = await app.request('/items?limit=not-a-number');
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: expect.any(String) });
+    expect(errorLog).not.toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+
+  it('exposes the validated, coerced query through c.req.valid', async () => {
+    const res = await app.request('/items?limit=5');
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ limit: 5 });
+  });
+});
+
+describe('pathParams', () => {
+  const app = new Hono();
+  app.onError(handleError);
+  app.get('/items/:id', pathParams(z.object({ id: z.string().uuid() })), (c) =>
+    c.json(c.req.valid('param')),
+  );
+
+  it('answers 400 and never reaches the handler when a path segment fails the schema', async () => {
+    const res = await app.request('/items/not-a-uuid');
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: expect.any(String) });
+  });
+
+  it('exposes the validated param through c.req.valid', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+
+    const res = await app.request(`/items/${id}`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id });
   });
 });

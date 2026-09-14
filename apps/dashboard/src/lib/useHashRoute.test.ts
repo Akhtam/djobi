@@ -91,11 +91,20 @@ describe('parseHash', () => {
       shown: PAGE_SIZE,
     });
   });
+
+  it('reads oldest-first applied-date sorting and ignores unknown values', () => {
+    expect(parseHash('#/?sort=oldest')).toEqual({
+      name: 'list',
+      filters: { query: '', stage: null, sort: 'oldest' },
+      shown: PAGE_SIZE,
+    });
+    expect(parseHash('#/?sort=random')).toEqual(unfiltered);
+  });
 });
 
 describe('parseHash, analytics', () => {
   it('reads the analytics route from its own hash, defaulting range and stage', () => {
-    expect(parseHash('#/analytics')).toEqual({ name: 'analytics', range: '7d', stage: null });
+    expect(parseHash('#/analytics')).toEqual({ name: 'analytics', range: '14d', stage: null });
   });
 
   it('reads range and stage from the query string', () => {
@@ -109,7 +118,7 @@ describe('parseHash, analytics', () => {
   it('falls back to the default range for a value nothing recognises', () => {
     expect(parseHash('#/analytics?range=lots')).toEqual({
       name: 'analytics',
-      range: '7d',
+      range: '14d',
       stage: null,
     });
   });
@@ -117,7 +126,7 @@ describe('parseHash, analytics', () => {
   it('normalises a stage that shares a pill, the same as the list route', () => {
     expect(parseHash('#/analytics?stage=rejected_ats')).toEqual({
       name: 'analytics',
-      range: '7d',
+      range: '14d',
       stage: 'rejected',
     });
   });
@@ -133,11 +142,11 @@ describe('parseHash, analytics', () => {
 
 describe('analyticsPath', () => {
   it('writes the bare analytics hash at the default range with no stage filter', () => {
-    expect(analyticsPath('7d', null)).toBe('#/analytics');
+    expect(analyticsPath('14d', null)).toBe('#/analytics');
   });
 
   it('omits the range param at its default even with a stage set', () => {
-    expect(analyticsPath('7d', 'applied')).toBe('#/analytics?stage=applied');
+    expect(analyticsPath('14d', 'applied')).toBe('#/analytics?stage=applied');
   });
 
   it('writes a non-default range with no stage filter', () => {
@@ -145,7 +154,7 @@ describe('analyticsPath', () => {
   });
 
   it('writes both when both are set', () => {
-    expect(analyticsPath('14d', 'rejected')).toBe('#/analytics?range=14d&stage=rejected');
+    expect(analyticsPath('60d', 'rejected')).toBe('#/analytics?range=60d&stage=rejected');
   });
 });
 
@@ -227,6 +236,11 @@ describe('listPath', () => {
       filters,
       shown: PAGE_SIZE * 3,
     });
+  });
+
+  it('writes oldest-first sorting while omitting the default order', () => {
+    expect(listPath({ query: '', stage: null, sort: 'oldest' })).toBe('#/?sort=oldest');
+    expect(listPath({ query: '', stage: null })).toBe('#/');
   });
 
   it('omits the first batch from the URL, so an untouched list stays at #/', () => {

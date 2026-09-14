@@ -225,7 +225,7 @@ function readingOf(
       const outcome = run?.fillOutcome ?? 'unverified';
       const pill =
         status === 'saving'
-          ? { label: 'Saving...', tone: 'busy' as const }
+          ? { label: 'Saving…', tone: 'busy' as const }
           : status === 'save-error'
             ? { label: 'Save failed', tone: 'error' as const }
             : status === 'saved'

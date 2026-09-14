@@ -5,9 +5,9 @@
  * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
  * named.
  */
-import { EMPTY_PROFILE, parseProfile, type Profile } from '@djobi/shared';
 import {
-  addSkill,
+  ListSection,
+  profileOutcomeMessage,
   profileListEditors,
   profileListSectionEntry,
   PROFILE_SECTION_BY_KEY,
@@ -15,19 +15,20 @@ import {
   ProfileSectionFields,
   removeSkill,
   scrollToSection,
-  useProfileDraft,
+  useProfileWorkflow,
   type BulletListClassNames,
   type CheckboxFieldRenderer,
   type CredentialItem,
   type FieldChrome,
   type FieldRenderer,
-  type ListEditor,
+  type ListSectionChrome,
+  type ProfilePagePort,
 } from '@djobi/profile-editor';
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import './App.css';
 import icon48 from '../assets/icons/icon48.png';
 import type { BackendClient } from '../lib/backendClient';
-import { isUnauthorized, userMessage } from '../lib/callBackend';
+import { userMessage } from '../lib/callBackend';
 import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { Login } from './Login';
 
@@ -73,160 +74,99 @@ const projectBulletListClassNames: BulletListClassNames = {
 };
 
 /**
- * The chrome around one editable list: the card, its legend and hint, a numbered removable card per
- * entry, and the add button.
- *
- * Only the fields inside an entry actually differ between the four sections, so only those are
- * passed in. `noun` drives both the visible labels and the remove button's accessible name, which
- * is how the tests address a specific entry.
+ * This page's `ListSectionChrome`: a `<fieldset className="card">` showing an item count beside
+ * the hint, and an entry that collapses behind its `summary` in a native `<details>` — the
+ * dashboard's own renderer shows neither; see `apps/dashboard/src/views/Profile.tsx`.
  */
-function ListSection<T>({
-  id,
-  legend,
-  noun,
-  addLabel,
-  hint,
-  items,
-  editor,
-  controls,
-  summary,
-  children,
-}: {
-  id: string;
-  legend: string;
-  noun: string;
-  addLabel: string;
-  hint?: string;
-  items: T[];
-  editor: ListEditor<T>;
-  controls?: React.ReactNode;
-  summary?: (entry: T, index: number) => React.ReactNode;
-  children: (entry: T, index: number) => React.ReactNode;
-}) {
-  return (
+const listSectionChrome: ListSectionChrome = {
+  emptyClassName: 'empty-list',
+  addButtonClassName: 'btn-add',
+  Section: ({ id, legend, hint, itemCount, children }) => (
     <fieldset id={id} className="card">
       <legend>{legend}</legend>
       <div className="section-meta">
         {hint ? <p className="hint">{hint}</p> : <span />}
-        <span className="entry-count">{items.length}</span>
+        <span className="entry-count">{itemCount}</span>
       </div>
-      {controls}
-      {items.length === 0 && <p className="empty-list">No {noun} added yet.</p>}
-      {items.map((entry, index) => {
-        const content = (
-          <>
-            <div className="entry-card-header">
-              <span>{`Entry ${index + 1}`}</span>
-              <button
-                type="button"
-                className="btn-danger-ghost"
-                aria-label={`Remove ${noun} ${index + 1}`}
-                onClick={() => editor.remove(index)}
-              >
-                Remove
-              </button>
-            </div>
-            {children(entry, index)}
-          </>
-        );
-        return (
-          <fieldset key={index} className="entry-card">
-            <legend>{`${noun} ${index + 1}`}</legend>
-            {summary ? (
-              <details className="entry-details" open>
-                <summary>{summary(entry, index)}</summary>
-                <div className="entry-details-body">{content}</div>
-              </details>
-            ) : (
-              content
-            )}
-          </fieldset>
-        );
-      })}
-      <button type="button" className="btn-add" onClick={editor.add}>
-        {addLabel}
-      </button>
+      {children}
     </fieldset>
-  );
-}
+  ),
+  Entry: ({ index, noun, onRemove, summary, children }) => {
+    const content = (
+      <>
+        <div className="entry-card-header">
+          <span>{`Entry ${index + 1}`}</span>
+          <button
+            type="button"
+            className="btn-danger-ghost"
+            aria-label={`Remove ${noun} ${index + 1}`}
+            onClick={onRemove}
+          >
+            Remove
+          </button>
+        </div>
+        {children}
+      </>
+    );
+    return (
+      <fieldset className="entry-card">
+        <legend>{`${noun} ${index + 1}`}</legend>
+        {summary ? (
+          <details className="entry-details" open>
+            <summary>{summary}</summary>
+            <div className="entry-details-body">{content}</div>
+          </details>
+        ) : (
+          content
+        )}
+      </fieldset>
+    );
+  },
+};
 
 export function App({ client }: { client: BackendClient }) {
   const { theme, toggleTheme } = useThemePreference();
-  const draft = useProfileDraft();
-  const profile = draft.profile;
-  const dirty = draft.dirty;
-  const extracting = draft.extracting;
-  const [status, setStatus] = useState<{ kind: 'saved' | 'error'; message: string } | null>(null);
-  const [newSkill, setNewSkill] = useState('');
-  // Separate from `status` above: that banner means "the save you just asked for landed or
-  // didn't," and an extraction is neither — nothing has been saved yet, and won't be until the
-  // candidate reviews what got filled in and clicks Save themselves.
-  const [extraction, setExtraction] = useState<{
-    kind: 'notice' | 'error';
-    message: string;
-  } | null>(null);
+  // A 401 means "sign in again", not "the backend is broken". Session recovery (adopting a shared
+  // dashboard session, retrying once) already happened inside `client` before one reaches here.
+  const [unauthorized, setUnauthorized] = useState(false);
+  const port = useMemo<ProfilePagePort>(
+    () => ({
+      loadProfile: () => client.getProfile(),
+      saveProfile: (profile) => client.saveProfile(profile),
+      extractResume: (file) => client.extractResume(file),
+    }),
+    [client],
+  );
+  const workflow = useProfileWorkflow(port, () => setUnauthorized(true));
+  const { draft, setProfile, newSkill, setNewSkill, saveResult, uploadResult, loadError } =
+    workflow;
+  const { profile, dirty, extracting } = draft;
   // The upload button opens the file picker by proxy — the real `<input type="file">` is visually
   // hidden so this can be a normal styled button rather than the browser's own file-input chrome.
   const resumeInputRef = useRef<HTMLInputElement>(null);
-  // Set on a 401 from `getProfile` rather than surfaced through `status` — an absent or expired
-  // session is "go sign in again," not "the backend is broken," and this is what routes to `Login`
-  // below instead of a generic error banner over an unusable empty form.
-  const [unauthorized, setUnauthorized] = useState(false);
-  // Bumped by `handleSignIn` to force the fetch effect below to run again once a fresh sign-in has
-  // replaced the session that expired.
-  const [reloadToken, setReloadToken] = useState(0);
 
-  function setProfile(next: Profile) {
-    draft.setProfile(next);
-    if (status?.kind === 'saved') setStatus(null);
-  }
-
-  useEffect(() => {
-    let current = true;
-
-    async function load() {
-      try {
-        // `parseProfile` completes a stored profile against the empty one and validates it, so a
-        // profile saved before a field existed can't crash the form that binds to that key.
-        // Session recovery — adopting a shared dashboard session and retrying once on a 401 — is
-        // `client`'s own concern now (`backendClient.ts`'s `withSessionRecovery`): every route
-        // gets the same one shot at recovery before a 401 here means there really is nothing to
-        // sign in with.
-        const loaded = await client.getProfile();
-        if (!current) return;
-        setUnauthorized(false);
-        draft.load(parseProfile(loaded));
-      } catch (error: unknown) {
-        if (!current) return;
-        if (isUnauthorized(error)) {
-          setUnauthorized(true);
-          return;
-        }
-        draft.load(EMPTY_PROFILE);
-        setStatus({ kind: 'error', message: `Failed to load profile: ${userMessage(error)}` });
+  const status = saveResult
+    ? {
+        kind: saveResult.kind === 'saved' ? 'saved' : 'error',
+        message: profileOutcomeMessage(saveResult),
       }
-    }
-
-    void load();
-    return () => {
-      current = false;
-    };
-    // `draft` is a fresh object every render (its own state setters are stable, but the object
-    // wrapping them isn't) — depending on it would re-run this on every render. `client`/
-    // `reloadToken` are this effect's real inputs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, reloadToken]);
+    : loadError !== null
+      ? { kind: 'error', message: `Failed to load profile: ${userMessage(loadError)}` }
+      : null;
+  const extraction = uploadResult
+    ? {
+        kind: uploadResult.kind === 'parsed' ? 'notice' : 'error',
+        message: profileOutcomeMessage(uploadResult),
+      }
+    : null;
 
   async function handleSignIn(email: string, password: string) {
     await client.signIn(email, password);
-    setReloadToken((token) => token + 1);
+    setUnauthorized(false);
+    workflow.reload();
   }
 
-  /*
-    `setUnauthorized(true)` directly, not another `reloadToken` bump: bumping would re-run the fetch
-    effect and let its own 401 discover the session is gone, but the session is already known gone
-    here — the whole point of asking to sign out — so there's nothing to round-trip for.
-  */
+  // No reload here: the session is already known to be gone, so there is nothing to round-trip for.
   async function handleSignOut() {
     await client.signOut();
     setUnauthorized(true);
@@ -248,63 +188,16 @@ export function App({ client }: { client: BackendClient }) {
   const { work, education, stories, customAnswers, projects, credentials } = editors;
   const section = PROFILE_SECTION_BY_KEY;
 
-  /**
-   * Parses the uploaded resume and applies whatever it found onto the draft — never saved on its
-   * own. `setProfile` marks the form `dirty`, so "You have unsaved changes" already tells the
-   * candidate the normal way nothing has been persisted yet; `extraction` here is only the
-   * upload's own success/failure message, not a save confirmation.
-   */
   async function handleResumeUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    // Cleared immediately so re-selecting the same file (after fixing nothing and trying again)
-    // still fires a change event.
+    // Cleared immediately so re-selecting the same file still fires a change event.
     e.target.value = '';
-    if (!file) return;
-
-    setExtraction(null);
-    // `draft.applyResume` owns the protocol — parse, apply field by field onto the draft as it
-    // stands when the parse returns, mark it dirty. What's left here is what only this page can
-    // answer: how a 401 is reported, and the wording of the result.
-    const outcome = await draft.applyResume(file, (upload) => client.extractResume(upload));
-    if (outcome.kind === 'stale') return;
-    if (outcome.kind === 'error') {
-      if (isUnauthorized(outcome.error)) {
-        setUnauthorized(true);
-        return;
-      }
-      setExtraction({
-        kind: 'error',
-        message: `Couldn't parse this resume: ${userMessage(outcome.error)}`,
-      });
-      return;
-    }
-    // A parse is an edit, and `applyResume` writes through the draft rather than the `setProfile`
-    // wrapper below, so the stale "Profile saved." banner is cleared here instead.
-    if (status?.kind === 'saved') setStatus(null);
-    setExtraction({
-      kind: 'notice',
-      message: 'Resume parsed. Review the pre-filled fields below, then save.',
-    });
+    if (file) await workflow.uploadResume(file);
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!profile) return;
-    setStatus(null);
-    // `draft.save` owns the whole protocol — normalize, persist, drop a response a later edit has
-    // superseded, load what came back. What's left here is what only this page can answer: how a
-    // 401 is reported, and the wording of the result.
-    const outcome = await draft.save((toSave) => client.saveProfile(toSave));
-    if (outcome.kind === 'stale') return;
-    if (outcome.kind === 'error') {
-      if (isUnauthorized(outcome.error)) {
-        setUnauthorized(true);
-        return;
-      }
-      setStatus({ kind: 'error', message: userMessage(outcome.error) });
-      return;
-    }
-    setStatus({ kind: 'saved', message: 'Profile saved.' });
+    await workflow.save();
   }
 
   return (
@@ -327,10 +220,10 @@ export function App({ client }: { client: BackendClient }) {
       <section className="profile-intro" aria-labelledby="profile-title">
         <div>
           <p className="eyebrow">Application profile</p>
-          <h2 id="profile-title">Your reusable career record</h2>
+          <h2 id="profile-title">Write it once, use it everywhere</h2>
           <p>
-            Keep this accurate and specific. Djobi uses it to tailor resumes and prepare application
-            answers without inventing details.
+            Keep this accurate and specific. djobi tailors your resume and drafts your answers from
+            what's here, and only from what's here — it won't make anything up.
           </p>
         </div>
         <span className="profile-intro-badge">One profile, every application</span>
@@ -379,7 +272,7 @@ export function App({ client }: { client: BackendClient }) {
               <p className="upload-resume-card__hint">
                 {extracting
                   ? 'Parsing…'
-                  : "PDF — we'll pull contact info, work history, and skills automatically."}
+                  : "Drop in a PDF and we'll pull out your contact details, work history, and skills."}
               </p>
             </div>
             <input
@@ -412,7 +305,7 @@ export function App({ client }: { client: BackendClient }) {
               <p className="eyebrow">Essentials</p>
               <h3 id="contact-title">{section.contact.title}</h3>
             </div>
-            <p>Used for form fields and the resume header.</p>
+            <p>These fill the form and head up your resume.</p>
           </div>
           <div className="field-grid">
             <ProfileSectionFields
@@ -481,20 +374,14 @@ export function App({ client }: { client: BackendClient }) {
               <label htmlFor="newSkill">New skill</label>
               <input id="newSkill" value={newSkill} onChange={(e) => setNewSkill(e.target.value)} />
             </div>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => {
-                setProfile(addSkill(profile, newSkill));
-                setNewSkill('');
-              }}
-            >
+            <button type="button" className="btn-secondary" onClick={workflow.addNewSkill}>
               Add skill
             </button>
           </div>
         </fieldset>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.work.anchor}
           legend={section.work.title}
           noun={section.work.noun}
@@ -521,7 +408,7 @@ export function App({ client }: { client: BackendClient }) {
                 />
               </div>
               <p className="hint">
-                A maximum, not a target. Roles with fewer bullets stay shorter.
+                A ceiling, not a target. Roles with fewer bullets stay shorter.
               </p>
             </div>
           }
@@ -551,6 +438,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.projects.anchor}
           legend={section.projects.title}
           noun={section.projects.noun}
@@ -569,6 +457,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.education.anchor}
           legend={section.education.title}
           noun={section.education.noun}
@@ -585,6 +474,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.credentials.anchor}
           legend={section.credentials.title}
           noun={section.credentials.noun}
@@ -617,6 +507,7 @@ export function App({ client }: { client: BackendClient }) {
         </fieldset>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.answers.anchor}
           legend={section.answers.title}
           noun={section.answers.noun}
@@ -633,6 +524,7 @@ export function App({ client }: { client: BackendClient }) {
         </ListSection>
 
         <ListSection
+          chrome={listSectionChrome}
           id={section.stories.anchor}
           legend={section.stories.title}
           noun={section.stories.noun}

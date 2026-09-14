@@ -19,6 +19,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@djobi/http-client": "workspace:*",
     "@djobi/shared": "workspace:*"
   },
   "peerDependencies": {

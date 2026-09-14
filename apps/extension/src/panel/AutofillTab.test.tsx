@@ -93,7 +93,7 @@ describe('AutofillTab', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Extract job posting' }));
 
     expect(await screen.findByDisplayValue(JOB_DESCRIPTION)).toBeInTheDocument();
-    expect(screen.getByText(/review or edit it before analyzing/i)).toBeInTheDocument();
+    expect(screen.getByText(/give it a read, edit if needed, then analyze/i)).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
     await vi.waitFor(async () =>
       expect(await getJobContext(1)).toMatchObject({
@@ -126,7 +126,7 @@ describe('AutofillTab', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Extract job posting' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/paste it instead/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/paste it in instead/i);
     fireEvent.change(screen.getByLabelText('Job description'), {
       target: { value: 'Manual fallback description' },
     });
@@ -157,7 +157,7 @@ describe('AutofillTab', () => {
     act(() => navigate(1, `${overviewUrl}/application`));
 
     expect(await screen.findByLabelText('Job description')).toHaveValue(JOB_DESCRIPTION);
-    expect(screen.getByText(/retained for this job/i)).toBeInTheDocument();
+    expect(screen.getByText(/still using the posting djobi pulled earlier/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
     expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toMatchObject({
@@ -332,7 +332,7 @@ describe('AutofillTab', () => {
     await clickAnalyze();
 
     expect(await screen.findByRole('note')).toHaveTextContent(
-      "Review your tailored resume before filling the form. Check every bullet for accuracy and edit anything that doesn't reflect your experience.",
+      "Read your tailored resume before you fill the form. Check every bullet, and change anything that doesn't sound like your actual experience.",
     );
   });
 
@@ -420,7 +420,7 @@ describe('AutofillTab', () => {
 
     await screen.findByText('Something went wrong analyzing this job posting.');
     expect(
-      screen.getByText('This service is temporarily unavailable. Try again.'),
+      screen.getByText("djobi couldn't finish that just now. Try again in a moment."),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -441,12 +441,14 @@ describe('AutofillTab', () => {
 
     render(<AutofillHarness />);
     await clickAnalyze();
-    await screen.findByText('An unexpected error occurred. Try again.');
+    await screen.findByText('Something unexpected went wrong. Try again.');
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    await screen.findByText('This service is temporarily unavailable. Try again.');
-    expect(screen.queryByText('An unexpected error occurred. Try again.')).not.toBeInTheDocument();
+    await screen.findByText("djobi couldn't finish that just now. Try again in a moment.");
+    expect(
+      screen.queryByText('Something unexpected went wrong. Try again.'),
+    ).not.toBeInTheDocument();
   });
 
   it('stops on a job already applied to, naming when it was applied for', async () => {
@@ -529,7 +531,7 @@ describe('AutofillTab', () => {
 
     await screen.findByText('Something went wrong analyzing this job posting.');
     expect(
-      screen.getByText('The model returned an unusable result. Try again.'),
+      screen.getByText("The AI came back with something djobi couldn't use. Try again."),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/report_answers did not produce a tool call/),
@@ -552,7 +554,7 @@ describe('AutofillTab', () => {
     await screen.findByText('Something went wrong analyzing this job posting.');
     expect(
       screen.getByText(
-        'You have been signed out. Sign in again from the extension options, then retry.',
+        "You've been signed out. Sign in again from the extension options, then retry.",
       ),
     ).toBeInTheDocument();
   });
@@ -571,7 +573,7 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
 
-    await screen.findByText('An unexpected error occurred. Try again.');
+    await screen.findByText('Something unexpected went wrong. Try again.');
     expect(screen.queryByText(/db unreachable/)).not.toBeInTheDocument();
   });
 
@@ -590,7 +592,7 @@ describe('AutofillTab', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Save application' }));
 
     await screen.findByText(
-      'The save may have completed. Check the Dashboard before trying again.',
+      'The save may have gone through. Check the dashboard before trying again.',
     );
   });
 
@@ -760,7 +762,7 @@ describe('AutofillTab', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText(/no form fields were found on this page/);
+    await screen.findByText(/found no form fields on this page/);
     expect(screen.queryByText(/saved the application\./)).not.toBeInTheDocument();
   });
 
@@ -782,7 +784,7 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
     await screen.findByText(/kept none of the values written into it/);
-    expect(screen.queryByText(/no form fields were found on this page/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/found no form fields on this page/)).not.toBeInTheDocument();
   });
 
   it('warns when no frame answered instead of rendering a confident success', async () => {
@@ -798,7 +800,7 @@ describe('AutofillTab', () => {
     await screen.findByRole('button', { name: 'Fill form' });
     fireEvent.click(screen.getByRole('button', { name: 'Fill form' }));
 
-    await screen.findByText(/fill could not be verified because this page did not answer/i);
+    await screen.findByText(/djobi can't confirm what was filled/i);
     expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
   });
 
@@ -1106,7 +1108,7 @@ describe('AutofillTab', () => {
     await clickAnalyze();
     fireEvent.click(await screen.findByRole('button', { name: 'Preview tailored resume' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't render/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't build the preview/i);
   });
 
   it('ignores a pending resume preview completion after same-tab navigation', async () => {
@@ -1170,7 +1172,7 @@ describe('AutofillTab', () => {
     act(() => navigate(1, 'https://boards.greenhouse.io/acme/jobs/2'));
     await act(async () => preview.reject(new Error('stale failure')));
 
-    expect(screen.queryByText(/couldn't render/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't build the preview/i)).not.toBeInTheDocument();
   });
 
   it('ignores a pending resume preview completion after unmount', async () => {

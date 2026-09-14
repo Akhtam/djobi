@@ -231,7 +231,7 @@ describe('the Log tab', () => {
     type(screen.getByPlaceholderText(/Paste the posting/), JOB_DESCRIPTION);
 
     expect(screen.getByRole('button', { name: 'Extract job details' })).toBeDisabled();
-    expect(screen.getByText(/doesn't look like a URL/)).toBeInTheDocument();
+    expect(screen.getByText(/doesn't look like a link/)).toBeInTheDocument();
     expect(client.extractJob).not.toHaveBeenCalled();
   });
 

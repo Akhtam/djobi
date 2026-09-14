@@ -1,6 +1,6 @@
 /**
  * The dashboard's theme preference — a port of the extension's, differing in the two places that
- * matter: it persists to `localStorage`, and new visitors default to light mode.
+ * matter: it persists to `localStorage`, and new visitors default to dark mode.
  *
  * Both of those are guarded rather than assumed, and the guards are the point: a browser with site
  * data blocked *throws* on `localStorage` access. The theme is read before anything else is drawn,
@@ -69,16 +69,16 @@ describe('useThemePreference', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
-  it('defaults to light when nothing is stored', () => {
+  it('defaults to dark when nothing is stored', () => {
     const { result } = renderHook(() => useThemePreference());
 
-    expect(result.current.theme).toBe('light');
-    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(result.current.theme).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
   it('ignores a stored value that is not a theme', () => {
     stubStorage({ [THEME_KEY]: 'solarized' });
-    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('light');
+    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('dark');
   });
 
   it('persists a toggle and applies it', () => {
@@ -87,17 +87,17 @@ describe('useThemePreference', () => {
 
     act(() => result.current.toggleTheme());
 
-    expect(result.current.theme).toBe('dark');
-    expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(store.get(THEME_KEY)).toBe('dark');
+    expect(result.current.theme).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(store.get(THEME_KEY)).toBe('light');
   });
 
   /**
    * The absence jsdom itself presents, and a real one: a page whose browser exposes no
-   * `localStorage` still has to render with the light default.
+   * `localStorage` still has to render with the dark default.
    */
   it('renders where there is no localStorage at all', () => {
-    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('light');
+    expect(renderHook(() => useThemePreference()).result.current.theme).toBe('dark');
   });
 
   /**
@@ -107,10 +107,10 @@ describe('useThemePreference', () => {
   it('renders and toggles where localStorage access throws', () => {
     stubBlockedStorage();
     const { result } = renderHook(() => useThemePreference());
-    expect(result.current.theme).toBe('light');
+    expect(result.current.theme).toBe('dark');
 
     expect(() => act(() => result.current.toggleTheme())).not.toThrow();
-    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('light');
   });
 });
 

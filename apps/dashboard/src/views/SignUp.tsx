@@ -48,7 +48,7 @@ export function SignUp({
     <AuthLayout
       eyebrow="Start your workspace"
       title="Create an account"
-      description="Build a clearer, more connected view of your job search."
+      description="A few details and your job search has a home."
       footer={
         <p>
           Already have an account? <a href={loginPath()}>Sign in</a>

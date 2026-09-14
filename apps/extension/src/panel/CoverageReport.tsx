@@ -75,8 +75,8 @@ export function CoverageReport({ coverage }: { coverage: KeywordCoverage[] }) {
                 ))}
               </ul>
               <p className="hint">
-                If you have any of these, add it to your profile — a skill your profile doesn't list
-                can't appear on the tailored resume.
+                If any of these apply to you, add them to your profile. djobi can only put a skill
+                on your resume if your profile says you have it.
               </p>
               <button
                 type="button"
@@ -93,8 +93,8 @@ export function CoverageReport({ coverage }: { coverage: KeywordCoverage[] }) {
           <details className="coverage-group coverage-gap">
             <summary className="coverage-gap-head">
               {profileExperience.length === 1
-                ? '1 keyword has Profile evidence absent from this resume'
-                : `${profileExperience.length} keywords have Profile evidence absent from this resume`}
+                ? 'Your profile covers 1 keyword this resume left out'
+                : `Your profile covers ${profileExperience.length} keywords this resume left out`}
             </summary>
             <div className="coverage-gap-body">
               <ul className="coverage-list">
@@ -108,8 +108,7 @@ export function CoverageReport({ coverage }: { coverage: KeywordCoverage[] }) {
                 ))}
               </ul>
               <p className="hint">
-                Star a listed source bullet in your profile to keep that evidence on every tailored
-                resume.
+                Star one of these bullets in your profile and it stays on every tailored resume.
               </p>
               <button
                 type="button"

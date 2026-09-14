@@ -6,20 +6,57 @@
  * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
  * place the real app's client is named, and it always names the HTTP one.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
 import { AccountMenu } from './components/AccountMenu';
+import type { ErrorInfo, ReactNode } from 'react';
 import type { DashboardClient } from './lib/dashboardClient';
 import { ThemeToggle, useThemePreference } from './lib/theme';
 import { useApplicationStore } from './lib/useApplicationStore';
 import { analyticsPath, listPath, loginPath, useHashRoute } from './lib/useHashRoute';
-import { Analytics } from './views/Analytics';
-import { ApplicationDetail } from './views/ApplicationDetail';
-import { ApplicationsList } from './views/ApplicationsList';
 import { LandingPage } from './views/LandingPage';
-import { Login } from './views/Login';
-import { Profile } from './views/Profile';
-import { SignUp } from './views/SignUp';
+
+// Split per view: the landing page is the homepage and stays in the entry chunk, while each
+// dashboard view is fetched only when its route is first visited.
+const Analytics = lazy(() => import('./views/Analytics').then((m) => ({ default: m.Analytics })));
+const ApplicationDetail = lazy(() =>
+  import('./views/ApplicationDetail').then((m) => ({ default: m.ApplicationDetail })),
+);
+const ApplicationsList = lazy(() =>
+  import('./views/ApplicationsList').then((m) => ({ default: m.ApplicationsList })),
+);
+const Login = lazy(() => import('./views/Login').then((m) => ({ default: m.Login })));
+const Profile = lazy(() => import('./views/Profile').then((m) => ({ default: m.Profile })));
+const SignUp = lazy(() => import('./views/SignUp').then((m) => ({ default: m.SignUp })));
+
+/**
+ * Catches a view chunk that failed to load (typically a redeploy removed the old hashed files) so
+ * the shell stays up with a reload prompt instead of React unmounting the whole app. `lazy` caches
+ * the rejected import, so reloading the page is the only real retry.
+ */
+class ViewLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error('Dashboard view failed to render', error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <p className="empty-state empty-state--error" role="alert">
+        This page couldn’t load — the dashboard may have been updated.{' '}
+        <button type="button" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </p>
+    );
+  }
+}
 
 /**
  * Whether the current URL asks for the dashboard rather than the landing page — a dashboard hash
@@ -237,64 +274,76 @@ function DashboardApp({ client }: { client: DashboardClient }) {
         ) : null}
 
         <main>
-          {route.name === 'login' ? (
-            <Login onSignIn={handleSignIn} />
-          ) : route.name === 'signup' ? (
-            <SignUp onSignUp={handleSignUp} />
-          ) : route.name === 'profile' ? (
-            <Profile
-              getProfile={client.getProfile}
-              saveProfile={client.saveProfile}
-              extractResume={client.extractResume}
-              onUnauthorized={handleUnauthorized}
-            />
-          ) : loading ? (
-            <p className="empty-state">Loading applications…</p>
-          ) : loadError ? (
-            <p className="empty-state empty-state--error" role="alert">
-              Couldn’t load applications. {loadError}
-            </p>
-          ) : route.name === 'list' ? (
-            <ApplicationsList
-              applications={applications}
-              client={client}
-              filters={route.filters}
-              shown={route.shown}
-              onFiltersChange={(filters) =>
-                // Back to one batch: the rows the user had revealed were rows of a different
-                // result set, and `listPath`'s default is that first batch.
-                replaceRoute(listPath(filters))
-              }
-              onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
-              onStageChange={(id, stage) => void updateStage(id, stage)}
-              onCreateApplication={createApplication}
-              onUnauthorized={handleUnauthorized}
-            />
-          ) : route.name === 'analytics' ? (
-            <Analytics
-              applications={applications}
-              range={route.range}
-              stage={route.stage}
-              onFiltersChange={(range, stage) => replaceRoute(analyticsPath(range, stage))}
-              getProfile={client.getProfile}
-              onUnauthorized={handleUnauthorized}
-            />
-          ) : application ? (
-            <ApplicationDetail
-              application={application}
-              back={backTarget.current}
-              onStageChange={(id, stage) => void updateStage(id, stage)}
-              onAddNote={addNote}
-              onDeleteNote={(id, noteId) => void deleteNote(id, noteId)}
-              onDeleteApplication={(id) => void handleDeleteApplication(id)}
-            />
-          ) : (
-            <p className="empty-state">
-              No application with that id.{' '}
-              <a href={backTarget.current.href}>Back to {backTarget.current.label.toLowerCase()}</a>
-              .
-            </p>
-          )}
+          <ViewLoadBoundary>
+            <Suspense fallback={<p className="empty-state">Loading…</p>}>
+              {route.name === 'login' ? (
+                <Login onSignIn={handleSignIn} />
+              ) : route.name === 'signup' ? (
+                <SignUp onSignUp={handleSignUp} />
+              ) : route.name === 'profile' ? (
+                <Profile
+                  getProfile={client.getProfile}
+                  saveProfile={client.saveProfile}
+                  extractResume={client.extractResume}
+                  onUnauthorized={handleUnauthorized}
+                />
+              ) : loading ? (
+                <p className="empty-state">Loading applications…</p>
+              ) : loadError ? (
+                <p className="empty-state empty-state--error" role="alert">
+                  Couldn’t load applications. {loadError}
+                </p>
+              ) : route.name === 'list' ? (
+                <ApplicationsList
+                  applications={applications}
+                  client={client}
+                  filters={route.filters}
+                  shown={route.shown}
+                  onFiltersChange={(filters) =>
+                    // Back to one batch: the rows the user had revealed were rows of a different
+                    // result set, and `listPath`'s default is that first batch.
+                    replaceRoute(listPath(filters))
+                  }
+                  // Reordering, not filtering — the revealed rows are still the right rows, just in
+                  // the other direction, so `shown` carries over rather than resetting to the default
+                  // batch the way `onFiltersChange` does. See `ApplicationsList`'s own doc comment.
+                  onSortChange={(sort) =>
+                    replaceRoute(listPath({ ...route.filters, sort }, route.shown))
+                  }
+                  onShowMore={(shown) => replaceRoute(listPath(route.filters, shown))}
+                  onStageChange={(id, stage) => void updateStage(id, stage)}
+                  onCreateApplication={createApplication}
+                  onUnauthorized={handleUnauthorized}
+                />
+              ) : route.name === 'analytics' ? (
+                <Analytics
+                  applications={applications}
+                  range={route.range}
+                  stage={route.stage}
+                  onFiltersChange={(range, stage) => replaceRoute(analyticsPath(range, stage))}
+                  getProfile={client.getProfile}
+                  onUnauthorized={handleUnauthorized}
+                />
+              ) : application ? (
+                <ApplicationDetail
+                  application={application}
+                  back={backTarget.current}
+                  onStageChange={(id, stage) => void updateStage(id, stage)}
+                  onAddNote={addNote}
+                  onDeleteNote={(id, noteId) => void deleteNote(id, noteId)}
+                  onDeleteApplication={(id) => void handleDeleteApplication(id)}
+                />
+              ) : (
+                <p className="empty-state">
+                  No application with that id.{' '}
+                  <a href={backTarget.current.href}>
+                    Back to {backTarget.current.label.toLowerCase()}
+                  </a>
+                  .
+                </p>
+              )}
+            </Suspense>
+          </ViewLoadBoundary>
         </main>
       </div>
     </>

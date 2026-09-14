@@ -186,7 +186,7 @@ export function App({ client }: { client: BackendClient }) {
         <div className="panel-body">
           <div className="state error" role="alert">
             <span className="state-icon error">🔒</span>
-            <p>You're not signed in. Sign in from profile settings to load your Profile here.</p>
+            <p>You're not signed in. Sign in from profile settings to load your profile here.</p>
             <button
               type="button"
               className="btn-primary"
@@ -227,7 +227,7 @@ export function App({ client }: { client: BackendClient }) {
         <div className="panel-body">
           <div className="state" role="status">
             <span className="state-icon">👤</span>
-            <p>Set up your profile to get started.</p>
+            <p>Set up your profile and you're ready to go.</p>
             <button
               type="button"
               className="btn-primary"

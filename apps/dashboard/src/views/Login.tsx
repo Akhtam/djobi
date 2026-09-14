@@ -39,7 +39,7 @@ export function Login({
     <AuthLayout
       eyebrow="Welcome back"
       title="Sign in"
-      description="Pick up where you left off and keep your search moving."
+      description="Pick up right where you left off."
       footer={
         <p>
           Don’t have an account? <a href={signUpPath()}>Create one</a>

@@ -12,20 +12,33 @@ function localThemeStorage() {
   return typeof chrome === 'undefined' ? undefined : chrome.storage.local;
 }
 
-/** Keeps the extension's independently-rendered pages on one persisted color preference. */
+/**
+ * Keeps the extension's independently-rendered pages on one persisted color preference.
+ *
+ * New installs start in dark mode; an explicitly saved preference takes precedence.
+ * `chrome.storage.local` has no synchronous read, so the initial render (and the no-storage
+ * fallback) use the same dark default the async lookup below falls back to — there is a brief
+ * window before that lookup resolves, but never one where the default itself disagrees.
+ *
+ * `panel/index.html` and `options/index.html` ship `data-theme="dark"` on `<html>` for the same
+ * reason, and it is load-bearing rather than redundant: the stylesheets' own `:root` is the *light*
+ * theme, so without it every side-panel open would paint a full white page before this hook's first
+ * effect ran. A stored `'light'` still overrides it on mount.
+ */
 export function useThemePreference() {
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>('dark');
 
   useEffect(() => {
+    // Applied synchronously (not left to the async lookup below) so the dark default is on the
+    // page before `chrome.storage.local.get` — which has no synchronous form — resolves.
+    applyTheme(theme);
+
     const storage = localThemeStorage();
-    if (!storage) {
-      applyTheme(theme);
-      return;
-    }
+    if (!storage) return;
 
     let current = true;
     void storage.get(THEME_KEY).then((stored) => {
-      const next: Theme = stored[THEME_KEY] === 'dark' ? 'dark' : 'light';
+      const next: Theme = stored[THEME_KEY] === 'light' ? 'light' : 'dark';
       if (!current) return;
       setTheme(next);
       applyTheme(next);
@@ -33,7 +46,7 @@ export function useThemePreference() {
 
     function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
       if (areaName !== 'local' || !(THEME_KEY in changes)) return;
-      const next: Theme = changes[THEME_KEY].newValue === 'dark' ? 'dark' : 'light';
+      const next: Theme = changes[THEME_KEY].newValue === 'light' ? 'light' : 'dark';
       setTheme(next);
       applyTheme(next);
     }

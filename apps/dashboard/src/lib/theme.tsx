@@ -5,14 +5,14 @@
  * through `chrome.storage.local`, which does not exist on a plain web page. The markup and the two
  * icons are kept identical so the control looks the same in both surfaces.
  *
- * Unlike the extension's version, this persists through `localStorage`. New visitors start in light
- * mode; an explicitly saved preference takes precedence.
+ * Unlike the extension's version, this persists through `localStorage`. New visitors start in dark
+ * mode; an explicitly saved preference takes precedence. `index.html` carries a matching inline
+ * script that applies the same default before first paint, so there is no flash of the other theme.
  */
 import { useEffect, useState } from 'react';
+import { DEFAULT_THEME, THEME_KEY } from './themeConstants';
 
 export type Theme = 'light' | 'dark';
-
-const THEME_KEY = 'djobi-dashboard-theme';
 
 function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
@@ -39,7 +39,7 @@ function themeStorage(): Storage | undefined {
 function preferredTheme(): Theme {
   const stored = themeStorage()?.getItem(THEME_KEY);
   if (stored === 'dark' || stored === 'light') return stored;
-  return 'light';
+  return DEFAULT_THEME;
 }
 
 /** Keeps the page on one persisted color preference. */

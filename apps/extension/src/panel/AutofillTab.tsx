@@ -209,8 +209,8 @@ export function AutofillTab({
             </div>
             <p className="hint">
               {jobPageData
-                ? 'Paste a job description or extract it from this page, review the text, then analyze it for this detected form.'
-                : 'Paste a job description or extract it from this page. It will be retained if this job opens its application form on another route.'}
+                ? 'Pull the job description off this page or paste it in, give it a read, then analyze it against the form djobi found.'
+                : 'Pull the job description off this page or paste it in. djobi holds on to it if this job opens its form on another page.'}
             </p>
             <label className="field-label" htmlFor="job-description">
               Job description
@@ -234,20 +234,20 @@ export function AutofillTab({
             </button>
             {jobDescription.scrapeStatus.kind === 'success' && (
               <p className="scrape-feedback" role="status">
-                Job posting extracted. Review or edit it before analyzing.
+                Got the posting. Give it a read, edit if needed, then analyze.
               </p>
             )}
             {jobDescription.scrapeStatus.kind === 'idle' && jobDescription.source === 'scraped' && (
               <p className="scrape-feedback" role="status">
-                Extracted job posting retained for this job.
+                Still using the posting djobi pulled earlier for this job.
               </p>
             )}
             {jobDescription.scrapeStatus.kind === 'error' && (
               <div className="inline-error" role="alert">
                 <p>
                   {jobDescription.scrapeStatus.reason === 'unavailable'
-                    ? 'This page could not be read. Reload it to reconnect the extension, or paste the job description.'
-                    : 'No confident job description was found on this page. Paste it instead.'}
+                    ? "djobi couldn't read this page. Reload it to reconnect, or paste the job description in yourself."
+                    : "Couldn't find a job description on this page worth trusting. Paste it in instead."}
                 </p>
               </div>
             )}
@@ -324,8 +324,8 @@ export function AutofillTab({
               {showPageTextEditor && (
                 <>
                   <p className="hint">
-                    Wrong job title, company, or missing context? Edit the job description here and
-                    re-analyze.
+                    Wrong job title or company, or missing something? Edit the posting here and run
+                    the analysis again.
                   </p>
                   <label className="field-label" htmlFor="review-job-description">
                     Job description
@@ -366,15 +366,14 @@ export function AutofillTab({
               <div className="inline-error inline-warning" role="note">
                 <div className="inline-error-body">
                   <p>
-                    <strong>Review your tailored resume before filling the form.</strong> Check
-                    every bullet for accuracy and edit anything that doesn't reflect your
-                    experience.
+                    <strong>Read your tailored resume before you fill the form.</strong> Check every
+                    bullet, and change anything that doesn't sound like your actual experience.
                   </p>
                 </div>
               </div>
               {resumePreview.state.kind === 'error' && (
                 <p className="preview-error" role="alert">
-                  Couldn't render the resume preview — try again.
+                  Couldn't build the preview. Try again.
                 </p>
               )}
               {resumePreview.state.kind === 'ready' && (
@@ -450,7 +449,7 @@ export function AutofillTab({
               disabled={!saveEnabled}
             >
               {status === 'saving' && <span className="spinner" />}
-              {status === 'saving' ? 'Saving...' : 'Save application'}
+              {status === 'saving' ? 'Saving…' : 'Save application'}
             </button>
           )}
           <button

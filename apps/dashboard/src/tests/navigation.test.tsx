@@ -17,7 +17,7 @@ describe('landing page', () => {
     renderDashboard({ client });
 
     expect(
-      screen.getByRole('heading', { name: 'Apply with context. Track outcomes with clarity.' }),
+      screen.getByRole('heading', { name: 'Every application tailored. Every outcome tracked.' }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Open dashboard' })[0]).toHaveAttribute(
       'href',
@@ -36,7 +36,7 @@ describe('landing page', () => {
     expect(within(systems).getByText('Greenhouse')).toBeInTheDocument();
     expect(within(systems).getByText('Ashby')).toBeInTheDocument();
     expect(within(systems).getByText('Lever')).toBeInTheDocument();
-    expect(within(systems).getByText('More platforms coming')).toBeInTheDocument();
+    expect(within(systems).getByText('More coming')).toBeInTheDocument();
     expect(within(systems).queryByText('Workday')).not.toBeInTheDocument();
   });
 
@@ -91,9 +91,9 @@ describe('landing page', () => {
     renderDashboard();
 
     expect(screen.getByRole('heading', { name: 'Build your profile' })).toBeInTheDocument();
-    expect(screen.getByText(/Start with a PDF or build your profile by hand/)).toBeInTheDocument();
+    expect(screen.getByText(/Start from a PDF or fill it in by hand/)).toBeInTheDocument();
     expect(
-      screen.getByText(/screening details, reusable answers, and stories/),
+      screen.getByText(/your screening details, the answers you reuse, and the stories you tell/),
     ).toBeInTheDocument();
   });
 

@@ -217,24 +217,58 @@ describe('handleTypedMessage', () => {
     );
   });
 
-  it('returns the Fill task for rejection observation', async () => {
+  it("resolves with the claim's verdict, reported through the callback runFill is given", async () => {
+    mockRunFill.mockImplementation(
+      async (
+        _tabId: number,
+        _profile: unknown,
+        _deps: unknown,
+        _expectedRunId: string,
+        onClaimed: (outcome: unknown) => void,
+      ) => {
+        onClaimed({ claimed: true });
+      },
+    );
+
     const returned = handleTypedMessage(
       { type: 'START_FILL', tabId: 7, profile, expectedRunId: 'run-1' },
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunFill).toHaveBeenCalledWith(7, profile, productionDeps, 'run-1');
-    await expect(returned).resolves.toBeUndefined();
+    expect(mockRunFill).toHaveBeenCalledWith(
+      7,
+      profile,
+      productionDeps,
+      'run-1',
+      expect.any(Function),
+    );
+    await expect(returned).resolves.toEqual({ claimed: true });
   });
 
-  it('returns the Save task for rejection observation', async () => {
+  it("resolves with the claim's verdict, reported through the callback runSaveApplication is given", async () => {
+    mockRunSaveApplication.mockImplementation(
+      async (
+        _tabId: number,
+        _deps: unknown,
+        _expectedRunId: string,
+        onClaimed: (outcome: unknown) => void,
+      ) => {
+        onClaimed({ claimed: false, reason: 'busy' });
+      },
+    );
+
     const returned = handleTypedMessage(
       { type: 'START_SAVE_APPLICATION', tabId: 7, expectedRunId: 'run-1' },
       {} as chrome.runtime.MessageSender,
     );
 
-    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, productionDeps, 'run-1');
-    await expect(returned).resolves.toBeUndefined();
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(
+      7,
+      productionDeps,
+      'run-1',
+      expect.any(Function),
+    );
+    await expect(returned).resolves.toEqual({ claimed: false, reason: 'busy' });
   });
 
   it('saves the application when the page reports the candidate submitting a form we filled', async () => {
@@ -257,16 +291,22 @@ describe('handleTypedMessage', () => {
     expect(mockRunSaveApplication).not.toHaveBeenCalled();
   });
 
-  it('lets a runner rejection reach the service-worker observation boundary', async () => {
+  it('resolves with a refusal, logged locally, when the step rejects before the claim is decided', async () => {
     const failure = new Error('session storage unavailable');
     mockRunFill.mockRejectedValue(failure);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
+    // `START_FILL`/`START_SAVE_APPLICATION` never reject `handleTypedMessage` — a caller waiting on
+    // this promise has no better answer for an early fault than the same refusal a losing claim
+    // already reports, and the fault itself is still logged, just here rather than at the caller.
     await expect(
       handleTypedMessage(
         { type: 'START_FILL', tabId: 7, profile, expectedRunId: 'run-1' },
         {} as chrome.runtime.MessageSender,
       ),
-    ).rejects.toBe(failure);
+    ).resolves.toEqual({ claimed: false, reason: 'busy' });
+    expect(error).toHaveBeenCalledWith('[djobi] fill step failed', failure);
+    error.mockRestore();
   });
 
   /**
@@ -301,8 +341,8 @@ describe('handleTypedMessage', () => {
     );
 
     expect(mockRunAnalysis.mock.calls[0][4]).toBe(deps);
-    expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps, 'run-1');
-    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps, 'run-1');
+    expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps, 'run-1', expect.any(Function));
+    expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps, 'run-1', expect.any(Function));
   });
 
   it('routes UPDATE_RUN through the background store queue and scopes it to its run', async () => {

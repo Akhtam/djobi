@@ -26,8 +26,8 @@ import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
 import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
 import { answersFor, STEP_STATUS } from '../lib/run';
-import type { JobPageData, ShowSavedToastCommandMessage } from '../lib/messages';
-import { chromePageClient, type PageClient } from '../lib/pageClient';
+import type { ClaimResult, JobPageData, ShowSavedToastCommandMessage } from '../lib/messages';
+import { chromePageClient, notifyPage, type PageClient } from '../lib/pageClient';
 import type { DetectedFrameRef } from '../lib/tabStore/detectedPage';
 import {
   type AnalyzedRun,
@@ -113,10 +113,7 @@ export const productionSaveNotice: SaveNotice = {
       company: job.company,
       roleTitle: job.roleTitle,
     };
-    // Broadcast rather than addressed to the filled frame: the submission has usually navigated the
-    // tab by now, so the frame that was filled may not exist and the top frame is as good a place
-    // to show it. Reading `lastError` is what marks an unanswered broadcast handled.
-    chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+    notifyPage(tabId, message);
   },
 };
 
@@ -248,11 +245,35 @@ async function fillStep(
   // Address the frame that reported the form. If navigation destroyed that frame, retry only this
   // read-only scan as a broadcast and use broadcast addressing for the single fill attempt below.
   // Retrying fill itself would be unsafe: clicks and uploads are not idempotent.
-  let frameId = (await deps.detection.frameForFill(tabId))?.frameId;
-  let scanned = await deps.page.scan(tabId, frameId);
-  if (frameId !== undefined && scanned === null) {
-    frameId = undefined;
-    scanned = await deps.page.scan(tabId);
+  // Render the resume alongside the scan rather than after it when the analyzed form already asked
+  // for one — the PDF is the slowest request in this step, and the scan rarely changes the answer.
+  // If the fresh scan turns out not to need it, the bytes are simply dropped; if it needs one this
+  // didn't anticipate, it is rendered below as before. The `catch` keeps an abandoned render (run
+  // superseded, resume not needed) from surfacing as an unhandled rejection; a render that is used
+  // is awaited through `early` and still throws there.
+  // Its own controller, linked to the step's signal: a superseding run still aborts it, and so does
+  // this step when it drops the render (resume not needed, or the run stopped being ours).
+  const earlyAbort = new AbortController();
+  const abortEarly = () => earlyAbort.abort();
+  signal.addEventListener('abort', abortEarly, { once: true });
+  if (signal.aborted) abortEarly();
+  const early = jobPageData.fields.some((field) => autofillSource(field.category) === 'resume')
+    ? deps.backend.renderResumePdf(profile, tailoredResume, earlyAbort.signal)
+    : undefined;
+  early?.catch(() => {});
+
+  let frameId: number | undefined;
+  let scanned: Awaited<ReturnType<typeof deps.page.scan>>;
+  try {
+    frameId = (await deps.detection.frameForFill(tabId))?.frameId;
+    scanned = await deps.page.scan(tabId, frameId);
+    if (frameId !== undefined && scanned === null) {
+      frameId = undefined;
+      scanned = await deps.page.scan(tabId);
+    }
+  } catch (error) {
+    abortEarly();
+    throw error;
   }
   // The fresh scan has the right elements; the analyzed run has the right wording. `mergeRescan`
   // keeps both — without it the re-scan silently discarded every API-supplied option label and
@@ -302,16 +323,23 @@ async function fillStep(
   const needsResume = fields.some((field) => autofillSource(field.category) === 'resume');
   // Rendering and filling can outlive a navigation or replacement analysis. Re-check after the
   // awaited scan before either operation can produce an upload or click against the wrong page.
-  if (!(await claim.stillOurs())) return null;
+  if (!needsResume) abortEarly();
+  if (!(await claim.stillOurs())) {
+    abortEarly();
+    return null;
+  }
   const resume = needsResume
     ? {
         name: resumeFileName(profile.fullName),
         type: 'application/pdf',
         // The one place this step spends model time, and therefore the one worth cancelling: a
         // superseding run aborts it rather than leaving a PDF rendering for a run nothing will use.
-        bytes: await deps.backend.renderResumePdf(profile, tailoredResume, signal),
+        bytes: await (early ?? deps.backend.renderResumePdf(profile, tailoredResume, signal)),
       }
     : undefined;
+
+  // The render has settled (or was never needed); stop listening on the step's signal.
+  signal.removeEventListener('abort', abortEarly);
 
   // PDF rendering is another await, so the run may have been superseded while it was in flight.
   // Keep this adjacent to the irreversible page command; there is no await between the check and it.
@@ -397,6 +425,7 @@ export async function runSaveApplication(
   tabId: number,
   deps: PipelineDeps = productionDeps,
   expectedRunId?: string,
+  onClaimed?: (outcome: ClaimResult) => void,
 ): Promise<void> {
   await withRunClaim(
     tabId,
@@ -406,6 +435,7 @@ export async function runSaveApplication(
       cancellation: 'none',
       expectedRunId,
       requires: asAnalyzedRun,
+      onClaimed,
     },
     async ({ run }) => {
       // Best-effort, not load-bearing: a Profile that can't be read at save time (deleted, or the
@@ -514,6 +544,7 @@ export async function runFill(
   profile: Profile,
   deps: PipelineDeps = productionDeps,
   expectedRunId?: string,
+  onClaimed?: (outcome: ClaimResult) => void,
 ): Promise<void> {
   await withRunClaim(
     tabId,
@@ -523,6 +554,7 @@ export async function runFill(
       cancellation: 'supersede',
       expectedRunId,
       requires: asAnalyzedRun,
+      onClaimed,
     },
     (claim) => fillStep(claim, profile, tabId, deps),
   );

@@ -26,15 +26,26 @@ import {
 import { stageFilterOf, type StageFilter } from './stages.js';
 
 /**
- * The Analytics view's date ranges. `'7d'` is the default so the first reading stays focused on the
- * candidate's most recent activity.
+ * The Analytics view's date ranges. `'14d'` is the default: long enough to usually hold more than
+ * one or two saved postings — a personal-scale search can easily go a week between applications —
+ * while still reading as "recent" rather than a full retrospective.
+ *
+ * `'all'` is the one member that names no window, and it earns its place from what the other four
+ * cannot answer. Every reading here is drawn from `Application.createdAt` — when the row was
+ * *saved* — so a short range holds the applications least likely to have been answered yet, and
+ * `responseRate` over seven days is mostly a measure of how recently someone applied. The longest
+ * preset is 60 days, which puts a search older than two months permanently out of view of the two
+ * reports that most need volume: which keywords keep recurring, and how often a reply comes back.
  */
-export const RANGES = ['7d', '14d', '30d', '60d'] as const;
+export const RANGES = ['7d', '14d', '30d', '60d', 'all'] as const;
 /** One of {@link RANGES} — a URL value (`?range=`), not free-form. */
 export type Range = (typeof RANGES)[number];
-export const DEFAULT_RANGE: Range = '7d';
+export const DEFAULT_RANGE: Range = '14d';
 
-const RANGE_DAYS: Record<Range, number> = { '7d': 7, '14d': 14, '30d': 30, '60d': 60 };
+/** The bounded ranges. `'all'` is absent by construction, which is what makes it unforgettable. */
+type BoundedRange = Exclude<Range, 'all'>;
+
+const RANGE_DAYS: Record<BoundedRange, number> = { '7d': 7, '14d': 14, '30d': 30, '60d': 60 };
 
 /**
  * Local midnight of `today − (n − 1)` days, so a 7-day range is seven calendar days with `today`
@@ -43,8 +54,15 @@ const RANGE_DAYS: Record<Range, number> = { '7d': 7, '14d': 14, '30d': 30, '60d'
  * when the candidate *saved* the row, not when the posting was published, since djobi never
  * captures the latter and the question this range answers is "what have I been applying to
  * lately."
+ *
+ * `null` for `'all'`, rather than a sentinel far enough in the past to include everything. A date
+ * would compare correctly and then be *rendered*: the view prints this boundary as the left half of
+ * its "from – to" heading, so an epoch would read as a real claim about a search that began in
+ * 1970. `null` says there is no boundary, which is the fact, and it makes every caller decide what
+ * to do about that rather than inherit a lie from this function.
  */
-export function rangeStart(range: Range, today: Date): Date {
+export function rangeStart(range: Range, today: Date): Date | null {
+  if (range === 'all') return null;
   const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   midnight.setDate(midnight.getDate() - (RANGE_DAYS[range] - 1));
   return midnight;
@@ -426,7 +444,8 @@ export interface AnalyticsReportFilters {
  * application or recompute profile coverage.
  */
 export interface AnalyticsReport {
-  rangeStartDate: Date;
+  /** The window's first day, or `null` for `'all'` — see {@link rangeStart}. */
+  rangeStartDate: Date | null;
   /** Every application in range, before the stage filter — what the stage pills count against. */
   inRange: Application[];
   /** In range and matching the stage filter — the population every field below is drawn from. */
@@ -446,9 +465,10 @@ export function analyticsReport(
   filters: AnalyticsReportFilters,
 ): AnalyticsReport {
   const rangeStartDate = rangeStart(filters.range, filters.asOf);
-  const inRange = applications.filter(
-    (application) => new Date(application.createdAt) >= rangeStartDate,
-  );
+  const inRange =
+    rangeStartDate === null
+      ? applications
+      : applications.filter((application) => new Date(application.createdAt) >= rangeStartDate);
   const filtered = filters.stage
     ? inRange.filter((application) => stageFilterOf(application.stage) === filters.stage)
     : inRange;
@@ -486,6 +506,62 @@ export function keywordRows(
     .filter((row) => row.count >= filters.minAppearances);
 }
 
+/** How many of a set of keyword rows the Profile does and doesn't back up — see {@link keywordCoverageSummary}. */
+export interface KeywordCoverageSummary {
+  evidenced: number;
+  gaps: number;
+  /** `0` for an empty `rows`, never `NaN`. */
+  gapPercent: number;
+}
+
+/**
+ * Rolls `rows` up into a gap count the summary strip can print — over whichever rows the caller
+ * passes, not necessarily every row `keywordRows` returned. The summary strip and the on-screen
+ * category groups (see {@link groupByKeywordCategory}) read from different slices of the same table
+ * — the strip describes everything the current filters matched, the groups describe only what has
+ * scrolled into view — so this takes `rows` as a parameter rather than assuming which one a caller
+ * means.
+ */
+export function keywordCoverageSummary(
+  rows: readonly KeywordFrequencyRow[],
+  coverageByTerm: Map<string, CoverageVerdict> | null,
+): KeywordCoverageSummary {
+  // Same "nothing can be confirmed as a gap without coverage to score against" rule `keywordRows`
+  // applies to `gapsOnly` — without a Profile, every row reads as evidenced rather than as a gap.
+  const gaps = coverageByTerm
+    ? rows.filter((row) => coverageByTerm.get(row.term) === 'missing').length
+    : 0;
+  const evidenced = rows.length - gaps;
+  const gapPercent = rows.length > 0 ? Math.round((gaps / rows.length) * 100) : 0;
+  return { evidenced, gaps, gapPercent };
+}
+
+/** One category's rows — see {@link groupByKeywordCategory}. */
+export interface KeywordCategoryGroup {
+  /** `null` groups every row whose own category is unset; the display label is the caller's copy. */
+  category: KeywordCategory | null;
+  items: KeywordFrequencyRow[];
+}
+
+/**
+ * Groups `rows` by category, each group keeping its rows in the order they arrived — which is
+ * usually count-descending, since that's how `keywordFrequency`/`keywordRows` sort. Categories
+ * themselves come out in first-appearance order rather than a fixed sequence: nothing today reads
+ * that order as meaningful the way `groupByImportance`'s `BAND_ORDER` does for bands, and imposing
+ * one here would be a UI change riding along with a refactor that isn't asking for one.
+ */
+export function groupByKeywordCategory(
+  rows: readonly KeywordFrequencyRow[],
+): KeywordCategoryGroup[] {
+  const byCategory = new Map<KeywordCategory | null, KeywordFrequencyRow[]>();
+  for (const row of rows) {
+    const group = byCategory.get(row.category) ?? [];
+    group.push(row);
+    byCategory.set(row.category, group);
+  }
+  return [...byCategory.entries()].map(([category, items]) => ({ category, items }));
+}
+
 /**
  * Everything `RequirementsPanel` renders for one keyword selection — the same filter/roll-up chain
  * that used to live inline in the component, called on every render with nothing behind an
@@ -502,6 +578,16 @@ export interface RequirementsReport {
   anyBanded: boolean;
   yearsDistribution: YearsOfExperienceCount[];
   evidence: RequirementEvidenceRollup;
+  /**
+   * `evidence`'s three verdicts that say the Profile backs the requirement up somehow —
+   * `direct-evidence`, `skill-only`, `omitted-profile-evidence` — summed. Computed here rather than
+   * left to the one caller that wants it: there is nothing else to inject and nothing that varies
+   * across a second caller, so a standalone function over `evidence` would be indirection with no
+   * seam behind it.
+   */
+  supportedCount: number;
+  /** `evidence`'s two verdicts that mean the candidate still has something to do — `needs-confirmation`, `unsupported` — summed. */
+  attentionCount: number;
 }
 
 export function requirementsReport(
@@ -521,6 +607,9 @@ export function requirementsReport(
   const anyBanded = bandCounts.total > bandCounts.unbanded;
   const yearsDistribution = yearsOfExperienceDistribution(matching);
   const evidence = requirementEvidenceRollup(matching);
+  const supportedCount =
+    evidence['direct-evidence'] + evidence['skill-only'] + evidence['omitted-profile-evidence'];
+  const attentionCount = evidence['needs-confirmation'] + evidence.unsupported;
 
   return {
     matching,
@@ -530,5 +619,7 @@ export function requirementsReport(
     anyBanded,
     yearsDistribution,
     evidence,
+    supportedCount,
+    attentionCount,
   };
 }

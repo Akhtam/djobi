@@ -73,7 +73,7 @@ describe('RunNoticeView', () => {
       />,
     );
 
-    expect(screen.getByRole('alert')).toHaveTextContent('no form fields were found on this page');
+    expect(screen.getByRole('alert')).toHaveTextContent('found no form fields on this page');
     expect(screen.getByRole('alert')).toHaveTextContent('reload the page and try again');
   });
 
@@ -176,7 +176,7 @@ describe('RunNoticeView', () => {
     );
 
     // Same `RunFailureKind`, different advice — checking the Dashboard, not the page.
-    expect(screen.getByRole('alert')).toHaveTextContent('The save may have completed');
+    expect(screen.getByRole('alert')).toHaveTextContent('The save may have gone through');
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onAction).toHaveBeenCalledWith('retry-save');
   });
@@ -196,7 +196,7 @@ describe('RunNoticeView', () => {
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'You have been signed out. Sign in again from the extension options',
+      "You've been signed out. Sign in again from the extension options",
     );
   });
 
@@ -214,6 +214,6 @@ describe('RunNoticeView', () => {
       />,
     );
 
-    expect(screen.getByRole('alert')).toHaveTextContent('could not reach its backend');
+    expect(screen.getByRole('alert')).toHaveTextContent("couldn't reach its backend");
   });
 });

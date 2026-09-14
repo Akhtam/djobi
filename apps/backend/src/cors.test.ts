@@ -43,6 +43,19 @@ describe('CORS', () => {
     expect(res.headers.get('access-control-allow-methods')).toContain('PATCH');
   });
 
+  it('answers the preflight the dashboard sends before a delete', async () => {
+    const res = await app.request('/applications/abc', {
+      method: 'OPTIONS',
+      headers: {
+        origin: DASHBOARD_ORIGIN,
+        'access-control-request-method': 'DELETE',
+      },
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-methods')).toContain('DELETE');
+  });
+
   it('does not allow an arbitrary origin — any page in the browser can reach 127.0.0.1', async () => {
     const res = await app.request('/applications', {
       headers: { origin: 'https://not-the-dashboard.example' },

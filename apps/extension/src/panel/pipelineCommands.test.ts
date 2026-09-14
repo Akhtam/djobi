@@ -156,7 +156,7 @@ describe('pipelineCommands', () => {
    * — a `begin` here and a shared `fail` there — the two were nine loose facts the tab paired by
    * inspection, and a late failure could stand a newer command's status down.
    */
-  it('stands the status it raised back down when Chrome cannot deliver the command', () => {
+  it('stands the status it raised back down when Chrome cannot deliver the command', async () => {
     const undelivered = vi.fn();
     const run = activeRun({
       beginCommand: vi.fn((step) => {
@@ -174,8 +174,54 @@ describe('pipelineCommands', () => {
     });
 
     commandsFor(run).fill();
+    await vi.waitFor(() => expect(undelivered).toHaveBeenCalledOnce());
 
     expect(raised).toEqual(['fill']);
-    expect(undelivered).toHaveBeenCalledWith('Could not establish connection.');
+  });
+
+  /**
+   * The other way a command produces nothing to observe: Chrome delivered it, but
+   * `background/runClaim.ts` refused the claim — another panel already running this step, or a
+   * stale `expectedRunId`. Neither leaves a `chrome.storage.onChanged` event for the panel to learn
+   * from, so this stands the optimistic status down exactly like an undelivered command does.
+   */
+  it('stands the status back down when the background refuses the claim', async () => {
+    const undelivered = vi.fn();
+    const run = activeRun({
+      beginCommand: vi.fn((step) => {
+        raised.push(step);
+        return undelivered;
+      }),
+    });
+    fakeChrome({
+      sendMessage: (_message, callback) => {
+        callback({ claimed: false, reason: 'busy' });
+      },
+    });
+
+    commandsFor(run).save();
+    await vi.waitFor(() => expect(undelivered).toHaveBeenCalledOnce());
+
+    expect(raised).toEqual(['save']);
+  });
+
+  it('does not stand the status down when the claim succeeds', async () => {
+    const undelivered = vi.fn();
+    const run = activeRun({
+      beginCommand: vi.fn((step) => {
+        raised.push(step);
+        return undelivered;
+      }),
+    });
+    const { sendMessage } = fakeChrome({
+      sendMessage: (_message, callback) => {
+        callback({ claimed: true });
+      },
+    });
+
+    commandsFor(run).fill();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce());
+
+    expect(undelivered).not.toHaveBeenCalled();
   });
 });

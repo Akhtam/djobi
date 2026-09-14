@@ -33,21 +33,21 @@ function failureReason(kind: RunFailureKind, step: RunStep): string {
         return 'The form may have been partially filled. Check the application page before trying again.';
       }
       if (step === 'save') {
-        return 'The save may have completed. Check the Dashboard before trying again.';
+        return 'The save may have gone through. Check the dashboard before trying again.';
       }
-      return 'This service is temporarily unavailable. Try again.';
+      return "djobi couldn't finish that just now. Try again in a moment.";
     case 'backend-unreachable':
-      return 'Djobi could not reach its backend. Check that it is running, then try again.';
+      return "djobi couldn't reach its backend. Check that it's running, then try again.";
     case 'invalid-page':
-      return 'This page returned data the extension could not use. Reload the page before trying again.';
+      return "This page sent back something djobi couldn't read. Reload it, then try again.";
     case 'invalid-model-output':
-      return 'The model returned an unusable result. Try again.';
+      return "The AI came back with something djobi couldn't use. Try again.";
     case 'unauthorized':
-      return 'You have been signed out. Sign in again from the extension options, then retry.';
+      return "You've been signed out. Sign in again from the extension options, then retry.";
     case 'cancelled':
       return 'This attempt was cancelled.';
     case 'unknown':
-      return 'An unexpected error occurred. Try again.';
+      return 'Something unexpected went wrong. Try again.';
   }
 }
 
@@ -95,8 +95,8 @@ export function RunNoticeView({
         <div className="state error" role="alert">
           <span className="state-icon error">⚠️</span>
           <p>
-            The fill could not be verified because this page did not answer. Check the form before
-            submitting or saving, and reload the page before trying again if fields are still empty.
+            This page didn't answer, so djobi can't confirm what was filled. Check the form before
+            you submit or save. If fields are still empty, reload the page and try again.
           </p>
         </div>
       );
@@ -106,10 +106,10 @@ export function RunNoticeView({
         <div className="state error" role="alert">
           <span className="state-icon error">⚠️</span>
           <p>
-            Nothing was filled — no form fields were found on this page, including in a fresh scan
-            taken just now. You'll need to fill the form yourself before saving this application. If
-            the form is visibly there, reload the page and try again: this extension can't reach a
-            page that was already open when it was last reloaded.
+            Nothing was filled — djobi found no form fields on this page, even after rescanning just
+            now. You'll have to fill the form yourself before saving. If the form is clearly there,
+            reload the page and try again: djobi can't reach a page that was already open the last
+            time the extension reloaded.
           </p>
         </div>
       );

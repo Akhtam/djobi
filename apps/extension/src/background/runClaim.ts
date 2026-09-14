@@ -30,6 +30,7 @@
  * guess that placement.
  */
 import { failureMessage } from '@djobi/shared';
+import type { ClaimResult } from '../lib/messages';
 import {
   type PipelineFailure,
   type PipelineRunState,
@@ -83,6 +84,16 @@ export type ClaimSpec<Run extends PipelineRunState> =
        * malformed run stuck in a busy status.
        */
       requires: (run: PipelineRunState | null) => Run | null;
+      /**
+       * Called once, synchronously with the claim's outcome, before `body` ever runs — not after the
+       * step finishes. Absent from the `'replace'` variant on purpose: an Analysis claim cannot lose
+       * (see the module doc), so there is nothing for it to report.
+       *
+       * `'busy'` means another step already holds this run; `'stale-run'` means `expectedRunId`
+       * named a run that is no longer the tab's current one. Both leave `run: null` below —
+       * distinguishing them costs one extra read, only ever taken on this rare failure path.
+       */
+      onClaimed?: (outcome: ClaimResult) => void;
     };
 
 /** The claimed run, and the two things a step may do with the claim while it holds it. */
@@ -212,7 +223,17 @@ export async function withRunClaim<Run extends PipelineRunState>(
           spec.requires(candidate) !== null,
       );
       run = spec.requires(claimed);
-      if (run) runId = run.runId;
+      if (run) {
+        runId = run.runId;
+        spec.onClaimed?.({ claimed: true });
+      } else {
+        // One extra read, only on this rare failure path: `transitionPipelineRun` reports that its
+        // predicate refused, not which half of it did. `expectedRunId` mismatching the tab's actual
+        // run is a stale command; everything else is some other step already holding it.
+        const current = await getPipelineRun(tabId);
+        const staleRun = spec.expectedRunId !== undefined && current?.runId !== spec.expectedRunId;
+        spec.onClaimed?.({ claimed: false, reason: staleRun ? 'stale-run' : 'busy' });
+      }
     }
 
     if (!run) return;

@@ -71,6 +71,28 @@ describe('valueForCategory', () => {
     expect(valueForCategory('last_name', mononym)).toBeUndefined();
   });
 
+  // `fullName`/`email` are plain `z.string()` with no minimum and the profile form marks neither
+  // required, so a profile really can be saved with them blank. Filling `""` over an ATS's own
+  // prefilled name is strictly worse than leaving the box alone.
+  it('reads a blank name or email as nothing to fill, not as an empty string', () => {
+    const nameless = { ...profile, fullName: '   ', email: '' };
+
+    expect(valueForCategory('first_name', nameless)).toBeUndefined();
+    expect(valueForCategory('last_name', nameless)).toBeUndefined();
+    expect(valueForCategory('full_name', nameless)).toBeUndefined();
+    expect(valueForCategory('email', nameless)).toBeUndefined();
+  });
+
+  // Split on a run of whitespace, not on one space: `'Ada  Lovelace'.split(' ')` yields an empty
+  // middle part, which used to reach the form as a leading space on the surname.
+  it('splits a name on any run of whitespace, so a double space leaves no blank part', () => {
+    const spaced = { ...profile, fullName: '  Ada   Lovelace King ' };
+
+    expect(valueForCategory('first_name', spaced)).toBe('Ada');
+    expect(valueForCategory('last_name', spaced)).toBe('Lovelace King');
+    expect(valueForCategory('full_name', spaced)).toBe('Ada   Lovelace King');
+  });
+
   it('reads a cleared optional field as nothing to fill, not as an empty string', () => {
     // The Profile stores a cleared optional as `null` (see `options/App.tsx`'s `orNull`), and the
     // Fill Step must skip the field rather than write "" over whatever the page already had.

@@ -34,7 +34,7 @@ describe('CoverageReport', () => {
   }
 
   function openProfileExperience() {
-    fireEvent.click(screen.getByText(/keyword.*profile evidence absent from this resume/i));
+    fireEvent.click(screen.getByText(/your profile covers .* this resume left out/i));
   }
 
   it('renders nothing when the posting yielded no keywords, rather than an empty report that reads as a clean bill', () => {
@@ -65,9 +65,7 @@ describe('CoverageReport', () => {
     );
     openReport();
 
-    expect(
-      screen.getByText('2 keywords have Profile evidence absent from this resume'),
-    ).toBeVisible();
+    expect(screen.getByText('Your profile covers 2 keywords this resume left out')).toBeVisible();
   });
 
   it('says nothing about coverage when there is no gap, rather than a count that reads as a score', () => {
@@ -115,7 +113,7 @@ describe('CoverageReport', () => {
     openReport();
     openMissingKeywords();
 
-    expect(screen.getByText(/add it to your profile/i)).toBeVisible();
+    expect(screen.getByText(/add them to your profile/i)).toBeVisible();
     expect(screen.queryByText(/add .* to your resume/i)).toBeNull();
   });
 
@@ -125,8 +123,8 @@ describe('CoverageReport', () => {
     openProfileExperience();
 
     expect(screen.getByText(profileExperience.evidence!)).toBeVisible();
-    expect(screen.getByText(/star a listed source bullet/i)).toBeVisible();
-    expect(screen.queryByText(/add it to your profile/i)).toBeNull();
+    expect(screen.getByText(/star one of these bullets in your profile/i)).toBeVisible();
+    expect(screen.queryByText(/add them to your profile/i)).toBeNull();
   });
 
   it('opens the options page from the gap list, which is where the gap is actually fixed', () => {

@@ -32,7 +32,7 @@ describe('panel App', () => {
 
     render(<App client={panelClient()} />);
 
-    await screen.findByText('Set up your profile to get started.');
+    await screen.findByText("Set up your profile and you're ready to go.");
     fireEvent.click(screen.getByRole('button', { name: 'Open profile settings' }));
     expect(openOptionsPage).toHaveBeenCalled();
   });
@@ -107,7 +107,7 @@ describe('panel App', () => {
 
     render(<App client={panelClient()} />);
 
-    await screen.findByText('Set up your profile to get started.');
+    await screen.findByText("Set up your profile and you're ready to go.");
     expect(screen.queryByRole('button', { name: 'Log' })).not.toBeInTheDocument();
   });
 

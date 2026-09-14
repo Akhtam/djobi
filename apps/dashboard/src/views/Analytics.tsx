@@ -21,9 +21,13 @@ import {
   type Profile,
 } from '@djobi/shared';
 import { countByOption, FilterPills } from '../components/FilterPills';
+import { FakeSelect } from '../components/FakeSelect';
 import { RequirementsPanel } from '../components/RequirementsPanel';
+import { stageFilterIcon } from '../components/StageFilterIcon';
 import {
   analyticsReport,
+  groupByKeywordCategory,
+  keywordCoverageSummary,
   keywordRows,
   MIN_DECIDED_FOR_RATE,
   RANGES,
@@ -36,11 +40,22 @@ import { formatShortDate } from '../lib/format';
 import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '../lib/stages';
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 
+/**
+ * Each range as a pill/option reads.
+ *
+ * Bare durations, with the group's own label carrying the sense. "Saved" rather than a plain "Last"
+ * — this filters `Application.createdAt`, not the posting's own date or anything about the
+ * interview, and the two can genuinely diverge: a role logged manually months after applying gets
+ * today's date here, not the date it was actually applied to. "Last 14 days" reads fine on its own
+ * but answers the wrong question if the reader assumes it means the last 14 days of activity on the
+ * application; "Saved" is what says this is about when the row entered djobi.
+ */
 const RANGE_LABELS: Record<Range, string> = {
   '7d': '7 days',
   '14d': '14 days',
   '30d': '30 days',
   '60d': '60 days',
+  all: 'All time',
 };
 
 /** Top-of-table cutoff for the keyword bar list; `Load more` grows it by the same amount. */
@@ -124,27 +139,7 @@ export function Analytics({
   const [today] = useState(() => new Date());
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
-  // 5 is a reasonable floor for a range with dozens of postings, but a personal-scale dataset's
-  // typical default range (7 days) usually holds a handful — a default that ignores that lands a
-  // first visit on "No keywords match these filters," with only a stepper the reader hasn't been
-  // introduced to yet as the way out. Scaling the *initial* value down to what this range's own
-  // most-repeated keyword actually reaches means a first visit shows something. It's still only a
-  // starting point: raising it from here to the signal-only view of a bigger range works exactly
-  // as before, and switching ranges later doesn't re-run this — a value the reader set themselves
-  // should never reset silently under them.
-  const [minAppearances, setMinAppearances] = useState<number>(() => {
-    const topCount = analyticsReport(applications, { range, stage, asOf: today, profile: null })
-      .frequency[0]?.count;
-    return Math.max(1, Math.min(5, topCount ?? 1));
-  });
-
   const profileState = useRemoteProfile(getProfile, onUnauthorized);
-
-  // Keyword selection resets on stage/range alone: it is the requirements panel's own concern (see
-  // `RequirementsPanel`'s `resetKey`), not this table's.
-  useEffect(() => {
-    setSelectedKeyword(null);
-  }, [range, stage]);
 
   // Keep aggregation independent of the table-only controls below: toggling gaps or the minimum
   // count should not rescan every application or recompute profile coverage.
@@ -160,6 +155,27 @@ export function Analytics({
   );
   const { rangeStartDate, inRange, filtered, frequency, coverageByTerm, gapCount, baseline } =
     report;
+  // 5 is a reasonable floor for a range with dozens of postings, but a personal-scale dataset's
+  // typical default range (14 days) usually holds a handful — a default that ignores that lands a
+  // first visit on "No keywords match these filters," with only a stepper the reader hasn't been
+  // introduced to yet as the way out. Scaling the *initial* value down to what this range's own
+  // most-repeated keyword actually reaches means a first visit shows something. It's still only a
+  // starting point: raising it from here to the signal-only view of a bigger range works exactly
+  // as before, and switching ranges later doesn't re-run this — a value the reader set themselves
+  // should never reset silently under them.
+  const [minAppearances, setMinAppearances] = useState<number>(() => {
+    // Read off the report above rather than building a second one: frequency doesn't depend on the
+    // profile, so this is the same number the old profile-less report produced.
+    const topCount = frequency[0]?.count;
+    return Math.max(1, Math.min(5, topCount ?? 1));
+  });
+
+  // Keyword selection resets on stage/range alone: it is the requirements panel's own concern (see
+  // `RequirementsPanel`'s `resetKey`), not this table's.
+  useEffect(() => {
+    setSelectedKeyword(null);
+  }, [range, stage]);
+
   const rows = useMemo(
     () =>
       keywordRows(frequency, coverageByTerm, {
@@ -182,32 +198,17 @@ export function Analytics({
   // per category, so a category can show fewer than its full count once the cutoff lands mid-group.
   const visibleRows = rows.slice(0, visibleKeywordCount);
   const maxCount = frequency[0]?.count ?? 0;
-  const shownGapCount = coverageByTerm
-    ? rows.filter((row) => coverageByTerm.get(row.term) === 'missing').length
-    : 0;
-  const shownEvidencedCount = rows.length - shownGapCount;
-  const shownGapPercent = rows.length > 0 ? Math.round((shownGapCount / rows.length) * 100) : 0;
+  // Over `rows`, not `visibleRows`: the summary strip describes everything the filters matched,
+  // not just what has scrolled into view — see `keywordCoverageSummary`'s own doc comment.
+  const keywordSummary = keywordCoverageSummary(rows, coverageByTerm);
   const requirements = useMemo(
     () => requirementsReport(filtered, selectedKeyword),
     [filtered, selectedKeyword],
   );
+  // A plain field read, not a derivation — the summed `supportedCount`/`attentionCount` fields
+  // live on `requirements` itself now; this is only a shorthand for the per-verdict fields below it.
   const requirementEvidence = requirements.evidence;
-  const supportedRequirementCount =
-    requirementEvidence['direct-evidence'] +
-    requirementEvidence['skill-only'] +
-    requirementEvidence['omitted-profile-evidence'];
-  const attentionRequirementCount =
-    requirementEvidence['needs-confirmation'] + requirementEvidence.unsupported;
-  const groups = useMemo(() => {
-    const byCategory = new Map<string, typeof visibleRows>();
-    for (const row of visibleRows) {
-      const key = row.category ?? UNCATEGORIZED_LABEL;
-      const group = byCategory.get(key) ?? [];
-      group.push(row);
-      byCategory.set(key, group);
-    }
-    return [...byCategory.entries()];
-  }, [visibleRows]);
+  const groups = useMemo(() => groupByKeywordCategory(visibleRows), [visibleRows]);
 
   const stageCounts = countByOption(STAGE_FILTERS, inRange, (a) => stageFilterOf(a.stage));
 
@@ -216,34 +217,19 @@ export function Analytics({
       <div className="analytics-head">
         <h1>Analytics</h1>
         <p>
-          What the postings you applied to are asking for, and which of those terms your profile
-          doesn’t evidence yet.
+          What the roles you applied to keep asking for, and which of those your profile can’t yet
+          back up.
         </p>
       </div>
 
       <div className="analytics-controls">
         <div className="analytics-control-group">
-          <span className="analytics-control-label">Saved in the last</span>
-          <div className="analytics-segmented-filter segmented-filter">
-            <div className="filter-pills" role="group" aria-label="Date range">
-              {RANGES.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={`filter-pill ${range === option ? 'is-selected' : ''}`}
-                  aria-pressed={range === option}
-                  onClick={() => onFiltersChange(option, stage)}
-                >
-                  {RANGE_LABELS[option]}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="analytics-control-group">
           <span className="analytics-control-label">Stage</span>
-          <div className="analytics-segmented-filter segmented-filter">
+          {/* `list-stage-filters` is `ApplicationsList`'s own class for this exact six-pill row —
+              reused rather than reinvented so the pills wrap onto a grid of equal columns on a
+              normal screen and only fall back to a horizontally scrollable strip on a genuinely
+              narrow one, instead of scrolling unconditionally at every width. */}
+          <div className="analytics-segmented-filter segmented-filter list-stage-filters">
             <FilterPills
               options={STAGE_FILTERS}
               labels={STAGE_LABELS}
@@ -251,11 +237,28 @@ export function Analytics({
               onSelect={(next) => onFiltersChange(range, next)}
               groupLabel="Filter by stage"
               counts={stageCounts}
+              allCount={inRange.length}
+              renderIcon={stageFilterIcon}
             />
           </div>
         </div>
 
-        <div className="analytics-toggle-row">
+        <div className="analytics-controls__secondary">
+          <div className="analytics-range-select">
+            <span className="analytics-control-label">Saved</span>
+            <FakeSelect
+              value={range}
+              options={RANGES}
+              labels={RANGE_LABELS}
+              ariaLabel="Date range"
+              onChange={(next) => onFiltersChange(next, stage)}
+              className="analytics-range-select__control"
+              valueClassName="analytics-range-select__value"
+              caretClassName="analytics-range-select__caret"
+              selectClassName="analytics-range-select__input"
+            />
+          </div>
+
           <label className="analytics-toggle">
             <input
               type="checkbox"
@@ -268,7 +271,7 @@ export function Analytics({
             <span className="analytics-toggle__track" />
             <span className="analytics-toggle__copy">
               <span className="analytics-toggle__label">Gaps only</span>
-              <span id="gaps-only-description" className="analytics-toggle__description">
+              <span id="gaps-only-description" hidden>
                 Show only keywords your profile doesn’t evidence yet.
               </span>
             </span>
@@ -281,7 +284,11 @@ export function Analytics({
           <span>
             <b>0</b> postings in range
           </span>
-          <span>Widen the range or change the stage filter to see more.</span>
+          <span>
+            {range === 'all'
+              ? 'Change the stage filter to see more.'
+              : 'Widen the date range or change the stage filter to see more.'}
+          </span>
         </p>
       ) : (
         <section className="analytics-summary" aria-label="Analytics overview">
@@ -289,7 +296,9 @@ export function Analytics({
             <div>
               <span className="analytics-summary__overline">Overview</span>
               <strong>
-                {formatShortDate(rangeStartDate)} – {formatShortDate(today)}
+                {rangeStartDate === null
+                  ? 'All time'
+                  : `${formatShortDate(rangeStartDate)} – ${formatShortDate(today)}`}
               </strong>
             </div>
             <span className="analytics-summary__posting-count">
@@ -336,11 +345,11 @@ export function Analytics({
                 <div
                   className="analytics-coverage-meter"
                   role="img"
-                  aria-label={`${shownEvidencedCount} of ${rows.length} shown keywords evidenced by your profile`}
+                  aria-label={`${keywordSummary.evidenced} of ${rows.length} shown keywords evidenced by your profile`}
                   style={
                     {
                       '--analytics-covered':
-                        rows.length > 0 ? shownEvidencedCount / rows.length : 0,
+                        rows.length > 0 ? keywordSummary.evidenced / rows.length : 0,
                     } as CSSProperties
                   }
                 >
@@ -348,12 +357,12 @@ export function Analytics({
                 </div>
                 <div className="analytics-summary__stats">
                   <span>
-                    <b>{shownEvidencedCount}</b>
+                    <b>{keywordSummary.evidenced}</b>
                     <small>Evidenced</small>
                   </span>
                   <span>
-                    <b className="gap-count">{shownGapCount}</b>
-                    <small>Gaps · {shownGapPercent}%</small>
+                    <b className="gap-count">{keywordSummary.gaps}</b>
+                    <small>Gaps · {keywordSummary.gapPercent}%</small>
                   </span>
                 </div>
               </>
@@ -379,16 +388,17 @@ export function Analytics({
             {requirementEvidence.total > 0 ? (
               <>
                 <div className="analytics-summary__metric">
-                  <strong>{supportedRequirementCount}</strong>
+                  <strong>{requirements.supportedCount}</strong>
                   <span>of {requirementEvidence.total} supported</span>
                 </div>
                 <div
                   className="analytics-coverage-meter analytics-coverage-meter--evidence"
                   role="img"
-                  aria-label={`${supportedRequirementCount} of ${requirementEvidence.total} requirements supported by your profile`}
+                  aria-label={`${requirements.supportedCount} of ${requirementEvidence.total} requirements supported by your profile`}
                   style={
                     {
-                      '--analytics-covered': supportedRequirementCount / requirementEvidence.total,
+                      '--analytics-covered':
+                        requirements.supportedCount / requirementEvidence.total,
                     } as CSSProperties
                   }
                 >
@@ -425,7 +435,7 @@ export function Analytics({
             ) : (
               <div className="analytics-summary__empty-detail analytics-summary__empty-detail--spanning">
                 <strong>No evidence scored yet</strong>
-                <span>New saved applications will add evidence here.</span>
+                <span>Save a few more applications and this fills in.</span>
               </div>
             )}
           </section>
@@ -442,11 +452,11 @@ export function Analytics({
                 <SummaryTooltip
                   id="attention-help"
                   label="About requirements needing attention"
-                  text="Requirements to prioritize because they need confirmation or have no supporting evidence."
+                  text="Requirements worth your attention: nothing in your profile confirms them yet."
                 />
               </header>
               <div className="analytics-summary__metric">
-                <strong>{attentionRequirementCount}</strong>
+                <strong>{requirements.attentionCount}</strong>
                 <span>of {requirementEvidence.total} requirements</span>
               </div>
               <div
@@ -501,7 +511,7 @@ export function Analytics({
                   <strong className="analytics-summary__metric analytics-summary__metric--copy">
                     No response rate yet
                   </strong>
-                  {/* Not the rate meter's blue: nothing here is "good" yet, only "closer to
+                  {/* Not the rate meter's green: nothing here is "good" yet, only "closer to
                       reportable" — a neutral fill keeps that distinct from the real rate below,
                       and replaces the empty placeholder that used to sit here looking unfinished. */}
                   <div
@@ -565,8 +575,8 @@ export function Analytics({
           <div>
             <strong>No profile saved yet</strong>
             <span>
-              Coverage needs a profile to compare against. Set one up in the extension’s options
-              page and these keywords will show what you already evidence.
+              There’s nothing to compare these keywords against yet. Set up a profile in the
+              extension’s options page and this fills in.
             </span>
           </div>
         </div>
@@ -635,15 +645,15 @@ export function Analytics({
             {frequency.length === 0 ? (
               <div className="analytics-empty">
                 <strong>No keywords extracted</strong>
-                No postings in this range have any extracted keywords.
+                None of the postings in this range had keywords worth pulling out.
               </div>
             ) : rows.length === 0 ? (
               <div className="analytics-empty">
                 <strong>No keywords match these filters</strong>
                 {gapsOnly && minAppearances > 1
-                  ? 'Try lowering "Min. appearances" or turning off Gaps only.'
+                  ? 'Try lowering "Min. appearances", or turn off Gaps only.'
                   : gapsOnly
-                    ? 'Every keyword these postings asked for is evidenced somewhere in your profile.'
+                    ? 'Your profile backs up every keyword these postings asked for.'
                     : 'Try lowering "Min. appearances".'}
               </div>
             ) : (
@@ -653,12 +663,10 @@ export function Analytics({
                 tabIndex={0}
                 aria-label="Keywords by category"
               >
-                {groups.map(([category, items]) => (
-                  <div key={category}>
+                {groups.map(({ category, items }) => (
+                  <div key={category ?? UNCATEGORIZED_LABEL}>
                     <div className="analytics-category">
-                      {category === UNCATEGORIZED_LABEL
-                        ? UNCATEGORIZED_LABEL
-                        : CATEGORY_GROUP_LABELS[category as KeywordCategory]}
+                      {category === null ? UNCATEGORIZED_LABEL : CATEGORY_GROUP_LABELS[category]}
                     </div>
                     <ul className="analytics-rows">
                       {items.map((row) => {

@@ -5,9 +5,30 @@ import {
   UpdateApplicationStageRequestSchema,
 } from '@djobi/shared';
 import { Hono, type Context } from 'hono';
+import { z } from 'zod';
 import type { AuthEnv } from '../authMiddleware.js';
 import type { ApplicationStore, Written } from '../db/applicationStore.js';
-import { parseBody } from '../requestBody.js';
+import { jsonBody, pathParams, queryParams } from '../requestBody.js';
+
+/**
+ * `GET /applications`'s query. No `.min(1)` on `jobUrl`: an absent key and an empty `?jobUrl=` both
+ * already mean "list everything" below (`if (jobUrl)` is false for `''` too), and this schema exists
+ * to state the route's shape, not to reject a value the handler already treats as absent.
+ */
+const ListApplicationsQuerySchema = z.object({ jobUrl: z.string().optional() });
+
+/**
+ * `:id` on every route below it. `.min(1)` documents what a route needs without changing what
+ * reaches it — see {@link pathParams}'s own doc comment for why this can never actually reject a
+ * routed request.
+ */
+const ApplicationIdParamSchema = z.object({ id: z.string().min(1) });
+
+/** `:id`/`:noteId` together, for the one route addressing both. */
+const ApplicationNoteIdParamSchema = z.object({
+  id: z.string().min(1),
+  noteId: z.string().min(1),
+});
 
 /**
  * Everything addressed at `/applications`: reading saved snapshots, creating one after an explicit
@@ -77,8 +98,8 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * Duplicate Guard's summary without loading snapshots. This remains a query rather than its own
    * path because `/applications/…` is already claimed by the `:id` route below.
    */
-  route.get('/applications', async (c) => {
-    const jobUrl = c.req.query('jobUrl');
+  route.get('/applications', queryParams(ListApplicationsQuerySchema), async (c) => {
+    const { jobUrl } = c.req.valid('query');
     if (jobUrl) {
       return c.json(
         c.req.query('response') === 'compact'
@@ -89,8 +110,8 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     return c.json(await store.list(c.get('userId')));
   });
 
-  route.get('/applications/:id', async (c) => {
-    const application = await store.byId(c.get('userId'), c.req.param('id'));
+  route.get('/applications/:id', pathParams(ApplicationIdParamSchema), async (c) => {
+    const application = await store.byId(c.get('userId'), c.req.valid('param').id);
     if (!application) {
       return c.json({ error: 'Application not found' }, 404);
     }
@@ -101,26 +122,22 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * `idempotency-key` is optional and honoured when given — see `applicationStore.ts`'s `create`.
    * A caller with nothing to retry (nothing today reads it back) never has to send one.
    */
-  route.post('/applications', async (c) =>
+  route.post('/applications', jsonBody(NewApplicationSchema), async (c) =>
     writeResponse(
       c,
-      await store.create(
-        c.get('userId'),
-        await parseBody(c, NewApplicationSchema),
-        c.req.header('idempotency-key'),
-      ),
+      await store.create(c.get('userId'), c.req.valid('json'), c.req.header('idempotency-key')),
     ),
   );
 
-  route.patch('/applications/:id', async (c) =>
-    writeResponse(
-      c,
-      await store.replaceSnapshot(
-        c.get('userId'),
-        c.req.param('id'),
-        await parseBody(c, ApplicationSnapshotSchema),
+  route.patch(
+    '/applications/:id',
+    pathParams(ApplicationIdParamSchema),
+    jsonBody(ApplicationSnapshotSchema),
+    async (c) =>
+      writeResponse(
+        c,
+        await store.replaceSnapshot(c.get('userId'), c.req.valid('param').id, c.req.valid('json')),
       ),
-    ),
   );
 
   /**
@@ -129,20 +146,28 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * written after the plain `:id` routes only to keep the file's read order (reads, create, update,
    * then tracking).
    */
-  route.patch('/applications/:id/stage', async (c) => {
-    const { stage } = await parseBody(c, UpdateApplicationStageRequestSchema);
-    return writeResponse(c, await store.setStage(c.get('userId'), c.req.param('id'), stage));
-  });
+  route.patch(
+    '/applications/:id/stage',
+    pathParams(ApplicationIdParamSchema),
+    jsonBody(UpdateApplicationStageRequestSchema),
+    async (c) => {
+      const { stage } = c.req.valid('json');
+      return writeResponse(
+        c,
+        await store.setStage(c.get('userId'), c.req.valid('param').id, stage),
+      );
+    },
+  );
 
-  route.post('/applications/:id/notes', async (c) =>
-    writeResponse(
-      c,
-      await store.appendNote(
-        c.get('userId'),
-        c.req.param('id'),
-        await parseBody(c, AddApplicationNoteRequestSchema),
+  route.post(
+    '/applications/:id/notes',
+    pathParams(ApplicationIdParamSchema),
+    jsonBody(AddApplicationNoteRequestSchema),
+    async (c) =>
+      writeResponse(
+        c,
+        await store.appendNote(c.get('userId'), c.req.valid('param').id, c.req.valid('json')),
       ),
-    ),
   );
 
   /**
@@ -150,11 +175,13 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * because deleting one note is addressing it — and it keeps the route shaped like the resource
    * the append created.
    */
-  route.delete('/applications/:id/notes/:noteId', async (c) =>
-    writeResponse(
-      c,
-      await store.deleteNote(c.get('userId'), c.req.param('id'), c.req.param('noteId')),
-    ),
+  route.delete(
+    '/applications/:id/notes/:noteId',
+    pathParams(ApplicationNoteIdParamSchema),
+    async (c) => {
+      const { id, noteId } = c.req.valid('param');
+      return writeResponse(c, await store.deleteNote(c.get('userId'), id, noteId));
+    },
   );
 
   /**
@@ -162,8 +189,8 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * would for a compact caller (`{ id }`) or a 404 for a row this user doesn't own — there's no
    * full-row case to fall back to, since a delete leaves nothing to read back.
    */
-  route.delete('/applications/:id', async (c) => {
-    const result = await store.deleteApplication(c.get('userId'), c.req.param('id'));
+  route.delete('/applications/:id', pathParams(ApplicationIdParamSchema), async (c) => {
+    const result = await store.deleteApplication(c.get('userId'), c.req.valid('param').id);
     if (!result) return c.json({ error: 'Application not found' }, 404);
     return c.json(result);
   });
