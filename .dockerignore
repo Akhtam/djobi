@@ -1,0 +1,21 @@
+# Anything under here is either reproduced inside the image by `pnpm install`/`pnpm build`, or has
+# no business being copied from the host at all. Excluding `node_modules` is not an optimization —
+# the host's may be built for a different OS/arch than the image, and `COPY . .` would silently
+# stomp the container's own freshly installed one with it.
+node_modules
+**/node_modules
+dist
+**/dist
+.pnpm-store
+
+.git
+.github
+
+# Never bake secrets into an image layer.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+*.log
+.DS_Store

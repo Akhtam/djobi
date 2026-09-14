@@ -219,6 +219,17 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
   });
 
   /**
+   * A liveness check for orchestration — Docker Compose's `healthcheck`, mainly — to wait on
+   * before starting anything that depends on this server actually being up, rather than just
+   * having been told to start. Unauthenticated (registered before `deps.requireAuth` below) and
+   * deliberately shallow: it confirms the HTTP server is accepting requests, not that Postgres or
+   * OpenRouter are reachable. `db` already gates on its own healthcheck before this container
+   * starts at all, so re-querying it here would only add a failure mode (a slow query) to a check
+   * that exists to be fast and boring.
+   */
+  app.get('/healthz', (c) => c.json({ ok: true }));
+
+  /**
    * Better Auth's own routes — `/api/auth/sign-up/email`, `/sign-in/email`, `/sign-in/social`,
    * the session endpoints, and (once `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set, see
    * `.env.example`) the Google OAuth callback. `auth.handler` is Better Auth's own Fetch-standard

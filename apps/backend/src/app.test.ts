@@ -36,6 +36,17 @@ describe('handleError', () => {
   });
 });
 
+describe('GET /healthz', () => {
+  it('answers ok with no credential, so an orchestrator can wait on it', async () => {
+    const { app } = createTestApp();
+
+    const res = await app.request('/healthz');
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+});
+
 describe('notFound', () => {
   it('answers an unregistered path with the same JSON shape every rejection uses', async () => {
     const { app } = createTestApp();

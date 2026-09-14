@@ -9,18 +9,22 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { neon, drizzle } = vi.hoisted(() => ({
-  neon: vi.fn(() => 'sql-handle'),
+const { Pool, drizzle } = vi.hoisted(() => ({
+  // A `function`, not an arrow: `client.ts` calls `new Pool(...)`, and Vitest 4+ mocks throw when an
+  // arrow implementation is constructed.
+  Pool: vi.fn(function () {
+    return { on: vi.fn() };
+  }),
   drizzle: vi.fn(() => ({ select: () => 'a query builder' })),
 }));
 
-vi.mock('@neondatabase/serverless', () => ({ neon }));
-vi.mock('drizzle-orm/neon-http', () => ({ drizzle }));
+vi.mock('pg', () => ({ Pool }));
+vi.mock('drizzle-orm/node-postgres', () => ({ drizzle }));
 
 /** A fresh module registry per case, since the resolved client is cached in module scope. */
 async function importClient(databaseUrl?: string) {
   vi.resetModules();
-  neon.mockClear();
+  Pool.mockClear();
   drizzle.mockClear();
   if (databaseUrl === undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL = databaseUrl;
@@ -36,7 +40,7 @@ describe('the database client', () => {
     const { db } = await importClient(undefined);
 
     expect(db).toBeDefined();
-    expect(neon).not.toHaveBeenCalled();
+    expect(Pool).not.toHaveBeenCalled();
   });
 
   it('names the missing configuration and how to supply it, on first use', async () => {
@@ -52,8 +56,8 @@ describe('the database client', () => {
     expect(db.select).toBeDefined();
     expect(db.select).toBeDefined();
 
-    expect(neon).toHaveBeenCalledTimes(1);
-    expect(neon).toHaveBeenCalledWith('postgres://user:pw@localhost/db');
+    expect(Pool).toHaveBeenCalledTimes(1);
+    expect(Pool).toHaveBeenCalledWith({ connectionString: 'postgres://user:pw@localhost/db' });
     expect(drizzle).toHaveBeenCalledTimes(1);
   });
 });

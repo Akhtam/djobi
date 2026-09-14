@@ -143,7 +143,7 @@ How an Application came to exist: `autofill` (the Application Pipeline produced 
 _Avoid_: type, kind, origin
 
 **Stage**:
-Where an Application has got to in the employer's interview pipeline: `applied` → `phone_screen` → `onsite` → `offer` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it.
+Where an Application has got to in the employer's interview pipeline: `applied` → `rejected_ats` → `phone_screen` → `onsite` → `offer` → `rejected`. Defaults to `applied`, and is never null, so nothing downstream has to null-check it. The two rejection values are deliberately distinct rather than one `rejected` plus a flag: `rejected_ats` means the application was screened out before ever reaching a human, while `rejected` is a rejection after contact was made — they share one "Rejected" filter pill in the Dashboard's list since both are terminal outcomes a candidate searches for the same way.
 _Avoid_: status (there is no longer a separate status field — see Application), step
 
 **Note**:
@@ -153,7 +153,7 @@ _Avoid_: comment, note field (there is no single overwritable text field), immut
 ### Tracking
 
 **Dashboard**:
-The web app where the candidate reviews saved Applications and tracks each one's Stage and Notes. A separate origin talking to the same backend, not an extension page — it needs no `chrome.*` API and no open ATS tab. Reads and edits what the Application Pipeline or Log Tab already saved; it never runs a step of that pipeline.
+The public web app where the candidate signs up, edits their Profile, reviews saved Applications and tracks each one's Stage and Notes, and reviews Analytics: how much of a Keyword Coverage gap their saved postings show against the Profile. A separate origin talking to the same backend, not an extension page — it needs no `chrome.*` API and no open ATS tab. It also has its own Log Tab counterpart (New Application) for recording an application made without the extension. It reads and edits what the Application Pipeline or Log Tab already saved, and edits the Profile directly (through the same `@djobi/profile-editor` the extension's options page uses); it never runs a step of the Application Pipeline itself.
 _Avoid_: admin, tracker page, extension dashboard (it is neither an extension surface nor an administrative one)
 
 **In Progress**:

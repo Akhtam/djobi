@@ -2,7 +2,7 @@ packages:
   - 'apps/*'
   - 'packages/*'
 allowBuilds:
-  # Pulled in transitively by @better-auth/cli's optional adapters (Prisma, SQLite) — this backend
+  # Pulled in transitively as optional adapters by better-auth itself (Prisma, SQLite) — this backend
   # only uses the Drizzle/Postgres adapter, so neither needs its native build step to run.
   '@prisma/client': false
   better-sqlite3: false

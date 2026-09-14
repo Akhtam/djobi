@@ -52,6 +52,18 @@ server.route('/', app);
 
 const port = Number(process.env.PORT ?? 5391);
 
-serve({ fetch: server.fetch, port, hostname: '127.0.0.1' }, (info) => {
-  console.log(`djobi backend listening on http://127.0.0.1:${info.port}`);
+/**
+ * `127.0.0.1` by default — never `0.0.0.0` on a bare host, where that would mean any other device
+ * on the LAN, not just this machine, reaching a server holding an OpenRouter key and a live
+ * database connection. `HOST` exists only to let the Docker Compose backend service (see the root
+ * `docker-compose.yml`) override it to `0.0.0.0`: inside a container, "any interface" means any
+ * *other container on the same Docker network* — the dashboard's nginx, specifically, proxying to
+ * this one — not the LAN, since nothing this container doesn't itself publish is reachable from
+ * outside Docker's own network namespace. A `127.0.0.1` bind inside that container would be
+ * unreachable from any other one, including that proxy.
+ */
+const hostname = process.env.HOST || '127.0.0.1';
+
+serve({ fetch: server.fetch, port, hostname }, (info) => {
+  console.log(`djobi backend listening on http://${hostname}:${info.port}`);
 });

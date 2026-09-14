@@ -35,9 +35,14 @@ All schemas, in the order data flows through the app:
 - **`QuestionAnswerSchema`** — one drafted answer to one `question` field. `sourceStoryIds[]`
   records which `Story.id`s the model drew on, so the review UI can say "this used your 'billing
   migration' story" instead of showing an opaque block of text.
-- **`ApplicationStageSchema`** — `'applied' | 'phone_screen' | 'onsite' | 'offer' | 'rejected'`: how far
-  an Application has got. Listed in pipeline order — which is the order a stage picker offers them
-  in, and which `apps/dashboard` reads off `.options` rather than restating.
+- **`ApplicationStageSchema`** — `'applied' | 'rejected_ats' | 'phone_screen' | 'onsite' | 'offer' |
+'rejected'`: how far an Application has got. Listed in pipeline order — which is the order a stage
+  picker offers them in, and which `apps/dashboard` reads off `.options` rather than restating.
+  `rejected_ats` sits between `applied` and `phone_screen`: it means the application was screened
+  out before ever reaching a human, while `rejected` is a rejection after contact was made. The two
+  collapse to the same "Rejected" filter pill in the dashboard's list
+  (`apps/dashboard/src/lib/stages.ts`'s `stageFilterOf`/`REJECTION_FILTERS`), since both are terminal
+  outcomes a candidate searches for the same way.
 
   There was also an `ApplicationStatusSchema` (`'draft' | 'submitted'`) meant to answer "was this
   actually sent to the employer". It was removed because nothing ever set `submitted`, so it carried
@@ -204,6 +209,16 @@ LLM calls and a re-application each time.
 A key the extension computed one way and the backend another would silently stop matching, which is
 the whole reason it isn't two private helpers.
 
+### `src/httpUrl.ts`
+
+`isHttpUrl(value)` — true only for `http:`/`https:` URLs. Exists because zod's `.url()` is just
+`new URL(value)` in a try/catch, which accepts `javascript:alert(1)` as readily as `https://…`; a
+stored `jobUrl` renders as an `<a href>` in the dashboard's `PostingLink`, so a non-http scheme that
+reaches the database is a script URL one click away from running on the origin holding the session
+cookie. `jobKeyForUrl` already refused anything but http(s) for a posting's _identity_ — this is the
+same rule stated for its storage, replacing duplicate paste-time checks that used to live separately
+in `LogApplication.tsx` and `NewApplication.tsx`.
+
 ### `src/resumeFileName.ts`
 
 `resumeFileName(fullName)` — the filename the generated Tailored Resume is attached under.
@@ -219,6 +234,18 @@ evidenced). Both are reports, deliberately never corrections: `reconcileResume` 
 tailored skill and bullet through the authoritative Profile, so neither module can add anything to a
 resume — only say what's already there. `Application.requirementEvidence` persists the latter's
 result as a snapshot at save time.
+
+### `src/requirementImportance.ts`
+
+**The Importance Gate** — a deterministic, no-model-call check on the Importance Band and Importance
+Tier `extractJob` assigns each requirement (see `CONTEXT.md`). The model can claim `critical`/`high`
+only on a `stated` tier backed by a quoted Posting Signal; an `inferred` tier is capped below that
+regardless of what the model returned, and the gate never raises a band, invents one, or edits a
+requirement's `text`/`kind`/`yearsOfExperience` — same discipline as `keywordCoverage.ts` and
+`requirementEvidence.ts`. The asymmetry is deliberate: an inflated band on a requirement the
+candidate lacks reads as "don't bother applying" and costs an application that should have
+happened, while an under-weighted real requirement only costs a worse-prepared interview — so the
+cap sits on the side where being wrong isn't recoverable.
 
 ### `src/bulletProvenance.ts`
 
@@ -259,8 +286,8 @@ One `describe` per schema in `schemas.test.ts`; each covers a valid parse, a mis
 and any schema-specific edge case worth pinning (nullable fields accepting `null`, an embedded
 invalid `Story` failing the parent `Profile`, every `FieldCategory` value being accepted).
 `applicationPayload`, `bulletProvenance`, `detectedField`, `duplicateGuard`, `failureMessage`,
-`jobKey`, `keywordCoverage`, `labelMatching`, `preparedAnswers`, `requirementEvidence`,
-`resumeFileName` and `wire` have their own test files.
+`httpUrl`, `jobKey`, `keywordCoverage`, `labelMatching`, `preparedAnswers`, `requirementEvidence`,
+`requirementImportance`, `resumeFileName` and `wire` have their own test files.
 
 **`screeningAnswers.ts` is the only module here with no test file** — so `matchScreeningTopic`'s
 order-dependent matching, where "authorized to work without sponsorship?" has to resolve to work

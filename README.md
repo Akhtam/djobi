@@ -8,43 +8,98 @@ server, a persisted history of past applications, and a web dashboard for tracki
 ## Architecture
 
 - `packages/shared` — zod schemas shared by every app (`Profile`, `JobInfo`, `TailoredResume`, etc.)
+- `packages/http-client` — the typed backend client shared by the extension and dashboard.
+- `packages/profile-editor` — the profile onboarding/editing form (fields, list sections, the
+  load/upload/save workflow), shared by the extension's options page and the dashboard's Profile
+  view so both surfaces behave identically by construction.
+- `packages/manual-log` — the extract → review → save state machine behind manually logging an
+  application, shared by the extension's Log tab and the dashboard's New application view.
 - `apps/backend` — local Hono server: LLM calls (multi-provider via OpenRouter), auth (Better Auth —
-  email/password, Google), Postgres persistence (Neon + Drizzle), resume PDF rendering. Runs on
-  `127.0.0.1:5391`.
+  email/password, Google), Postgres persistence (Drizzle, over the standard wire protocol — Docker,
+  a local install, or Neon all work), resume PDF rendering. Runs on `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
   an options page (profile setup), and a side panel with **Autofill** (scrape or paste/review/fill),
   **Log**, and **Ask**
   tabs. There is no popup — the toolbar icon opens the side panel, which survives tab switches and
   clicking away.
-- `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications and
-  tracking each one's stage and notes. A separate app rather than an extension page: it needs no
-  `chrome.*` API, so it talks to the backend over CORS like any other origin.
+- `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications,
+  editing your profile, and reviewing keyword-gap analytics across everything you've applied to. A
+  separate app rather than an extension page: it needs no `chrome.*` API, so it talks to the backend
+  over CORS like any other origin.
 
 ## Prerequisites
 
-- Node.js 26 (`.nvmrc`; the root `engines` field requires >= 22) and `pnpm` 11 (see `devEngines` in
-  `package.json`, which downloads a matching version on demand)
-- A [Neon](https://neon.tech) Postgres database (or any Postgres connection string)
+- [Docker](https://www.docker.com) (recommended — runs the whole server side for you), **or**
+  Node.js 26 (`.nvmrc`; the root `engines` field requires >= 22) and `pnpm` 11 (see `devEngines` in
+  `package.json`) for a fully manual setup
+- Node.js/pnpm and Google Chrome regardless of which you picked above — the extension can't run in
+  a container at all, so building and loading it (step 2) always needs both
 - An [OpenRouter](https://openrouter.ai) API key
-- Google Chrome (to load the extension)
+- A Postgres database if you're going the manual route — any of three options, no cloud account
+  required unless you want one (see Option B below)
 
-## 1. Install dependencies
+## 1. Get the server side running
 
-```bash
-pnpm install
-```
+Pick one option — both end with the backend and dashboard running and the database migrated.
+Everything from step 2 onward is identical either way.
 
-## 2. Configure the backend
+### Option A: Docker (recommended)
 
 ```bash
 cp apps/backend/.env.example apps/backend/.env
 ```
 
-Edit `apps/backend/.env`:
+Edit `apps/backend/.env` and fill in `OPENROUTER_API_KEY` and `BETTER_AUTH_SECRET` (generate the
+secret with `openssl rand -base64 32`). Leave `DATABASE_URL` as-is — it already points at the
+Postgres container this brings up.
+
+```bash
+docker compose up -d
+```
+
+Migrations run automatically — a one-shot `migrate` service applies them before `backend` starts.
+
+`docker compose up -d` builds and starts `db` + `backend` + the built `dashboard` together, one
+origin — nginx (the `dashboard` container) reverse-proxying the backend exactly the way
+`apps/dashboard/vite.config.ts`'s dev proxy does (`docker/dashboard.nginx.conf`), the same topology
+`docs/adr/0001-cloudflare-single-worker.md` already commits this project to for a real deploy.
+Dashboard: `http://localhost:5174`. Backend: `http://127.0.0.1:5391` (the extension always calls
+this directly, container or not).
+
+This is a **preview** path, not a development one — neither container has hot reload (the backend
+restarts only if the whole container restarts; the dashboard is a static `vite build`, not
+`vite dev`). Use Option B instead if you're changing backend or dashboard code.
+
+`pnpm db:generate` regenerates migrations after changing `apps/backend/src/db/schema.ts`, the same
+as Option B below. `docker compose down` stops everything, keeping the Postgres volume; add `-v` to
+also drop it.
+
+### Option B: Manual (without Docker)
+
+```bash
+pnpm install
+```
+
+Start a database — the backend connects over the standard Postgres wire protocol (`pg`), not a
+cloud-specific driver (see `docs/adr/0002-postgres-driver-for-local-dev.md`), so any of these
+work — pick one:
+
+- **Docker, for just the database:** `pnpm db:up` (a container, persisted in a named volume;
+  `pnpm db:down` stops it, keeping the volume, and `pnpm db:logs` follows its output)
+- **A Postgres you already have installed locally:** `createdb djobi`
+- **[Neon](https://neon.tech)**, for a database that persists in the cloud rather than on your
+  machine: create a project there and copy its connection string
+
+```bash
+cp apps/backend/.env.example apps/backend/.env
+```
+
+Edit `apps/backend/.env`. `.env.example` documents all three `DATABASE_URL` shapes above; the
+Docker one is filled in by default:
 
 ```
-DATABASE_URL=postgres://user:password@your-neon-host/djobi?sslmode=require
+DATABASE_URL=postgres://djobi:djobi@127.0.0.1:5432/djobi
 OPENROUTER_API_KEY=sk-or-v1-...
 PORT=5391
 BETTER_AUTH_SECRET=
@@ -57,18 +112,24 @@ defaults to 5391. The rest of `apps/backend/.env.example` (`BETTER_AUTH_URL`, `P
 deploy or Google sign-in — see `docs/multi-tenant-auth.md`. Email/password sign-in works with none
 of them set.
 
-Everything else about the local wiring is deliberately hardcoded rather than configurable:
+Most of the local wiring is otherwise deliberately hardcoded rather than configurable:
 
-- The bind address is always `127.0.0.1` (`apps/backend/src/index.ts`), never `0.0.0.0`.
-- The CORS allowlist is the literal list `http://localhost:5174, http://127.0.0.1:5174` in
-  `apps/backend/src/app.ts`. Never a wildcard: this server holds an API key and any page in your
-  browser can reach `127.0.0.1`.
-- The backend origin each client calls is `http://127.0.0.1:5391`, written into
-  `apps/extension/src/lib/callBackend.ts` (and the manifest's host permissions) and
-  `apps/dashboard/src/lib/dashboardClient.ts`.
+- The bind address defaults to `127.0.0.1`, never `0.0.0.0`, on a bare `pnpm dev:backend` run
+  (`apps/backend/src/index.ts`) — an override (`HOST` env var) exists only for the Docker Compose
+  backend service in Option A, where "every interface" means every other container on that one
+  Docker network rather than the LAN.
+- The CORS allowlist always includes `http://localhost:5174, http://127.0.0.1:5174`
+  (`apps/backend/src/app.ts`), plus whatever real origins `PUBLIC_ORIGINS` lists. Never a wildcard:
+  this server holds an API key and any page in your browser can reach `127.0.0.1`.
+- Locally, the dashboard never calls `http://127.0.0.1:5391` directly — every request is a relative
+  path that `apps/dashboard/vite.config.ts`'s dev-server proxy forwards to it, so the browser sees
+  the dashboard and backend as the same origin (needed for the session cookie). The extension has
+  no origin of its own to proxy through, so it calls `http://127.0.0.1:5391` directly
+  (`apps/extension/src/extensionConfig.ts`, which also feeds the manifest's host permissions).
 
-Deploying to a real origin is what would make these configurable — see
-`docs/adr/0001-cloudflare-single-worker.md`, which lists them as porting items.
+Both apps read a `VITE_BACKEND_ORIGIN` env var (see `apps/extension/.env.example` and
+`apps/dashboard/.env.example`) — set it to the real deployed backend's origin when building for a
+real deploy. Leave it unset locally.
 
 Run migrations against your database:
 
@@ -77,16 +138,22 @@ pnpm db:generate   # only needed after changing apps/backend/src/db/schema.ts
 pnpm db:migrate
 ```
 
-## 3. Run the backend
+Then run the backend:
 
 ```bash
 pnpm dev:backend
 ```
 
 Starts the Hono server on `http://127.0.0.1:5391` (via `tsx watch`, restarts on file changes).
-Leave this running — the extension talks to it directly.
+Leave this running — the extension talks to it directly. In another terminal, run the dashboard:
 
-## 4. Build and load the extension
+```bash
+pnpm dev:dashboard
+```
+
+Starts the dashboard dev server on `http://localhost:5174`, with Vite HMR.
+
+## 2. Build and load the extension
 
 The extension needs a real `dist/` build to load into Chrome (a plain `vite dev` server isn't
 enough for an MV3 unpacked extension):
@@ -104,26 +171,22 @@ Then in Chrome:
    `pnpm --filter extension dev` for `@crxjs/vite-plugin`'s watch/HMR mode, then click the reload
    icon on the extension card in `chrome://extensions`
 
-## 5. Create an account
+## 3. Create an account
 
-With the backend running:
-
-```bash
-pnpm dev:dashboard
-```
-
-Open `http://localhost:5174`, go to **Create an account**, and sign up with an email and password
+The dashboard is already running from step 1, either way you set it up. Open
+`http://localhost:5174`, go to **Create an account**, and sign up with an email and password
 (8+ characters). This is the only sign-up surface — the extension has none; it's a companion to an
 account created here. Google sign-in is also wired but needs `GOOGLE_CLIENT_ID`/
-`GOOGLE_CLIENT_SECRET` configured (see step 2), so email/password is the default path.
+`GOOGLE_CLIENT_SECRET` configured (see Option B's `.env` step), so email/password is the default
+path.
 
-## 6. Sign in to the extension
+## 4. Sign in to the extension
 
 Right-click the djobi icon → **Options**, and sign in with the same email/password. The extension
 and dashboard share one Better Auth session — signing in on either surface, or opening the other
 while already signed in on one, authenticates both (`apps/extension/src/lib/sharedSessionCookie.ts`).
 
-## 7. Set up your profile
+## 5. Set up your profile
 
 Still on the options page:
 
@@ -136,7 +199,7 @@ Already have a resume? The options page's **Upload resume** action parses an upl
 pre-fills the form for you to review and edit before saving — it never auto-saves or overwrites a
 field you've already filled in with nothing.
 
-## 8. Use it
+## 6. Use it
 
 Navigate to the application form for a job you want to apply to, and click the djobi icon to open
 the side panel:
@@ -155,15 +218,21 @@ the side panel:
 5. **Fill form** writes the reviewed values into the page and attaches the generated resume PDF. It
    reports verified counts and unresolved required fields when the content script responds. If no
    frame responds, attempted counts are retained but the result is marked **Fill unverified**
-6. **Save application** records the current job info, tailored resume and answers. Saving is explicit
-   and separate from filling; re-saving after another edit or fill updates the same record rather
-   than creating a second one. Applications have no draft/submitted status
+6. **Save application** records the current job info, tailored resume and answers. Saving is
+   normally explicit and separate from filling; re-saving after another edit or fill updates the
+   same record rather than creating a second one. Applications have no draft/submitted status
 
-djobi never submits the employer's form; the candidate does that on the ATS. Saving does not verify
-that submission happened. Analysis, filling and saving all run in the background service worker, so
-closing the panel mid-run doesn't lose them. Chrome may still stop that worker mid-step; the next
-one to start turns any operation its predecessor abandoned into a visible error you can retry from,
-rather than a step that appears to run forever.
+djobi never submits the employer's form; the candidate does that on the ATS. But if you fill a form
+with djobi and then click the ATS's own submit button, djobi notices and saves the application for
+you automatically — a toast on the page confirms it, and a ✓ badge on the toolbar icon survives the
+navigation in case the panel and toast are both gone by the time you look back
+(`apps/extension/src/content/submitWatch.ts`, `savedToast.ts`,
+`apps/extension/src/background/saveBadge.ts`). Saving (manual or automatic) does not verify that the
+employer actually received the submission — only that the candidate clicked submit. Analysis,
+filling and saving all run in the background service worker, so closing the panel mid-run doesn't
+lose them. Chrome may still stop that worker mid-step; the next one to start turns any operation its
+predecessor abandoned into a visible error you can retry from, rather than a step that appears to run
+forever.
 
 Use the **Log** tab for an application made without djobi. Its URL field follows the active tab until
 you edit it; it extracts Job Info from a pasted posting and saves a manual Application without
@@ -177,12 +246,25 @@ opened cold it offers a copy button.
 The panel and options page share a light/dark theme, toggled from the icon in either header and
 persisted in `chrome.storage.local`.
 
-## 9. Browse past applications
+## 7. Browse past applications
 
-Back at `http://localhost:5174` (started in step 5), signed in, it lists every saved application
-(filter by stage, search by title or company) and opens each one to edit its stage, append notes,
-and review the saved job info, tailored resume and drafted answers. Notes are append-only. The
-backend's CORS allowlist covers the dashboard's dev origins only — see `apps/backend/README.md`.
+Back at `http://localhost:5174` (started in step 1), signed in, the dashboard is more than a
+read-only list:
+
+- **Applications** (`#/`) lists every saved application (filter by stage, search by title or
+  company) and opens each one (`#/applications/:id`) to edit its stage, append notes, and review
+  the saved job info, tailored resume and drafted answers. Notes are append-only.
+- **Profile** (`#/profile`) is the same profile editor as the extension's options page, built from
+  the same `@djobi/profile-editor` package, so you can set up or edit your profile from either
+  surface — the options page is no longer the only place to do this.
+- **Analytics** (`#/analytics`) is a retrospective on the postings you've already saved as
+  applications: which keywords they ask for, and which of them your profile doesn't evidence. It's
+  a gap analysis over your own saved postings, not a survey of the job market.
+- **New application** is the dashboard's counterpart to the extension's Log tab, for recording an
+  application made without djobi.
+
+The backend's CORS allowlist covers the dashboard's dev origins only — see
+`apps/backend/README.md`.
 
 ## Tests
 

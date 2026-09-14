@@ -15,9 +15,20 @@ Still true: there is no `wrangler` config in the repo, and `pnpm --filter backen
 a plain-Node `dist/` started with `node dist/index.js`. The Worker entrypoint and `wrangler.jsonc`
 remain to be written — see "Known porting items" below for what is now done and what is left.
 
+**One premise of "Context" below was reverted on 2026-09-14 — see ADR-0002.** This backend now
+connects to Postgres with `pg` (a plain wire-protocol driver), not `@neondatabase/serverless`'s
+HTTP driver, so that a contributor can run it against a local or Docker Postgres with no cloud
+account at all. That is a real regression against _this_ ADR's Worker-deploy goal (raw TCP sockets
+don't work in a Worker), taken deliberately because open-source local-dev reach is a nearer-term
+goal than the Worker deploy, which remains undone. Read the bullet below about
+`@neondatabase/serverless` being "the HTTP driver, not a pooled `pg` connection" as **no longer
+true of the code**, only of the historical reasoning; ADR-0002 is where a future Worker port's
+driver choice belongs.
+
 ## Status
 
-Accepted — decided, not yet implemented.
+Accepted, partially implemented — see the dated note above and "Known porting items" below for
+what's done and what's left.
 
 ## Context
 

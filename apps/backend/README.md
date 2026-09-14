@@ -4,9 +4,12 @@ The local Hono server that does the LLM, auth, and database work for djobi: extr
 Job Info from a pasted Job Description, tailoring a resume to it, drafting answers to freeform
 application questions, holding a chat about one of those answers, extracting a draft Profile from an
 uploaded resume PDF, rendering the resume PDF, authenticating both clients (Better Auth), and
-persisting users, profiles and applications. Runs on your machine (`127.0.0.1:5391`); the only cloud
-dependencies are the Neon Postgres database and the OpenRouter API (plus Google, if Google sign-in is
-configured). See `docs/multi-tenant-auth.md` for the auth design.
+persisting users, profiles and applications. Runs on your machine (`127.0.0.1:5391`); the only
+required cloud dependency is the OpenRouter API. Postgres can be local (Docker or a native install)
+or cloud (Neon) — see "Connect to Postgres over the plain wire protocol"
+(`docs/adr/0002-postgres-driver-for-local-dev.md`) for why both work with no code change. Google is
+an optional third dependency, only if Google sign-in is configured. See `docs/multi-tenant-auth.md`
+for the auth design.
 
 Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**, **Profile**,
 **Application**) are defined in the repo-root `CONTEXT.md`.
@@ -47,8 +50,11 @@ only when its content-type is `text/plain`, `application/x-www-form-urlencoded`,
 `application/json` (never a simple content-type) forces the preflight the allowlist gets to refuse.
 Both real clients already send it, so 415 is a status no correct client sees.
 
-`index.ts` is the entrypoint: starts `app.ts` via `@hono/node-server` bound to `127.0.0.1` (never
-`0.0.0.0`) on `$PORT`, defaulting to 5391. It mounts `app` under a wrapper instance carrying
+`index.ts` is the entrypoint: starts `app.ts` via `@hono/node-server` bound to `$HOST` (defaulting
+to `127.0.0.1`, never `0.0.0.0`, unless overridden — the Docker Compose `backend` service is the
+one place that does, since "every interface" inside a container means every other container on
+that Docker network, not the LAN) on `$PORT`, defaulting to 5391. It mounts `app` under a wrapper
+instance carrying
 `hono/logger`, rather than calling `app.use(logger())` — Hono composes handlers in registration
 order, so middleware added after `app.ts`'s routes never runs for a request a route answers. (It
 _does_ run for a 404, which is a convincing way to look correct while logging almost nothing.)
@@ -64,10 +70,14 @@ _does_ run for a 404, which is a convincing way to look correct while logging al
 --> POST /answer-questions 400 4ms
 ```
 
-Most "the extension isn't working" questions end here. The Analysis Step awaits `/extract-job`, then
-fires `/tailor-resume` and `/answer-questions` in parallel. It checkpoints Review as soon as those
-finish. If `/extract-job` 500s (usually a missing `OPENROUTER_API_KEY`), neither later route is called
-and their absence from this log is expected.
+Most "the extension isn't working" questions end here. The Analysis Step now runs as one round trip
+against `POST /analyze`, which does the same sequencing server-side: extract Job Info, then tailor
+a Resume and draft Question Answers from it in parallel (`llm/analyzeApplication.ts`). It checkpoints
+Review as soon as that resolves. The three underlying operations still exist as their own routes
+(`/extract-job`, `/tailor-resume`, `/answer-questions`) — the Log tab's Duplicate Guard calls
+`/extract-job` alone, and an older extension build still uses the three-call sequence — so seeing
+`/extract-job` in this log without a following `/analyze` is normal for that path. If `/analyze` 500s
+(usually a missing `OPENROUTER_API_KEY`), nothing downstream of extraction ran.
 
 Uncaught failures are already logged by `app.onError` with the method, path and stack.
 
@@ -151,27 +161,40 @@ Operation-specific transport bodies and aliases live in `@djobi/shared`'s `wire.
 and extension use the same contracts instead of private route schemas. Domain write shapes such as
 `NewApplication` and `ApplicationSnapshot` remain in `schemas.ts`. See that package's README for why.
 
-The four model-only routes below share one file, `routes/llm.ts` — each is a one-line
+The five model-only routes below share one file, `routes/llm.ts` — each is a one-line
 `post(path, schema, operation)` registration rather than its own module; see that file's own header
 comment for why. `routes/profile.ts`, `routes/applications.ts` and `routes/render-resume-pdf.ts` each
 hold a REST resource's or a render cache's worth of actual logic, so they stay their own modules.
 
-| Route                           | Body                            | Delegates to            |
-| ------------------------------- | ------------------------------- | ----------------------- |
-| `* /api/auth/*`                 | Better Auth's own               | `auth.ts` (Better Auth) |
-| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`        |
-| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`      |
-| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`   |
-| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`        |
-| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`      |
-| `GET`/`POST /profile`           | `Profile`                       | `db/profileStore`       |
-| `POST /profile/extract-resume`  | multipart, field `resume` (PDF) | `llm/extractResume`     |
-| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationStore`   |
-| `GET /applications/:id`         | —                               | `db/applicationStore`   |
-| `POST /applications`            | `NewApplication`                | `db/applicationStore`   |
-| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationStore`   |
-| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationStore`   |
-| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationStore`   |
+| Route                           | Body                            | Delegates to             |
+| ------------------------------- | ------------------------------- | ------------------------ |
+| `* /api/auth/*`                 | Better Auth's own               | `auth.ts` (Better Auth)  |
+| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`         |
+| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`       |
+| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`    |
+| `POST /analyze`                 | `AnalyzeApplicationRequest`     | `llm/analyzeApplication` |
+| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`         |
+| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`       |
+| `GET`/`POST /profile`           | `Profile`                       | `db/profileStore`        |
+| `POST /profile/extract-resume`  | multipart, field `resume` (PDF) | `llm/extractResume`      |
+| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationStore`    |
+| `GET /applications/:id`         | —                               | `db/applicationStore`    |
+| `POST /applications`            | `NewApplication`                | `db/applicationStore`    |
+| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationStore`    |
+| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationStore`    |
+| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationStore`    |
+
+`POST /analyze` is the Analysis Step's own consolidated call — `extractJob`, then `tailorResume` and
+`answerQuestions` from it in parallel, in one round trip and one Profile-over-the-wire instead of
+three (`llm/analyzeApplication.ts`). It's additive alongside the three routes above, which stay: the
+Log tab's Duplicate Guard needs `extractJob` alone, and an extension build older than this route
+still needs the three-call sequence.
+
+`POST /applications` also honours an optional `idempotency-key` request header (see
+`db/postgresApplicationStore.ts`'s `create`): a retried Save Step after a lost or timed-out
+response upserts the same row on `(user_id, idempotency_key)` rather than creating a second
+Application. `hono/cors`'s `allowHeaders` in `app.ts` lists it explicitly, since a non-simple
+header otherwise fails CORS silently.
 
 `POST /profile/extract-resume` parses an uploaded resume PDF into a draft `Profile` extraction for
 the candidate to review — it never calls `ProfileStore.save`, the same separation the extension
@@ -215,7 +238,7 @@ and paid model context limited to relevant fields.
 why the extension has a separate `callBackendBinary` for it. The route retains one exact-input
 render promise, so Preview and Fill reuse completed or in-flight work without an unbounded cache.
 
-## `src/db/` — persistence (Neon Postgres via Drizzle)
+## `src/db/` — persistence (Postgres via Drizzle)
 
 ### `schema.ts`
 
@@ -235,10 +258,14 @@ Six tables:
   plain columns (so they're queryable without reaching into JSON); `jobInfo`, `tailoredResume` and
   `answers` are jsonb snapshots of what was generated for that specific application, so past
   applications stay readable even if `Profile` or the tailoring prompt changes later. `stage`
-  (`applied` → `phone_screen` → `onsite` → `offer` → `rejected`) tracks how far it got. `notes` is a
-  jsonb array appended to over the life of the application, never overwritten. `rawDescription`,
-  `extractionVersion`, `requirementEvidence` and `bulletProvenance` (all nullable) are the posting
-  text an application was analyzed against and the matching provenance derived from it.
+  (`applied` → `rejected_ats` → `phone_screen` → `onsite` → `offer` → `rejected`) tracks how far it
+  got. `notes` is a jsonb array appended to over the life of the application, never overwritten.
+  `rawDescription`, `extractionVersion`, `requirementEvidence` and `bulletProvenance` (all nullable)
+  are the posting text an application was analyzed against and the matching provenance derived from
+  it. `idempotencyKey` (nullable, migration `0012`) is a client-chosen token for one create attempt,
+  carried as the `idempotency-key` request header on `POST /applications` and enforced by a unique
+  `(user_id, idempotency_key)` index, so a retried request after a lost response upserts the same
+  row instead of creating a duplicate.
 
   A `status` column (`draft`/`submitted`) sat beside `stage` until migration `0002`. Nothing ever
   wrote `submitted`, so the column held no information and was removed. Its removal does not prove
@@ -248,9 +275,15 @@ Six tables:
 ### `client.ts`
 
 The Drizzle client used by every store. Reads `DATABASE_URL` from the environment and throws
-immediately if it's unset — fails fast rather than on the first query. Uses
-`@neondatabase/serverless` + `drizzle-orm/neon-http`, Neon's low-latency HTTP driver (a plain `pg`
-connection also works if the backend ever needs multi-statement transactions within one request).
+immediately if it's unset — fails fast rather than on the first query. Uses `pg`
+(`drizzle-orm/node-postgres`), a plain wire-protocol connection pool, so the same `DATABASE_URL`
+works unchanged against a local or Docker Postgres, a self-hosted one, or Neon: Neon's connection
+string speaks standard Postgres wire protocol too, and only needs `@neondatabase/serverless`'s
+HTTP driver when the caller can't open a raw TCP socket at all (a Cloudflare Worker, mainly). This
+backend runs as a Node process both in dev and in `dist/`, so that constraint doesn't apply here —
+see the module's own doc comment and `docs/adr/0001-cloudflare-single-worker.md`, whose driver
+choice this supersedes now that running locally without any cloud account is a goal in its own
+right.
 
 ### `profileStore.ts` / `postgresProfileStore.ts` / `applicationStore.ts` / `postgresApplicationStore.ts`
 
@@ -288,7 +321,7 @@ and assigned every existing row to. No route reads it any more — it's kept onl
 
 ### `migrations/`
 
-`drizzle-kit` output, applied against Neon. `0000_slimy_manta.sql` creates both original tables;
+`drizzle-kit` output, applied against whichever Postgres `DATABASE_URL` names. `0000_slimy_manta.sql` creates both original tables;
 `0001_living_captain_stacy.sql` adds `applications.stage` and `applications.notes`.
 `0002_outstanding_black_tom.sql` drops `applications.status`; `0003_abandoned_sir_ram.sql` adds the
 Application source; `0004_shocking_wind_dancer.sql` consolidates the Profile to its fixed singleton
@@ -304,6 +337,9 @@ the bootstrap row, renames `profiles.id` to `profiles.user_id`, backfills and co
 `0010_parched_selene.sql` is Phase B: creates Better Auth's own `account`/`session`/`verification`
 tables. `0011_steep_callisto.sql` adds `ON DELETE cascade` to both `user_id` foreign keys, so
 deleting a user cascades instead of hitting a raw FK violation (Phase F's account-deletion prep).
+`0012_fixed_arclight.sql` adds `applications.idempotency_key` and its unique
+`(user_id, idempotency_key)` index, backing `POST /applications`'s optional `idempotency-key`
+header.
 
 ## `drizzle.config.ts`
 
@@ -430,6 +466,18 @@ Two constraints worth knowing:
   treats it as binding, and post-processing independently maps high-confidence authorization and
   sponsorship polarity. If no unique safe mapping exists, the answer is omitted.
 
+### `analyzeApplication.ts`
+
+The Analysis Step's own sequencing, moved server-side: `extractJob`, then `tailorResume` and
+`answerQuestions` from the result in parallel — one round trip instead of three, and the Profile
+crosses the wire once instead of once per operation. Behind `POST /analyze`. Deliberately not the
+whole Analysis Step: classifying a page's fields into questions, the prepared-answer split, which
+questions are worth a model call, reconstructing page order, and measuring Keyword Coverage all stay
+in the extension's `background/applicationPipeline.ts`, since every one of them depends either on
+Detected Fields (a page-specific concept this backend can't see) or on the candidate's full Profile,
+which this operation's narrower grounding (`AnalyzeApplicationProfile`) deliberately doesn't carry —
+`questions` here is already the caller's filtered, model-worthy subset.
+
 ### `answerChat.ts`
 
 One turn of the Ask tab's conversation about a single application question, through the same
@@ -542,7 +590,7 @@ Same minimal Node-environment config as `packages/shared`.
 
 ## `.env.example`
 
-Template for the real `.env` (gitignored). Required: `DATABASE_URL` (Neon connection string),
+Template for the real `.env` (gitignored). Required: `DATABASE_URL` (any Postgres connection string — Docker, local, or Neon),
 `OPENROUTER_API_KEY`, `BETTER_AUTH_SECRET` (the backend throws at first auth-route use if unset).
 Optional: `PORT` (defaults to 5391), `BETTER_AUTH_URL`, `PUBLIC_ORIGINS`, `NODE_ENV`, and
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google sign-in — see `docs/multi-tenant-auth.md`.

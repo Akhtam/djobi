@@ -13,6 +13,9 @@
     "build:shared": "pnpm --filter @djobi/shared build",
     "db:generate": "pnpm --filter backend db:generate",
     "db:migrate": "pnpm --filter backend db:migrate",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose stop db",
+    "db:logs": "docker compose logs -f db",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --if-present run typecheck",
@@ -35,6 +38,6 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "prettier": "^3.4.2"
+    "prettier": "^3.9.6"
   }
 }

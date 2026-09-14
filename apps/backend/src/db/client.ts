@@ -1,5 +1,5 @@
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -16,15 +16,28 @@ function resolveDb(): Db {
     );
   }
 
-  const sql = neon(databaseUrl);
-  cached = drizzle(sql, { schema });
+  const pool = new Pool({ connectionString: databaseUrl });
+  // pg-pool emits 'error' on the pool (not just a rejected query) when an idle client errors —
+  // e.g. a Postgres restart. An EventEmitter with no 'error' listener throws and crashes the
+  // process, so this keeps a transient DB hiccup from taking down every in-flight request.
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle Postgres client', err);
+  });
+  cached = drizzle(pool, { schema });
   return cached;
 }
 
 /**
- * The Drizzle client used by every route to read/write `profiles` and `applications`. Uses Neon's
- * low-latency HTTP driver (`drizzle-orm/neon-http`) rather than a pooled `pg` connection, since
- * this backend makes one-off queries per request rather than needing cross-request transactions.
+ * The Drizzle client used by every route to read/write `profiles` and `applications`. Uses `pg`
+ * (`drizzle-orm/node-postgres`) — a plain wire-protocol connection pool, not an HTTP driver — so
+ * the same `DATABASE_URL` works unchanged against a local or Docker Postgres, a self-hosted one,
+ * or Neon: Neon's connection string speaks standard Postgres wire protocol too, and only needs
+ * `@neondatabase/serverless`'s HTTP driver when the caller can't open a raw TCP socket at all (a
+ * Cloudflare Worker, mainly). This backend runs as a Node process both in dev and in `dist/`, so
+ * that constraint doesn't apply here; see `docs/adr/0001-cloudflare-single-worker.md`, whose
+ * driver choice this supersedes now that running locally without any cloud account is a goal in
+ * its own right — a Worker port, if it happens, can special-case the HTTP driver in its own
+ * entrypoint rather than in this shared client.
  *
  * Lazily initialized on first use, not at import time — so importing this module (or anything
  * that transitively imports it, like a route file) doesn't require `DATABASE_URL` to be set.

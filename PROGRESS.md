@@ -14,9 +14,9 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **1692 tests**
-(278 shared / 26 http-client / 30 profile-editor / 326 backend / 746 extension / 286 dashboard),
-`pnpm test` from the repo root. A green run prints nothing: every
+**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **2039 tests**
+(316 shared / 40 http-client / 15 manual-log / 78 profile-editor / 377 backend / 840 extension / 373
+dashboard), `pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
 `format:check`, `typecheck`, `build` and `test` on Linux for every PR and every push to `main`.
@@ -26,16 +26,30 @@ anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
   Detected Field is and how an answer gets back onto one), `wire.ts` (shared route contracts whose
   request/response shapes must stay aligned across consumers), `labelMatching.ts` (when two labels
   are the same), `screeningAnswers.ts` / `preparedAnswers.ts` (the facts a Profile answers without a
-  model), `jobKey.ts` (a posting's URL identity, which both sides must derive identically), and
-  `resumeFileName.ts`.
+  model), `jobKey.ts` (a posting's URL identity, which both sides must derive identically),
+  `httpUrl.ts` (the http(s)-only rule for a stored posting URL), `requirementImportance.ts` (the
+  Importance Gate), and `resumeFileName.ts`.
+- **`packages/http-client`** — the one shared transport (`createHttpTransport`) both `callBackend.ts`
+  (extension) and `dashboardClient.ts` (dashboard) build their client on, carrying auth
+  (bearer/cookie), the upload content-type wrinkle, and now an `idempotency-key` passthrough.
+- **`packages/profile-editor`** — the profile onboarding/editing form (fields, list sections, the
+  load/upload/save workflow), shared by the extension's options page and the dashboard's Profile
+  view so both surfaces behave identically by construction.
+- **`packages/manual-log`** — the extract → review → save state machine behind manually logging an
+  application, shared by the extension's Log tab and the dashboard's New application view.
 - **`apps/backend`** — Hono on `127.0.0.1:5391`. Four LLM calls (`extractJob`, `tailorResume`,
   `answerQuestions`, `answerChat`) through `structuredCall.ts` — one seam over
   the Vercel AI SDK and OpenRouter, routed per operation by `client.ts`'s `MODELS` — all grounded by
   one `promptContext.ts` scaffold — each grounded in a Profile _projection_ the operation parses
-  from `wire.ts` rather than restating, so widening one is a deliberate disclosure change; a
-  one-page-fitting resume PDF renderer, and
-  Postgres persistence (Neon + Drizzle) for profiles and applications. `pnpm --filter backend
-build` compiles the shared package and emits a plain-Node production server to `dist/`.
+  from `wire.ts` rather than restating, so widening one is a deliberate disclosure change. The
+  Analysis Step's three-call sequence (`extractJob` → `tailorResume` + `answerQuestions` in
+  parallel) also has a server-side consolidation, `POST /analyze` (`llm/analyzeApplication.ts`),
+  which is what the extension actually calls now — one round trip and one Profile-over-the-wire
+  instead of three; the three separate routes stay, for the Log tab's Duplicate Guard and for an
+  older extension build. A one-page-fitting resume PDF renderer, and
+  Postgres persistence (Drizzle, over the standard `pg` wire protocol — Docker, local, or Neon, see
+  `docs/adr/0002-postgres-driver-for-local-dev.md`) for profiles and applications. `pnpm --filter
+backend build` compiles the shared package and emits a plain-Node production server to `dist/`.
 - **`apps/dashboard`** — Vite + React on `localhost:5174`, browsing past Applications and tracking
   their Stage and Notes against the live backend. A marketing `LandingPage` at the bare path, and
   six views behind a hand-rolled hash router (`lib/useHashRoute.ts`): the applications list, one
@@ -50,7 +64,8 @@ build` compiles the shared package and emits a plain-Node production server to `
   Profile; the side panel is the review surface, sending its three commands through
   `panel/pipelineCommands.ts` and holding one conversation in `panel/useAskThread.ts`. A tab's
   stored record is one entry under one lock behind four focused interfaces (`lib/tabStore/`). Light/dark theme shared by both pages (`lib/theme.tsx`), persisted in
-  `chrome.storage.local`.
+  `chrome.storage.local`. `content/submitWatch.ts` watches a filled form for the candidate's own
+  submit click and auto-saves — see "Auto-save on the ATS's own submit" under Shipped.
 
 The Application Pipeline as it runs today: **scrape or paste a job description → duplicate guard →
 Analysis Step → review and edit → Fill Step → explicit Save Step.** The panel is hydrated from and
@@ -86,11 +101,13 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   code path with no test coverage waiting to be wrong. Anthropic model slugs prefer the `anthropic`
   upstream and may fall back only to `claude-on-aws`; every call logs its resolved upstream and its
   cost, so the routing is revisable with numbers rather than argument.
-- **DB:** Postgres on Neon (cloud), accessed via Drizzle ORM. The backend itself runs locally.
-  Duplicate Guard lookups match a derived `job_key` — the posting's URL identity — backed by a
-  `(job_key, created_at DESC)` index, falling back to `(job_url, created_at DESC)` for rows written
-  before the key existed. PGlite integration tests execute the optimized query and singleton/index
-  migrations against a PostgreSQL-compatible engine.
+- **DB:** Postgres, accessed via Drizzle ORM over the standard wire protocol (`pg`) — Docker, a
+  local install, or Neon all work unchanged (`docs/adr/0002-postgres-driver-for-local-dev.md`). The
+  backend itself always runs locally as a Node process. Duplicate Guard lookups match a derived
+  `job_key` — the posting's URL identity — backed by a `(job_key, created_at DESC)` index, falling
+  back to `(job_url, created_at DESC)` for rows written before the key existed. PGlite integration
+  tests execute the optimized query and singleton/index migrations against a PostgreSQL-compatible
+  engine.
 - **Structured output is the response format, and the local parse is still the guarantee.** Every
   LLM call goes through `generateObject` with its zod schema — see
   `apps/backend/src/llm/structuredCall.ts` — and the object is re-validated against that schema
@@ -271,6 +288,86 @@ what's kept here is the reasoning a later change would otherwise have to re-deri
 fields on `PATCH /applications/:id`, whose body is an `ApplicationSnapshot` that deliberately
 excludes stage and notes. Folding them in would let a re-saved autofill stomp interview history.
 
+`ApplicationStageSchema` gained `rejected_ats`, sitting between `applied` and `phone_screen`: it
+means the application was screened out before ever reaching a human, distinct from `rejected` (a
+rejection after contact was made). The dashboard's list collapses both under one "Rejected" filter
+pill (`lib/stages.ts`'s `REJECTION_FILTERS`/`stageFilterOf`), with a nested control to narrow to
+just ATS or just non-ATS rejections, since the pipeline-position distinction still matters once
+you're already filtering for "didn't work out."
+
+### Auto-save on the ATS's own submit
+
+Saving an Application used to require the candidate to click **Save application** in the panel. If
+they instead filled a form with djobi and then clicked the ATS's own submit button, closing the tab
+before opening the panel to save meant nothing was ever recorded. `content/submitWatch.ts` now
+watches a filled form for that click (armed only after a completed Fill, never by detection alone,
+since a wrong detection here means writing an Application row rather than just a stray suggestion)
+and triggers the same auto-save the panel's own Save button does. Because the tab is mid-navigation
+by the time this fires, confirmation moves to two places built to survive it: `savedToast.ts` shows
+an on-page toast in a closed shadow root (so the ATS's own CSS and scripts, still running mid-submit,
+can't touch or hide it), and `background/saveBadge.ts` sets a per-tab ✓ badge on the toolbar icon,
+which — being owned by Chrome rather than the page — survives the navigation the toast might not.
+
+### Postgres over the plain wire protocol, for open-source local dev
+
+`db/client.ts` used to connect through `@neondatabase/serverless`'s HTTP driver
+(`drizzle-orm/neon-http`) — chosen by ADR-0001 for a future Cloudflare Worker deploy, but it only
+ever speaks to Neon, so running the backend at all required a Neon account. Now that this project is
+being open-sourced, that was the wrong trade: it now connects with `pg` (`drizzle-orm/node-postgres`)
+instead, a plain connection pool that works unmodified against a local Postgres install, Postgres in
+Docker (`docker-compose.yml` at the repo root, `docker compose up -d db`), or Neon — Neon's
+connection string is standard wire-protocol Postgres, `pg-connection-string` already honors its
+`?sslmode=require`, and `drizzle-kit`'s CLI was never coupled to the HTTP driver in the first place,
+so migrations already worked locally before this change. See
+`docs/adr/0002-postgres-driver-for-local-dev.md` for the full reasoning, including why this
+knowingly regresses ADR-0001's Worker-readiness (accepted: no Worker entrypoint exists yet, so
+nothing running today is broken by it). `@neondatabase/serverless` is no longer a dependency.
+Verified against a real throwaway local Postgres instance, not just typechecked: migrations applied
+with `drizzle-kit migrate`, then a real query and a real `app.request()` round trip both succeeded
+through the new client.
+
+### A full Docker Compose stack (db + backend + built dashboard), one origin
+
+`docker compose up -d` (after `pnpm db:migrate` against it once) now brings up the whole server
+side with no Node/pnpm toolchain on the host: `db` (already shipped, see above), `backend` (the
+same image built by the root `Dockerfile`'s `backend` target — a pruned, production `node
+dist/index.js`), and `dashboard` (nginx serving the static `vite build` output, reverse-proxying
+`/api`, `/applications`, `/profile` and `/extract-job` to `backend:5391` —
+`docker/dashboard.nginx.conf`, deliberately kept in lockstep with `apps/dashboard/vite.config.ts`'s
+own dev-server proxy list). One origin, nginx standing in for the Cloudflare Worker
+`docs/adr/0001-cloudflare-single-worker.md` already commits this project to for a real deploy — the
+same topology, reached a different way.
+
+This is a **preview** path, not a development one: neither container has hot reload. The native
+`pnpm dev:backend` / `pnpm dev:dashboard` (plus `pnpm db:up` for just Postgres) stays how you'd
+actually change backend or dashboard code. The extension is never part of it — it cannot run in a
+container at all, since Chrome has to load it unpacked from disk on the host.
+
+One backend change this needed: `index.ts` bound to a hardcoded `127.0.0.1`, which is correct for a
+bare host process (never expose an OpenRouter key and a live DB connection to the LAN) but makes the
+server unreachable from any _other_ container, including nginx — inside a container, "every
+interface" means every other container on that one Docker network, not the LAN, so the hazard the
+hardcoding defended against doesn't apply the same way there. It now reads an optional `HOST` env
+var (default unchanged, `127.0.0.1`); `docker-compose.yml`'s `backend` service is the one place that
+sets it, to `0.0.0.0`. Also new: `GET /healthz`, unauthenticated and deliberately shallow (confirms
+the HTTP server is up, nothing about Postgres or OpenRouter), for the backend service's own Compose
+healthcheck — `dashboard` depends on it being healthy, not just started, before nginx starts
+proxying to it.
+
+The Dockerfile builds via `pnpm build` (the same command CI runs) inside one shared multi-stage
+`deps`/`build` stage — not a `pnpm deploy`-based isolated subset, because that follows `.gitignore`
+by default and `dist/` is gitignored, which would silently ship an empty package. `pnpm prune --prod`
+has no `-r`/`--recursive` flag, so it needs one invocation per workspace member (`-C <dir>`) to
+actually strip devDependencies everywhere. `corepack enable` doesn't work at all in this repo's
+image, for an unrelated reason: it tries to resolve pnpm's exact version from `devEngines
+.packageManager.version` (`^11.20.0`, a semver _range_ — deliberate, see the root README's
+Prerequisites) and rejects it for not being one exact version; a plain `npm install -g pnpm@11`
+sidesteps that mismatch entirely.
+
+**Verified for real**, not just built: signed up, captured the session cookie, and fetched
+`/applications` with it — all through `http://localhost:5174` (nginx) → `backend:5391` → a real
+Postgres in the `db` container, the same round trip a contributor's browser would make.
+
 ### Bullet reconciliation by source index
 
 `tailorResume` does not ask the model for resume prose. It returns
@@ -298,9 +395,13 @@ candidate's pinned content is never silently discarded.
   `'autofill'` so every existing row and the extension's unchanged save path stay valid).
 - **`source` is omitted from `ApplicationSnapshotSchema`**, alongside `stage` and `notes`: a re-save
   must not be able to relabel how a record was created.
-- **`jobUrl` stays required and `.url()`-validated.** It is the duplicate guard's key, so the Log tab
-  makes it a required field rather than inventing a placeholder — and it runs the same
-  already-applied check before writing, warning without blocking.
+- **`jobUrl` stays required and validated as an http(s) URL.** It is the duplicate guard's key, so
+  the Log tab makes it a required field rather than inventing a placeholder, and it runs the same
+  already-applied check before writing, warning without blocking. The write boundary validates it
+  with `@djobi/shared`'s `HttpUrlSchema`/`isHttpUrl`, not zod's own `.url()` — that accepts any
+  scheme parseable by `new URL()`, `javascript:` included, which a stored `jobUrl` rendered as an
+  `<a href>` in the dashboard would otherwise turn into a script URL one click away from running on
+  the session-cookie-holding origin.
 - **A manual row stores the Base Resume, not a tailored one.** `baseResumeOf` projects the Profile
   into the `TailoredResume` shape — possible only because the latter is defined as a subset of the
   former — and the dashboard relabels that section on manual rows, since "Tailored resume" would be
@@ -402,6 +503,15 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
   The Autofill Tab renders that as the step's own error state and clears it as soon as any persisted
   progress for the run arrives — usually there is none, but a worker coming back mid-report is the
   race the guard exists for. This adds no response payload: the protocol still has no replies.
+- **The Save Step's first write is now idempotent, closing the one gap `runClaim.ts`'s cancellation
+  policy explicitly called out as unsolved.** A retried or superseded `POST /applications` used to
+  risk a second Application for the same run if the first attempt's response was lost. The pipeline
+  now sends `run.runId` as an `idempotency-key` header (`applicationPipeline.ts`'s
+  `runSaveApplication`); the backend enforces it with a unique `(user_id, idempotency_key)` index
+  (migration `0012`, `db/postgresApplicationStore.ts`'s `create`), so a resent create for a run whose
+  first attempt already landed returns that same row rather than writing a second one. Only the
+  _first_ save needs this — every save after `run.applicationId` is set goes through
+  `updateApplication`, which is idempotent by construction.
 
 ## Planned
 

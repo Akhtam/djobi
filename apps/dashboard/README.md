@@ -11,7 +11,7 @@ pnpm dev:dashboard
 ```
 
 Port 5174, because 5173 is the extension dev server's `strictPort` and both usually run at once.
-`vite.config.ts` proxies `/api`, `/applications` and `/profile` onto this dev server's own origin,
+`vite.config.ts` proxies `/api`, `/applications`, `/profile` and `/extract-job` onto this dev server's own origin,
 so the browser sees every backend call as same-origin — without it the session cookie is a
 third-party cookie Chrome silently drops, which reads as "sign-in succeeded, then every request
 401s."
