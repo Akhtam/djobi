@@ -14,7 +14,9 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
-  throw new Error('DATABASE_URL is not set — copy apps/backend/.env.example to .env and fill it in.');
+  throw new Error(
+    'DATABASE_URL is not set — copy apps/backend/.env.example to .env and fill it in.',
+  );
 }
 
 const migrationsFolder = fileURLToPath(new URL('../../src/db/migrations', import.meta.url));
