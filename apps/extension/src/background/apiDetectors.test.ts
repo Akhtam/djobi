@@ -114,7 +114,7 @@ describe('enrichWithApiOracle', () => {
             ...response.questions[0],
             fields: [
               {
-                ...response.questions[0].fields[0],
+                ...response.questions[0]!.fields[0]!,
                 // The API knows a choice the rendered DOM didn't show.
                 values: [
                   { value: '1', label: 'Yes' },
@@ -133,7 +133,7 @@ describe('enrichWithApiOracle', () => {
         stubFetch(withExtraChoice),
       );
 
-      expect(result[0].options).toEqual([
+      expect(result[0]!.options).toEqual([
         { label: 'Yes', selector: '#opt-yes' },
         { label: 'No', selector: '#opt-no' },
         { label: 'Prefer not to say', selector: null },
@@ -156,7 +156,7 @@ describe('enrichWithApiOracle', () => {
         stubFetch(response),
       );
 
-      expect(result[0].options?.[0]).toEqual({ label: 'Yes', selector: null });
+      expect(result[0]!.options?.[0]).toEqual({ label: 'Yes', selector: null });
     });
 
     it('leaves a field untouched when no question matches its label', async () => {
@@ -183,7 +183,7 @@ describe('enrichWithApiOracle', () => {
         stubFetch(noChoices),
       );
 
-      expect(result[0].options).toBeUndefined();
+      expect(result[0]!.options).toBeUndefined();
     });
   });
 
@@ -278,7 +278,7 @@ describe('enrichWithApiOracle', () => {
         stubFetch(response),
       );
 
-      expect(result[0].required).toBe(true);
+      expect(result[0]!.required).toBe(true);
     });
   });
 
@@ -459,11 +459,11 @@ describe('carryEnrichment', () => {
 
     // The answer was drafted against — and constrained to — the API's wording, so that is what the
     // Fill Step has to be able to match.
-    expect(carried.options?.map((option) => option.label)).toEqual([
+    expect(carried!.options?.map((option) => option.label)).toEqual([
       'Yes, I am authorized',
       'No, I require sponsorship',
     ]);
-    expect(carried.id).toBe('q9');
+    expect(carried!.id).toBe('q9');
   });
 
   it("carries the fresh scan's selector, not the stale one the earlier scan recorded", () => {
@@ -481,7 +481,7 @@ describe('carryEnrichment', () => {
       }),
     ];
 
-    expect(carryEnrichment(scanned, analyzed)[0].options).toEqual([
+    expect(carryEnrichment(scanned, analyzed)[0]!.options).toEqual([
       { label: 'Yes', selector: '#fresh-yes' },
     ]);
   });
@@ -502,7 +502,7 @@ describe('carryEnrichment', () => {
 
     // Nothing was lost in the carrying — the selector was already null — but the field cannot fill,
     // and that has to be visible rather than looking like a successful enrichment.
-    expect(carried.options).toEqual([
+    expect(carried!.options).toEqual([
       { label: 'Yes, I am authorized to work in the US', selector: null },
     ]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('will not fill'));
@@ -526,14 +526,14 @@ describe('carryEnrichment', () => {
     const analyzed = [question('Work authorization', { required: true })];
     const scanned = [question('Work authorization', { id: 'q9', required: false })];
 
-    expect(carryEnrichment(scanned, analyzed)[0].required).toBe(true);
+    expect(carryEnrichment(scanned, analyzed)[0]!.required).toBe(true);
   });
 
   it('never lowers a required flag the fresh page asserts on its own', () => {
     const analyzed = [question('Work authorization', { required: false })];
     const scanned = [question('Work authorization', { id: 'q9', required: true })];
 
-    expect(carryEnrichment(scanned, analyzed)[0].required).toBe(true);
+    expect(carryEnrichment(scanned, analyzed)[0]!.required).toBe(true);
   });
 
   it('leaves a field the earlier scan never saw exactly as scanned', () => {
@@ -548,6 +548,6 @@ describe('carryEnrichment', () => {
     ];
     const scanned = [question('  work authorization  ', { id: 'q9' })];
 
-    expect(carryEnrichment(scanned, analyzed)[0].options).toHaveLength(1);
+    expect(carryEnrichment(scanned, analyzed)[0]!.options).toHaveLength(1);
   });
 });

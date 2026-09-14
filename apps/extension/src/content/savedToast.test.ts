@@ -22,7 +22,7 @@ describe('showSavedToast', () => {
     expect(hosts()).toHaveLength(1);
     // A closed root is deliberately unreachable from the page; reading it back through the return
     // of `attachShadow` is not possible here either, so the assertion is on what the page can see.
-    expect(hosts()[0].shadowRoot).toBeNull();
+    expect(hosts()[0]!.shadowRoot).toBeNull();
   });
 
   it('removes itself once it has been up long enough to read', () => {

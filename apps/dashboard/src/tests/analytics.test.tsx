@@ -364,8 +364,8 @@ describe('analytics', () => {
 
   it('presents requested experience as readable thresholds', async () => {
     const applications = structuredClone(fixtureApplications.slice(0, 2));
-    applications[0].jobInfo.requirements[0].yearsOfExperience = 1;
-    applications[1].jobInfo.requirements[1].yearsOfExperience = 5;
+    applications[0]!.jobInfo.requirements[0]!.yearsOfExperience = 1;
+    applications[1]!.jobInfo.requirements[1]!.yearsOfExperience = 5;
     const { user, container } = renderDashboard({
       client: createFixtureDashboardClient(applications),
     });
@@ -451,7 +451,7 @@ describe('analytics', () => {
      * fixtures still cover the case that matters most: a rate withheld for want of data.
      */
     function staged(stages: readonly Application['stage'][]): Application[] {
-      const [template] = fixtureApplications;
+      const template = fixtureApplications[0]!;
       return stages.map((stage, index) => ({
         ...structuredClone(template),
         id: `app-staged-${index}`,

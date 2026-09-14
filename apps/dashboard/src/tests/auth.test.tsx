@@ -49,7 +49,7 @@ describe('auth', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(window.location.hash).toBe('#/'));
-    expect(await screen.findByText(fixtureApplications[0].roleTitle)).toBeInTheDocument();
+    expect(await screen.findByText(fixtureApplications[0]!.roleTitle)).toBeInTheDocument();
   });
 
   it('reports a bad password without leaving the login page', async () => {
@@ -85,7 +85,7 @@ describe('auth', () => {
     await user.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => expect(window.location.hash).toBe('#/'));
-    expect(await screen.findByText(fixtureApplications[0].roleTitle)).toBeInTheDocument();
+    expect(await screen.findByText(fixtureApplications[0]!.roleTitle)).toBeInTheDocument();
   });
 
   it('rejects a too-short password before submitting', async () => {

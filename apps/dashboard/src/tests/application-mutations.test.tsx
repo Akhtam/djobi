@@ -125,7 +125,7 @@ describe('failures', () => {
     const { user } = renderDashboard({ client: failing, hash: '#/applications/app-brex' });
     await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
-    await user.click(screen.getAllByRole('button', { name: /^Delete note/ })[0]);
+    await user.click(screen.getAllByRole('button', { name: /^Delete note/ })[0]!);
     await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Backend unreachable');

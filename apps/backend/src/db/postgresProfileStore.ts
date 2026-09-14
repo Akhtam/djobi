@@ -1,6 +1,7 @@
 /**
- * The production `ProfileStore`: Neon Postgres through Drizzle. The interface, and the in-memory
- * adapter this is held against, are in `db/profileStore.ts`.
+ * The production `ProfileStore`: Postgres through Drizzle (local, Docker, or a serverless cloud
+ * database — see `docs/adr/0002-postgres-driver-for-local-dev.md`). The interface, and the
+ * in-memory adapter this is held against, are in `db/profileStore.ts`.
  *
  * Scoped by `userId` (`docs/multi-tenant-auth.md`, Phase A): every caller supplies one, which since
  * Phase B means `routes/profile.ts` reading it off the authenticated request's own context.

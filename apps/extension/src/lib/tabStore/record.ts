@@ -233,9 +233,10 @@ export function subscribeRunRecord(
   const key = storageKey(tabId);
 
   function onChanged(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
-    if (areaName !== 'session' || !(key in changes)) return;
-    const previous = changes[key].oldValue as TabState | undefined;
-    const current = changes[key].newValue as TabState | undefined;
+    const change = changes[key];
+    if (areaName !== 'session' || !change) return;
+    const previous = change.oldValue as TabState | undefined;
+    const current = change.newValue as TabState | undefined;
     onChange({
       previous: previous?.run ?? null,
       current: current?.run ?? null,

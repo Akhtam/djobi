@@ -76,7 +76,7 @@ export type ClaimSpec<Run extends PipelineRunState> =
        * current when it lands, which after a re-analysis is a different job's. `UPDATE_RUN` has
        * always carried its `runId`; these two were the exception.
        */
-      expectedRunId?: string;
+      expectedRunId?: string | undefined;
       /**
        * The precondition the run must already satisfy, checked **before** `to` is committed.
        *
@@ -93,7 +93,7 @@ export type ClaimSpec<Run extends PipelineRunState> =
        * named a run that is no longer the tab's current one. Both leave `run: null` below —
        * distinguishing them costs one extra read, only ever taken on this rare failure path.
        */
-      onClaimed?: (outcome: ClaimResult) => void;
+      onClaimed?: ((outcome: ClaimResult) => void) | undefined;
     };
 
 /** The claimed run, and the two things a step may do with the claim while it holds it. */

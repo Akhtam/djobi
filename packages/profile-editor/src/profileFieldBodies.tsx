@@ -10,6 +10,7 @@
  * as JSX one way in the extension and a plain string the other in the dashboard, which is a real
  * difference in presentation, not a duplicated fact.
  */
+import type { ReactElement } from 'react';
 import type { CredentialItem, ListEditor } from './listEditing.js';
 import type { BulletListClassNames, FieldChrome } from './fieldChrome.js';
 import { toggleStarredBullet, parseBulletCap } from './bulletEditing.js';
@@ -40,7 +41,7 @@ export function ContactFields({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   return (
     <>
@@ -95,7 +96,7 @@ export function LinksFields({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   return (
     <>
@@ -157,7 +158,7 @@ export function SummaryField({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   return (
     <Field id="summary" label="Summary" span2>
@@ -179,7 +180,7 @@ export function ResumeSettingsFields({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   const { Field, Checkbox, controlClassName } = chrome;
   return (
     <>
@@ -224,7 +225,7 @@ export function WorkExperienceEntryFields({
   index: number;
   maxBulletsPerRole: number;
   work: ListEditor<WorkExperience>;
-}) {
+}): ReactElement {
   const { Field, Checkbox, controlClassName } = chrome;
   const n = index + 1;
   return (
@@ -346,7 +347,7 @@ export function ProjectEntryFields({
   entry: Project;
   index: number;
   projects: ListEditor<Project>;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   const n = index + 1;
   return (
@@ -435,7 +436,7 @@ export function EducationEntryFields({
   entry: Education;
   index: number;
   education: ListEditor<Education>;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   const n = index + 1;
   return (
@@ -491,7 +492,7 @@ export function CredentialEntryFields({
   index: number;
   editor: ListEditor<CredentialItem>;
   changeKind: (item: CredentialItem, kind: CredentialItem['kind']) => void;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   const n = index + 1;
   return (
@@ -559,7 +560,7 @@ export function ScreeningAnswerFields({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   return (
     <>
@@ -603,7 +604,7 @@ export function CustomAnswerEntryFields({
   entry: CustomAnswer;
   index: number;
   customAnswers: ListEditor<CustomAnswer>;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   return (
     <>
@@ -637,7 +638,7 @@ export function StoryEntryFields({
   entry: Story;
   index: number;
   stories: ListEditor<Story>;
-}) {
+}): ReactElement {
   const { Field, controlClassName } = chrome;
   const n = index + 1;
   return (

@@ -25,7 +25,7 @@
  * {@link HttpTransportOptions.baseUrl}.
  */
 import { BackendErrorBodySchema, failureMessage } from '@djobi/shared';
-import type { BackendErrorCode, ZodError, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
+import type { BackendErrorCode, ZodError, ZodType, ZodTypeOf } from '@djobi/shared';
 
 /**
  * Why a call failed, as a closed set.
@@ -44,12 +44,16 @@ export type HttpErrorKind = 'http' | 'timeout' | 'network' | 'invalid-response';
 
 /** Any failed call to the djobi backend. One class, discriminated by {@link HttpErrorKind}. */
 export class HttpError extends Error {
+  readonly kind: HttpErrorKind;
+  readonly path: string;
+  /** The response status, for `kind: 'http'` only. */
+  readonly status?: number | undefined;
+
   constructor(
-    readonly kind: HttpErrorKind,
-    readonly path: string,
+    kind: HttpErrorKind,
+    path: string,
     message: string,
-    /** The response status, for `kind: 'http'` only. */
-    readonly status?: number,
+    status?: number,
     /**
      * The error this one was mapped from, where there was one.
      *
@@ -59,7 +63,7 @@ export class HttpError extends Error {
      */
     options?: {
       cause?: unknown;
-      backendCode?: BackendErrorCode;
+      backendCode?: BackendErrorCode | undefined;
       /**
        * The part of `message` fit to show a candidate, when it differs from `message` itself — see
        * {@link HttpError.reason}. Omitted, `reason` falls back to `message`, which is already clean
@@ -72,12 +76,15 @@ export class HttpError extends Error {
   ) {
     super(message, options);
     this.name = 'HttpError';
+    this.kind = kind;
+    this.path = path;
+    this.status = status;
     this.backendCode = options?.backendCode;
     this.reason = options?.reason ?? message;
   }
 
   /** A safe semantic classification supplied by the backend, independent of transport kind. */
-  readonly backendCode?: BackendErrorCode;
+  readonly backendCode?: BackendErrorCode | undefined;
 
   /**
    * The text fit to show the candidate who triggered this call — never the diagnostic
@@ -183,7 +190,7 @@ export interface RequestOptions {
    * a `'timeout'` — because the caller asked for it and a caller that cancelled is not a failure to
    * report.
    */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
   /**
    * Sent as `idempotency-key`, for a write a caller might resend after a timeout or a lost
    * response — `POST /applications` is the one route that reads it (see
@@ -204,7 +211,7 @@ export interface RequestOptions {
 
 export interface HttpTransport {
   /** Sends `path` and decodes the response through `schema`. */
-  json<Schema extends ZodTypeAny>(
+  json<Schema extends ZodType>(
     path: string,
     schema: Schema,
     options?: RequestOptions,
@@ -223,11 +230,11 @@ export interface HttpTransport {
    * "simple" types. `x-djobi-upload` is what forces the same preflight for this call; it is added
    * here, once, rather than at every call site that might otherwise forget it.
    */
-  upload<Schema extends ZodTypeAny>(
+  upload<Schema extends ZodType>(
     path: string,
     schema: Schema,
     formData: FormData,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal | undefined },
   ): Promise<ZodTypeOf<Schema>>;
 }
 
@@ -245,7 +252,10 @@ function issuesFrom(error: ZodError): string {
  * text for anything that isn't JSON at all — a crash outside the backend's own error handling, or
  * nothing listening on the port, still produces a readable message.
  */
-export function errorBodyFrom(raw: string): { reason: string; backendCode?: BackendErrorCode } {
+export function errorBodyFrom(raw: string): {
+  reason: string;
+  backendCode?: BackendErrorCode | undefined;
+} {
   try {
     const parsed: unknown = JSON.parse(raw);
 
@@ -444,7 +454,7 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
    * upload's response is JSON exactly like every other route's — only how the *request* body is
    * built differs, which `call()`'s own branch on `body instanceof FormData` already covers.
    */
-  function decodeJson<Schema extends ZodTypeAny>(
+  function decodeJson<Schema extends ZodType>(
     path: string,
     method: string,
     raw: string,

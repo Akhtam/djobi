@@ -37,7 +37,7 @@ export function NotesLog({
   // prompts in one list is two chances to confirm the wrong one.
   const [armed, setArmed] = useState<string | null>(null);
 
-  const newestFirst = [...notes].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const newestFirst = notes.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
   const visible = category ? newestFirst.filter((note) => note.category === category) : newestFirst;
 
   const counts = countByOption(NOTE_CATEGORIES, notes, (note) => note.category);

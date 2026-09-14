@@ -87,12 +87,52 @@ export interface AutofillApplicationSource {
 export function autofillApplicationPayload(
   run: AutofillApplicationSource,
   profile: Profile | null,
-) {
-  // No return-type annotation: `run.jobInfo` is already the parsed `JobInfo` (not `NewApplication
-  // Request`'s wire-input shape, which additionally allows a requirement as a bare string). Naming
-  // `NewApplicationRequest` here would widen `jobInfo.requirements` to that union and break this
-  // payload's use for `updateApplication`, whose `ApplicationSnapshot` accepts only the parsed
-  // shape. Letting the object literal's own shape be the return type keeps it assignable to both.
+): {
+  company: string;
+  roleTitle: string;
+  jobUrl: string;
+  jobInfo: {
+    company: string;
+    team: string | null;
+    roleTitle: string;
+    seniority: string | null;
+    location: string | null;
+    requirements: {
+      text: string;
+      kind: 'preferred' | 'required' | 'unspecified';
+      yearsOfExperience: number | null;
+      importance: 'critical' | 'high' | 'low-signal' | 'meaningful' | 'preferred' | null;
+      importanceTier: 'inferred' | 'stated' | 'structural' | null;
+      postingSignal: string | null;
+    }[];
+    keywords: {
+      term: string;
+      category: 'domain' | 'framework' | 'language' | 'platform' | 'soft-skill' | 'tool' | null;
+      postingSpelling: string | null;
+    }[];
+  };
+  tailoredResume: {
+    skills: string[];
+    workExperience: {
+      company: string;
+      title: string;
+      startDate: string;
+      endDate: string | null;
+      bullets: string[];
+    }[];
+  };
+  answers: { fieldId: string; question: string; answer: string; sourceStoryIds: string[] }[];
+  rawDescription: string;
+  extractionVersion: string;
+  requirementEvidence: import('./requirementEvidence.js').RequirementEvidence[] | null;
+  bulletProvenance: import('./bulletProvenance.js').BulletProvenanceEntry[] | null;
+} {
+  // The return type is spelled out structurally rather than named `NewApplicationRequest`:
+  // `run.jobInfo` is already the parsed `JobInfo` (not `NewApplicationRequest`'s wire-input shape,
+  // which additionally allows a requirement as a bare string). Naming `NewApplicationRequest` would
+  // widen `jobInfo.requirements` to that union and break this payload's use for
+  // `updateApplication`, whose `ApplicationSnapshot` accepts only the parsed shape. The parsed shape
+  // written out here stays assignable to both.
   return {
     company: run.jobInfo.company,
     roleTitle: run.jobInfo.roleTitle,

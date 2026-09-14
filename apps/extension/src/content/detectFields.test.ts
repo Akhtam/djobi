@@ -37,8 +37,8 @@ describe('detectFields', () => {
 
     const fields = detectFields(document);
 
-    expect(() => document.querySelector(fields[0].selector)).not.toThrow();
-    expect(document.querySelector(fields[0].selector)).toBe(
+    expect(() => document.querySelector(fields[0]!.selector)).not.toThrow();
+    expect(document.querySelector(fields[0]!.selector)).toBe(
       document.getElementById('question_68209436[]'),
     );
   });
@@ -175,7 +175,7 @@ describe('detectFields', () => {
     const [group] = detectFields(document);
 
     expect(group).toMatchObject({ elementRole: 'radiogroup', required: true });
-    expect(group.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(group!.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
   });
 
   it("flags a native radio group where only one member carries `required`, per the spec's group semantics", () => {
@@ -189,7 +189,7 @@ describe('detectFields', () => {
       </form>
     `;
 
-    expect(detectFields(document)[0].required).toBe(true);
+    expect(detectFields(document)[0]!.required).toBe(true);
   });
 
   it("reads a required marker from a label that isn't formally associated with the input, which is how Lever renders one", () => {
@@ -234,7 +234,7 @@ describe('detectFields', () => {
       </form>
     `;
 
-    expect(detectFields(document)[0].required).toBe(false);
+    expect(detectFields(document)[0]!.required).toBe(false);
   });
 
   it("still honours a fieldset's own aria-required, which is what Greenhouse ships around its checkbox groups", () => {
@@ -299,7 +299,7 @@ describe('detectFields', () => {
       </form>
     `;
 
-    expect(detectFields(document)[0].label).toBe('Are you legally authorized to work?');
+    expect(detectFields(document)[0]!.label).toBe('Are you legally authorized to work?');
   });
 
   it("leaves out the control's own value when reading a label that wraps it, so a pre-filled field keeps its question", () => {
@@ -311,7 +311,7 @@ describe('detectFields', () => {
       </form>
     `;
 
-    expect(detectFields(document)[0].label).toBe('Country');
+    expect(detectFields(document)[0]!.label).toBe('Country');
   });
 
   it('reports one field for a react-select widget, not a second one for the hidden `required` input it renders beside it', () => {
@@ -342,8 +342,8 @@ describe('detectFields', () => {
 
     const fields = detectFields(document);
 
-    expect(fields[0].label).toBe('Years of experience');
-    expect(fields[1].label).toBe('');
+    expect(fields[0]!.label).toBe('Years of experience');
+    expect(fields[1]!.label).toBe('');
   });
 
   it('collapses option labels onto one line too, so a multi-line choice still matches an ATS API wording of it', () => {
@@ -365,8 +365,8 @@ describe('detectFields', () => {
     const combobox = fields.find((field) => field.elementRole === 'combobox');
     const select = fields.find((field) => field.inputType === 'select-one');
 
-    expect(combobox?.options?.[0].label).toBe('San Francisco, California');
-    expect(select?.options?.[0].label).toBe('Platform Engineering');
+    expect(combobox?.options?.[0]?.label).toBe('San Francisco, California');
+    expect(select?.options?.[0]?.label).toBe('Platform Engineering');
   });
 
   it('resolves a label that wraps its input with no `for` attribute', () => {
@@ -415,10 +415,10 @@ describe('detectFields', () => {
       elementRole: 'combobox',
       required: true,
     });
-    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
     // Each choice keeps a selector back to its own element, so the Fill Step never re-derives text.
     expect(
-      fields[0].options?.map((option) => document.querySelector(option.selector!)?.textContent),
+      fields[0]!.options?.map((option) => document.querySelector(option.selector!)?.textContent),
     ).toEqual(['Yes', 'No']);
   });
 
@@ -438,7 +438,7 @@ describe('detectFields', () => {
       category: 'question',
       elementRole: 'combobox',
     });
-    expect(fields[0].options).toBeUndefined();
+    expect(fields[0]!.options).toBeUndefined();
   });
 
   it("resolves each radio/checkbox option's real label text via `for=id` even when the label doesn't wrap the input (e.g. Ashby's markup), instead of falling back to the input's default \"on\" value", () => {
@@ -456,12 +456,12 @@ describe('detectFields', () => {
 
     const fields = detectFields(document);
 
-    expect(fields[0].options?.map((option) => option.label)).toEqual([
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual([
       'Yes, I am local',
       'No, I am not willing',
     ]);
     expect(
-      fields[0].options?.map((option) => document.querySelector(option.selector!)?.id),
+      fields[0]!.options?.map((option) => document.querySelector(option.selector!)?.id),
     ).toEqual(['opt-a', 'opt-b']);
   });
 
@@ -565,13 +565,13 @@ describe('detectFields', () => {
       elementRole: 'checkboxgroup',
       required: true,
     });
-    expect(fields[0].options?.map((option) => option.label)).toEqual([
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual([
       'TypeScript',
       'Python',
       'Go',
     ]);
     expect(
-      fields[0].options?.map(
+      fields[0]!.options?.map(
         (option) => document.querySelector<HTMLInputElement>(option.selector!)?.value,
       ),
     ).toEqual(['ts', 'py', 'go']);
@@ -591,12 +591,12 @@ describe('detectFields', () => {
 
     const fields = detectFields(document);
 
-    expect(fields[0].options?.map((option) => option.label)).toEqual([
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual([
       'Pacific Time',
       'Eastern Time',
     ]);
     expect(
-      fields[0].options?.map(
+      fields[0]!.options?.map(
         (option) => document.querySelector<HTMLOptionElement>(option.selector!)?.value,
       ),
     ).toEqual(['pt', 'et']);
@@ -621,9 +621,9 @@ describe('detectFields', () => {
       elementRole: 'radiogroup',
       required: true,
     });
-    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
     expect(
-      fields[0].options?.map((option) => document.querySelector(option.selector!)?.id),
+      fields[0]!.options?.map((option) => document.querySelector(option.selector!)?.id),
     ).toEqual(['onsite-yes', 'onsite-no']);
   });
 
@@ -648,7 +648,7 @@ describe('detectFields', () => {
       category: 'question',
       elementRole: 'radiogroup',
     });
-    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
   });
 
   it('groups radios that share a name but sit in no group element, instead of reporting each choice as its own unknown field labelled "Yes"/"No"', () => {
@@ -670,7 +670,7 @@ describe('detectFields', () => {
       category: 'question',
       elementRole: 'radiogroup',
     });
-    expect(fields[0].options?.map((option) => option.label)).toEqual(['Yes', 'No']);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual(['Yes', 'No']);
   });
 
   it('leaves a lone named checkbox alone — a consent toggle is not a question with choices', () => {
@@ -703,7 +703,10 @@ describe('detectFields', () => {
 
     expect(fields).toHaveLength(1);
     expect(fields[0]).toMatchObject({ label: 'Availability', elementRole: 'radiogroup' });
-    expect(fields[0].options?.map((option) => option.label)).toEqual(['Immediately', 'In a month']);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual([
+      'Immediately',
+      'In a month',
+    ]);
   });
 
   it("does not mistake ordinary page buttons for a question's choices", () => {
@@ -736,9 +739,9 @@ describe('detectFields', () => {
 
     const [field] = detectFields(document);
 
-    expect(field.label).toBe('Where are you currently located?');
+    expect(field!.label).toBe('Where are you currently located?');
     // ...and with the real label recovered, it's a profile field rather than a drafted answer.
-    expect(field.category).toBe('location');
+    expect(field!.category).toBe('location');
   });
 
   it("doesn't borrow a neighbouring field's label when a control has none of its own", () => {
@@ -803,8 +806,8 @@ describe('detectFields', () => {
     const fields = detectFields(inner);
 
     expect(fields.map((field) => field.category)).toEqual(['email', 'unknown']);
-    expect(fields[0].required).toBe(true);
-    expect(fields[1].options?.map((option) => option.label)).toEqual(['Platform']);
+    expect(fields[0]!.required).toBe(true);
+    expect(fields[1]!.options?.map((option) => option.label)).toEqual(['Platform']);
   });
 
   it('gives an element the same id on every scan, so answers drafted against one scan still name the same field in the next', () => {
@@ -833,9 +836,9 @@ describe('detectFields', () => {
     const after = detectFields(document);
 
     const stillThere = after.find((field) => field.label === 'first');
-    expect(stillThere?.id).toBe(before.id);
+    expect(stillThere?.id).toBe(before!.id);
     // ...and the newcomer got an id of its own rather than inheriting the one it displaced.
-    expect(after.find((field) => field.label === 'inserted')?.id).not.toBe(before.id);
+    expect(after.find((field) => field.label === 'inserted')?.id).not.toBe(before!.id);
     expect(new Set(after.map((field) => field.id)).size).toBe(after.length);
   });
 });

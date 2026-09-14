@@ -600,7 +600,7 @@ export function requirementsReport(
         application.jobInfo.keywords.some((keyword) => normalizeKeyword(keyword.term) === needle),
       )
     : applications;
-  const sorted = [...matching].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const sorted = matching.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const requirementCounts = requirementKindCounts(matching);
   const bandCounts = requirementImportanceCounts(matching);

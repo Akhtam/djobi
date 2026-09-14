@@ -244,8 +244,9 @@ describe('POST /applications', () => {
   /**
    * The optimization the `Written` row exists for, stated as behaviour rather than as a comment: a
    * full-row write answers from what the write returned, so it costs one store call and not two.
-   * Against Neon that second call was a second HTTP round trip; a `byId` here would put it back
-   * without anything visible changing in the response, which is exactly why it is asserted.
+   * Against a cloud database that second call was a second network round trip; a `byId` here would
+   * put it back without anything visible changing in the response, which is exactly why it is
+   * asserted.
    */
   it('answers a full-row write without reading the row back', async () => {
     const store = inMemoryApplicationStore();

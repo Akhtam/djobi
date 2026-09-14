@@ -1,5 +1,6 @@
 /**
- * The production `ApplicationStore`: Neon Postgres through Drizzle.
+ * The production `ApplicationStore`: Postgres through Drizzle (local, Docker, or a serverless
+ * cloud database — see `docs/adr/0002-postgres-driver-for-local-dev.md`).
  *
  * The interface it satisfies, and the in-memory adapter it is held against, are in
  * `db/applicationStore.ts`. Everything below is the half that is genuinely about Postgres —
@@ -156,6 +157,8 @@ async function saveApplication(
       set: { id: sql`${applications.id}` },
     })
     .returning();
+  // An upsert with `RETURNING` always yields the inserted or conflicting row.
+  if (!row) throw new Error('saveApplication: INSERT … RETURNING produced no row');
   return { id: row.id, application: toWrittenApplication(row) };
 }
 

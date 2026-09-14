@@ -122,7 +122,7 @@ export interface StubOptions {
 /** The entry for successive calls, repeating the last one once the list is exhausted. */
 export function nth<T>(entries: (T | null)[] | undefined, index: number): T | null {
   if (!entries || entries.length === 0) return null;
-  return entries[Math.min(index, entries.length - 1)];
+  return entries[Math.min(index, entries.length - 1)] ?? null;
 }
 
 /**
@@ -345,13 +345,7 @@ export function callsOfType(sendMessage: ReturnType<typeof vi.fn>, type: string)
 }
 
 export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
+  return Promise.withResolvers<T>();
 }
 
 /**

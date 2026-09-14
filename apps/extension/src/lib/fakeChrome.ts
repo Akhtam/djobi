@@ -25,11 +25,12 @@ type RemovedListener = (tabId: number) => void;
 
 export interface FakeChromeOptions {
   /** The active tab `chrome.tabs.query` reports. `null` for a window with no active tab. */
-  tab?: { id: number; url?: string | null } | null;
+  tab?: { id: number; url?: string | null | undefined } | null | undefined;
   /** Share a store across two mounts — what a panel closing and reopening sees. */
-  storage?: FakeSessionStorage;
+  storage?: FakeSessionStorage | undefined;
   /** Answers `chrome.runtime.sendMessage`. The default records the call and replies `undefined`. */
-  sendMessage?: (message: Record<string, unknown>, callback: (response: unknown) => void) => void;
+  sendMessage?:
+    ((message: Record<string, unknown>, callback: (response: unknown) => void) => void) | undefined;
 }
 
 export interface FakeChrome {
@@ -65,7 +66,8 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
   const tabsById = new Map<number, { id: number; url?: string }>();
 
   const active = options.tab === undefined ? { id: 1, url: undefined } : options.tab;
-  if (active) tabsById.set(active.id, { id: active.id, url: active.url ?? undefined });
+  if (active)
+    tabsById.set(active.id, { id: active.id, ...(active.url != null ? { url: active.url } : {}) });
 
   const storage = options.storage ?? fakeSessionStorage();
   const cookies = new Map<string, string>();
@@ -80,7 +82,9 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
   vi.stubGlobal('chrome', {
     tabs: {
       query: vi.fn((_query: unknown, callback: (tabs: { id: number; url?: string }[]) => void) =>
-        callback(active ? [{ id: active.id, url: active.url ?? undefined }] : []),
+        callback(
+          active ? [{ id: active.id, ...(active.url != null ? { url: active.url } : {}) }] : [],
+        ),
       ),
       get: vi.fn((tabId: number, callback: (tab: { id: number; url?: string }) => void) =>
         callback(tabsById.get(tabId) ?? { id: tabId }),
@@ -143,7 +147,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
       if (value === null) cookies.delete(name);
       else cookies.set(name, value);
     },
-    knowTab: (id, url) => tabsById.set(id, { id, url: url ?? undefined }),
+    knowTab: (id, url) => tabsById.set(id, { id, ...(url != null ? { url } : {}) }),
     // Iterate a copy, as `fakeSessionStorage` does: a listener that removes itself mid-dispatch
     // would otherwise make the next one be skipped.
     activate: (tabId) => [...activated].forEach((listener) => listener({ tabId, windowId: 1 })),

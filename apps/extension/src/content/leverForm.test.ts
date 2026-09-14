@@ -48,7 +48,7 @@ function find(fields: DetectedField[], needle: string): DetectedField {
   if (matches.length !== 1) {
     throw new Error(`${matches.length} fields' labels contain ${JSON.stringify(needle)}, wanted 1`);
   }
-  return matches[0];
+  return matches[0]!;
 }
 
 describe('a live Lever application form', () => {
@@ -87,7 +87,7 @@ describe('a live Lever application form', () => {
     const uploads = fields.filter((field) => field.category === 'resume_upload');
 
     expect(uploads).toHaveLength(1);
-    expect(uploads[0].inputType).toBe('file');
+    expect(uploads[0]!.inputType).toBe('file');
   });
 
   it("classifies the posting's custom questions as questions, not as unknown fields", () => {
@@ -113,7 +113,7 @@ describe('a live Lever application form', () => {
     );
 
     expect(ageBand).toHaveLength(1);
-    expect(ageBand[0].options).toHaveLength(6);
+    expect(ageBand[0]!.options).toHaveLength(6);
   });
 
   it('writes values into the form and verifies the page kept them', async () => {

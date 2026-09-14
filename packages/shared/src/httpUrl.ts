@@ -29,10 +29,9 @@ export function isHttpUrl(value: string): boolean {
 /**
  * A URL a posting can actually be served over.
  *
- * `.url()` is kept in front of the refinement so a value that isn't a URL at all still reports
+ * `z.url()` is kept in front of the refinement so a value that isn't a URL at all still reports
  * zod's own message rather than the scheme one, which would be misleading for a typo.
  */
-export const HttpUrlSchema = z
-  .string()
+export const HttpUrlSchema: z.ZodURL = z
   .url()
-  .refine(isHttpUrl, { message: 'Must be an http(s) URL.' });
+  .refine(isHttpUrl, { error: 'Must be an http(s) URL.' });

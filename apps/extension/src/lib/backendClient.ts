@@ -77,9 +77,9 @@ import { HttpError, transport } from './callBackend';
 export interface AnswerChatTurn {
   profile: Profile;
   question: string;
-  jobInfo?: JobInfo | null;
+  jobInfo?: JobInfo | null | undefined;
   /** The draft being refined, when the thread was seeded from a question card. */
-  currentAnswer?: string;
+  currentAnswer?: string | undefined;
   /** The thread so far, empty on a cold ask, ending with the candidate's new message. */
   messages: ChatMessage[];
 }

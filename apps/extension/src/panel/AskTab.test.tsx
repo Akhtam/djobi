@@ -128,7 +128,7 @@ describe('AskTab — a cold ask', () => {
     });
     // The tab asks with no draft; dropping the key on the wire is `httpBackendClient`'s job, and
     // is asserted where that adapter is tested.
-    expect(chatCalls()[0].currentAnswer).toBeUndefined();
+    expect(chatCalls()[0]!.currentAnswer).toBeUndefined();
   });
 
   it('offers a copy button and no write-back, since there is no field to write to', async () => {
@@ -157,7 +157,7 @@ describe('AskTab — a cold ask', () => {
     type('Make it shorter.');
 
     await waitFor(() => expect(screen.getByText('Shorter now.')).toBeTruthy());
-    expect(chatCalls()[1].messages).toEqual([
+    expect(chatCalls()[1]!.messages).toEqual([
       { role: 'assistant', content: 'Here is a draft.' },
       { role: 'user', content: 'Make it shorter.' },
     ]);
@@ -280,7 +280,7 @@ describe('AskTab — a cold ask', () => {
 
     const copyButtons = screen.getAllByRole('button', { name: /Copy answer|Copied/ });
     expect(copyButtons).toHaveLength(2);
-    fireEvent.click(copyButtons[0]);
+    fireEvent.click(copyButtons[0]!);
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(1));
     expect(screen.getAllByRole('button', { name: 'Copy answer' })).toHaveLength(1);
@@ -416,7 +416,7 @@ describe('AskTab — failures', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     await waitFor(() => expect(screen.getByText('Second time lucky.')).toBeTruthy());
-    expect(chatCalls()[1].messages).toEqual([{ role: 'user', content: 'Shorter.' }]);
+    expect(chatCalls()[1]!.messages).toEqual([{ role: 'user', content: 'Shorter.' }]);
     expect(screen.getAllByText('Shorter.')).toHaveLength(1);
   });
 

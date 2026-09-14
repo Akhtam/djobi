@@ -63,7 +63,7 @@ function find(fields: DetectedField[], needle: string): DetectedField {
   if (matches.length !== 1) {
     throw new Error(`${matches.length} fields' labels contain ${JSON.stringify(needle)}, wanted 1`);
   }
-  return matches[0];
+  return matches[0]!;
 }
 
 /** Every URL the oracle asked for during the current test. */

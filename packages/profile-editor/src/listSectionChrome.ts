@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 export type ListSectionRenderer = (props: {
   id: string;
   legend: string;
-  hint?: string;
+  hint?: string | undefined;
   /** `items.length` — the extension shows it; the dashboard's own renderer ignores it. */
   itemCount: number;
   children: ReactNode;

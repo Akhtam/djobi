@@ -50,11 +50,11 @@ describe('useAskThread', () => {
     act(() => result.current.ask('Make it shorter.'));
     await waitFor(() => expect(result.current.turns).toHaveLength(4));
 
-    expect(answerChat.mock.calls[1][0].messages).toEqual([
+    expect(answerChat.mock.calls[1]![0]!.messages).toEqual([
       { role: 'assistant', content: 'Here is a draft.' },
       { role: 'user', content: 'Make it shorter.' },
     ]);
-    expect(answerChat.mock.calls[1][0].messages).not.toEqual(
+    expect(answerChat.mock.calls[1]![0]!.messages).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: expect.anything() })]),
     );
   });
@@ -73,7 +73,7 @@ describe('useAskThread', () => {
     act(() => result.current.ask('Make it shorter.'));
     await waitFor(() => expect(answerChat).toHaveBeenCalledOnce());
 
-    expect(answerChat.mock.calls[0][0]).toMatchObject({
+    expect(answerChat.mock.calls[0]![0]!).toMatchObject({
       question: seed.question,
       currentAnswer: seed.currentAnswer,
       jobInfo,
@@ -132,7 +132,7 @@ describe('useAskThread', () => {
     act(() => result.current.retry());
     await waitFor(() => expect(result.current.turns).toHaveLength(2));
 
-    expect(answerChat.mock.calls[1][0].messages).toEqual([
+    expect(answerChat.mock.calls[1]![0]!.messages).toEqual([
       { role: 'user', content: 'Make it shorter.' },
     ]);
     expect(result.current.error).toBeNull();

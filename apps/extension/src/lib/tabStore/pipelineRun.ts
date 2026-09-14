@@ -96,7 +96,7 @@ export async function applyPanelEdit(
   tabId: number,
   runId: string,
   edits: Pick<PipelineRunState, 'answers' | 'jobDescription'> & {
-    tailoredResume?: TailoredResume;
+    tailoredResume?: TailoredResume | undefined;
   },
 ): Promise<{ applied: boolean; run: PipelineRunState | null }> {
   return withTabLock(tabId, async () => {
@@ -107,7 +107,13 @@ export async function applyPanelEdit(
     }
 
     const before = panelEditsOf(run);
-    const after = { ...before, ...edits };
+    // An absent `tailoredResume` leaves the stored one untouched; an explicit `undefined` means the same.
+    const { tailoredResume, ...rest } = edits;
+    const after = {
+      ...before,
+      ...rest,
+      ...(tailoredResume !== undefined ? { tailoredResume } : {}),
+    };
     const changed = JSON.stringify(after) !== JSON.stringify(before);
 
     const updated: PipelineRunState = {

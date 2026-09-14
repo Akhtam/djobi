@@ -5,7 +5,7 @@ import { openrouter } from './client.js';
 import { routeFor, type LlmOperation } from './routing.js';
 
 /** Options for {@link callStructured}. */
-export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
+export interface StructuredToolCallOptions<Schema extends z.ZodType> {
   /** The application operation whose route policy this call uses. */
   operation: LlmOperation;
   /** Request-derived override for the operation's default output limit. */
@@ -73,7 +73,7 @@ export interface StructuredToolCallOptions<Schema extends z.ZodTypeAny> {
    * read. Passing the signal down is what turns "the client stopped listening" into "the model
    * stopped writing".
    */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
 }
 
 /** Backend-local classification used to decide whether this exact model call may be retried. */
@@ -88,16 +88,27 @@ export type StructuredCallFailure = 'no-tool-call' | 'invalid-input';
  * `{ error }` HTTP response after the local decision has been made.
  */
 export class StructuredCallError extends Error {
+  readonly kind: StructuredCallFailure;
+  readonly toolName: string;
+  readonly requestId?: string | undefined;
+  readonly retryable: boolean;
+  readonly stopReason?: string | null | undefined;
+
   constructor(
-    readonly kind: StructuredCallFailure,
-    readonly toolName: string,
+    kind: StructuredCallFailure,
+    toolName: string,
     message: string,
-    readonly requestId?: string,
-    readonly retryable = false,
-    readonly stopReason?: string | null,
+    requestId?: string,
+    retryable = false,
+    stopReason?: string | null,
   ) {
     super(message);
     this.name = 'StructuredCallError';
+    this.kind = kind;
+    this.toolName = toolName;
+    this.requestId = requestId;
+    this.retryable = retryable;
+    this.stopReason = stopReason;
   }
 }
 
@@ -143,7 +154,7 @@ function openRouterMetadata(metadata: unknown): OpenRouterCallMetadata {
  * @throws {StructuredCallError} If the model doesn't produce the object at all
  *   (`kind: 'no-tool-call'`), or produces one that fails validation (`kind: 'invalid-input'`).
  */
-export async function callStructured<Schema extends z.ZodTypeAny>(
+export async function callStructured<Schema extends z.ZodType>(
   options: StructuredToolCallOptions<Schema>,
 ): Promise<z.infer<Schema>> {
   const route = routeFor(options.operation);
@@ -169,15 +180,17 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
   const logCall = (fields: {
     attempt: 1 | 2;
     startedAt: number;
-    usage?: {
-      inputTokens?: number;
-      outputTokens?: number;
-      inputTokenDetails?: { cacheReadTokens?: number };
-      outputTokenDetails?: { reasoningTokens?: number };
-    };
-    finishReason?: string;
+    usage?:
+      | {
+          inputTokens?: number | undefined;
+          outputTokens?: number | undefined;
+          inputTokenDetails?: { cacheReadTokens?: number | undefined } | undefined;
+          outputTokenDetails?: { reasoningTokens?: number | undefined } | undefined;
+        }
+      | undefined;
+    finishReason?: string | undefined;
     providerMetadata?: unknown;
-    requestId?: string;
+    requestId?: string | undefined;
   }): void => {
     const { provider, usage: openRouterUsage } = openRouterMetadata(fields.providerMetadata);
     // Output tokens are what a structured call spends its wall clock on, so a slow call is a long
@@ -216,7 +229,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
         schemaDescription: options.toolDescription,
         maxOutputTokens: maxTokens,
         messages,
-        abortSignal: options.signal,
+        ...(options.signal ? { abortSignal: options.signal } : {}),
         // The SDK otherwise retries selected transport/status failures itself. Keep the total
         // request budget explicit here: one normal attempt, plus one semantic retry.
         maxRetries: 0,
@@ -257,7 +270,10 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
         requestId: result.response?.id,
       });
 
-      const unmet = options.requires?.(result.object);
+      // The AI SDK infers `result.object` through its own conditional schema type, which zod 4's
+      // generic output doesn't reduce to; the SDK has already validated it against `options.schema`.
+      const object = result.object as z.infer<Schema>;
+      const unmet = options.requires?.(object);
       if (unmet) {
         throw new StructuredCallError(
           'no-tool-call',
@@ -269,7 +285,7 @@ export async function callStructured<Schema extends z.ZodTypeAny>(
         );
       }
 
-      return result.object;
+      return object;
     } catch (error) {
       // Anything that isn't "the model didn't give us the object" is a provider or transport
       // failure — or an unmet `requires`, already classified above — and belongs to the caller

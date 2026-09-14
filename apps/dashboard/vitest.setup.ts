@@ -12,6 +12,7 @@ import { afterEach, vi } from 'vitest';
 class NoopIntersectionObserver implements IntersectionObserver {
   readonly root = null;
   readonly rootMargin = '';
+  readonly scrollMargin = '';
   readonly thresholds: ReadonlyArray<number> = [];
   observe() {}
   unobserve() {}

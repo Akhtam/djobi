@@ -116,12 +116,14 @@ export function profileListEditors(
   const credentialsEditor: ListEditor<CredentialItem> = {
     update: (combinedIndex, patch) => {
       const item = items[combinedIndex];
+      if (!item) return;
       if (item.kind === 'certification')
         certifications.update(item.index, patch as Partial<Certification>);
       else awards.update(item.index, patch as Partial<Award>);
     },
     remove: (combinedIndex) => {
       const item = items[combinedIndex];
+      if (!item) return;
       if (item.kind === 'certification') certifications.remove(item.index);
       else awards.remove(item.index);
     },

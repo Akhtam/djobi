@@ -19,7 +19,16 @@ type AssertSameLiterals<A extends string, B extends string> = [A] extends [B]
   : never;
 
 /** Resume content shared by a Profile work entry and its projected Tailored Resume entry. */
-export const ResumeWorkExperienceSchema = z.object({
+export const ResumeWorkExperienceSchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    title: z.ZodString;
+    startDate: z.ZodString;
+    endDate: z.ZodNullable<z.ZodString>;
+    bullets: z.ZodArray<z.ZodString>;
+  },
+  z.core.$strip
+> = z.object({
   company: z.string(),
   title: z.string(),
   startDate: z.string().describe('e.g. 2022-01'),
@@ -30,7 +39,19 @@ export const ResumeWorkExperienceSchema = z.object({
 });
 
 /** One job in a profile's work history, including its tailoring selection controls. */
-export const WorkExperienceSchema = ResumeWorkExperienceSchema.extend({
+export const WorkExperienceSchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    title: z.ZodString;
+    startDate: z.ZodString;
+    endDate: z.ZodNullable<z.ZodString>;
+    bullets: z.ZodArray<z.ZodString>;
+    maxBullets: z.ZodDefault<z.ZodNullable<z.ZodNumber>>;
+    starredIndices: z.ZodDefault<z.ZodArray<z.ZodNumber>>;
+    suppressIfEmpty: z.ZodDefault<z.ZodBoolean>;
+  },
+  z.core.$strip
+> = ResumeWorkExperienceSchema.extend({
   maxBullets: z
     .number()
     .int()
@@ -56,7 +77,7 @@ export const WorkExperienceSchema = ResumeWorkExperienceSchema.extend({
 
   if (!allResolve || unique.size !== starredIndices.length) {
     context.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['starredIndices'],
       message: 'Starred bullet indices must be unique and resolve against bullets',
     });
@@ -66,7 +87,15 @@ export const WorkExperienceSchema = ResumeWorkExperienceSchema.extend({
 export type WorkExperience = z.infer<typeof WorkExperienceSchema>;
 
 /** One degree in a profile's education history. */
-export const EducationSchema = z.object({
+export const EducationSchema: z.ZodObject<
+  {
+    school: z.ZodString;
+    degree: z.ZodString;
+    field: z.ZodNullable<z.ZodString>;
+    graduationYear: z.ZodNullable<z.ZodString>;
+  },
+  z.core.$strip
+> = z.object({
   school: z.string(),
   degree: z.string(),
   field: z.string().nullable(),
@@ -80,7 +109,18 @@ export type Education = z.infer<typeof EducationSchema>;
  * Drawn on by `answerQuestions` when drafting freeform application answers — `tags` are matched
  * against the question text to pick the most relevant 1-3 stories per question.
  */
-export const StorySchema = z.object({
+export const StorySchema: z.ZodObject<
+  {
+    id: z.ZodString;
+    title: z.ZodString;
+    tags: z.ZodArray<z.ZodString>;
+    situation: z.ZodString;
+    task: z.ZodString;
+    action: z.ZodString;
+    result: z.ZodString;
+  },
+  z.core.$strip
+> = z.object({
   id: z
     .string()
     .describe('Stable id, e.g. a slug, so answers can reference which story they drew on'),
@@ -105,7 +145,16 @@ export type Story = z.infer<typeof StorySchema>;
  * home on a `workExperience` entry. `bullets` mirrors `workExperience`'s shape rather than folding
  * into `description`, so a project reads the same as a role: one line of context, then detail bullets.
  */
-export const ProjectSchema = z.object({
+export const ProjectSchema: z.ZodObject<
+  {
+    name: z.ZodString;
+    description: z.ZodString;
+    bullets: z.ZodArray<z.ZodString>;
+    link: z.ZodNullable<z.ZodString>;
+    technologies: z.ZodNullable<z.ZodArray<z.ZodString>>;
+  },
+  z.core.$strip
+> = z.object({
   name: z.string(),
   description: z.string(),
   bullets: z
@@ -118,7 +167,10 @@ export const ProjectSchema = z.object({
 export type Project = z.infer<typeof ProjectSchema>;
 
 /** One professional certification. `date` is whatever date the resume names for it — issued or expiring. */
-export const CertificationSchema = z.object({
+export const CertificationSchema: z.ZodObject<
+  { name: z.ZodString; issuer: z.ZodString; date: z.ZodString },
+  z.core.$strip
+> = z.object({
   name: z.string(),
   issuer: z.string(),
   date: z.string(),
@@ -131,7 +183,15 @@ export type Certification = z.infer<typeof CertificationSchema>;
  * list, since resumes often bullet the two under one heading but they carry different fields: an
  * award routinely explains itself with a `description`, a certification has no honest use for one.
  */
-export const AwardSchema = z.object({
+export const AwardSchema: z.ZodObject<
+  {
+    name: z.ZodString;
+    issuer: z.ZodString;
+    date: z.ZodString;
+    description: z.ZodOptional<z.ZodString>;
+  },
+  z.core.$strip
+> = z.object({
   name: z.string(),
   issuer: z.string(),
   date: z.string(),
@@ -145,7 +205,36 @@ export type Award = z.infer<typeof AwardSchema>;
  * stories. Stored whole as the `profiles.data` jsonb column; each operation receives only the
  * projection it uses, and tailoring/answering treat those projected facts as ground truth.
  */
-export const ProfileSchema = z.object({
+export const ProfileSchema: z.ZodObject<
+  {
+    fullName: z.ZodString;
+    email: z.ZodString;
+    phone: z.ZodNullable<z.ZodString>;
+    location: z.ZodNullable<z.ZodString>;
+    links: z.ZodObject<
+      {
+        linkedin: z.ZodNullable<z.ZodString>;
+        portfolio: z.ZodNullable<z.ZodString>;
+        github: z.ZodNullable<z.ZodString>;
+      },
+      z.core.$strip
+    >;
+    summary: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+    workExperience: z.ZodArray<typeof WorkExperienceSchema>;
+    maxBulletsPerRole: z.ZodDefault<z.ZodNumber>;
+    resumePageSize: z.ZodDefault<z.ZodEnum<{ A4: 'A4'; LETTER: 'LETTER' }>>;
+    showRolePrefix: z.ZodDefault<z.ZodBoolean>;
+    education: z.ZodArray<typeof EducationSchema>;
+    projects: z.ZodDefault<z.ZodArray<typeof ProjectSchema>>;
+    certifications: z.ZodDefault<z.ZodArray<typeof CertificationSchema>>;
+    awards: z.ZodDefault<z.ZodArray<typeof AwardSchema>>;
+    skills: z.ZodArray<z.ZodString>;
+    stories: z.ZodArray<typeof StorySchema>;
+    screeningAnswers: z.ZodDefault<typeof ScreeningAnswersSchema>;
+    customAnswers: z.ZodDefault<z.ZodArray<typeof CustomAnswerSchema>>;
+  },
+  z.core.$strip
+> = z.object({
   fullName: z.string(),
   email: z.string(),
   phone: z.string().nullable(),
@@ -282,7 +371,30 @@ export function parseProfile(value: unknown): Profile {
  * {@link ProfileSchema} itself, which requires `fullName`/`email` — this schema produces a draft the
  * candidate reviews before it can reach the schema that actually enforces those.
  */
-export const ExtractedProfileSchema = z.object({
+export const ExtractedProfileSchema: z.ZodObject<
+  {
+    fullName: z.ZodNullable<z.ZodString>;
+    email: z.ZodNullable<z.ZodString>;
+    phone: z.ZodNullable<z.ZodString>;
+    location: z.ZodNullable<z.ZodString>;
+    links: z.ZodObject<
+      {
+        linkedin: z.ZodNullable<z.ZodString>;
+        portfolio: z.ZodNullable<z.ZodString>;
+        github: z.ZodNullable<z.ZodString>;
+      },
+      z.core.$strip
+    >;
+    summary: z.ZodNullable<z.ZodString>;
+    workExperience: z.ZodArray<typeof ResumeWorkExperienceSchema>;
+    education: z.ZodArray<typeof EducationSchema>;
+    skills: z.ZodArray<z.ZodString>;
+    projects: z.ZodArray<typeof ProjectSchema>;
+    certifications: z.ZodArray<typeof CertificationSchema>;
+    awards: z.ZodArray<typeof AwardSchema>;
+  },
+  z.core.$strip
+> = z.object({
   fullName: z.string().nullable(),
   email: z.string().nullable(),
   phone: z.string().nullable(),
@@ -310,7 +422,11 @@ export type ExtractedProfile = z.infer<typeof ExtractedProfileSchema>;
  * `'unspecified'` rather than `'required'`, since stamping every old row `'required'` would fabricate
  * a fact the posting never stated (see {@link JobInfoSchema}).
  */
-export const RequirementKindSchema = z.enum(['required', 'preferred', 'unspecified']);
+export const RequirementKindSchema: z.ZodEnum<{
+  preferred: 'preferred';
+  required: 'required';
+  unspecified: 'unspecified';
+}> = z.enum(['required', 'preferred', 'unspecified']);
 /** Inferred type of {@link RequirementKindSchema}. */
 export type RequirementKind = z.infer<typeof RequirementKindSchema>;
 
@@ -328,13 +444,13 @@ export type RequirementKind = z.infer<typeof RequirementKindSchema>;
  * boilerplate line and a screen-deciding must-have under the same heading, which is exactly the
  * distinction `kind` cannot make.
  */
-export const RequirementImportanceSchema = z.enum([
-  'critical',
-  'high',
-  'meaningful',
-  'preferred',
-  'low-signal',
-]);
+export const RequirementImportanceSchema: z.ZodEnum<{
+  critical: 'critical';
+  high: 'high';
+  'low-signal': 'low-signal';
+  meaningful: 'meaningful';
+  preferred: 'preferred';
+}> = z.enum(['critical', 'high', 'meaningful', 'preferred', 'low-signal']);
 /** Inferred type of {@link RequirementImportanceSchema}. */
 export type RequirementImportance = z.infer<typeof RequirementImportanceSchema>;
 
@@ -347,7 +463,8 @@ export type RequirementImportance = z.infer<typeof RequirementImportanceSchema>;
  * enum lands in this list automatically, at whatever position it was declared, which is why the
  * enum above is itself declared most-decisive-first.
  */
-export const IMPORTANCE_BANDS = RequirementImportanceSchema.options;
+export const IMPORTANCE_BANDS: ('critical' | 'high' | 'low-signal' | 'meaningful' | 'preferred')[] =
+  RequirementImportanceSchema.options;
 
 /**
  * Where a requirement's {@link RequirementImportanceSchema} band came from. The band alone is not
@@ -367,7 +484,11 @@ export const IMPORTANCE_BANDS = RequirementImportanceSchema.options;
  * for what the candidate's resume shows, which is a claim about the candidate rather than about the
  * posting. Two `evidence` vocabularies on one screen is a vocabulary nobody can hold.
  */
-export const ImportanceTierSchema = z.enum(['stated', 'structural', 'inferred']);
+export const ImportanceTierSchema: z.ZodEnum<{
+  inferred: 'inferred';
+  stated: 'stated';
+  structural: 'structural';
+}> = z.enum(['stated', 'structural', 'inferred']);
 /** Inferred type of {@link ImportanceTierSchema}. */
 export type ImportanceTier = z.infer<typeof ImportanceTierSchema>;
 
@@ -386,7 +507,17 @@ export type ImportanceTier = z.infer<typeof ImportanceTierSchema>;
  * `requirementImportance.ts` at extraction time, not by a refinement here. A refinement would make
  * an already-stored row fail to parse, turning a bad extraction into an unreadable application.
  */
-export const JobRequirementSchema = z.object({
+export const JobRequirementSchema: z.ZodObject<
+  {
+    text: z.ZodString;
+    kind: typeof RequirementKindSchema;
+    yearsOfExperience: z.ZodNullable<z.ZodNumber>;
+    importance: z.ZodDefault<z.ZodNullable<typeof RequirementImportanceSchema>>;
+    importanceTier: z.ZodDefault<z.ZodNullable<typeof ImportanceTierSchema>>;
+    postingSignal: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+  },
+  z.core.$strip
+> = z.object({
   text: z.string().describe("The requirement in the posting's own words"),
   kind: RequirementKindSchema,
   yearsOfExperience: z
@@ -418,7 +549,25 @@ export type JobRequirement = z.infer<typeof JobRequirementSchema>;
  * {@link JobInfoSchema} sees only the canonical object shape, the same way {@link parseProfile}
  * completes a Profile saved before a field existed.
  */
-export const JobRequirementInputSchema = z.union([
+export const JobRequirementInputSchema: z.ZodUnion<
+  readonly [
+    z.ZodPipe<
+      z.ZodString,
+      z.ZodTransform<
+        {
+          text: string;
+          kind: 'preferred' | 'required' | 'unspecified';
+          yearsOfExperience: number | null;
+          importance: 'critical' | 'high' | 'low-signal' | 'meaningful' | 'preferred' | null;
+          importanceTier: 'inferred' | 'stated' | 'structural' | null;
+          postingSignal: string | null;
+        },
+        string
+      >
+    >,
+    typeof JobRequirementSchema,
+  ]
+> = z.union([
   z.string().transform((text): JobRequirement => ({
     text,
     kind: 'unspecified',
@@ -439,7 +588,13 @@ export const JobRequirementInputSchema = z.union([
  * for the *function's* return shape, which this schema is written to match structurally rather than
  * be derived from, to avoid a runtime import cycle (that module imports `JobRequirement` from here).
  */
-export const RequirementEvidenceVerdictSchema = z.enum([
+export const RequirementEvidenceVerdictSchema: z.ZodEnum<{
+  'direct-evidence': 'direct-evidence';
+  'needs-confirmation': 'needs-confirmation';
+  'omitted-profile-evidence': 'omitted-profile-evidence';
+  'skill-only': 'skill-only';
+  unsupported: 'unsupported';
+}> = z.enum([
   'direct-evidence',
   'skill-only',
   'omitted-profile-evidence',
@@ -459,7 +614,14 @@ type _RequirementEvidenceVerdictsMatch = AssertSameLiterals<
 const _requirementEvidenceVerdictsMatch: _RequirementEvidenceVerdictsMatch = true;
 void _requirementEvidenceVerdictsMatch;
 
-export const RequirementEvidenceSchema = z.object({
+export const RequirementEvidenceSchema: z.ZodObject<
+  {
+    requirement: typeof JobRequirementSchema;
+    verdict: typeof RequirementEvidenceVerdictSchema;
+    evidence: z.ZodNullable<z.ZodString>;
+  },
+  z.core.$strip
+> = z.object({
   requirement: JobRequirementSchema,
   verdict: RequirementEvidenceVerdictSchema,
   evidence: z.string().nullable(),
@@ -472,14 +634,14 @@ export type RequirementEvidenceEntry = z.infer<typeof RequirementEvidenceSchema>
  * `keywordCoverage`'s literal match cannot conclude a Profile lacks "leadership" because it says
  * "mentored" instead, and a wrong `missing` verdict is worse than an unscored row.
  */
-export const KeywordCategorySchema = z.enum([
-  'language',
-  'framework',
-  'tool',
-  'platform',
-  'domain',
-  'soft-skill',
-]);
+export const KeywordCategorySchema: z.ZodEnum<{
+  domain: 'domain';
+  framework: 'framework';
+  language: 'language';
+  platform: 'platform';
+  'soft-skill': 'soft-skill';
+  tool: 'tool';
+}> = z.enum(['language', 'framework', 'tool', 'platform', 'domain', 'soft-skill']);
 /** Inferred type of {@link KeywordCategorySchema}. */
 export type KeywordCategory = z.infer<typeof KeywordCategorySchema>;
 
@@ -495,7 +657,14 @@ export type KeywordCategory = z.infer<typeof KeywordCategorySchema>;
  * `term`, so a Profile that itself says "K8s" is not reported missing merely because the posting's
  * canonical echo and the Profile's own wording differ.
  */
-export const JobKeywordSchema = z.object({
+export const JobKeywordSchema: z.ZodObject<
+  {
+    term: z.ZodString;
+    category: z.ZodNullable<typeof KeywordCategorySchema>;
+    postingSpelling: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+  },
+  z.core.$strip
+> = z.object({
   term: z.string().describe('Canonical, expanded, industry-standard name, e.g. Kubernetes not K8s'),
   category: KeywordCategorySchema.nullable(),
   postingSpelling: z
@@ -514,7 +683,22 @@ export type JobKeyword = z.infer<typeof JobKeywordSchema>;
  * lifts to `category: null, postingSpelling: null` on read, the same tolerant-read reasoning as
  * {@link JobRequirementInputSchema}.
  */
-export const JobKeywordInputSchema = z.union([
+export const JobKeywordInputSchema: z.ZodUnion<
+  readonly [
+    z.ZodPipe<
+      z.ZodString,
+      z.ZodTransform<
+        {
+          term: string;
+          category: 'domain' | 'framework' | 'language' | 'platform' | 'soft-skill' | 'tool' | null;
+          postingSpelling: string | null;
+        },
+        string
+      >
+    >,
+    typeof JobKeywordSchema,
+  ]
+> = z.union([
   z.string().transform((term): JobKeyword => ({ term, category: null, postingSpelling: null })),
   JobKeywordSchema,
 ]);
@@ -523,7 +707,18 @@ export const JobKeywordInputSchema = z.union([
  * Structured job-posting information extracted by `extractJob` from the candidate-reviewed Job
  * Description (see `apps/backend/src/llm/extractJob.ts`).
  */
-export const JobInfoSchema = z.object({
+export const JobInfoSchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    team: z.ZodNullable<z.ZodString>;
+    roleTitle: z.ZodString;
+    seniority: z.ZodNullable<z.ZodString>;
+    location: z.ZodNullable<z.ZodString>;
+    requirements: z.ZodArray<typeof JobRequirementInputSchema>;
+    keywords: z.ZodArray<typeof JobKeywordInputSchema>;
+  },
+  z.core.$strip
+> = z.object({
   company: z.string(),
   team: z.string().nullable().describe('Team or department, if mentioned'),
   roleTitle: z.string(),
@@ -544,7 +739,13 @@ export type JobInfo = z.infer<typeof JobInfoSchema>;
  * (see `apps/backend/src/llm/tailorResume.ts`). Deliberately a subset of {@link ProfileSchema} —
  * no `education`/`links`, since those don't need per-job tailoring.
  */
-export const TailoredResumeSchema = z.object({
+export const TailoredResumeSchema: z.ZodObject<
+  {
+    skills: z.ZodArray<z.ZodString>;
+    workExperience: z.ZodArray<typeof ResumeWorkExperienceSchema>;
+  },
+  z.core.$strip
+> = z.object({
   skills: z
     .array(z.string())
     .describe("The base profile's complete skills list, unchanged and in profile order"),
@@ -595,7 +796,15 @@ export function baseResumeOf(profile: Pick<Profile, 'skills' | 'workExperience'>
  * One drafted answer to one detected `question` field, produced by `answerQuestions`
  * (see `apps/backend/src/llm/answerQuestions.ts`).
  */
-export const QuestionAnswerSchema = z.object({
+export const QuestionAnswerSchema: z.ZodObject<
+  {
+    fieldId: z.ZodString;
+    question: z.ZodString;
+    answer: z.ZodString;
+    sourceStoryIds: z.ZodDefault<z.ZodArray<z.ZodString>>;
+  },
+  z.core.$strip
+> = z.object({
   fieldId: z.string().describe('Matches DetectedField.id'),
   question: z.string(),
   answer: z.string(),
@@ -640,14 +849,14 @@ export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
  * What this shape can't record is *which* later stage a `rejected` row came from — the stage it
  * held is overwritten. If that matters, it needs a `rejectedFrom` column, not a third enum value.
  */
-export const ApplicationStageSchema = z.enum([
-  'applied',
-  'rejected_ats',
-  'phone_screen',
-  'onsite',
-  'offer',
-  'rejected',
-]);
+export const ApplicationStageSchema: z.ZodEnum<{
+  applied: 'applied';
+  offer: 'offer';
+  onsite: 'onsite';
+  phone_screen: 'phone_screen';
+  rejected: 'rejected';
+  rejected_ats: 'rejected_ats';
+}> = z.enum(['applied', 'rejected_ats', 'phone_screen', 'onsite', 'offer', 'rejected']);
 /** Inferred type of {@link ApplicationStageSchema}. */
 export type ApplicationStage = z.infer<typeof ApplicationStageSchema>;
 
@@ -656,7 +865,11 @@ export type ApplicationStage = z.infer<typeof ApplicationStageSchema>;
  * that's the split that makes them reusable later — "what did this company ask me technically" is a
  * question you want to answer without re-reading every note on the application.
  */
-export const NoteCategorySchema = z.enum(['technical', 'behavioral', 'general']);
+export const NoteCategorySchema: z.ZodEnum<{
+  behavioral: 'behavioral';
+  general: 'general';
+  technical: 'technical';
+}> = z.enum(['technical', 'behavioral', 'general']);
 /** Inferred type of {@link NoteCategorySchema}. */
 export type NoteCategory = z.infer<typeof NoteCategorySchema>;
 
@@ -667,7 +880,15 @@ export type NoteCategory = z.infer<typeof NoteCategorySchema>;
  * `id` and `createdAt` are assigned by the server on append, never by the client: a note whose
  * timestamp the sender chose isn't trustworthy history.
  */
-export const NoteSchema = z.object({
+export const NoteSchema: z.ZodObject<
+  {
+    id: z.ZodString;
+    category: typeof NoteCategorySchema;
+    text: z.ZodString;
+    createdAt: z.ZodString;
+  },
+  z.core.$strip
+> = z.object({
   id: z.string(),
   category: NoteCategorySchema,
   text: z.string(),
@@ -680,7 +901,10 @@ export type Note = z.infer<typeof NoteSchema>;
  * Body shape for `POST /applications/:id/notes` — a {@link NoteSchema} minus the fields the server
  * assigns. Derived rather than hand-written so it can't drift from `NoteSchema`.
  */
-export const NewNoteSchema = NoteSchema.omit({ id: true, createdAt: true });
+export const NewNoteSchema: z.ZodObject<
+  { category: typeof NoteCategorySchema; text: z.ZodString },
+  z.core.$strip
+> = NoteSchema.omit({ id: true, createdAt: true });
 /** Inferred type of {@link NewNoteSchema}. */
 export type NewNote = z.infer<typeof NewNoteSchema>;
 
@@ -698,7 +922,8 @@ export type NewNote = z.infer<typeof NewNoteSchema>;
  * Defaults to `'autofill'` at every write boundary, so the extension's existing save path (which
  * posts no `source`) keeps working unchanged.
  */
-export const ApplicationSourceSchema = z.enum(['autofill', 'manual']);
+export const ApplicationSourceSchema: z.ZodEnum<{ autofill: 'autofill'; manual: 'manual' }> =
+  z.enum(['autofill', 'manual']);
 /** Inferred type of {@link ApplicationSourceSchema}. */
 export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
 
@@ -713,7 +938,11 @@ export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
 export const EXTRACTION_VERSION = '2026-09-10';
 
 /** {@link BulletProvenanceEntry}'s verdict — mirrors `bulletProvenance.ts`'s own type, see the note on {@link RequirementEvidenceVerdictSchema}. */
-export const BulletProvenanceVerdictSchema = z.enum(['verbatim', 'reworded', 'unmatched']);
+export const BulletProvenanceVerdictSchema: z.ZodEnum<{
+  reworded: 'reworded';
+  unmatched: 'unmatched';
+  verbatim: 'verbatim';
+}> = z.enum(['verbatim', 'reworded', 'unmatched']);
 // If the enum above and `bulletProvenance.ts`'s own union ever drift, this line fails to
 // typecheck instead of the schema silently accepting or rejecting values the function can return.
 type _BulletProvenanceVerdictsMatch = AssertSameLiterals<
@@ -728,7 +957,16 @@ void _bulletProvenanceVerdictsMatch;
  * `bulletProvenance.ts`'s per-bullet result, computed once at save time so the audit trail reflects
  * exactly what was saved rather than being re-derivable only while the Profile still matches.
  */
-export const BulletProvenanceEntrySchema = z.object({
+export const BulletProvenanceEntrySchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    title: z.ZodString;
+    bullet: z.ZodString;
+    verdict: typeof BulletProvenanceVerdictSchema;
+    source: z.ZodNullable<z.ZodString>;
+  },
+  z.core.$strip
+> = z.object({
   company: z.string(),
   title: z.string(),
   bullet: z.string(),
@@ -746,7 +984,26 @@ export const BulletProvenanceEntrySchema = z.object({
  * and logged afterwards — see {@link ApplicationSourceSchema}. The two are the same record; only
  * `source` and the provenance of `tailoredResume` differ.
  */
-export const ApplicationSchema = z.object({
+export const ApplicationSchema: z.ZodObject<
+  {
+    id: z.ZodString;
+    company: z.ZodString;
+    roleTitle: z.ZodString;
+    jobUrl: z.ZodString;
+    jobInfo: typeof JobInfoSchema;
+    tailoredResume: typeof TailoredResumeSchema;
+    answers: z.ZodArray<typeof QuestionAnswerSchema>;
+    source: z.ZodEnum<{ autofill: 'autofill'; manual: 'manual' }>;
+    stage: typeof ApplicationStageSchema;
+    notes: z.ZodArray<typeof NoteSchema>;
+    rawDescription: z.ZodNullable<z.ZodString>;
+    extractionVersion: z.ZodNullable<z.ZodString>;
+    requirementEvidence: z.ZodNullable<z.ZodArray<typeof RequirementEvidenceSchema>>;
+    bulletProvenance: z.ZodNullable<z.ZodArray<typeof BulletProvenanceEntrySchema>>;
+    createdAt: z.ZodString;
+  },
+  z.core.$strip
+> = z.object({
   id: z.string(),
   company: z.string(),
   roleTitle: z.string(),
@@ -788,7 +1045,24 @@ export type Application = z.infer<typeof ApplicationSchema>;
  * `stage` and `notes` default, and must keep doing so: the extension posts a body with neither
  * (`background/applicationPipeline.ts`), so making either required 400s every fill.
  */
-export const NewApplicationSchema = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
+export const NewApplicationSchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    roleTitle: z.ZodString;
+    jobInfo: typeof JobInfoSchema;
+    tailoredResume: typeof TailoredResumeSchema;
+    answers: z.ZodArray<typeof QuestionAnswerSchema>;
+    jobUrl: z.ZodURL;
+    source: z.ZodDefault<z.ZodEnum<{ autofill: 'autofill'; manual: 'manual' }>>;
+    stage: z.ZodDefault<typeof ApplicationStageSchema>;
+    notes: z.ZodDefault<z.ZodArray<typeof NoteSchema>>;
+    rawDescription: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+    extractionVersion: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+    requirementEvidence: z.ZodDefault<z.ZodNullable<z.ZodArray<typeof RequirementEvidenceSchema>>>;
+    bulletProvenance: z.ZodDefault<z.ZodNullable<z.ZodArray<typeof BulletProvenanceEntrySchema>>>;
+  },
+  z.core.$strip
+> = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
   // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
   //
   // `HttpUrlSchema`, not `z.string().url()`: zod's `.url()` is `new URL(value)` in a try/catch, so
@@ -828,7 +1102,21 @@ export type NewApplicationRequest = z.input<typeof NewApplicationSchema>;
  * about the snapshot being written over it. Leaving it in would let a re-save relabel a manual entry
  * as an autofill.
  */
-export const ApplicationSnapshotSchema = NewApplicationSchema.omit({
+export const ApplicationSnapshotSchema: z.ZodObject<
+  {
+    company: z.ZodString;
+    roleTitle: z.ZodString;
+    jobInfo: typeof JobInfoSchema;
+    tailoredResume: typeof TailoredResumeSchema;
+    answers: z.ZodArray<typeof QuestionAnswerSchema>;
+    jobUrl: z.ZodURL;
+    rawDescription: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+    extractionVersion: z.ZodDefault<z.ZodNullable<z.ZodString>>;
+    requirementEvidence: z.ZodDefault<z.ZodNullable<z.ZodArray<typeof RequirementEvidenceSchema>>>;
+    bulletProvenance: z.ZodDefault<z.ZodNullable<z.ZodArray<typeof BulletProvenanceEntrySchema>>>;
+  },
+  z.core.$strict
+> = NewApplicationSchema.omit({
   source: true,
   stage: true,
   notes: true,

@@ -35,10 +35,7 @@ export class RequestValidationError extends Error {
  * branch would otherwise run on unvalidated data, and the whole reason this exists is that the
  * un-branched path — the `throw` out of `c.req.json()` — was the one nobody handled.
  */
-export async function parseBody<T extends z.ZodTypeAny>(
-  c: Context,
-  schema: T,
-): Promise<z.infer<T>> {
+export async function parseBody<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T>> {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -66,11 +63,13 @@ export async function parseBody<T extends z.ZodTypeAny>(
  * app's `{ error }` convention for the exact same fault. Reusing `parseBody` keeps one behavior
  * (and one `RequestValidationError` message) for "the body wasn't JSON", however it's reached.
  */
-export function jsonBody<T extends z.ZodTypeAny, E extends Env = Env>(
+export function jsonBody<T extends z.ZodType, E extends Env = Env>(
   schema: T,
 ): MiddlewareHandler<E, string, { in: { json: z.input<T> }; out: { json: z.infer<T> } }> {
   return async (c, next) => {
-    c.req.addValidatedData('json', await parseBody(c, schema));
+    // zod 4 leaves a generic schema's output unconstrained (it could be `undefined`), which Hono's
+    // `addValidatedData` refuses; every schema routed through here describes an object.
+    c.req.addValidatedData('json', (await parseBody(c, schema)) as object);
     await next();
   };
 }
@@ -86,7 +85,7 @@ export function jsonBody<T extends z.ZodTypeAny, E extends Env = Env>(
  * `c.req.query(key)` calls already read, so wiring a route through this changes nothing about which
  * values reach the schema.
  */
-export function queryParams<T extends z.ZodTypeAny, E extends Env = Env>(
+export function queryParams<T extends z.ZodType, E extends Env = Env>(
   schema: T,
 ): MiddlewareHandler<E, string, { in: { query: z.input<T> }; out: { query: z.infer<T> } }> {
   return async (c, next) => {
@@ -94,7 +93,7 @@ export function queryParams<T extends z.ZodTypeAny, E extends Env = Env>(
     if (!parsed.success) {
       throw new RequestValidationError(parsed.error.message);
     }
-    c.req.addValidatedData('query', parsed.data);
+    c.req.addValidatedData('query', parsed.data as object);
     await next();
   };
 }
@@ -108,7 +107,7 @@ export function queryParams<T extends z.ZodTypeAny, E extends Env = Env>(
  * rather than leaving it to be inferred from `c.req.param('id')` calls scattered through the
  * handler: the schema is what a route expects, read in one place instead of assumed at each call.
  */
-export function pathParams<T extends z.ZodTypeAny, E extends Env = Env>(
+export function pathParams<T extends z.ZodType, E extends Env = Env>(
   schema: T,
 ): MiddlewareHandler<E, string, { in: { param: z.input<T> }; out: { param: z.infer<T> } }> {
   return async (c, next) => {
@@ -116,7 +115,7 @@ export function pathParams<T extends z.ZodTypeAny, E extends Env = Env>(
     if (!parsed.success) {
       throw new RequestValidationError(parsed.error.message);
     }
-    c.req.addValidatedData('param', parsed.data);
+    c.req.addValidatedData('param', parsed.data as object);
     await next();
   };
 }

@@ -140,7 +140,7 @@ describe('application detail', () => {
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
     const [first] = screen.getAllByRole('button', { name: /^Delete note/ });
 
-    await user.click(first);
+    await user.click(first!);
     await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
 
     await waitFor(() =>
@@ -156,7 +156,7 @@ describe('application detail', () => {
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
     const [first] = screen.getAllByRole('button', { name: /^Delete note/ });
 
-    await user.click(first);
+    await user.click(first!);
     await user.click(screen.getByRole('button', { name: 'Keep it' }));
 
     expect(screen.getByText(/disagreed with a technical decision/)).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe('application detail', () => {
     await screen.findByRole('heading', { name: 'Brex · Infrastructure · Remote (US)' });
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
 
-    await user.click(screen.getAllByRole('button', { name: /^Delete note/ })[0]);
+    await user.click(screen.getAllByRole('button', { name: /^Delete note/ })[0]!);
 
     expect(screen.getAllByRole('button', { name: 'Yes, delete' })).toHaveLength(1);
   });

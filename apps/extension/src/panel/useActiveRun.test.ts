@@ -87,7 +87,7 @@ describe('useActiveRun.updateAnswer', () => {
 
     act(() => result.current.updateAnswer('a-run-from-another-posting', 'f-why', 'Wrong run.'));
 
-    expect(result.current.run?.answers[0].answer).toBe('Draft answer.');
+    expect(result.current.run?.answers[0]!.answer).toBe('Draft answer.');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -97,7 +97,7 @@ describe('useActiveRun.updateAnswer', () => {
 
     act(() => result.current.updateAnswer('run-1', 'f-why', 'Too late.'));
 
-    expect(result.current.run?.answers[0].answer).toBe('Draft answer.');
+    expect(result.current.run?.answers[0]!.answer).toBe('Draft answer.');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe('useActiveRun.updateAnswer', () => {
     act(() => result.current.updateAnswer('run-1', 'f-why', 'Edited after saving.'));
 
     await waitFor(() => expect(result.current.status).toBe('filled'));
-    expect((await getPipelineRun(1))?.answers[0].answer).toBe('Edited after saving.');
+    expect((await getPipelineRun(1))?.answers[0]!.answer).toBe('Edited after saving.');
   });
 
   it('leaves a run whose answers it does not recognize untouched', async () => {

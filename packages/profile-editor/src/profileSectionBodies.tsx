@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import type { Profile } from '@djobi/shared';
 import type { BulletListClassNames, FieldChrome } from './fieldChrome.js';
 import type { CredentialItem } from './listEditing.js';
@@ -31,7 +31,7 @@ export function ProfileSectionFields({
   chrome: FieldChrome;
   profile: Profile;
   onChange: (next: Profile) => void;
-}) {
+}): ReactElement {
   switch (section) {
     case 'contact':
       return <ContactFields chrome={chrome} profile={profile} onChange={onChange} />;
@@ -65,12 +65,12 @@ export function ProfileSectionEntry({
 }: {
   section: ProfileListSectionKey;
   chrome: FieldChrome;
-  bulletListClassNames?: BulletListClassNames;
+  bulletListClassNames?: BulletListClassNames | undefined;
   entry: Entry;
   index: number;
   editors: ProfileListEditors;
   maxBulletsPerRole: number;
-}) {
+}): ReactElement {
   switch (section) {
     case 'work':
       return (
@@ -154,7 +154,7 @@ export function profileListSectionEntry<K extends ProfileListSectionKey>(
      * rather than an empty `<div>` a bare omission would otherwise leave behind.
      */
     wrapperClassName?: string;
-    bulletListClassNames?: BulletListClassNames;
+    bulletListClassNames?: BulletListClassNames | undefined;
     maxBulletsPerRole: number;
   },
 ): (entry: Entry, index: number) => ReactNode {

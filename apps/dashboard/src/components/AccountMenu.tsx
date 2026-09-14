@@ -20,7 +20,7 @@ import type { DashboardClient } from '../lib/dashboardClient';
 /** The avatar's letter: the Profile's name, falling back to its email, first character, upper-cased. */
 function initialOf(source: string | null | undefined): string | null {
   const trimmed = source?.trim();
-  return trimmed ? trimmed[0].toUpperCase() : null;
+  return trimmed ? trimmed.charAt(0).toUpperCase() : null;
 }
 
 export function AccountMenu({

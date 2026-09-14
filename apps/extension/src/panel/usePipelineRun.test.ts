@@ -278,7 +278,11 @@ describe('usePipelineRun', () => {
     const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
       if (typedMessage.type === 'UPDATE_RUN') {
-        queued.push(typedMessage);
+        // Parsed JSON never carries an explicit `undefined`, so the optional fields are simply absent.
+        queued.push({
+          ...typedMessage,
+          updates: typedMessage.updates as Partial<PipelineRunState>,
+        });
         callback({ applied: true });
         return;
       }
@@ -294,7 +298,7 @@ describe('usePipelineRun', () => {
     act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
 
     await act(async () => {
-      await patchPipelineRun(1, queued[0].runId, queued[0].updates);
+      await patchPipelineRun(1, queued[0]!.runId, queued[0]!.updates);
     });
 
     expect(result.current.status).toBe('filling');
@@ -302,7 +306,7 @@ describe('usePipelineRun', () => {
     expect(result.current.run?.jobDescription).toBe('AB');
 
     await act(async () => {
-      await patchPipelineRun(1, queued[1].runId, queued[1].updates);
+      await patchPipelineRun(1, queued[1]!.runId, queued[1]!.updates);
     });
 
     expect(result.current.status).toBe('filling');
@@ -441,12 +445,12 @@ describe('usePipelineRun', () => {
 
     act(() =>
       result.current.edit({
-        answers: [{ ...run.answers[0], answer: 'Edited.' }],
+        answers: [{ ...run.answers[0]!, answer: 'Edited.' }],
         jobDescription: 'Senior Engineer at Acme...',
       }),
     );
 
-    expect(result.current.run?.answers[0].answer).toBe('Edited.');
+    expect(result.current.run?.answers[0]!.answer).toBe('Edited.');
   });
 
   it('discards an edit the store refuses and re-reads the actual run, rather than showing it forever', async () => {
@@ -470,7 +474,7 @@ describe('usePipelineRun', () => {
 
     act(() =>
       result.current.edit({
-        answers: [{ ...run.answers[0], answer: 'Edited.' }],
+        answers: [{ ...run.answers[0]!, answer: 'Edited.' }],
         jobDescription: 'edited',
       }),
     );
@@ -481,7 +485,7 @@ describe('usePipelineRun', () => {
     // Once the refusal lands, the local value reverts to what the store actually holds instead of
     // being preserved indefinitely by the "keep local edits over a stale echo" reconciliation.
     await waitFor(() => expect(result.current.run?.jobDescription).toBe(run.jobDescription));
-    expect(result.current.run?.answers[0].answer).toBe(run.answers[0].answer);
+    expect(result.current.run?.answers[0]!.answer).toBe(run.answers[0]!.answer);
 
     // The rejected send no longer sits in the pending queue, so it can't swallow a later,
     // successful edit's echo either — confirm the next edit still resolves normally.
@@ -573,7 +577,7 @@ describe('usePipelineRun', () => {
 
     act(() =>
       result.current.edit({
-        answers: [{ ...run.answers[0], answer: 'Edited.' }],
+        answers: [{ ...run.answers[0]!, answer: 'Edited.' }],
         jobDescription: 'pasted',
       }),
     );
@@ -619,7 +623,11 @@ describe('usePipelineRun', () => {
     const sendMessage = vi.fn((message, callback: (response?: unknown) => void) => {
       const typedMessage = TypedMessageEnvelopeSchema.parse(message).payload;
       if (typedMessage.type === 'UPDATE_RUN') {
-        queued.push(typedMessage);
+        // Parsed JSON never carries an explicit `undefined`, so the optional fields are simply absent.
+        queued.push({
+          ...typedMessage,
+          updates: typedMessage.updates as Partial<PipelineRunState>,
+        });
         callback({ applied: true });
         return;
       }
@@ -642,11 +650,11 @@ describe('usePipelineRun', () => {
     ]);
 
     await act(async () => {
-      await patchPipelineRun(1, queued[0].runId, queued[0].updates);
+      await patchPipelineRun(1, queued[0]!.runId, queued[0]!.updates);
     });
     expect(result.current.run?.jobDescription).toBe(run.jobDescription);
     await act(async () => {
-      await patchPipelineRun(1, queued[1].runId, queued[1].updates);
+      await patchPipelineRun(1, queued[1]!.runId, queued[1]!.updates);
     });
     expect((await getPipelineRun(1))?.jobDescription).toBe(run.jobDescription);
   });

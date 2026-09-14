@@ -14,7 +14,7 @@
  * Deliberately separate from the coordination protocol in `lib/messages.ts`: that module is
  * panel/content-script -> background; everything here is background -> content script.
  */
-import type { DetectedField, ZodTypeAny, ZodTypeOf } from '@djobi/shared';
+import type { DetectedField, ZodType, ZodTypeOf } from '@djobi/shared';
 import {
   FillFormResultSchema,
   JobPageDataSchema,
@@ -45,7 +45,7 @@ export interface FillPageCommand {
   runId: string;
   fields: DetectedField[];
   values: Record<string, string>;
-  resume?: { name: string; type: string; bytes: ArrayBuffer };
+  resume?: { name: string; type: string; bytes: ArrayBuffer } | undefined;
 }
 
 /** The tab-facing half of the Application Pipeline's outside world. */
@@ -75,21 +75,21 @@ type ResponseCommand =
 
 /** A content-script reply arrived but did not match the command's response contract. */
 export class PageResponseError extends Error {
-  constructor(
-    readonly command: ResponseCommand['type'],
-    detail?: string,
-  ) {
+  readonly command: ResponseCommand['type'];
+
+  constructor(command: ResponseCommand['type'], detail?: string) {
     super(`${command} returned an invalid response${detail ? `: ${detail}` : ''}`);
     this.name = 'PageResponseError';
+    this.command = command;
   }
 }
 
 type FrameResponse<Value> =
-  | { status: 'unreachable'; frameId?: number }
-  | { status: 'invalid'; frameId?: number; error: PageResponseError }
-  | { status: 'valid'; frameId?: number; value: Value };
+  | { status: 'unreachable'; frameId?: number | undefined }
+  | { status: 'invalid'; frameId?: number | undefined; error: PageResponseError }
+  | { status: 'valid'; frameId?: number | undefined; value: Value };
 
-function sendToPage<Schema extends ZodTypeAny>(
+function sendToPage<Schema extends ZodType>(
   tabId: number,
   message: ResponseCommand,
   schema: Schema,
@@ -138,7 +138,7 @@ function sendToPage<Schema extends ZodTypeAny>(
  * wrong answer wins deterministically. The two-argument form remains for the case where no frame
  * has reported yet and there is genuinely nobody to address.
  */
-function ask<Schema extends ZodTypeAny>(
+function ask<Schema extends ZodType>(
   tabId: number,
   message: FillFormCommandMessage | ScanPageCommandMessage,
   schema: Schema,

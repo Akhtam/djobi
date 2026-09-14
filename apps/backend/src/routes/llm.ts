@@ -44,7 +44,7 @@ export const llmRoutes = new Hono();
  * for as long as it is allowed to, whether or not anything is still listening. Passing the signal is
  * what stops an abandoned Analysis Step from finishing at full price.
  */
-function post<Schema extends z.ZodTypeAny>(
+function post<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   respond: (body: z.infer<Schema>, signal: AbortSignal) => Promise<unknown>,

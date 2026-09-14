@@ -316,10 +316,11 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
         // where the Note sat.
         rollback: (a, previous) => {
           const index = previous.notes.findIndex((note) => note.id === noteId);
-          if (index === -1 || a.notes.some((note) => note.id === noteId)) return a;
+          const removed = previous.notes[index];
+          if (!removed || a.notes.some((note) => note.id === noteId)) return a;
 
           const notes = [...a.notes];
-          notes.splice(index, 0, previous.notes[index]);
+          notes.splice(index, 0, removed);
           return { ...a, notes };
         },
       });
@@ -336,8 +337,8 @@ export function useApplicationStore(client: DashboardClient): ApplicationStore {
   const deleteApplication = useCallback(
     async (id: string): Promise<boolean> => {
       const index = applications.findIndex((a) => a.id === id);
-      if (index === -1) return false;
       const previous = applications[index];
+      if (!previous) return false;
 
       setWriteError(null);
       setApplications((current) => current.filter((a) => a.id !== id));

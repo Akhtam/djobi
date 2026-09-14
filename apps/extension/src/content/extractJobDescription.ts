@@ -328,20 +328,23 @@ function structuredCandidate(document: Document): ScrapedJobDescription | null {
   // entries, use a unique page-title match; if several remain indistinguishable, let the focused DOM
   // extractor decide rather than selecting a related/stale posting arbitrarily.
   const unknown = candidates.filter((candidate) => candidate.urlMatch === 'unknown');
-  if (unknown.length === 1) return scrapedCandidate(unknown[0]);
+  const [onlyUnknown] = unknown;
+  if (unknown.length === 1 && onlyUnknown) return scrapedCandidate(onlyUnknown);
   const pageTitle = `${document.querySelector('h1')?.textContent ?? ''} ${document.title}`
     .trim()
     .toLowerCase();
   const titleMatches = unknown.filter(
     (candidate) => candidate.title && pageTitle.includes(candidate.title.toLowerCase()),
   );
-  return titleMatches.length === 1 ? scrapedCandidate(titleMatches[0]) : null;
+  const [titleMatch] = titleMatches;
+  return titleMatches.length === 1 && titleMatch ? scrapedCandidate(titleMatch) : null;
 }
 
 function openRoots(document: Document): ParentNode[] {
   const roots: ParentNode[] = [document];
-  for (let index = 0; index < roots.length; index += 1) {
-    for (const element of roots[index].querySelectorAll('*')) {
+  // `for…of` reads `roots.length` live, so a shadow root pushed below is walked in turn.
+  for (const root of roots) {
+    for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot && !roots.includes(element.shadowRoot)) roots.push(element.shadowRoot);
     }
   }

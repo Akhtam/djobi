@@ -74,7 +74,12 @@ export function objectGeneration(object: unknown, overrides: Record<string, unkn
  * schema, `.providerOptions` for routing, `.maxOutputTokens` for the cap.
  */
 export function modelCall(index = 0) {
-  return mockDoGenerate.mock.calls[index][0];
+  const call = mockDoGenerate.mock.calls[index];
+  if (!call)
+    throw new Error(
+      `Expected model call #${index}, but only ${mockDoGenerate.mock.calls.length} were made.`,
+    );
+  return call[0];
 }
 
 /**

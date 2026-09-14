@@ -25,7 +25,7 @@ function fieldFor(fields: DetectedField[], needle: string): DetectedField {
   if (matches.length !== 1) {
     throw new Error(`${matches.length} fields' labels contain ${JSON.stringify(needle)}, wanted 1`);
   }
-  return matches[0];
+  return matches[0]!;
 }
 
 /** Scans `document` and resolves `answer` on the field named by `needle`, in one step. */

@@ -352,7 +352,10 @@ export function LandingPage() {
   function movePreview(direction: -1 | 1) {
     setPreviewSlide((current) => {
       const index = PREVIEW_SLIDES.indexOf(current);
-      return PREVIEW_SLIDES[(index + direction + PREVIEW_SLIDES.length) % PREVIEW_SLIDES.length];
+      return (
+        PREVIEW_SLIDES[(index + direction + PREVIEW_SLIDES.length) % PREVIEW_SLIDES.length] ??
+        current
+      );
     });
   }
 

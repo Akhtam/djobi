@@ -60,7 +60,7 @@ export function AutofillTab({
    * Injectable so panel tests do not need to reproduce Chrome's frame-enumeration API. Passed
    * straight through to `panel/useJobDescription.ts`, which owns the scrape and names the default.
    */
-  readPosting?: (tabId: number) => Promise<PostingReadOutcome>;
+  readPosting?: ((tabId: number) => Promise<PostingReadOutcome>) | undefined;
   /**
    * Whether another tab is showing.
    *

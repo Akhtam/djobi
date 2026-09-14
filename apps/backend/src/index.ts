@@ -37,8 +37,8 @@ configureOpenRouterKey(() => process.env.OPENROUTER_API_KEY);
 /**
  * The one place the Postgres adapters are named. Everything else — every route, every test — works
  * against `ApplicationStore` and `ProfileStore`, so this line is the whole of the app's coupling to
- * Neon. See `db/applicationStore.ts` for why the in-memory adapters are deliberately not reachable
- * from here by a flag.
+ * Postgres. See `db/applicationStore.ts` for why the in-memory adapters are deliberately not
+ * reachable from here by a flag.
  */
 const app = createApp({
   applicationStore: postgresApplicationStore,

@@ -83,7 +83,15 @@ export interface ManualLogPorts extends DuplicateLookup {
 /** One message a generic failed save reports, for the one path that never throws — see `save` port. */
 const SAVE_FAILED_MESSAGE = 'Something went wrong logging the application.';
 
-export function useManualLogFlow(ports: ManualLogPorts) {
+/** What {@link useManualLogFlow} hands its caller. */
+export interface ManualLogFlow {
+  state: ManualLogState;
+  extract: (jobUrl: string, jobDescription: string) => Promise<JobInfo | null>;
+  save: (profile: Profile, company: string, roleTitle: string) => Promise<void>;
+  backToForm: () => void;
+}
+
+export function useManualLogFlow(ports: ManualLogPorts): ManualLogFlow {
   const [state, setState] = useState<ManualLogState>({ kind: 'form' });
 
   /**

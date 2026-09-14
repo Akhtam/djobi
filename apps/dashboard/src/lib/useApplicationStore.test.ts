@@ -14,7 +14,7 @@ import type { DashboardClient } from './dashboardClient';
 import { fixtureApplications } from './fixtures';
 import { useApplicationStore } from './useApplicationStore';
 
-const [seed] = fixtureApplications;
+const seed = fixtureApplications[0]!;
 const application: Application = { ...structuredClone(seed), id: 'app-1', stage: 'applied' };
 
 const note: NewNote = { category: 'general', text: 'Recruiter call booked.' };
@@ -89,7 +89,7 @@ describe('useApplicationStore', () => {
 
     act(() => void store.current.updateStage('app-1', 'onsite'));
 
-    expect(store.current.applications[0].stage).toBe('onsite');
+    expect(store.current.applications[0]!.stage).toBe('onsite');
   });
 
   it('puts the Stage back when the write fails, and says why', async () => {
@@ -101,7 +101,7 @@ describe('useApplicationStore', () => {
       await store.current.updateStage('app-1', 'onsite');
     });
 
-    expect(store.current.applications[0].stage).toBe('applied');
+    expect(store.current.applications[0]!.stage).toBe('applied');
     expect(store.current.writeError).toBe('Backend unreachable');
   });
 
@@ -152,7 +152,7 @@ describe('useApplicationStore', () => {
       await first.promise;
     });
 
-    await waitFor(() => expect(store.current.applications[0].stage).toBe('onsite'));
+    await waitFor(() => expect(store.current.applications[0]!.stage).toBe('onsite'));
   });
 
   /** The same rule on the failure path: a stale rollback would undo the newer click. */
@@ -172,7 +172,7 @@ describe('useApplicationStore', () => {
       await first.promise.catch(() => undefined);
     });
 
-    expect(store.current.applications[0].stage).toBe('onsite');
+    expect(store.current.applications[0]!.stage).toBe('onsite');
   });
 
   it("appends a Note and replaces it with the server's record", async () => {
@@ -182,7 +182,7 @@ describe('useApplicationStore', () => {
       expect(await store.current.addNote('app-1', note)).toBe(true);
     });
 
-    const [{ notes }] = store.current.applications;
+    const { notes } = store.current.applications[0]!;
     expect(notes.at(-1)?.text).toBe('Recruiter call booked.');
     expect(notes.at(-1)?.id).not.toMatch(/^optimistic-/);
   });
@@ -221,7 +221,7 @@ describe('useApplicationStore', () => {
     });
 
     await waitFor(() => {
-      const [{ notes }] = store.current.applications;
+      const { notes } = store.current.applications[0]!;
       expect(notes.filter((n) => n.id.startsWith('optimistic-'))).toEqual([]);
       expect(notes.map((n) => n.text)).toContain('Second note.');
     });
@@ -230,14 +230,14 @@ describe('useApplicationStore', () => {
   it('removes a Note optimistically and keeps it gone once the write lands', async () => {
     const store = await loadedStore(client());
     await act(async () => void (await store.current.addNote('app-1', note)));
-    const [{ notes }] = store.current.applications;
+    const { notes } = store.current.applications[0]!;
     const target = notes.at(-1)!;
 
     await act(async () => {
       expect(await store.current.deleteNote('app-1', target.id)).toBe(true);
     });
 
-    expect(store.current.applications[0].notes).toEqual([]);
+    expect(store.current.applications[0]!.notes).toEqual([]);
   });
 
   it('puts a deleted Note back, in its own place, when the write fails', async () => {
@@ -251,15 +251,15 @@ describe('useApplicationStore', () => {
     await act(
       async () => void (await store.current.addNote('app-1', { ...note, text: 'Second note.' })),
     );
-    const [first, second] = store.current.applications[0].notes;
+    const [first, second] = store.current.applications[0]!.notes;
 
     await act(async () => {
-      expect(await store.current.deleteNote('app-1', first.id)).toBe(false);
+      expect(await store.current.deleteNote('app-1', first!.id)).toBe(false);
     });
 
-    expect(store.current.applications[0].notes.map((n) => n.text)).toEqual([
-      first.text,
-      second.text,
+    expect(store.current.applications[0]!.notes.map((n) => n.text)).toEqual([
+      first!.text,
+      second!.text,
     ]);
   });
 
@@ -270,11 +270,11 @@ describe('useApplicationStore', () => {
     const failing = deferred<{ id: string; noteId: string }>();
     const store = await loadedStore(client({ deleteNote: () => failing.promise }));
     await act(async () => void (await store.current.addNote('app-1', note)));
-    const doomed = store.current.applications[0].notes[0];
+    const doomed = store.current.applications[0]!.notes[0]!;
 
     let deleting!: Promise<boolean>;
     act(() => {
-      deleting = store.current.deleteNote('app-1', doomed.id);
+      deleting = store.current.deleteNote('app-1', doomed!.id);
     });
     await act(async () => void (await store.current.addNote('app-1', { ...note, text: 'Later.' })));
     await act(async () => {
@@ -282,7 +282,10 @@ describe('useApplicationStore', () => {
       await deleting;
     });
 
-    expect(store.current.applications[0].notes.map((n) => n.text)).toEqual([doomed.text, 'Later.']);
+    expect(store.current.applications[0]!.notes.map((n) => n.text)).toEqual([
+      doomed!.text,
+      'Later.',
+    ]);
   });
 
   it('removes an Application optimistically and keeps it gone once the write lands', async () => {
@@ -332,8 +335,8 @@ describe('useApplicationStore', () => {
     });
 
     const [record] = store.current.applications;
-    expect(record.stage).toBe('applied');
-    expect(record.notes.at(-1)?.text).toBe('Recruiter call booked.');
+    expect(record!.stage).toBe('applied');
+    expect(record!.notes.at(-1)?.text).toBe('Recruiter call booked.');
   });
 
   it('reports a failure to load without pretending there are no applications to write to', async () => {

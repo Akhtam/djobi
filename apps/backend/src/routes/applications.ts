@@ -63,9 +63,9 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
    * same condition the line above it already answers with a 404, arriving a few milliseconds later.
    *
    * The read-back is now the exception rather than the rule. The row comes back from the write's own
-   * `RETURNING` (see `Written`), so the default full-row response costs one Neon round trip instead
-   * of two — and the deleted-between-write-and-read race that the paragraph above is about cannot
-   * arise at all, because there is no window between the two.
+   * `RETURNING` (see `Written`), so the default full-row response costs one database round trip
+   * instead of two — and the deleted-between-write-and-read race that the paragraph above is about
+   * cannot arise at all, because there is no window between the two.
    *
    * `store.byId` stays as the fallback for the one case the write cannot answer: a stored row that
    * no longer parses as an `Application`. Reaching for it there is deliberate — it throws a Zod

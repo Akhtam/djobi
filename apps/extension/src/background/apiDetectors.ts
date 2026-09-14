@@ -24,9 +24,9 @@ import {
 /** What an ATS's schema says about one question, projected into a platform-independent shape. */
 interface QuestionPatch {
   /** Left undefined when the schema doesn't say, so the DOM's own determination stands. */
-  required?: boolean;
+  required?: boolean | undefined;
   /** Authoritative choice labels, if the schema lists any. */
-  optionLabels?: string[];
+  optionLabels?: string[] | undefined;
 }
 
 export interface AtsOracle {
@@ -178,7 +178,7 @@ function greenhousePosting(url: URL): { boardToken: string; postingId: string } 
   if (/(^|\.)greenhouse\.io$/.test(url.hostname)) {
     // Covers both `job-boards.greenhouse.io/{board}/jobs/{id}` and the legacy `boards.` host.
     const path = url.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
-    if (path) return { boardToken: path[1], postingId: path[2] };
+    if (path?.[1] && path[2]) return { boardToken: path[1], postingId: path[2] };
 
     // The `job_app`/`job_board` embed iframes, which name both outright as parameters.
     const boardToken = url.searchParams.get('for');

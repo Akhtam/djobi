@@ -56,7 +56,7 @@ export interface CredentialItem {
   name: string;
   issuer: string;
   date: string;
-  description?: string;
+  description?: string | undefined;
 }
 
 /** Certifications, then awards, each tagged with where it lives — see {@link CredentialItem}. */

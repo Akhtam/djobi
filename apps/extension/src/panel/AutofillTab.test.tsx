@@ -160,7 +160,7 @@ describe('AutofillTab', () => {
     expect(screen.getByText(/still using the posting djobi pulled earlier/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
-    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toMatchObject({
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0]![0]!).toMatchObject({
       tabUrl: overviewUrl,
       jobDescription: JOB_DESCRIPTION,
     });
@@ -273,7 +273,7 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Analyze' }));
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
-    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toEqual({
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0]![0]!).toEqual({
       type: 'START_ANALYSIS',
       tabId: 1,
       tabUrl: 'https://example.com',
@@ -305,7 +305,7 @@ describe('AutofillTab', () => {
     await clickAnalyze('Pasted job description text.');
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1));
-    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0][0]).toEqual(
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[0]![0]!).toEqual(
       expect.objectContaining({
         type: 'START_ANALYSIS',
         jobDescription: 'Pasted job description text.',
@@ -384,7 +384,7 @@ describe('AutofillTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
 
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
-    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1]![0]!).toMatchObject({
       jobDescription: 'Pasted job description text.',
     });
   });
@@ -481,7 +481,7 @@ describe('AutofillTab', () => {
 
     await screen.findByText('Senior Engineer at Acme');
     await vi.waitFor(() => expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(2));
-    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1][0]).toMatchObject({ force: true });
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')[1]![0]!).toMatchObject({ force: true });
   });
 
   it('says how many times a repeatedly-applied-to job was applied for', async () => {
@@ -613,7 +613,7 @@ describe('AutofillTab', () => {
     // Naming the run is what stops a command delivered after a re-analysis from filling a
     // different posting's form — see `background/runClaim.ts`.
     const filledRunId = (await getPipelineRun(1))!.runId;
-    expect(callsOfType(sendMessage, 'START_FILL')[0][0]).toEqual({
+    expect(callsOfType(sendMessage, 'START_FILL')[0]![0]!).toEqual({
       type: 'START_FILL',
       tabId: 1,
       profile,
@@ -633,7 +633,7 @@ describe('AutofillTab', () => {
     const savedConfirmation = await screen.findByText('Application saved.');
     expect(savedConfirmation.closest('[role="status"]')).toHaveClass('compact');
     expect(screen.queryByText(/Save the application when you're ready/)).not.toBeInTheDocument();
-    expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')[0][0]).toEqual({
+    expect(callsOfType(sendMessage, 'START_SAVE_APPLICATION')[0]![0]!).toEqual({
       type: 'START_SAVE_APPLICATION',
       tabId: 1,
       expectedRunId: filledRunId,
@@ -904,7 +904,7 @@ describe('AutofillTab', () => {
     });
     // Wait for the edit to reach the store, or reopening races the write it's meant to restore.
     await vi.waitFor(async () =>
-      expect((await getPipelineRun(1))?.answers[0].answer).toBe('Edited answer.'),
+      expect((await getPipelineRun(1))?.answers[0]!.answer).toBe('Edited answer.'),
     );
     first.unmount(); // simulates the panel closing
 
@@ -964,7 +964,7 @@ describe('AutofillTab', () => {
     // mounted panel's own writes.
     const run = await getPipelineRun(1);
     await patchPipelineRun(1, run!.runId, {
-      answers: [{ ...answers[0], answer: 'Updated from elsewhere.' }],
+      answers: [{ ...answers[0]!, answer: 'Updated from elsewhere.' }],
     });
 
     await screen.findByDisplayValue('Updated from elsewhere.');
@@ -1033,7 +1033,7 @@ describe('AutofillTab', () => {
     });
 
     await vi.waitFor(async () =>
-      expect((await getPipelineRun(1))?.tailoredResume?.workExperience[0].bullets).toEqual([
+      expect((await getPipelineRun(1))?.tailoredResume?.workExperience[0]!.bullets).toEqual([
         'Built the thing end to end',
       ]),
     );
@@ -1089,7 +1089,7 @@ describe('AutofillTab', () => {
       name: 'Re-analyze',
     });
     expect(editorReanalyze).toBeDisabled();
-    fireEvent.click(noticeReanalyze);
+    fireEvent.click(noticeReanalyze!);
 
     expect(screen.getByTitle('Tailored resume')).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(1);

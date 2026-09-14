@@ -136,7 +136,7 @@ function reconcileAnswers(
     if (candidates?.length !== 1) return [];
 
     const modelAnswer = candidates[0];
-    if (!modelAnswer.answer?.trim()) return [];
+    if (!modelAnswer?.answer?.trim()) return [];
     const answer = question.options
       ? matchOptionLabel(question.options, modelAnswer.answer)
       : modelAnswer.answer;
@@ -175,7 +175,8 @@ async function mapWithConcurrency<T, R>(
   const worker = async (): Promise<void> => {
     while (next < items.length) {
       const index = next++;
-      results[index] = await task(items[index]);
+      // `index < items.length` was just checked, so the element exists.
+      results[index] = await task(items[index]!);
     }
   };
 

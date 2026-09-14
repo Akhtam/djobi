@@ -46,7 +46,7 @@ const EVIDENCE_HELP: Record<RequirementEvidenceVerdict, string> = {
   unsupported: 'Nothing in your profile backs this up.',
 };
 
-const LEGACY_REQUIREMENT_HELP: Record<string, string> = {
+const LEGACY_REQUIREMENT_HELP: Record<'required' | 'preferred' | 'unspecified', string> = {
   required: 'The posting explicitly presents these requirements as required.',
   preferred: 'The posting presents these requirements as preferred or nice-to-have.',
   unspecified: "The posting doesn't say whether these are required or just preferred.",

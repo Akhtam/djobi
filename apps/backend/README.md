@@ -6,7 +6,8 @@ application questions, holding a chat about one of those answers, extracting a d
 uploaded resume PDF, rendering the resume PDF, authenticating both clients (Better Auth), and
 persisting users, profiles and applications. Runs on your machine (`127.0.0.1:5391`); the only
 required cloud dependency is the OpenRouter API. Postgres can be local (Docker or a native install)
-or cloud (Neon) — see "Connect to Postgres over the plain wire protocol"
+or a serverless cloud database (Neon, Supabase, or another Postgres-compatible host) — see "Connect
+to Postgres over the plain wire protocol"
 (`docs/adr/0002-postgres-driver-for-local-dev.md`) for why both work with no code change. Google is
 an optional third dependency, only if Google sign-in is configured. See `docs/multi-tenant-auth.md`
 for the auth design.
@@ -277,9 +278,10 @@ Six tables:
 The Drizzle client used by every store. Reads `DATABASE_URL` from the environment and throws
 immediately if it's unset — fails fast rather than on the first query. Uses `pg`
 (`drizzle-orm/node-postgres`), a plain wire-protocol connection pool, so the same `DATABASE_URL`
-works unchanged against a local or Docker Postgres, a self-hosted one, or Neon: Neon's connection
-string speaks standard Postgres wire protocol too, and only needs `@neondatabase/serverless`'s
-HTTP driver when the caller can't open a raw TCP socket at all (a Cloudflare Worker, mainly). This
+works unchanged against a local or Docker Postgres, a self-hosted one, or a serverless cloud database
+(e.g. Neon): those providers' connection strings speak standard Postgres wire protocol too, and only
+need their HTTP drivers (e.g. `@neondatabase/serverless`) when the caller can't open a raw TCP socket
+at all (a Cloudflare Worker, mainly). This
 backend runs as a Node process both in dev and in `dist/`, so that constraint doesn't apply here —
 see the module's own doc comment and `docs/adr/0001-cloudflare-single-worker.md`, whose driver
 choice this supersedes now that running locally without any cloud account is a goal in its own
@@ -590,7 +592,7 @@ Same minimal Node-environment config as `packages/shared`.
 
 ## `.env.example`
 
-Template for the real `.env` (gitignored). Required: `DATABASE_URL` (any Postgres connection string — Docker, local, or Neon),
+Template for the real `.env` (gitignored). Required: `DATABASE_URL` (any Postgres connection string — Docker, local, or a serverless cloud database),
 `OPENROUTER_API_KEY`, `BETTER_AUTH_SECRET` (the backend throws at first auth-route use if unset).
 Optional: `PORT` (defaults to 5391), `BETTER_AUTH_URL`, `PUBLIC_ORIGINS`, `NODE_ENV`, and
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google sign-in — see `docs/multi-tenant-auth.md`.

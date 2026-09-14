@@ -31,13 +31,14 @@ function resolveDb(): Db {
  * The Drizzle client used by every route to read/write `profiles` and `applications`. Uses `pg`
  * (`drizzle-orm/node-postgres`) — a plain wire-protocol connection pool, not an HTTP driver — so
  * the same `DATABASE_URL` works unchanged against a local or Docker Postgres, a self-hosted one,
- * or Neon: Neon's connection string speaks standard Postgres wire protocol too, and only needs
- * `@neondatabase/serverless`'s HTTP driver when the caller can't open a raw TCP socket at all (a
- * Cloudflare Worker, mainly). This backend runs as a Node process both in dev and in `dist/`, so
- * that constraint doesn't apply here; see `docs/adr/0001-cloudflare-single-worker.md`, whose
- * driver choice this supersedes now that running locally without any cloud account is a goal in
- * its own right — a Worker port, if it happens, can special-case the HTTP driver in its own
- * entrypoint rather than in this shared client.
+ * or a serverless cloud database (e.g. Neon): those providers' connection strings speak standard
+ * Postgres wire protocol too, and only need their own HTTP drivers (e.g.
+ * `@neondatabase/serverless`) when the caller can't open a raw TCP socket at all (a Cloudflare
+ * Worker, mainly). This backend runs as a Node process both in dev and in `dist/`, so that
+ * constraint doesn't apply here; see `docs/adr/0001-cloudflare-single-worker.md`, whose driver
+ * choice this supersedes now that running locally without any cloud account is a goal in its own
+ * right — a Worker port, if it happens, can special-case an HTTP driver in its own entrypoint
+ * rather than in this shared client.
  *
  * Lazily initialized on first use, not at import time — so importing this module (or anything
  * that transitively imports it, like a route file) doesn't require `DATABASE_URL` to be set.

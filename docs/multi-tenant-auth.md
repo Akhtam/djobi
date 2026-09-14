@@ -39,7 +39,7 @@ scoping — on live data containing immigration status.
 
 ## Mechanism
 
-**An OAuth-first auth library, self-hosted against the existing Neon Postgres.** Better Auth is the
+**An OAuth-first auth library, self-hosted against the existing Postgres database.** Better Auth is the
 closest fit to this stack (TypeScript, Hono handler, Drizzle adapter); verify its current
 integration surface against its own docs before committing to it.
 

@@ -77,7 +77,15 @@ const projectBulletListClassNames: BulletListClassNames = {
 };
 
 /** A panel's head — anchored by `id` for the quick-nav to scroll to, always expanded. */
-function PanelHead({ id, legend, hint }: { id: string; legend: string; hint?: string }) {
+function PanelHead({
+  id,
+  legend,
+  hint,
+}: {
+  id: string;
+  legend: string;
+  hint?: string | undefined;
+}) {
   return (
     <div id={id} className="detail__panel-head">
       <h2>{legend}</h2>

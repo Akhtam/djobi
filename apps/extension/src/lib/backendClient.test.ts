@@ -104,7 +104,7 @@ describe('httpBackendClient', () => {
       expect.any(FormData),
       { signal },
     );
-    const formData = vi.mocked(transport.upload).mock.calls[0][2];
+    const formData = vi.mocked(transport.upload).mock.calls[0]![2]!;
     expect(formData.get('resume')).toBe(file);
   });
 
@@ -408,7 +408,7 @@ describe('httpBackendClient.answerChat', () => {
       messages: [],
     });
 
-    expect(vi.mocked(transport.json).mock.calls[0][2]?.body).not.toHaveProperty('jobInfo');
+    expect(vi.mocked(transport.json).mock.calls[0]![2]?.body).not.toHaveProperty('jobInfo');
   });
 });
 
@@ -452,8 +452,8 @@ describe('Profile projections', () => {
   async function profileSentBy(send: () => Promise<unknown>, binary = false): Promise<unknown> {
     await send();
     const body = binary
-      ? (vi.mocked(transport.binary).mock.calls[0][1] as { body: unknown }).body
-      : (vi.mocked(transport.json).mock.calls[0][2] as { body: unknown }).body;
+      ? (vi.mocked(transport.binary).mock.calls[0]![1] as { body: unknown }).body
+      : (vi.mocked(transport.json).mock.calls[0]![2] as { body: unknown }).body;
     return (body as { profile: unknown }).profile;
   }
 

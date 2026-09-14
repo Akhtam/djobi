@@ -184,7 +184,8 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
 
     // Split on `;` — a browser may append `charset=utf-8`, which is still JSON, or a multipart
     // boundary.
-    const contentType = (c.req.header('content-type') ?? '').split(';')[0].trim().toLowerCase();
+    const [mediaType = ''] = (c.req.header('content-type') ?? '').split(';');
+    const contentType = mediaType.trim().toLowerCase();
 
     // `POST /profile/extract-resume` (20.3) sends a file, which cannot be `application/json`. But
     // `multipart/form-data` is itself one of the three CORS "simple" content types the comment above

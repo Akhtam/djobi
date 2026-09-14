@@ -64,7 +64,7 @@ describe('the extension backend transport', () => {
 
     await transport.json('/extract-job', Result, { method: 'POST', body: {} });
 
-    const headers = vi.mocked(fetch).mock.calls[0][1]?.headers;
+    const headers = vi.mocked(fetch).mock.calls[0]![1]?.headers;
     expect(headers).not.toHaveProperty('authorization');
   });
 

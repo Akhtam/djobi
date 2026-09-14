@@ -340,7 +340,7 @@ describe('handleTypedMessage', () => {
       deps,
     );
 
-    expect(mockRunAnalysis.mock.calls[0][4]).toBe(deps);
+    expect(mockRunAnalysis.mock.calls[0]![4]!).toBe(deps);
     expect(mockRunFill).toHaveBeenCalledWith(7, profile, deps, 'run-1', expect.any(Function));
     expect(mockRunSaveApplication).toHaveBeenCalledWith(7, deps, 'run-1', expect.any(Function));
   });

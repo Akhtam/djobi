@@ -13,10 +13,10 @@ describe('createFixtureDashboardClient', () => {
   it('does not hand out a reference callers can mutate', async () => {
     const client = createFixtureDashboardClient(fixtureApplications);
     const first = await client.listApplications();
-    first[0].company = 'Mutated';
+    first[0]!.company = 'Mutated';
 
     const second = await client.listApplications();
-    expect(second[0].company).not.toBe('Mutated');
+    expect(second[0]!.company).not.toBe('Mutated');
   });
 
   it('persists a stage change for the session', async () => {
@@ -90,7 +90,7 @@ describe('createFixtureDashboardClient', () => {
 
   it('creates a full application row and includes it in later lists', async () => {
     const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
-    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0];
+    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0]!;
 
     const created = await client.createApplication(
       {
@@ -111,7 +111,7 @@ describe('createFixtureDashboardClient', () => {
 
   it('returns the same row for a repeated idempotency key instead of creating a second one', async () => {
     const client = createFixtureDashboardClient(fixtureApplications, fixtureProfile);
-    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0];
+    const { id: _id, createdAt: _createdAt, ...template } = fixtureApplications[0]!;
     const payload = {
       ...template,
       company: 'New company',
@@ -131,9 +131,9 @@ describe('createFixtureDashboardClient', () => {
     const client = createFixtureDashboardClient(fixtureApplications);
     const existing = fixtureApplications[0];
 
-    await expect(client.findApplicationDuplicates(existing.jobUrl)).resolves.toMatchObject({
+    await expect(client.findApplicationDuplicates(existing!.jobUrl)).resolves.toMatchObject({
       count: 1,
-      latest: { id: existing.id },
+      latest: { id: existing!.id },
     });
   });
 
@@ -196,7 +196,7 @@ describe('createFixtureDashboardClient, auth', () => {
     await expect(client.findApplicationDuplicates('https://example.com')).rejects.toBeInstanceOf(
       HttpError,
     );
-    const { id: _id, createdAt: _createdAt, ...payload } = fixtureApplications[0];
+    const { id: _id, createdAt: _createdAt, ...payload } = fixtureApplications[0]!;
     await expect(client.createApplication(payload, 'idempotency-key-1')).rejects.toBeInstanceOf(
       HttpError,
     );

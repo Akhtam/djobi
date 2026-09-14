@@ -45,7 +45,7 @@ function stubDeferredChrome() {
   });
 
   return {
-    resolveQuery: (id: number, url: string) => queryCallbacks[0]([{ id, url } as chrome.tabs.Tab]),
+    resolveQuery: (id: number, url: string) => queryCallbacks[0]!([{ id, url } as chrome.tabs.Tab]),
     activate: (tabId: number) => activated.forEach((listener) => listener({ tabId, windowId: 1 })),
     resolveGet: (tabId: number, url: string) =>
       getCallbacks.get(tabId)?.({ id: tabId, url } as chrome.tabs.Tab),

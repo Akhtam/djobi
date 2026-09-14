@@ -38,7 +38,7 @@ export function renderDashboard(options: { client?: DashboardClient; hash?: stri
  * applications-list pagination tests and the routing test that reloads a deep link mid-batch.
  */
 export function manyApplications(count: number) {
-  const [template] = fixtureApplications;
+  const template = fixtureApplications[0]!;
   return Array.from({ length: count }, (_, i) => ({
     ...structuredClone(template),
     id: `app-${i}`,
@@ -50,13 +50,7 @@ export function manyApplications(count: number) {
 
 /** A promise plus its own `resolve`/`reject`, for tests that drive write-order by hand. */
 export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
+  return Promise.withResolvers<T>();
 }
 
 /**

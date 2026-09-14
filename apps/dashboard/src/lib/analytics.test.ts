@@ -181,7 +181,7 @@ describe('keywordFrequency', () => {
       }),
     ];
 
-    expect(keywordFrequency(applications)[0].term).toBe('Kubernetes');
+    expect(keywordFrequency(applications)[0]!.term).toBe('Kubernetes');
   });
 
   it('carries the most frequent non-null category along with the term', () => {
@@ -197,7 +197,7 @@ describe('keywordFrequency', () => {
       }),
     ];
 
-    expect(keywordFrequency(applications)[0].category).toBe('language');
+    expect(keywordFrequency(applications)[0]!.category).toBe('language');
   });
 
   it('sorts by count descending, alphabetical tie-break', () => {

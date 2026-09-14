@@ -26,7 +26,7 @@
  * through this package keeps the two halves of every composed schema on one zod version.
  */
 export { z } from 'zod';
-export type { TypeOf as ZodTypeOf, ZodError, ZodTypeAny } from 'zod';
+export type { output as ZodTypeOf, ZodError, ZodType } from 'zod';
 
 export * from './detectedField.js';
 export * from './schemas.js';

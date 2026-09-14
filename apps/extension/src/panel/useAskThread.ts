@@ -45,7 +45,7 @@ export interface Turn extends ChatMessage {
    * the same way: two turns that produce the same answer are still two turns.
    */
   id: string;
-  revisedAnswer?: string;
+  revisedAnswer?: string | undefined;
   /**
    * A turn the transcript shows but the request's `messages` must not carry: the question itself,
    * on a cold ask. It travels as the `question` field, and sending it twice would show the model

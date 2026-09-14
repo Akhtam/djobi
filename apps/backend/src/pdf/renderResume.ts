@@ -136,18 +136,28 @@ interface TextStyle {
  * retry at a tighter density, rather than discovering it by finding text missing afterwards.
  */
 class ResumeLayout {
+  private readonly pdf: PDF;
+  private readonly pageSize: { width: number; height: number };
+  private readonly density: Density;
+  private readonly regular: EmbeddedFont;
+  private readonly bold: EmbeddedFont;
   private page: ReturnType<PDF['addPage']>;
   private pageCount = 1;
   /** Distance from the top of the current page to the top of the next thing drawn. */
   private y: number;
 
   constructor(
-    private readonly pdf: PDF,
-    private readonly pageSize: { width: number; height: number },
-    private readonly density: Density,
-    private readonly regular: EmbeddedFont,
-    private readonly bold: EmbeddedFont,
+    pdf: PDF,
+    pageSize: { width: number; height: number },
+    density: Density,
+    regular: EmbeddedFont,
+    bold: EmbeddedFont,
   ) {
+    this.pdf = pdf;
+    this.pageSize = pageSize;
+    this.density = density;
+    this.regular = regular;
+    this.bold = bold;
     this.page = this.pdf.addPage({ width: pageSize.width, height: pageSize.height });
     this.y = density.pagePaddingVertical;
   }

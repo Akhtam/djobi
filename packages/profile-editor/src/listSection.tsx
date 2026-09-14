@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
 import type { ListEditor } from './listEditing.js';
 import type { ListSectionChrome } from './listSectionChrome.js';
 
@@ -30,13 +30,13 @@ export function ListSection<T>({
   legend: string;
   noun: string;
   addLabel: string;
-  hint?: string;
+  hint?: string | undefined;
   items: T[];
   editor: ListEditor<T>;
   controls?: ReactNode;
   summary?: (entry: T, index: number) => ReactNode;
   children: (entry: T, index: number) => ReactNode;
-}) {
+}): ReactElement {
   const { Section, Entry, emptyClassName, addButtonClassName } = chrome;
 
   return (

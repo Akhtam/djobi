@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/readme/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/readme/banner-light.svg">
+  <img alt="djobi — every application tailored, every outcome tracked" src=".github/readme/banner-light.svg">
+</picture>
+
 # djobi
 
 A Chrome extension that autofills job applications on ATS sites (Greenhouse, Ashby, Lever, Workday,
@@ -16,7 +22,8 @@ server, a persisted history of past applications, and a web dashboard for tracki
   application, shared by the extension's Log tab and the dashboard's New application view.
 - `apps/backend` — local Hono server: LLM calls (multi-provider via OpenRouter), auth (Better Auth —
   email/password, Google), Postgres persistence (Drizzle, over the standard wire protocol — Docker,
-  a local install, or Neon all work), resume PDF rendering. Runs on `127.0.0.1:5391`.
+  a local install, or a serverless cloud database all work), resume PDF rendering. Runs on
+  `127.0.0.1:5391`.
 - `apps/extension` — MV3 Chrome extension (Vite + `@crxjs/vite-plugin` + React): content scripts
   that detect application forms and fill them, a background service worker that runs the pipeline,
   an options page (profile setup), and a side panel with **Autofill** (scrape or paste/review/fill),
@@ -88,8 +95,9 @@ work — pick one:
 - **Docker, for just the database:** `pnpm db:up` (a container, persisted in a named volume;
   `pnpm db:down` stops it, keeping the volume, and `pnpm db:logs` follows its output)
 - **A Postgres you already have installed locally:** `createdb djobi`
-- **[Neon](https://neon.tech)**, for a database that persists in the cloud rather than on your
-  machine: create a project there and copy its connection string
+- **A serverless cloud database** (e.g. [Neon](https://neon.tech), [Supabase](https://supabase.com),
+  or another Postgres-compatible host), for a database that persists in the cloud rather than on
+  your machine: create a project there and copy its connection string
 
 ```bash
 cp apps/backend/.env.example apps/backend/.env

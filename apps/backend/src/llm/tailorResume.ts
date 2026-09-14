@@ -11,14 +11,25 @@ import { verifyBulletRewrite } from './bulletTruthfulness.js';
 import { groundingContext, jobContext, sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
+/**
+ * Integer-valued, checked locally. Not `.int()`: zod 4 renders that into the JSON schema as
+ * safe-integer `minimum`/`maximum` bounds, outside the keyword subset every route serves. `.meta`
+ * restores the plain `"type": "integer"` the model saw under zod 3. An index out of range is
+ * already rejected where it's looked up (`bulletsFor`, `tailorResume`).
+ */
+const SourceIndexSchema = z
+  .number()
+  .refine(Number.isInteger, 'sourceIndex must be an integer')
+  .meta({ type: 'integer' });
+
 /** Compact model output: source indices replace work-experience metadata the backend already owns. */
 const TailoredResumeOutputSchema = z.object({
   workExperience: z.array(
     z.object({
-      sourceIndex: z.number().int(),
+      sourceIndex: SourceIndexSchema,
       bullets: z.array(
         z.object({
-          sourceIndex: z.number().int(),
+          sourceIndex: SourceIndexSchema,
           text: z.string().optional(),
         }),
       ),
@@ -77,10 +88,10 @@ function bulletsFor(
   }
 
   const resolved = modelRole.bullets.flatMap((bullet) => {
-    if (counts.get(bullet.sourceIndex) !== 1 || role.bullets[bullet.sourceIndex] === undefined) {
+    const sourceText = role.bullets[bullet.sourceIndex];
+    if (counts.get(bullet.sourceIndex) !== 1 || sourceText === undefined) {
       return [];
     }
-    const sourceText = role.bullets[bullet.sourceIndex];
     if (starred.has(bullet.sourceIndex)) {
       return [{ text: sourceText, starred: true }];
     }
@@ -142,7 +153,7 @@ function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume)
     // An explicit, candidate-set opt-in only — see WorkExperienceSchema.suppressIfEmpty. Silently
     // hiding a role nobody asked to hide would misrepresent the candidate's own employment history.
     .filter(
-      (role, index) => role.bullets.length > 0 || !profile.workExperience[index].suppressIfEmpty,
+      (role, index) => role.bullets.length > 0 || !profile.workExperience[index]?.suppressIfEmpty,
     );
 
   return { skills: profile.skills, workExperience };

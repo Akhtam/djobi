@@ -18,7 +18,7 @@ import { JobDescriptionSourceSchema } from './jobContext';
  * explicit `SCRAPE_JOB_DESCRIPTION` request that fails closed and only populates the candidate's
  * editable field. Detection remains independent because the Fill Step needs to know what to fill.
  */
-export const JobPageDataSchema = z.object({ fields: z.array(DetectedFieldSchema) }).strict();
+export const JobPageDataSchema = z.strictObject({ fields: z.array(DetectedFieldSchema) });
 export type JobPageData = ZodTypeOf<typeof JobPageDataSchema>;
 
 /** Content script -> background: reports a detected job page. No response. */
@@ -34,18 +34,16 @@ export type ReportJobPageMessage = ZodTypeOf<typeof ReportJobPageMessageSchema>;
  * `chrome.storage.onChanged`, not the message response, precisely so the caller doesn't need to
  * stay around to receive one.
  */
-export const StartAnalysisMessageSchema = z
-  .object({
-    type: z.literal('START_ANALYSIS'),
-    tabId: z.number().int().nonnegative(),
-    tabUrl: z.string().nullable(),
-    profile: ProfileSchema,
-    /** The candidate-reviewed posting text from the panel — the Analysis Step's only input. */
-    jobDescription: z.string(),
-    /** Skip the duplicate check after the candidate chose "Analyze and apply anyway". */
-    force: z.boolean().optional(),
-  })
-  .strict();
+export const StartAnalysisMessageSchema = z.strictObject({
+  type: z.literal('START_ANALYSIS'),
+  tabId: z.number().int().nonnegative(),
+  tabUrl: z.string().nullable(),
+  profile: ProfileSchema,
+  /** The candidate-reviewed posting text from the panel — the Analysis Step's only input. */
+  jobDescription: z.string(),
+  /** Skip the duplicate check after the candidate chose "Analyze and apply anyway". */
+  force: z.boolean().optional(),
+});
 export type StartAnalysisMessage = ZodTypeOf<typeof StartAnalysisMessageSchema>;
 
 /**
@@ -58,25 +56,21 @@ export type StartAnalysisMessage = ZodTypeOf<typeof StartAnalysisMessageSchema>;
  * different posting's answers. {@link UpdateRunMessage} has always carried its `runId`; these two
  * were the exception. See `background/runClaim.ts`.
  */
-export const StartFillMessageSchema = z
-  .object({
-    type: z.literal('START_FILL'),
-    tabId: z.number().int().nonnegative(),
-    profile: ProfileSchema,
-    expectedRunId: z.string(),
-  })
-  .strict();
+export const StartFillMessageSchema = z.strictObject({
+  type: z.literal('START_FILL'),
+  tabId: z.number().int().nonnegative(),
+  profile: ProfileSchema,
+  expectedRunId: z.string(),
+});
 export type StartFillMessage = ZodTypeOf<typeof StartFillMessageSchema>;
 
 /** Panel -> background: persist the current filled application snapshot. */
-export const StartSaveApplicationMessageSchema = z
-  .object({
-    type: z.literal('START_SAVE_APPLICATION'),
-    tabId: z.number().int().nonnegative(),
-    /** The run the panel meant — see {@link StartFillMessage.expectedRunId}. */
-    expectedRunId: z.string(),
-  })
-  .strict();
+export const StartSaveApplicationMessageSchema = z.strictObject({
+  type: z.literal('START_SAVE_APPLICATION'),
+  tabId: z.number().int().nonnegative(),
+  /** The run the panel meant — see {@link StartFillMessage.expectedRunId}. */
+  expectedRunId: z.string(),
+});
 export type StartSaveApplicationMessage = ZodTypeOf<typeof StartSaveApplicationMessageSchema>;
 
 /** Panel -> background: persist optimistic review edits against the run they were made on. */
@@ -85,17 +79,15 @@ export const UpdateRunMessageSchema = z
     type: z.literal('UPDATE_RUN'),
     tabId: z.number().int().nonnegative(),
     runId: z.string(),
-    updates: z
-      .object({
-        answers: z.array(QuestionAnswerSchema),
-        jobDescription: z.string(),
-        /** The candidate's own accept/reject/reorder/edit changes to the Analysis Step's output —
-         * see `panel/ResumeReview.tsx`. Optional: an answers/jobDescription-only edit sends nothing
-         * here, and the background leaves the stored resume untouched rather than overwriting it
-         * with `undefined`. */
-        tailoredResume: TailoredResumeSchema.optional(),
-      })
-      .strict(),
+    updates: z.strictObject({
+      answers: z.array(QuestionAnswerSchema),
+      jobDescription: z.string(),
+      /** The candidate's own accept/reject/reorder/edit changes to the Analysis Step's output —
+       * see `panel/ResumeReview.tsx`. Optional: an answers/jobDescription-only edit sends nothing
+       * here, and the background leaves the stored resume untouched rather than overwriting it
+       * with `undefined`. */
+      tailoredResume: TailoredResumeSchema.optional(),
+    }),
     // No `status` field: whether a saved run reverts to `filled` is the run domain's call, not the
     // panel's — `lib/tabStore/pipelineRun.ts`'s `applyPanelEdit` derives it from what actually
     // changed. A panel-supplied literal was applied unconditionally, so a no-op resend (an undo, or
@@ -105,7 +97,7 @@ export const UpdateRunMessageSchema = z
 export type UpdateRunMessage = ZodTypeOf<typeof UpdateRunMessageSchema>;
 
 /** Background -> panel: whether an `UPDATE_RUN` edit was actually written. */
-export const UpdateRunResultSchema = z.object({ applied: z.boolean() }).strict();
+export const UpdateRunResultSchema = z.strictObject({ applied: z.boolean() });
 export type UpdateRunResult = ZodTypeOf<typeof UpdateRunResultSchema>;
 
 /**
@@ -120,8 +112,8 @@ export type UpdateRunResult = ZodTypeOf<typeof UpdateRunResultSchema>;
  * same way a delivery failure already does — see `panel/pipelineCommands.ts`.
  */
 export const ClaimResultSchema = z.discriminatedUnion('claimed', [
-  z.object({ claimed: z.literal(true) }).strict(),
-  z.object({ claimed: z.literal(false), reason: z.enum(['busy', 'stale-run']) }).strict(),
+  z.strictObject({ claimed: z.literal(true) }),
+  z.strictObject({ claimed: z.literal(false), reason: z.enum(['busy', 'stale-run']) }),
 ]);
 export type ClaimResult = ZodTypeOf<typeof ClaimResultSchema>;
 
@@ -135,15 +127,13 @@ export type ClaimResult = ZodTypeOf<typeof ClaimResultSchema>;
 export type UpdateRunOutcome = UpdateRunResult & { delivered: boolean };
 
 /** Panel -> background: retain the editable pre-analysis description for this job. */
-export const UpdateJobContextMessageSchema = z
-  .object({
-    type: z.literal('UPDATE_JOB_CONTEXT'),
-    tabId: z.number().int().nonnegative(),
-    tabUrl: z.string(),
-    jobDescription: z.string(),
-    source: JobDescriptionSourceSchema,
-  })
-  .strict();
+export const UpdateJobContextMessageSchema = z.strictObject({
+  type: z.literal('UPDATE_JOB_CONTEXT'),
+  tabId: z.number().int().nonnegative(),
+  tabUrl: z.string(),
+  jobDescription: z.string(),
+  source: JobDescriptionSourceSchema,
+});
 export type UpdateJobContextMessage = ZodTypeOf<typeof UpdateJobContextMessageSchema>;
 
 export interface FillFormPayload {
@@ -154,7 +144,7 @@ export interface FillFormPayload {
   runId: string;
   fields: DetectedField[];
   values: Record<string, string>;
-  resumeFile?: { name: string; type: string; bytes: number[] };
+  resumeFile?: { name: string; type: string; bytes: number[] } | undefined;
 }
 
 /**
@@ -167,13 +157,11 @@ export interface FillFormPayload {
  * the panel showed a green check over a form the ATS then rejected as empty. This is the page's
  * own account of what happened; see `content/fillForm.ts` for how it's established.
  */
-export const FillFormResultSchema = z
-  .object({
-    ok: z.literal(true),
-    filledFieldIds: z.array(z.string()),
-    resumeAttached: z.boolean(),
-  })
-  .strict();
+export const FillFormResultSchema = z.strictObject({
+  ok: z.literal(true),
+  filledFieldIds: z.array(z.string()),
+  resumeAttached: z.boolean(),
+});
 export type FillFormResult = ZodTypeOf<typeof FillFormResultSchema>;
 
 /** Background -> content, sent directly by `applicationPipeline.ts` (not relayed via `TypedMessage`): fill this tab's form. Response: {@link FillFormResult}. */
@@ -199,14 +187,12 @@ export interface ScanPageCommandMessage {
 }
 
 /** A focused posting candidate extracted from one frame. */
-export const ScrapedJobDescriptionSchema = z
-  .object({
-    text: z.string(),
-    /** Comparable within this extractor; the frame reader uses it to select the best candidate. */
-    score: z.number(),
-    source: z.enum(['structured-data', 'dom']),
-  })
-  .strict();
+export const ScrapedJobDescriptionSchema = z.strictObject({
+  text: z.string(),
+  /** Comparable within this extractor; the frame reader uses it to select the best candidate. */
+  score: z.number(),
+  source: z.enum(['structured-data', 'dom']),
+});
 export type ScrapedJobDescription = ZodTypeOf<typeof ScrapedJobDescriptionSchema>;
 
 /** Panel -> content: find the Job Description visible in this frame. */
@@ -215,9 +201,9 @@ export interface ScrapeJobDescriptionCommandMessage {
 }
 
 /** An explicit reply lets the caller distinguish "no posting here" from an unreachable frame. */
-export const ScrapeJobDescriptionResponseSchema = z
-  .object({ candidate: ScrapedJobDescriptionSchema.nullable() })
-  .strict();
+export const ScrapeJobDescriptionResponseSchema = z.strictObject({
+  candidate: ScrapedJobDescriptionSchema.nullable(),
+});
 export type ScrapeJobDescriptionResponse = ZodTypeOf<typeof ScrapeJobDescriptionResponseSchema>;
 
 /**
@@ -288,14 +274,16 @@ export type ContentCommandMessage =
  * on to another posting must not save *that* posting's run. The content script only ever arms its
  * watcher from a `FILL_FORM` it completed, so this can only be sent for a run the extension filled.
  */
-export const ReportSubmissionMessageSchema = z
-  .object({ type: z.literal('REPORT_SUBMISSION'), runId: z.string().min(1) })
-  .strict();
+export const ReportSubmissionMessageSchema = z.strictObject({
+  type: z.literal('REPORT_SUBMISSION'),
+  runId: z.string().min(1),
+});
 export type ReportSubmissionMessage = ZodTypeOf<typeof ReportSubmissionMessageSchema>;
 
-export const CheckRunMessageSchema = z
-  .object({ type: z.literal('CHECK_RUN'), tabId: z.number().int().nonnegative() })
-  .strict();
+export const CheckRunMessageSchema = z.strictObject({
+  type: z.literal('CHECK_RUN'),
+  tabId: z.number().int().nonnegative(),
+});
 export type CheckRunMessage = ZodTypeOf<typeof CheckRunMessageSchema>;
 
 export const TypedMessageSchema = z.discriminatedUnion('type', [
@@ -314,13 +302,11 @@ export type TypedMessage = ZodTypeOf<typeof TypedMessageSchema>;
 export const TYPED_MESSAGE_PROTOCOL = 'djobi/typed-message' as const;
 export const TYPED_MESSAGE_VERSION = 1 as const;
 
-export const TypedMessageEnvelopeSchema = z
-  .object({
-    protocol: z.literal(TYPED_MESSAGE_PROTOCOL),
-    version: z.literal(TYPED_MESSAGE_VERSION),
-    payload: TypedMessageSchema,
-  })
-  .strict();
+export const TypedMessageEnvelopeSchema = z.strictObject({
+  protocol: z.literal(TYPED_MESSAGE_PROTOCOL),
+  version: z.literal(TYPED_MESSAGE_VERSION),
+  payload: TypedMessageSchema,
+});
 export type TypedMessageEnvelope = ZodTypeOf<typeof TypedMessageEnvelopeSchema>;
 
 export function typedMessageEnvelope(message: TypedMessage): TypedMessageEnvelope {

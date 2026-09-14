@@ -49,7 +49,7 @@ describe('applications list', () => {
     expect(heading).toHaveAttribute('aria-sort', 'ascending');
     expect(window.location.hash).toBe('#/?sort=oldest');
     expect(
-      within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Frontend Engineer' }),
+      within(screen.getAllByRole('row')[1]!).getByRole('link', { name: 'Frontend Engineer' }),
     ).toHaveAttribute('href', '#/applications/app-notion');
 
     await user.click(screen.getByRole('button', { name: 'Sort by applied date, newest first' }));

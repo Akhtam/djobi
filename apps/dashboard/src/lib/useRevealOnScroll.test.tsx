@@ -10,10 +10,9 @@ class FakeIntersectionObserver {
   static instances: FakeIntersectionObserver[] = [];
   observedRoot: Element | null;
   disconnected = false;
-  constructor(
-    private callback: IntersectionObserverCallback,
-    options?: IntersectionObserverInit,
-  ) {
+  private callback: IntersectionObserverCallback;
+  constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+    this.callback = callback;
     this.observedRoot = (options?.root as Element | null) ?? null;
     FakeIntersectionObserver.instances.push(this);
   }
@@ -72,7 +71,7 @@ function LateHarness({
 }
 
 function latestObserver(): FakeIntersectionObserver {
-  return FakeIntersectionObserver.instances[FakeIntersectionObserver.instances.length - 1];
+  return FakeIntersectionObserver.instances[FakeIntersectionObserver.instances.length - 1]!;
 }
 
 /** `intersect()` triggers a state update outside React's own event handling, same as a real one. */

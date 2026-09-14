@@ -31,7 +31,7 @@
     "hono": "^4.13.7",
     "pg": "^8.23.0",
     "unpdf": "^1.8.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -41,7 +41,7 @@
     "drizzle-kit": "^0.31.10",
     "subset-font": "^2.7.0",
     "tsx": "^4.23.13",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }
 }

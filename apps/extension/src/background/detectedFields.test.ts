@@ -91,8 +91,8 @@ describe('detectedFields', () => {
     const fields = (await snapshot).fields;
     await reported;
 
-    expect(fields[0].required).toBe(true);
-    expect(fields[0].options?.map((option) => option.label)).toEqual([
+    expect(fields[0]!.required).toBe(true);
+    expect(fields[0]!.options?.map((option) => option.label)).toEqual([
       'Yes, I am authorized',
       'No, I require sponsorship',
     ]);
@@ -131,7 +131,7 @@ describe('detectedFields', () => {
     const fields = (await snapshot).fields;
     await secondReport;
 
-    expect(fields[0].required).toBe(true);
+    expect(fields[0]!.required).toBe(true);
   });
 
   it('proceeds on baseline fields when the oracle never answers, rather than hanging Analyze', async () => {
@@ -145,8 +145,8 @@ describe('detectedFields', () => {
 
     const fields = (await snapshotForRun(1, 10)).fields;
 
-    expect(fields[0].required).toBe(false);
-    expect(fields[0].options).toBeUndefined();
+    expect(fields[0]!.required).toBe(false);
+    expect(fields[0]!.options).toBeUndefined();
 
     release();
     await reported;
@@ -164,7 +164,7 @@ describe('detectedFields', () => {
     // A timeout of zero can only pass if there is nothing left registered to wait on.
     const fields = (await snapshotForRun(1, 0)).fields;
 
-    expect(fields[0].required).toBe(true);
+    expect(fields[0]!.required).toBe(true);
   });
 
   it('leaves the snapshot to the baseline when the oracle fetch rejects', async () => {
@@ -172,7 +172,7 @@ describe('detectedFields', () => {
 
     await recordReport(1, 0, [question()], POSTING);
 
-    expect((await snapshotForRun(1, 0)).fields[0].required).toBe(false);
+    expect((await snapshotForRun(1, 0)).fields[0]!.required).toBe(false);
   });
 
   it('still drops a stale enrichment whose frame was re-reported while it was in flight', async () => {
@@ -191,8 +191,8 @@ describe('detectedFields', () => {
     await stale;
 
     const fields = (await snapshotForRun(1, 0)).fields;
-    expect(fields[0].label).toBe('A different question entirely');
-    expect(fields[0].required).toBe(false);
+    expect(fields[0]!.label).toBe('A different question entirely');
+    expect(fields[0]!.required).toBe(false);
   });
 
   it('reports no form for a tab nothing has detected on, rather than a missing one', async () => {

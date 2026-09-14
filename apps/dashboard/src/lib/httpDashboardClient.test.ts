@@ -12,7 +12,7 @@ import { HttpError } from '@djobi/http-client';
 import { httpDashboardClient } from './dashboardClient';
 import { fixtureApplications } from './fixtures';
 
-const sample: Application = fixtureApplications[0];
+const sample: Application = fixtureApplications[0]!;
 
 function stubFetch(response: { ok?: boolean; status?: number; jsonBody?: unknown }) {
   // `?? {}` would have flattened an explicit `jsonBody: null` — a real response, `GET /profile`'s
@@ -99,7 +99,7 @@ describe('manual application calls', () => {
     await expect(
       httpDashboardClient.findApplicationDuplicates('https://example.com/job?id=1'),
     ).resolves.toEqual(summary);
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    expect(fetchMock.mock.calls[0]![0]!).toBe(
       '/applications?jobUrl=https%3A%2F%2Fexample.com%2Fjob%3Fid%3D1&response=compact',
     );
   });
@@ -174,7 +174,7 @@ describe('extractResume', () => {
       signal: expect.any(AbortSignal),
       credentials: 'include',
     });
-    const body = fetchMock.mock.calls[0][1]?.body as FormData;
+    const body = fetchMock.mock.calls[0]![1]?.body as FormData;
     expect(body.get('resume')).toBe(file);
   });
 });
@@ -199,7 +199,7 @@ describe('updateStage', () => {
 
     await httpDashboardClient.updateStage('a/b', 'applied');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb/stage?response=compact');
+    expect(fetchMock.mock.calls[0]![0]!).toBe('/applications/a%2Fb/stage?response=compact');
   });
 });
 
@@ -253,7 +253,7 @@ describe('deleteNote', () => {
 
     await httpDashboardClient.deleteNote('a/b', 'n/1');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb/notes/n%2F1?response=compact');
+    expect(fetchMock.mock.calls[0]![0]!).toBe('/applications/a%2Fb/notes/n%2F1?response=compact');
   });
 });
 
@@ -276,7 +276,7 @@ describe('deleteApplication', () => {
 
     await httpDashboardClient.deleteApplication('a/b');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('/applications/a%2Fb');
+    expect(fetchMock.mock.calls[0]![0]!).toBe('/applications/a%2Fb');
   });
 });
 

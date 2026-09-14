@@ -15,7 +15,7 @@ async function extensionIdFromManifestKey(base64Key: string): Promise<string> {
   const der = Uint8Array.from(atob(base64Key), (c) => c.charCodeAt(0));
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', der));
   return Array.from(digest.slice(0, 16))
-    .map((byte) => 'abcdefghijklmnop'[byte >> 4] + 'abcdefghijklmnop'[byte & 0x0f])
+    .map((byte) => 'abcdefghijklmnop'.charAt(byte >> 4) + 'abcdefghijklmnop'.charAt(byte & 0x0f))
     .join('');
 }
 
@@ -54,12 +54,12 @@ describe('manifest', () => {
 
   it("injects the content script on every http(s) page, not a fixed ATS-domain allowlist, so white-labeled ATS embeds on a company's own domain (e.g. Ashby on superhuman.com) are reachable", () => {
     const [contentScript] = manifest.content_scripts!;
-    expect(contentScript.matches).toEqual(expect.arrayContaining(['http://*/*', 'https://*/*']));
+    expect(contentScript!.matches).toEqual(expect.arrayContaining(['http://*/*', 'https://*/*']));
   });
 
   it('runs the content script in every frame, so iframe-embedded application forms are reachable too', () => {
     const [contentScript] = manifest.content_scripts!;
-    expect(contentScript.all_frames).toBe(true);
+    expect(contentScript!.all_frames).toBe(true);
   });
 
   it('has no default_popup, so the toolbar icon opens the side panel instead', () => {

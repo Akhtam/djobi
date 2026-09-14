@@ -35,17 +35,17 @@ const SignUp = lazy(() => import('./views/SignUp').then((m) => ({ default: m.Sig
  * the rejected import, so reloading the page is the only real retry.
  */
 class ViewLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+  override state = { failed: false };
 
   static getDerivedStateFromError() {
     return { failed: true };
   }
 
-  componentDidCatch(error: unknown, info: ErrorInfo) {
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error('Dashboard view failed to render', error, info.componentStack);
   }
 
-  render() {
+  override render() {
     if (!this.state.failed) return this.props.children;
     return (
       <p className="empty-state empty-state--error" role="alert">

@@ -119,7 +119,7 @@ describe('associatedLabels', () => {
     const widget = document.querySelector('[role="combobox"]')!;
     const labels = associatedLabels(document, widget);
     expect(labels).toHaveLength(1);
-    expect(labels[0].textContent).toContain('Team');
+    expect(labels[0]!.textContent).toContain('Team');
   });
 
   it('returns no labels for an unassociated ARIA widget', () => {

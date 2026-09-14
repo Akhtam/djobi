@@ -27,7 +27,22 @@ import { labelsMatch, uniqueMatch } from './labelMatching.js';
  * The categories the content script classifies each form field on an ATS page into, before
  * reporting {@link DetectedFieldSchema} entries back to the background.
  */
-export const FieldCategorySchema = z.enum([
+export const FieldCategorySchema: z.ZodEnum<{
+  cover_letter_text: 'cover_letter_text';
+  cover_letter_upload: 'cover_letter_upload';
+  email: 'email';
+  first_name: 'first_name';
+  full_name: 'full_name';
+  github_url: 'github_url';
+  last_name: 'last_name';
+  linkedin_url: 'linkedin_url';
+  location: 'location';
+  phone: 'phone';
+  portfolio_url: 'portfolio_url';
+  question: 'question';
+  resume_upload: 'resume_upload';
+  unknown: 'unknown';
+}> = z.enum([
   'first_name',
   'last_name',
   'full_name',
@@ -55,7 +70,12 @@ export type FieldCategory = z.infer<typeof FieldCategorySchema>;
  * same `question` category whether the ATS renders it as a `<select>` or a react-select combobox,
  * but filling it differs completely.
  */
-export const ElementRoleSchema = z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup']);
+export const ElementRoleSchema: z.ZodEnum<{
+  checkboxgroup: 'checkboxgroup';
+  combobox: 'combobox';
+  native: 'native';
+  radiogroup: 'radiogroup';
+}> = z.enum(['native', 'combobox', 'radiogroup', 'checkboxgroup']);
 /** Inferred type of {@link ElementRoleSchema}. */
 export type ElementRole = z.infer<typeof ElementRoleSchema>;
 
@@ -69,7 +89,10 @@ export type ElementRole = z.infer<typeof ElementRoleSchema>;
  * wrapping `<label>`, a `for=`-linked sibling, an `aria-labelledby` reference) and the same element
  * yields different text depending on how you ask.
  */
-export const FieldOptionSchema = z.object({
+export const FieldOptionSchema: z.ZodObject<
+  { label: z.ZodString; selector: z.ZodDefault<z.ZodNullable<z.ZodString>> },
+  z.core.$strip
+> = z.object({
   label: z.string().describe('The choice text a candidate reads — used for prompting and display'),
   selector: z
     .string()
@@ -83,7 +106,19 @@ export const FieldOptionSchema = z.object({
 export type FieldOption = z.infer<typeof FieldOptionSchema>;
 
 /** One form field found on an ATS application page, classified by the content script. */
-export const DetectedFieldSchema = z.object({
+export const DetectedFieldSchema: z.ZodObject<
+  {
+    id: z.ZodString;
+    label: z.ZodString;
+    inputType: z.ZodString;
+    selector: z.ZodString;
+    category: typeof FieldCategorySchema;
+    required: z.ZodDefault<z.ZodBoolean>;
+    options: z.ZodOptional<z.ZodArray<typeof FieldOptionSchema>>;
+    elementRole: z.ZodDefault<typeof ElementRoleSchema>;
+  },
+  z.core.$strip
+> = z.object({
   id: z.string().describe('Stable id assigned by the content script for round-tripping'),
   label: z.string().describe('Best-effort human label text for the field'),
   inputType: z.string().describe('input/textarea/select and its type attribute'),

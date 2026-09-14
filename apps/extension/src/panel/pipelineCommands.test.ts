@@ -87,7 +87,7 @@ describe('pipelineCommands', () => {
 
     commandsFor().analyze(true);
 
-    expect(sendMessage.mock.calls[0][0]).toMatchObject({ payload: { force: true } });
+    expect(sendMessage.mock.calls[0]![0]!).toMatchObject({ payload: { force: true } });
   });
 
   it.each([
@@ -99,7 +99,7 @@ describe('pipelineCommands', () => {
     send(commandsFor());
 
     expect(raised).toEqual([step]);
-    expect(sendMessage.mock.calls[0][0]).toMatchObject({
+    expect(sendMessage.mock.calls[0]![0]!).toMatchObject({
       payload: { type, expectedRunId: 'run-1' },
     });
   });
@@ -169,7 +169,7 @@ describe('pipelineCommands', () => {
         const runtime = chrome.runtime as { lastError?: { message: string } };
         runtime.lastError = { message: 'Could not establish connection.' };
         callback(undefined);
-        runtime.lastError = undefined;
+        delete runtime.lastError;
       },
     });
 

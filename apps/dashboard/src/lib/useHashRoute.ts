@@ -39,9 +39,9 @@ export interface ListFilters {
    */
   stage: StageFilter | null;
   /** An exact rejection outcome, used only while the combined Rejected stage is selected. */
-  rejection?: RejectionFilter | null;
+  rejection?: RejectionFilter | null | undefined;
   /** Applied-date order. Newest-first is the default and is omitted from the URL. */
-  sort?: 'oldest';
+  sort?: 'oldest' | undefined;
 }
 
 /**
@@ -116,10 +116,10 @@ function rejectionFilterFrom(params: URLSearchParams): RejectionFilter | null {
  * about how many applications exist. The list caps it against the real count at render time.
  */
 export function parseHash(hash: string): Route {
-  const [path, search = ''] = hash.split('?');
+  const [path = '', search = ''] = hash.split('?');
 
-  const match = /^#\/applications\/([^/?#]+)$/.exec(path);
-  if (match) return { name: 'detail', id: decodeURIComponent(match[1]) };
+  const id = /^#\/applications\/([^/?#]+)$/.exec(path)?.[1];
+  if (id) return { name: 'detail', id: decodeURIComponent(id) };
 
   const params = new URLSearchParams(search);
 

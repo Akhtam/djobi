@@ -55,7 +55,131 @@ export interface ProfileSection {
 }
 
 /** Every section, in presentation order. */
-export const PROFILE_SECTIONS = [
+export const PROFILE_SECTIONS: readonly [
+  {
+    readonly key: 'upload';
+    readonly anchor: 'section-upload';
+    readonly label: 'Upload';
+    readonly title: 'Upload resume';
+    readonly group: 'intake';
+    readonly body: 'app';
+  },
+  {
+    readonly key: 'contact';
+    readonly anchor: 'section-contact';
+    readonly label: 'Contact';
+    readonly title: 'Contact details';
+    readonly group: 'profile';
+    readonly body: 'fields';
+  },
+  {
+    readonly key: 'links';
+    readonly anchor: 'section-links';
+    readonly label: 'Links';
+    readonly title: 'Links';
+    readonly group: 'profile';
+    readonly body: 'fields';
+  },
+  {
+    readonly key: 'summary';
+    readonly anchor: 'section-summary';
+    readonly label: 'Summary';
+    readonly title: 'Summary';
+    readonly hint: 'A short intro paragraph, shown near the top of the resume.';
+    readonly group: 'profile';
+    readonly body: 'fields';
+  },
+  {
+    readonly key: 'resume';
+    readonly anchor: 'section-resume';
+    readonly label: 'Resume';
+    readonly title: 'Resume PDF';
+    readonly hint: 'Formatting used for both resume previews and attachments.';
+    readonly group: 'profile';
+    readonly body: 'fields';
+  },
+  {
+    readonly key: 'skills';
+    readonly anchor: 'section-skills';
+    readonly label: 'Skills';
+    readonly title: 'Skills';
+    readonly group: 'profile';
+    readonly body: 'app';
+  },
+  {
+    readonly key: 'work';
+    readonly anchor: 'section-work';
+    readonly label: 'Work';
+    readonly title: 'Work experience';
+    readonly hint: 'Keep the full bullet bank for each role. Star must-keep evidence; tailoring selects the rest up to the cap.';
+    readonly noun: 'work experience';
+    readonly addLabel: 'Add work experience';
+    readonly group: 'profile';
+    readonly body: 'list';
+  },
+  {
+    readonly key: 'projects';
+    readonly anchor: 'section-projects';
+    readonly label: 'Projects';
+    readonly title: 'Projects';
+    readonly hint: 'Personal, open-source or freelance work — anything not covered by Work experience above.';
+    readonly noun: 'project';
+    readonly addLabel: 'Add project';
+    readonly group: 'profile';
+    readonly body: 'list';
+  },
+  {
+    readonly key: 'education';
+    readonly anchor: 'section-education';
+    readonly label: 'Education';
+    readonly title: 'Education';
+    readonly noun: 'education';
+    readonly addLabel: 'Add education';
+    readonly group: 'profile';
+    readonly body: 'list';
+  },
+  {
+    readonly key: 'credentials';
+    readonly anchor: 'section-credentials';
+    readonly label: 'Credentials';
+    readonly title: 'Certifications & Awards';
+    readonly hint: 'Pick which each row is — the fields shown adjust to match.';
+    readonly noun: 'certification or award';
+    readonly addLabel: 'Add certification or award';
+    readonly group: 'profile';
+    readonly body: 'list';
+  },
+  {
+    readonly key: 'screening';
+    readonly anchor: 'section-screening';
+    readonly label: 'Screening';
+    readonly title: 'Screening answers';
+    readonly hint: 'The questions almost every application asks. Anything answered here is filled in directly — the AI is never asked to guess it. Leave a row blank to let it be drafted as usual.';
+    readonly group: 'prep';
+    readonly body: 'fields';
+  },
+  {
+    readonly key: 'answers';
+    readonly anchor: 'section-answers';
+    readonly label: 'Answers';
+    readonly title: 'Other prepared answers';
+    readonly hint: "Anything else you're asked repeatedly. The question is matched loosely against the form's own wording, so it needn't be phrased identically.";
+    readonly noun: 'prepared answer';
+    readonly addLabel: 'Add prepared answer';
+    readonly group: 'prep';
+    readonly body: 'list';
+  },
+  {
+    readonly key: 'stories';
+    readonly anchor: 'section-stories';
+    readonly label: 'Stories';
+    readonly title: 'Stories';
+    readonly noun: 'story';
+    readonly addLabel: 'Add story';
+    readonly group: 'prep';
+    readonly body: 'list';
+  },
+] = [
   {
     key: 'upload',
     anchor: 'section-upload',

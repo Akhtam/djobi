@@ -14,7 +14,7 @@ describe('account menu', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Account menu' });
     // The avatar's letter comes from the Profile's name, fetched once on mount.
-    expect(await screen.findByText(fixtureProfile.fullName[0].toUpperCase())).toBeInTheDocument();
+    expect(await screen.findByText(fixtureProfile.fullName[0]!.toUpperCase())).toBeInTheDocument();
 
     await user.click(trigger);
     await user.click(await screen.findByRole('menuitem', { name: 'Profile' }));

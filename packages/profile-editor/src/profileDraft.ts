@@ -216,7 +216,10 @@ export function normalizeProfileDraft(profile: Profile, createStoryId: () => str
     workExperience: profile.workExperience.map((entry) => {
       let normalized = entry;
       for (let index = entry.bullets.length - 1; index >= 0; --index) {
-        if (!entry.bullets[index].trim()) normalized = spliceWorkBullets(normalized, index, 1);
+        const bullet = entry.bullets[index];
+        if (bullet !== undefined && !bullet.trim()) {
+          normalized = spliceWorkBullets(normalized, index, 1);
+        }
       }
       return normalized;
     }),
