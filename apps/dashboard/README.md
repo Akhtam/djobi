@@ -23,25 +23,66 @@ authenticated app. Every view reads from one shared applications array held by
 `useApplicationStore`. There is deliberately no `getApplication(id)`.
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart LR
-  main["main.tsx<br/>httpDashboardClient · chunk-reload guard"] --> app["App<br/>hash starts with '#/'?"]
-  app -- "no" --> landing["LandingPage<br/>public, no client"]
-  app -- "yes" --> shell["DashboardApp<br/>header · nav · AccountMenu<br/>401 → #/login?from"]
-  shell --> hashRoute["useHashRoute<br/>filters + shown in URL"]
-  shell --> store["useApplicationStore<br/>applications[] (one copy)<br/>mutate: apply / write / reconcile / rollback"]
-  store --> client["dashboardClient<br/>createHttpTransport · baseUrl '' · credentials include<br/>createFixtureDashboardClient (tests)"]
+  main("main.tsx<br/>httpDashboardClient · chunk-reload guard") --> app("App<br/>hash starts with '#/'?")
+  app -- "no" --> landing("LandingPage<br/>public, no client")
+  app -- "yes" --> shell("DashboardApp<br/>header · nav · AccountMenu<br/>401 → #/login?from")
+  shell --> hashRoute("useHashRoute<br/>filters + shown in URL")
+  shell --> store("useApplicationStore<br/>applications[] (one copy)<br/>mutate: apply / write / reconcile / rollback")
+  store --> client("dashboardClient<br/>createHttpTransport · baseUrl '' · credentials include<br/>createFixtureDashboardClient (tests)")
   client -- "fetch via proxy" --> backend(["backend<br/>/applications · /profile · /extract-job · /api/auth"])
 
   subgraph views["Lazy views (route → chunk)"]
-    list["ApplicationsList<br/>#/ · search · stage · sort<br/>load more (20)<br/>NewApplication (@djobi/manual-log)"]
-    detail["ApplicationDetail<br/>#/applications/:id<br/>StageSelect · NotesLog · AddNoteForm<br/>RequirementList · delete"]
-    analytics["Analytics<br/>#/analytics?range&stage<br/>keyword gaps · RequirementsPanel<br/>useRemoteProfile"]
-    profile["Profile<br/>#/profile<br/>@djobi/profile-editor · resume upload"]
-    auth["Login · SignUp<br/>#/login?from · #/signup<br/>/api/auth/sign-*"]
+    list("ApplicationsList<br/>#/ · search · stage · sort<br/>load more (20)<br/>NewApplication (@djobi/manual-log)")
+    detail("ApplicationDetail<br/>#/applications/:id<br/>StageSelect · NotesLog · AddNoteForm<br/>RequirementList · delete")
+    analytics("Analytics<br/>#/analytics?range&stage<br/>keyword gaps · RequirementsPanel<br/>useRemoteProfile")
+    profile("Profile<br/>#/profile<br/>@djobi/profile-editor · resume upload")
+    auth("Login · SignUp<br/>#/login?from · #/signup<br/>/api/auth/sign-*")
   end
 
   shell -- "renders by route.name" --> views
   store --> list & detail & analytics
+
+  classDef page fill:#ffedd5,stroke:#f97316,stroke-width:1.5px,color:#7c2d12
+  classDef worker fill:#fce7f3,stroke:#ec4899,stroke-width:1.5px,color:#831843
+  classDef ui fill:#ede9fe,stroke:#8b5cf6,stroke-width:1.5px,color:#4c1d95
+  classDef http fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1.5px,color:#0c4a6e
+  classDef data fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#064e3b
+  classDef external fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
+  classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  class main,app entry
+  class landing external
+  class shell,hashRoute worker
+  class store data
+  class client,backend http
+  class list,detail,analytics,profile ui
+  class auth page
+
+  style views fill:#8b5cf60f,stroke:#8b5cf6,stroke-width:1.5px,color:#8b5cf6
+
+  linkStyle default stroke:#94a3b8,stroke-width:1.5px
 ```
 
 Stage changes are **slotted** mutations: they queue per `id:stage`, and only the newest reply is

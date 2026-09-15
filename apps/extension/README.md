@@ -9,46 +9,67 @@ The service worker owns every step that costs money or can't be undone. The pane
 candidate's optimistic edits. `chrome.storage.session` is where they all meet.
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart LR
   subgraph content["Content script · content/"]
-    cIndex["index.ts<br/>message handler + watcher"]
-    detect["detect.ts<br/>file input / resume|cv|cover letter|linkedin label"]
-    detectFields["detectFields.ts<br/>→ DetectedField[] (category)"]
-    signals["pageSignals.ts · detectedFieldDom.ts<br/>realm-safe label ladder · field ↔ live DOM"]
-    extractJd["extractJobDescription.ts<br/>JSON-LD JobPosting → DOM score"]
-    fill["fillForm.ts<br/>native setter + InputEvent"]
-    submit["submitWatch.ts<br/>armed only after a fill"]
-    toast["savedToast.ts<br/>on-page confirmation"]
+    cIndex("index.ts<br/>message handler + watcher")
+    detect("detect.ts<br/>file input / resume|cv|cover letter|linkedin label")
+    detectFields("detectFields.ts<br/>→ DetectedField[] (category)")
+    signals("pageSignals.ts · detectedFieldDom.ts<br/>realm-safe label ladder · field ↔ live DOM")
+    extractJd("extractJobDescription.ts<br/>JSON-LD JobPosting → DOM score")
+    fill("fillForm.ts<br/>native setter + InputEvent")
+    submit("submitWatch.ts<br/>armed only after a fill")
+    toast("savedToast.ts<br/>on-page confirmation")
   end
 
   subgraph worker["Service worker · background/"]
-    sw["service-worker.ts<br/>envelope parse · recoveryReady<br/>tab cleanup · side-panel behavior"]
-    router["router.ts<br/>handleTypedMessage switch<br/>withWorkerKeptAlive"]
-    pipeline["applicationPipeline.ts<br/>runAnalysis · runFill<br/>runSaveApplication"]
-    claim["runClaim.ts<br/>lock + abort"]
-    failure["pipelineFailure.ts<br/>failure → run vocabulary"]
-    detected["detectedFields.ts + apiDetectors.ts<br/>recordReport · snapshotForRun · frameForFill<br/>enrichWithApiOracle"]
-    badge["saveBadge.ts<br/>toolbar ✓"]
+    sw("service-worker.ts<br/>envelope parse · recoveryReady<br/>tab cleanup · side-panel behavior")
+    router("router.ts<br/>handleTypedMessage switch<br/>withWorkerKeptAlive")
+    pipeline("applicationPipeline.ts<br/>runAnalysis · runFill<br/>runSaveApplication")
+    claim("runClaim.ts<br/>lock + abort")
+    failure("pipelineFailure.ts<br/>failure → run vocabulary")
+    detected("detectedFields.ts + apiDetectors.ts<br/>recordReport · snapshotForRun · frameForFill<br/>enrichWithApiOracle")
+    badge("saveBadge.ts<br/>toolbar ✓")
   end
 
   subgraph lib["Shared lib · lib/"]
     tabStore[("tabStore/<br/>record.ts (tab lock)<br/>pipelineRun.ts · detectedPage.ts<br/>jobContext.ts<br/>lifecycle.ts (tab close / navigation)")]
-    run["run/<br/>status.ts FACTS table · state.ts<br/>review · answers<br/>canFill/canSave/…"]
-    pageClient["pageClient.ts<br/>tabs.sendMessage · notifyPage"]
-    keepAlive["keepAlive.ts<br/>getPlatformInfo (20s beat)"]
-    disposition["fieldDisposition.ts<br/>category → fill / answer / attach / skip"]
-    backendClient["backendClient.ts<br/>schema.parse projections<br/>→ callBackend transport (@djobi/http-client)"]
-    auth["authClient · authToken<br/>sharedSessionCookie"]
-    messages["messages.ts<br/>zod envelope djobi/typed-message v1"]
+    run("run/<br/>status.ts FACTS table · state.ts<br/>review · answers<br/>canFill/canSave/…")
+    pageClient("pageClient.ts<br/>tabs.sendMessage · notifyPage")
+    keepAlive("keepAlive.ts<br/>getPlatformInfo (20s beat)")
+    disposition("fieldDisposition.ts<br/>category → fill / answer / attach / skip")
+    backendClient("backendClient.ts<br/>schema.parse projections<br/>→ callBackend transport (@djobi/http-client)")
+    auth("authClient · authToken<br/>sharedSessionCookie")
+    messages("messages.ts<br/>zod envelope djobi/typed-message v1")
   end
 
   subgraph ui["UI · panel/ options/"]
-    panelApp["panel/App<br/>profile bootstrap · tab switch"]
-    autofill["AutofillTab"]
-    logTab["LogApplication"]
-    ask["AskTab"]
-    hooks["hooks<br/>usePipelineRun · useActiveRun · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands"]
-    options["options/App<br/>Profile editor · Login · resume upload"]
+    panelApp("panel/App<br/>profile bootstrap · tab switch")
+    autofill("AutofillTab")
+    logTab("LogApplication")
+    ask("AskTab")
+    hooks("hooks<br/>usePipelineRun · useActiveRun · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands")
+    options("options/App<br/>Profile editor · Login · resume upload")
   end
 
   cIndex -- "REPORT_JOB_PAGE · REPORT_SUBMISSION" --> sw
@@ -67,6 +88,27 @@ flowchart LR
   hooks -- "renderResumePdf" --> backendClient
   options -- "profile · extractResume · signIn/Out" --> backendClient
   backendClient --> auth
+
+  classDef page fill:#ffedd5,stroke:#f97316,stroke-width:1.5px,color:#7c2d12
+  classDef worker fill:#fce7f3,stroke:#ec4899,stroke-width:1.5px,color:#831843
+  classDef ui fill:#ede9fe,stroke:#8b5cf6,stroke-width:1.5px,color:#4c1d95
+  classDef http fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1.5px,color:#0c4a6e
+  classDef data fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#064e3b
+  classDef external fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
+  classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  class cIndex,detect,detectFields,signals,extractJd,fill,submit,toast page
+  class sw,router,pipeline,claim,failure,detected,badge worker
+  class tabStore,run,pageClient,keepAlive,disposition,messages data
+  class backendClient,auth http
+  class panelApp,autofill,logTab,ask,hooks,options ui
+
+  style content fill:#f973160f,stroke:#f97316,stroke-width:1.5px,color:#f97316
+  style worker fill:#ec48990f,stroke:#ec4899,stroke-width:1.5px,color:#ec4899
+  style lib fill:#10b9810f,stroke:#10b981,stroke-width:1.5px,color:#10b981
+  style ui fill:#8b5cf60f,stroke:#8b5cf6,stroke-width:1.5px,color:#8b5cf6
+
+  linkStyle default stroke:#94a3b8,stroke-width:1.5px
 ```
 
 Messages go one way on each channel. Panel and content script send typed messages _to_ the worker
@@ -102,20 +144,41 @@ steps: **Analysis → Fill → Save**. Every step follows the same shape: a _run
 _succeeded_ or _failed_ one (`STEP_STATUS` in `lib/run/status.ts`).
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart LR
   start((no run))
 
   analyzing([analyzing])
-  review[review]
+  review(review)
   filling([filling])
-  filled[filled]
+  filled(filled)
   saving([saving])
-  saved[saved]
+  saved(saved)
 
-  duplicate[duplicate]
-  analyzeError[analyze-error]
-  fillError[fill-error]
-  saveError[save-error]
+  duplicate(duplicate)
+  analyzeError(analyze-error)
+  fillError(fill-error)
+  saveError(save-error)
 
   %% Happy path
   start -- Analyze --> analyzing
@@ -137,17 +200,25 @@ flowchart LR
   saveError -. retry .-> saving
   saved -. answer edited .-> filled
 
-  classDef busy fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-  classDef idle fill:#f3f4f6,stroke:#6b7280,color:#111827
-  classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
-  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
-  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef idle fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a
+  classDef busy fill:#e0f2fe,stroke:#0ea5e9,stroke-width:2px,color:#0c4a6e
+  classDef done fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#064e3b
+  classDef warn fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef error fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  classDef origin fill:#fce7f3,stroke:#ec4899,stroke-width:2px,color:#831843
 
-  class start,review,filled idle
+  class start origin
+  class review,filled idle
   class analyzing,filling,saving busy
   class saved done
   class duplicate warn
   class analyzeError,fillError,saveError error
+
+  linkStyle 0 stroke:#ec4899,stroke-width:2px
+  linkStyle 1,2,3,4,5 stroke:#10b981,stroke-width:3px
+  linkStyle 6 stroke:#f59e0b,stroke-width:1.5px
+  linkStyle 7,8,9 stroke:#f43f5e,stroke-width:1.5px
+  linkStyle 10,11,12,13 stroke:#94a3b8,stroke-width:1.5px
 ```
 
 **How to read it:** thick arrows are the happy path. Blue pills mean a step is running, green is

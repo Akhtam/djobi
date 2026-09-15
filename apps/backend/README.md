@@ -22,28 +22,68 @@ Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**,
 registration order, that order is what makes the guards work.
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart TB
-  logger["logger<br/>index.ts wrapper"] --> cors["cors()<br/>:5174 + PUBLIC_ORIGINS"]
-  cors --> csrf["CSRF guard<br/>json, or multipart + x-djobi-upload · else 415"]
-  csrf --> healthz["GET /healthz<br/>public"]
-  csrf --> authRoutes["/api/auth/*<br/>auth.handler (public)"]
-  csrf --> requireAuth["deps.requireAuth<br/>401 or userId"]
+  logger("logger<br/>index.ts wrapper") --> cors("cors()<br/>:5174 + PUBLIC_ORIGINS")
+  cors --> csrf("CSRF guard<br/>json, or multipart + x-djobi-upload · else 415")
+  csrf --> healthz("GET /healthz<br/>public")
+  csrf --> authRoutes("/api/auth/*<br/>auth.handler (public)")
+  csrf --> requireAuth("deps.requireAuth<br/>401 or userId")
 
-  requireAuth --> llmRoutes["routes/llm.ts (jsonBody(zod) + signal)<br/>/extract-job → extractJob<br/>/tailor-resume → tailorResume<br/>/answer-questions → answerQuestions<br/>/analyze → analyzeApplication<br/>/answer-chat → answerChat"]
-  requireAuth --> profileRoute["routes/profile.ts<br/>GET/POST /profile<br/>/profile/extract-resume → extractResume"]
-  requireAuth --> appRoutes["routes/applications.ts<br/>store param + c.get('userId')"]
-  requireAuth --> renderRoute["routes/render-resume-pdf.ts<br/>pdf/renderResume · @libpdf/core<br/>Noto Sans · DENSITY_STEPS"]
+  requireAuth --> llmRoutes("routes/llm.ts (jsonBody(zod) + signal)<br/>/extract-job → extractJob<br/>/tailor-resume → tailorResume<br/>/answer-questions → answerQuestions<br/>/analyze → analyzeApplication<br/>/answer-chat → answerChat")
+  requireAuth --> profileRoute("routes/profile.ts<br/>GET/POST /profile<br/>/profile/extract-resume → extractResume")
+  requireAuth --> appRoutes("routes/applications.ts<br/>store param + c.get('userId')")
+  requireAuth --> renderRoute("routes/render-resume-pdf.ts<br/>pdf/renderResume · @libpdf/core<br/>Noto Sans · DENSITY_STEPS")
 
-  llmRoutes --> analyze["/analyze internals<br/>1. extractJob(jd) → normalizeRequirementImportance<br/>2. Promise.all([<br/>tailorResume → reconcileResume + verifyBulletRewrite,<br/>answerQuestions (1 call/question, ≤8 at once)<br/>])"]
+  llmRoutes --> analyze("/analyze internals<br/>1. extractJob(jd) → normalizeRequirementImportance<br/>2. Promise.all([<br/>tailorResume → reconcileResume + verifyBulletRewrite,<br/>answerQuestions (1 call/question, ≤8 at once)<br/>])")
   llmRoutes --> structured
   analyze -.-> structured
-  profileRoute --> structured["llm/structuredCall.ts<br/>routing.ts → model + maxTokens<br/>cachedPrefix (stable text first)<br/>generateObject(schema, abortSignal)<br/>provider: require_parameters · data_collection deny<br/>anthropic/* → anthropic, claude-on-aws only<br/>retry once if no object & retryable<br/>log: tokens · cost · provider"]
+  profileRoute --> structured("llm/structuredCall.ts<br/>routing.ts → model + maxTokens<br/>cachedPrefix (stable text first)<br/>generateObject(schema, abortSignal)<br/>provider: require_parameters · data_collection deny<br/>anthropic/* → anthropic, claude-on-aws only<br/>retry once if no object & retryable<br/>log: tokens · cost · provider")
   structured --> openrouter(["OpenRouter"])
 
   profileRoute --> stores[("ApplicationStore / ProfileStore<br/>postgres* (prod) · inMemory* (tests)")]
   appRoutes --> stores
 
-  errors["onError: 499 aborted · 400 validation<br/>HTTPException as-is · 500 {error, code?}<br/>notFound: 404 {error}"]
+  errors("onError: 499 aborted · 400 validation<br/>HTTPException as-is · 500 {error, code?}<br/>notFound: 404 {error}")
+
+  classDef page fill:#ffedd5,stroke:#f97316,stroke-width:1.5px,color:#7c2d12
+  classDef worker fill:#fce7f3,stroke:#ec4899,stroke-width:1.5px,color:#831843
+  classDef ui fill:#ede9fe,stroke:#8b5cf6,stroke-width:1.5px,color:#4c1d95
+  classDef http fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1.5px,color:#0c4a6e
+  classDef data fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#064e3b
+  classDef external fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
+  classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  class logger,cors,csrf entry
+  class healthz,authRoutes external
+  class requireAuth worker
+  class llmRoutes,profileRoute,appRoutes,renderRoute http
+  class analyze,structured ui
+  class openrouter external
+  class stores data
+  class errors danger
+
+  linkStyle default stroke:#94a3b8,stroke-width:1.5px
 ```
 
 No route handler has its own `try/catch`. Validation errors become 400, including an oversized
@@ -80,6 +120,20 @@ own responses, and a Hono `HTTPException` (none is thrown by this app today) is 
 `db/schema.ts` · Drizzle migrations `0000`–`0012`
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#fce7f3"
+    primaryBorderColor: "#db2777"
+    primaryTextColor: "#831843"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    attributeBackgroundColorOdd: "#ffffff"
+    attributeBackgroundColorEven: "#fdf2f8"
+---
 erDiagram
   users ||--o{ session : has
   users ||--o{ account : has

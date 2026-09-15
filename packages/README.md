@@ -6,15 +6,36 @@ surface; `@djobi/shared` has its own detailed README.
 ## Shared packages and who imports them
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart TB
-  ext["apps/extension"]
-  dash["apps/dashboard"]
-  backend["apps/backend"]
+  ext("apps/extension")
+  dash("apps/dashboard")
+  backend("apps/backend")
 
-  http["@djobi/http-client<br/>createHttpTransport: json · binary · upload<br/>HttpError kinds: http · timeout · network · invalid-response<br/>90s default deadline · isUnauthorized · userMessage"]
-  editor["@djobi/profile-editor (React)<br/>useProfileDraft · useProfileWorkflow<br/>section inventory + section/field components<br/>list + bullet editing (★ starred bullets)"]
-  manualLog["@djobi/manual-log (React)<br/>useManualLogFlow<br/>extract + duplicate check → review → save"]
-  shared["@djobi/shared (zod)<br/>schemas · wire · detectedField<br/>jobKey · duplicateGuard · applicationPayload<br/>keywordCoverage · requirementEvidence · requirementImportance<br/>labelMatching · screeningAnswers · preparedAnswers<br/>bulletProvenance · httpUrl · resumeFileName · failureMessage"]
+  http("@djobi/http-client<br/>createHttpTransport: json · binary · upload<br/>HttpError kinds: http · timeout · network · invalid-response<br/>90s default deadline · isUnauthorized · userMessage")
+  editor("@djobi/profile-editor (React)<br/>useProfileDraft · useProfileWorkflow<br/>section inventory + section/field components<br/>list + bullet editing (★ starred bullets)")
+  manualLog("@djobi/manual-log (React)<br/>useManualLogFlow<br/>extract + duplicate check → review → save")
+  shared("@djobi/shared (zod)<br/>schemas · wire · detectedField<br/>jobKey · duplicateGuard · applicationPayload<br/>keywordCoverage · requirementEvidence · requirementImportance<br/>labelMatching · screeningAnswers · preparedAnswers<br/>bulletProvenance · httpUrl · resumeFileName · failureMessage")
 
   ext --> http & editor & manualLog & shared
   dash --> http & editor & manualLog & shared
@@ -22,6 +43,22 @@ flowchart TB
   editor --> http & shared
   manualLog --> http & shared
   http --> shared
+
+  classDef page fill:#ffedd5,stroke:#f97316,stroke-width:1.5px,color:#7c2d12
+  classDef worker fill:#fce7f3,stroke:#ec4899,stroke-width:1.5px,color:#831843
+  classDef ui fill:#ede9fe,stroke:#8b5cf6,stroke-width:1.5px,color:#4c1d95
+  classDef http fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1.5px,color:#0c4a6e
+  classDef data fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#064e3b
+  classDef external fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
+  classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  class ext,dash,backend entry
+  class http http
+  class editor ui
+  class manualLog worker
+  class shared data
+
+  linkStyle default stroke:#94a3b8,stroke-width:1.5px
 ```
 
 | Package                 | Imported by                                                                                                                                                                                                                                                                       |

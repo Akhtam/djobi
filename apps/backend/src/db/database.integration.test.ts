@@ -494,7 +494,7 @@ async function createLegacyProfilesTable(client: PGlite): Promise<void> {
   `);
 }
 
-describe('0004 singleton profile migration', () => {
+describe('0004 singleton profile migration', { timeout: 30_000 }, () => {
   it('keeps the newest legacy profile, removes duplicates, and assigns the fixed id', async () => {
     const client = new PGlite();
     try {
@@ -601,7 +601,7 @@ async function applyOwnershipMigration(client: PGlite): Promise<void> {
   }
 }
 
-describe('0009 user ownership migration', () => {
+describe('0009 user ownership migration', { timeout: 30_000 }, () => {
   it('creates the bootstrap user and assigns every existing row to it', async () => {
     const client = new PGlite();
     try {

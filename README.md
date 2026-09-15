@@ -14,24 +14,45 @@ server, a persisted history of past applications, and a web dashboard for tracki
 ## Architecture
 
 ```mermaid
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#f1f5f9"
+    primaryBorderColor: "#94a3b8"
+    primaryTextColor: "#0f172a"
+    textColor: "#334155"
+    lineColor: "#94a3b8"
+    edgeLabelBackground: "#f8fafc"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    titleColor: "#64748b"
+  flowchart:
+    curve: basis
+    padding: 18
+    nodeSpacing: 36
+    rankSpacing: 56
+---
 flowchart LR
   subgraph browser["Chrome browser"]
     subgraph ats["ATS tab (any http/https page, all frames)<br/>greenhouse · ashby · lever · workday · white-labeled boards"]
-      cs["content script<br/>detect · scrape · fill · submit"]
-      form["employer's form (DOM)<br/>inputs · radios · file upload"]
+      cs("content script<br/>detect · scrape · fill · submit")
+      form("employer's form (DOM)<br/>inputs · radios · file upload")
     end
-    sw["background service worker<br/>router.ts → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake"]
+    sw("background service worker<br/>router.ts → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake")
     store[("chrome.storage.session<br/>tabStore/record per tab:<br/>pipeline run state · detected frames<br/>job context · authToken")]
-    panel["side panel (React)<br/>Autofill · Log · Ask tabs<br/>usePipelineRun ← onChanged<br/>backendClient (bearer)"]
-    options["options page<br/>Profile editor + login<br/>@djobi/profile-editor<br/>resume PDF upload"]
-    dash["dashboard SPA · localhost:5174<br/>(Vite, proxy → backend)"]
+    panel("side panel (React)<br/>Autofill · Log · Ask tabs<br/>usePipelineRun ← onChanged<br/>backendClient (bearer)")
+    options("options page<br/>Profile editor + login<br/>@djobi/profile-editor<br/>resume PDF upload")
+    dash("dashboard SPA · localhost:5174<br/>(Vite, proxy → backend)")
   end
 
   subgraph server["Local server + cloud"]
-    backend["Hono backend · 127.0.0.1:5391<br/>cors allowlist → json-only CSRF guard<br/>GET /healthz (public)<br/>/api/auth/* (Better Auth)<br/>requireAuth → userId<br/>POST /analyze /extract-job /tailor-resume /answer-*<br/>GET|POST /profile (+extract-resume)<br/>/applications CRUD, stage, notes<br/>POST /render-resume-pdf (@libpdf)<br/>onError → {error, code} JSON"]
-    llm["OpenRouter (one key)<br/>gemini-3.1-flash-lite → extractJob, extractResume<br/>claude-sonnet-5 → tailorResume, answerQuestions, answerChat<br/>data_collection: deny · 1 semantic retry"]
+    backend("Hono backend · 127.0.0.1:5391<br/>cors allowlist → json-only CSRF guard<br/>GET /healthz (public)<br/>/api/auth/* (Better Auth)<br/>requireAuth → userId<br/>POST /analyze /extract-job /tailor-resume /answer-*<br/>GET|POST /profile (+extract-resume)<br/>/applications CRUD, stage, notes<br/>POST /render-resume-pdf (@libpdf)<br/>onError → {error, code} JSON")
+    llm("OpenRouter (one key)<br/>gemini-3.1-flash-lite → extractJob, extractResume<br/>claude-sonnet-5 → tailorResume, answerQuestions, answerChat<br/>data_collection: deny · 1 semantic retry")
     db[("Postgres<br/>drizzle node-postgres<br/>users · session/account<br/>profiles (jsonb) · applications")]
-    atsApi["Public ATS APIs (called from service worker)<br/>boards-api.greenhouse.io<br/>api.smartrecruiters.com · *.workable.com<br/>→ required flags + real choice labels"]
+    atsApi("Public ATS APIs (called from service worker)<br/>boards-api.greenhouse.io<br/>api.smartrecruiters.com · *.workable.com<br/>→ required flags + real choice labels")
   end
 
   cs --> form
@@ -47,6 +68,32 @@ flowchart LR
   sw -. "GET schema" .-> atsApi
   backend -- "generateObject(zod)" --> llm
   backend --> db
+
+  classDef page fill:#ffedd5,stroke:#f97316,stroke-width:1.5px,color:#7c2d12
+  classDef worker fill:#fce7f3,stroke:#ec4899,stroke-width:1.5px,color:#831843
+  classDef ui fill:#ede9fe,stroke:#8b5cf6,stroke-width:1.5px,color:#4c1d95
+  classDef http fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1.5px,color:#0c4a6e
+  classDef data fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#064e3b
+  classDef external fill:#fef3c7,stroke:#f59e0b,stroke-width:1.5px,color:#78350f
+  classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
+  classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
+  class cs,form page
+  class sw worker
+  class panel,options,dash ui
+  class backend http
+  class store,db data
+  class llm,atsApi external
+
+  style browser fill:#ec48990f,stroke:#ec4899,stroke-width:1.5px,color:#ec4899
+  style ats fill:#f973160f,stroke:#f97316,stroke-width:1.5px,color:#f97316,stroke-dasharray:6 4
+  style server fill:#0ea5e90f,stroke:#0ea5e9,stroke-width:1.5px,color:#0ea5e9
+
+  linkStyle default stroke:#94a3b8,stroke-width:1.5px
+  linkStyle 0 stroke:#f97316,stroke-width:2px
+  linkStyle 1,2,4,6 stroke:#ec4899,stroke-width:2px
+  linkStyle 3,5,12 stroke:#10b981,stroke-width:2px
+  linkStyle 7,8,9 stroke:#0ea5e9,stroke-width:2px
+  linkStyle 10,11 stroke:#f59e0b,stroke-width:2px
 ```
 
 The browser holds everything that touches the page or the candidate's session. The backend holds
