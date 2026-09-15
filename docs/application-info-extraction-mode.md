@@ -20,6 +20,12 @@
 > those sections describe the implementation at the time of research, before the panel gained its
 > **Autofill / Log / Ask** tab switcher; they are preserved as design history, not claims about the
 > current tree. Every repo claim below is `path:line`, and those line numbers predate both tabs.
+>
+> **Model routing has also changed since this snapshot** (§2.8, §5.8): extraction runs on
+> `google/gemini-3.1-flash-lite` and the writing calls on `anthropic/claude-sonnet-5`, both through
+> OpenRouter — see `apps/backend/src/llm/routing.ts`. `MODEL`/`FAST_MODEL`, the forced-tool-call
+> structured output and the Anthropic key mentioned below no longer exist. Likewise
+> `lib/tabStore.ts` and `lib/runReview.ts` are now `lib/tabStore/` and `lib/run/`.
 
 ## 1. The question, restated
 

@@ -282,7 +282,7 @@ async function fillStep(
     ? mergeRescan(scanned.fields, jobPageData.fields)
     : jobPageData.fields;
   // Resolved through the run, so the panel's warning and this fill agree by construction — see
-  // `lib/runAnswers.ts`. `run` is the analyzed snapshot, which is the only correct source for the
+  // `lib/run/answers.ts`. `run` is the analyzed snapshot, which is the only correct source for the
   // labels: `fields` above is the *fresh* scan.
   const drafted = answersFor(run);
 

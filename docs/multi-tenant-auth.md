@@ -12,7 +12,8 @@
 > unsettled** — see that section: this product is meant to fund model calls the way any subscription
 > SaaS funds its own infrastructure, but the concrete mechanism (BYOK vs. quotas vs. billing-gated
 > access) is a decision for a later session, not resolved here. ADR 0001 (single Cloudflare Worker)
-> is explicitly _not_ assumed here.
+> was once described here as not assumed; that is stale — the dashboard's relative-path client and
+> same-origin proxy already depend on its single-origin topology (see ADR-0001's status note).
 >
 > The file/module names below were corrected on the 2026-09-01 pass — the repo has moved since this
 > was written (Phases 12–19 landed in between) and a few names in the original plan no longer exist.
@@ -95,7 +96,7 @@ integration surface against its own docs before committing to it.
 | `db/applicationStore.ts` / `db/postgresApplicationStore.ts` | All eight `ApplicationStore` methods take a `userId` and scope on it, in both the Postgres adapter and `inMemoryApplicationStore`                                        |
 | `routes/*.ts`                                               | Every handler reads the user from context instead of assuming one                                                                                                        |
 | `app.ts`                                                    | Auth middleware, registered after CORS and the content-type guard, before the routes                                                                                     |
-| `llm/client.ts`                                             | Module-scope `createOpenRouter()` must become per-request if BYOK is chosen                                                                                              |
+| `llm/client.ts`                                             | The one lazily built provider must become per-request if BYOK is chosen                                                                                                  |
 | `packages/http-client/src/index.ts`                         | New: a way for a caller to attach a bearer token or request `credentials: 'include'` — `HttpTransportOptions`/`RequestOptions` today carry no auth-related fields at all |
 | `extension/lib/callBackend.ts`                              | Passes a token into the shared transport; 401 handling                                                                                                                   |
 | `extension/options/`                                        | The login surface, and where a user's own API key would go                                                                                                               |
@@ -116,24 +117,24 @@ a few places below — read those as `db/profileStore.ts` + `db/postgresProfileS
 `db/applicationStore.ts` + `db/postgresApplicationStore.ts` respectively; the "repository" naming was
 never adopted. `applicationStore.contract.test.ts` already runs the same suite against both the
 in-memory and a real Postgres (PGlite) adapter — that existing file is where Phase A's
-cross-user-isolation tests belong, not a new one. Migration numbering has also moved: the newest
-migration in the repo is `0008` (Phase 19), so Phase A's migration is `0009`, not `0007`.
+cross-user-isolation tests belong, not a new one. Migration numbering has also moved: Phase A's
+migration landed as `0009`, not `0007` (the newest in the repo is now `0012`).
 
 ## The thing that will bite you
 
 **One server-side `OPENROUTER_API_KEY` funds every user who signs up.** (Corrected: this was
 `ANTHROPIC_API_KEY` when the doc was written; Phase 11 moved the whole backend onto OpenRouter, and
-`llm/client.ts` is now a single `createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })`
-instance — the module-scope-singleton problem below is unchanged, just under a different name.)
-Today that is fine because there is one user. The moment signup is public, an analysis run is three
+`llm/client.ts` now builds one shared OpenRouter provider lazily, on first use, from a key resolver
+(`configureOpenRouterKey`) — still one key for every user, so the problem below is unchanged.)
+Today that is fine because there is one user. The moment signup is public, an analysis run is several
 model calls that someone else pays for, and there is no upper bound. This is not a hardening task to
 do later — it gates going public at all.
 
 Two workable answers:
 
 - **Bring your own key.** Each user stores their own OpenRouter key, encrypted at rest. Honest, cost-
-  safe, and it makes the `llm/client.ts` refactor mandatory: the module-scope singleton reads the key
-  at import time and must become a per-request client. Costs you a worse first-run experience.
+  safe, and it makes the `llm/client.ts` refactor mandatory: the one cached provider holds a single key
+  and must become a per-request client. Costs you a worse first-run experience.
 - **Hard per-user quotas.** You keep paying, with a counted ceiling per user per period, enforced
   server-side before the call. Better onboarding, real money at risk, and quota accounting is its own
   small system.
@@ -291,7 +292,7 @@ this is a real gate, not a checklist to defer indefinitely.
 
 - [x] Rate limiting on the auth routes — Better Auth's own limiter, configured in `auth.ts`
       (`rateLimit`), with sign-in/sign-up already getting its own tighter built-in budget (10s
-      window, 3 requests) than the general default. **Not yet done for the three model routes** —
+      window, 3 requests) than the general default. **Not yet done for the model routes** —
       those still have no per-request ceiling of their own, separate from Phase E's billing question
 - [x] CORS allowlist moves from the hardcoded localhost pair to real configured origins —
       `PUBLIC_ORIGINS` (comma-separated) extends both `app.ts`'s CORS `origin` list and `auth.ts`'s
@@ -307,8 +308,8 @@ this is a real gate, not a checklist to defer indefinitely.
       exists yet
 - [ ] A privacy policy, given what the Profile stores. Required by the Chrome Web Store for an
       extension handling personal data, and true regardless
-- [ ] CI-automated migrations — nothing runs `db:migrate` on deploy today; `pnpm db:migrate` is still
-      a manual step, and this has already caused a real incident once (see Phase C's postmortem
+- [ ] CI-automated migrations — nothing runs migrations on deploy today; outside the Docker Compose
+      preview (whose one-shot `migrate` service applies them), `pnpm db:migrate` is still a manual step, and this has already caused a real incident once (see Phase C's postmortem
       above)
 - [ ] Email verification and password reset — `requireEmailVerification` stays `false`; no
       email-sending provider (Resend/SES/etc.) exists in the repo yet to build either on

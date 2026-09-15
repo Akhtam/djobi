@@ -1,7 +1,8 @@
 # @djobi/shared
 
-Zod schemas, types, and the handful of rules that **both** the backend (`apps/backend`) and the
-Chrome extension (`apps/extension`) have to agree on. Anything in here is here because two processes
+Zod schemas, types, and the handful of rules that the backend (`apps/backend`) and its clients —
+the Chrome extension (`apps/extension`), the dashboard (`apps/dashboard`) and the other workspace
+packages — have to agree on. Anything in here is here because two processes
 would otherwise keep private copies of it and drift apart.
 
 Domain terms below (**Profile**, **Job Info**, **Tailored Resume**, **Question Answer**,
@@ -289,9 +290,10 @@ invalid `Story` failing the parent `Profile`, every `FieldCategory` value being 
 `httpUrl`, `jobKey`, `keywordCoverage`, `labelMatching`, `preparedAnswers`, `requirementEvidence`,
 `requirementImportance`, `resumeFileName` and `wire` have their own test files.
 
-**`screeningAnswers.ts` is the only module here with no test file** — so `matchScreeningTopic`'s
-order-dependent matching, where "authorized to work without sponsorship?" has to resolve to work
-authorization rather than sponsorship, is covered only indirectly through `preparedAnswers`.
+**`screeningAnswers.ts` is the only module here with no test file of its own** — `matchScreeningTopic`,
+including its order-dependent matching ("authorized to work without sponsorship?" has to resolve to
+work authorization rather than sponsorship), is tested directly in `preparedAnswers.test.ts`'s own
+`describe('matchScreeningTopic', …)` block.
 
 Run with `pnpm --filter @djobi/shared test`.
 

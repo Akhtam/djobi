@@ -32,8 +32,8 @@ server, a persisted history of past applications, and a web dashboard for tracki
   clicking away.
 - `apps/dashboard` — Vite + React web app (`localhost:5174`) for browsing saved applications,
   editing your profile, and reviewing keyword-gap analytics across everything you've applied to. A
-  separate app rather than an extension page: it needs no `chrome.*` API, so it talks to the backend
-  over CORS like any other origin.
+  separate app rather than an extension page: it needs no `chrome.*` API, so it stays out of the MV3
+  bundle. Its backend calls are same-origin — through Vite's dev proxy locally, nginx under Docker.
 
 ## Prerequisites
 
@@ -113,8 +113,8 @@ PORT=5391
 BETTER_AUTH_SECRET=
 ```
 
-`DATABASE_URL`, `OPENROUTER_API_KEY` and `BETTER_AUTH_SECRET` are required — the backend throws at
-startup if `BETTER_AUTH_SECRET` is unset (generate one with `openssl rand -base64 32`). `PORT`
+`DATABASE_URL`, `OPENROUTER_API_KEY` and `BETTER_AUTH_SECRET` are required — the backend throws on
+its first auth request if `BETTER_AUTH_SECRET` is unset (generate one with `openssl rand -base64 32`). `PORT`
 defaults to 5391. The rest of `apps/backend/.env.example` (`BETTER_AUTH_URL`, `PUBLIC_ORIGINS`,
 `NODE_ENV`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) is optional and only needed for a real
 deploy or Google sign-in — see `docs/multi-tenant-auth.md`. Email/password sign-in works with none
@@ -260,8 +260,9 @@ Back at `http://localhost:5174` (started in step 1), signed in, the dashboard is
 read-only list:
 
 - **Applications** (`#/`) lists every saved application (filter by stage, search by title or
-  company) and opens each one (`#/applications/:id`) to edit its stage, append notes, and review
-  the saved job info, tailored resume and drafted answers. Notes are append-only.
+  company) and opens each one (`#/applications/:id`) to edit its stage, add notes, and review the
+  saved job info, tailored resume and drafted answers. Notes can't be edited, but a single note can
+  be deleted (behind a confirmation), and so can the whole application.
 - **Profile** (`#/profile`) is the same profile editor as the extension's options page, built from
   the same `@djobi/profile-editor` package, so you can set up or edit your profile from either
   surface — the options page is no longer the only place to do this.
@@ -271,24 +272,27 @@ read-only list:
 - **New application** is the dashboard's counterpart to the extension's Log tab, for recording an
   application made without djobi.
 
-The backend's CORS allowlist covers the dashboard's dev origins only — see
-`apps/backend/README.md`.
+The backend's CORS allowlist covers the dashboard's local origins plus whatever `PUBLIC_ORIGINS`
+lists — see `apps/backend/README.md`.
 
 ## Tests
 
 ```bash
-pnpm test                        # every package
-pnpm --filter backend test       # backend only
-pnpm --filter extension test     # extension only
-pnpm --filter dashboard test     # dashboard only
-pnpm --filter @djobi/shared test # shared schemas only
+pnpm test                                # every package
+pnpm --filter backend test               # backend only
+pnpm --filter extension test             # extension only
+pnpm --filter dashboard test             # dashboard only
+pnpm --filter @djobi/shared test         # shared schemas only
+pnpm --filter @djobi/http-client test    # shared HTTP transport only
+pnpm --filter @djobi/profile-editor test # shared profile editor only
+pnpm --filter @djobi/manual-log test     # shared manual-log flow only
 ```
 
 ## Other scripts
 
 ```bash
 pnpm typecheck      # tsc across every package
-pnpm build          # shared, then every package's own build
+pnpm build          # the four workspace packages, then every app's own build
 pnpm format         # prettier --write .
 pnpm format:check   # prettier --check .
 ```
@@ -298,3 +302,76 @@ request and every push to `main`, on Linux — the host here is macOS, and a cas
 catches import-casing bugs that are invisible locally.
 
 Known issues and loose ends live in `PROGRESS.md` → "Known loose ends".
+
+## How the pieces connect
+
+```mermaid
+flowchart LR
+  subgraph browser["Chrome browser"]
+    subgraph ats["ATS tab (any http/https page, all frames)<br/>greenhouse · ashby · lever · workday · white-labeled boards"]
+      cs["content script<br/>detect · scrape · fill · submit"]
+      form["employer's form (DOM)<br/>inputs · radios · file upload"]
+    end
+    sw["background service worker<br/>router.ts → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake"]
+    store[("chrome.storage.session<br/>tabStore/record per tab:<br/>pipeline run state · detected frames<br/>job context · authToken")]
+    panel["side panel (React)<br/>Autofill · Log · Ask tabs<br/>usePipelineRun ← onChanged<br/>backendClient (bearer)"]
+    options["options page<br/>Profile editor + login<br/>@djobi/profile-editor<br/>resume PDF upload"]
+    dash["dashboard SPA · localhost:5174<br/>(Vite, proxy → backend)"]
+  end
+
+  subgraph server["Local server + cloud"]
+    backend["Hono backend · 127.0.0.1:5391<br/>cors allowlist → json-only CSRF guard<br/>GET /healthz (public)<br/>/api/auth/* (Better Auth)<br/>requireAuth → userId<br/>POST /analyze /extract-job /tailor-resume /answer-*<br/>GET|POST /profile (+extract-resume)<br/>/applications CRUD, stage, notes<br/>POST /render-resume-pdf (@libpdf)<br/>onError → {error, code} JSON"]
+    llm["OpenRouter (one key)<br/>gemini-3.1-flash-lite → extractJob, extractResume<br/>claude-sonnet-5 → tailorResume, answerQuestions, answerChat<br/>data_collection: deny · 1 semantic retry"]
+    db[("Postgres<br/>drizzle node-postgres<br/>users · session/account<br/>profiles (jsonb) · applications")]
+    atsApi["Public ATS APIs (called from service worker)<br/>boards-api.greenhouse.io<br/>api.smartrecruiters.com · *.workable.com<br/>→ required flags + real choice labels"]
+  end
+
+  cs --> form
+  cs -- "REPORT_JOB_PAGE<br/>REPORT_SUBMISSION" --> sw
+  sw -. "SCAN_PAGE · FILL_FORM<br/>SHOW_SAVED_TOAST" .-> cs
+  sw --> store
+  panel -- "START_ANALYSIS/FILL/SAVE<br/>UPDATE_RUN · CHECK_RUN" --> sw
+  store -. "storage.onChanged" .-> panel
+  panel -. "SCRAPE_JOB_DESCRIPTION" .-> cs
+  sw -- "fetch + Bearer" --> backend
+  panel -- "Bearer" --> backend
+  dash -- "cookie (same-origin via proxy)" --> backend
+  sw -. "GET schema" .-> atsApi
+  backend -- "generateObject(zod)" --> llm
+  backend --> db
+```
+
+The browser holds everything that touches the page or the candidate's session. The backend holds
+every secret (OpenRouter key, database URL, auth secret). Paid work always runs on the backend. The
+three application steps (Analyze, Fill, Save) are started from the **service worker**, so a run
+keeps going if the panel closes. The panel's other calls (Ask tab chat, Log tab job extraction,
+resume PDF preview) and the options page's resume import call the backend directly, and stop if
+their page closes.
+
+### A job application, end to end
+
+1. Content script decides a page is an application form (`detect.ts`) and reports its fields to the
+   worker.
+2. Worker stores them per frame and, if the URL is Greenhouse, SmartRecruiters or Workable, fills in
+   details from that ATS's API.
+3. Candidate pastes or scrapes the Job Description in the panel and clicks **Analyze**.
+4. Worker checks for a duplicate first, then makes one `POST /analyze` call: extract Job Info, then
+   tailor the resume and answer questions in parallel.
+5. Candidate reviews and edits, then clicks **Fill**: the worker rescans the page, renders the PDF
+   and sends `FILL_FORM`. The page reports back what it actually kept.
+6. Clicking **Save** (or pressing the site's own Submit) runs `POST /applications`, using the `runId`
+   as the idempotency key.
+7. The dashboard then lists the application and tracks its Stage and Notes.
+
+### Design rules that recur everywhere
+
+- **Ports + fakes**: `BackendClient`, `DashboardClient`, `ApplicationStore`, `ProfileStore`,
+  `PipelineDeps`. Each has a real adapter and a fake. Tests never hit the network.
+- **Zod on both ends**: every wire shape lives in `@djobi/shared`. Clients _parse_ request bodies,
+  which strips Profile fields the model shouldn't see.
+- **Lazy Proxies** for `db`, `auth` and `openrouter`: nothing reads env at import time, so the code
+  stays ready to run on Cloudflare Workers (ADR-0001).
+- **Abort signals** go from the browser through Hono into `generateObject`, so an abandoned analysis
+  stops being billed.
+- **Fails open**: the Duplicate Guard and ATS oracles fall back to the plain result instead of
+  blocking.

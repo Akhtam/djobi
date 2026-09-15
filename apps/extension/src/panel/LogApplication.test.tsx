@@ -278,7 +278,7 @@ describe('the Log tab', () => {
     // extraction in one `Promise.all` and call the pair, so a backend that couldn't answer a
     // *warning* reported the extraction as failed — throwing away a model call that had already
     // succeeded and leaving the candidate unable to record an application they had made. The rule
-    // now lives in `lib/duplicateGuard.ts`, which resolves rather than rejects.
+    // now lives in `@djobi/shared`'s `duplicateGuard.ts`, which resolves rather than rejects.
     const { saved } = stubBackend({ duplicateFailure: 'Failed to fetch' });
     // The guard's own warning; asserted where failing open is the subject, in
     // `background/applicationPipeline.test.ts`.

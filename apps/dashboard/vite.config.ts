@@ -23,7 +23,7 @@ export default defineConfig({
      * `Set-Cookie` response is never blocked), but the very next `GET /applications` came back 401
      * because the cookie was never attached. No cookie attribute fixes that; only not being
      * cross-origin does. It also matches where this was always headed —
-     * `docs/multi-tenant-auth.md`'s ADR-0001 already has the deployed dashboard served from the same
+     * ADR-0001 (`docs/adr/0001-cloudflare-single-worker.md`) already has the deployed dashboard served from the same
      * Worker as the API, at which point this becomes moot rather than something to unwind.
      *
      * Paths only, not a catch-all: the dashboard's own routing lives entirely in the hash fragment

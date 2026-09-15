@@ -8,8 +8,8 @@ plain-Node server. That reading was wrong about where the code was actually head
 had already been changed to call **relative** paths (`apps/dashboard/src/lib/dashboardClient.ts`
 sets `baseUrl: ''`), with `vite.config.ts`'s dev proxy standing in for the same-origin deployment
 this ADR describes. The dashboard therefore _requires_ the single-origin topology below; it is not
-optional. `docs/multi-tenant-auth.md`'s line that this ADR "is explicitly _not_ assumed" contradicts
-that and should be read as stale.
+optional. `docs/multi-tenant-auth.md` once said this ADR "is explicitly _not_ assumed"; that line has since
+been corrected.
 
 Still true: there is no `wrangler` config in the repo, and `pnpm --filter backend build` still emits
 a plain-Node `dist/` started with `node dist/index.js`. The Worker entrypoint and `wrangler.jsonc`
@@ -38,7 +38,8 @@ means choosing between one origin and two.
 
 The backend turns out to be unusually close to Workers-ready already, which shapes the decision:
 
-- Backend source imports **zero** `node:` builtins.
+- Backend source imports **zero** `node:` builtins (the app itself; the Node-only `db/migrate.ts`
+  script imports `node:url`).
 - `@neondatabase/serverless` is the HTTP driver, not a pooled `pg` connection — the shape Workers
   require. `apps/backend/src/db/client.ts` documents this choice.
 - `apps/backend/src/app.ts` is a plain Hono fetch handler, deliberately separated from the
@@ -51,7 +52,11 @@ Deploy both as **one Worker on one origin**:
 
 - A static-assets binding serves `apps/dashboard/dist` with
   `not_found_handling: single-page-application`.
-- `/api/*` routes to the existing Hono app.
+- `/api/*` routes to the existing Hono app. Only `/api/auth/*` actually lives under `/api` today, so
+  the Worker must send every backend route to the app, not only the prefixes
+  `docker/dashboard.nginx.conf` proxies for the dashboard (`/api`, `/applications`, `/profile`,
+  `/extract-job`): a packaged extension calls the same origin for `/analyze`, `/answer-chat`,
+  `/render-resume-pdf` and the rest, and `/healthz` must answer too.
 
 The Worker entrypoint is additive — `export default app` — and `apps/backend/src/index.ts` stays as
 the local Node dev server for the macOS host.

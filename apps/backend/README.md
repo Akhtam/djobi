@@ -15,12 +15,155 @@ for the auth design.
 Domain terms used below (**Job Info**, **Tailored Resume**, **Question Answer**, **Profile**,
 **Application**) are defined in the repo-root `CONTEXT.md`.
 
+## Backend request path
+
+`index.ts` mounts `createApp(deps)` under a logger and binds it to `$HOST` (default `127.0.0.1`) on
+`$PORT` (default 5391). `app.ts` registers middleware in a fixed order. Because Hono runs handlers in
+registration order, that order is what makes the guards work.
+
+```mermaid
+flowchart TB
+  logger["logger<br/>index.ts wrapper"] --> cors["cors()<br/>:5174 + PUBLIC_ORIGINS"]
+  cors --> csrf["CSRF guard<br/>json, or multipart + x-djobi-upload · else 415"]
+  csrf --> healthz["GET /healthz<br/>public"]
+  csrf --> authRoutes["/api/auth/*<br/>auth.handler (public)"]
+  csrf --> requireAuth["deps.requireAuth<br/>401 or userId"]
+
+  requireAuth --> llmRoutes["routes/llm.ts (jsonBody(zod) + signal)<br/>/extract-job → extractJob<br/>/tailor-resume → tailorResume<br/>/answer-questions → answerQuestions<br/>/analyze → analyzeApplication<br/>/answer-chat → answerChat"]
+  requireAuth --> profileRoute["routes/profile.ts<br/>GET/POST /profile<br/>/profile/extract-resume → extractResume"]
+  requireAuth --> appRoutes["routes/applications.ts<br/>store param + c.get('userId')"]
+  requireAuth --> renderRoute["routes/render-resume-pdf.ts<br/>pdf/renderResume · @libpdf/core<br/>Noto Sans · DENSITY_STEPS"]
+
+  llmRoutes --> analyze["/analyze internals<br/>1. extractJob(jd) → normalizeRequirementImportance<br/>2. Promise.all([<br/>tailorResume → reconcileResume + verifyBulletRewrite,<br/>answerQuestions (1 call/question, ≤8 at once)<br/>])"]
+  llmRoutes --> structured
+  analyze -.-> structured
+  profileRoute --> structured["llm/structuredCall.ts<br/>routing.ts → model + maxTokens<br/>cachedPrefix (stable text first)<br/>generateObject(schema, abortSignal)<br/>provider: require_parameters · data_collection deny<br/>anthropic/* → anthropic, claude-on-aws only<br/>retry once if no object & retryable<br/>log: tokens · cost · provider"]
+  structured --> openrouter(["OpenRouter"])
+
+  profileRoute --> stores[("ApplicationStore / ProfileStore<br/>postgres* (prod) · inMemory* (tests)")]
+  appRoutes --> stores
+
+  errors["onError: 499 aborted · 400 validation<br/>HTTPException as-is · 500 {error, code?}<br/>notFound: 404 {error}"]
+```
+
+No route handler has its own `try/catch`. Validation errors become 400, including an oversized
+resume upload (its body limit throws `RequestValidationError`). A client that disconnects gets 499
+(empty body, not logged), and bad model output becomes 500 with `code: invalid-model-output`. An
+unknown path is a 404. All of these except the 499 return the `{error}` shape that
+`@djobi/http-client` parses. Two things fall outside that shape: `/api/auth/*` returns Better Auth's
+own responses, and a Hono `HTTPException` (none is thrown by this app today) is returned as built.
+
+### Route surface
+
+| Route                                                                    | Kind | Model / store                                       | Called by                                                          |
+| ------------------------------------------------------------------------ | ---- | --------------------------------------------------- | ------------------------------------------------------------------ |
+| `POST /analyze`                                                          | LLM  | flash-lite, then sonnet-5 ×2 in parallel            | extension Analysis Step                                            |
+| `POST /extract-job`                                                      | LLM  | gemini-3.1-flash-lite · 4096 tok                    | extension Log tab, dashboard New Application                       |
+| `POST /tailor-resume`, `/answer-questions`                               | LLM  | claude-sonnet-5 · 2048 / 1024 tok                   | no current client (older extension builds)                         |
+| `POST /answer-chat`                                                      | LLM  | claude-sonnet-5 · 4096 tok                          | extension Ask tab                                                  |
+| `POST /profile/extract-resume`                                           | LLM  | unpdf → flash-lite · 4096 tok · 5 MB cap            | extension options page, dashboard Profile                          |
+| `GET`/`POST /profile`                                                    | DB   | profiles upsert on `user_id`                        | extension panel, options, Save Step; dashboard                     |
+| `GET /applications`                                                      | DB   | `list`                                              | dashboard                                                          |
+| `GET /applications?jobUrl=…&response=compact`                            | DB   | `duplicateSummary` by `job_key` (+ exact `job_url`) | Duplicate Guard: Analysis Step, Log tab, dashboard New Application |
+| `GET /applications/:id`                                                  | DB   | `byId`                                              | no current client                                                  |
+| `POST /applications` (+ `idempotency-key`)                               | DB   | `ON CONFLICT (user_id, idempotency_key)`            | Save Step, Log tab, dashboard New Application                      |
+| `PATCH /applications/:id`                                                | DB   | `replaceSnapshot` (keeps stage, notes, source)      | Save Step re-save                                                  |
+| `PATCH /applications/:id/stage`                                          | DB   | `setStage`                                          | dashboard                                                          |
+| `POST /applications/:id/notes`, `DELETE /applications/:id/notes/:noteId` | DB   | `appendNote` / `deleteNote`                         | dashboard                                                          |
+| `DELETE /applications/:id`                                               | DB   | `deleteApplication`                                 | dashboard                                                          |
+| `POST /render-resume-pdf`                                                | PDF  | `@libpdf/core`                                      | Fill Step, panel resume preview                                    |
+| `GET /healthz`                                                           | —    | `{ ok: true }`                                      | Docker Compose healthcheck                                         |
+| `* /api/auth/*`                                                          | auth | Better Auth                                         | dashboard and extension sign-in/up/out                             |
+
+## Data model
+
+`db/schema.ts` · Drizzle migrations `0000`–`0012`
+
+```mermaid
+erDiagram
+  users ||--o{ session : has
+  users ||--o{ account : has
+  users ||--o| profiles : has
+  users ||--o{ applications : owns
+
+  users {
+    uuid id PK
+    text email UK
+    text name
+    boolean email_verified
+    text image
+    timestamp created_at
+    timestamp updated_at
+  }
+  session {
+    uuid id PK
+    text token UK
+    timestamp expires_at
+    uuid user_id FK "cascade"
+    text ip_address
+    text user_agent
+  }
+  account {
+    uuid id PK
+    text account_id
+    text provider_id
+    uuid user_id FK "cascade"
+    text password
+    text access_token "plus refresh/id tokens, scope"
+  }
+  verification {
+    uuid id PK
+    text identifier "indexed"
+    text value
+    timestamp expires_at
+  }
+  profiles {
+    uuid user_id PK, FK "cascade, 1:1"
+    jsonb data "whole Profile"
+    timestamp updated_at
+  }
+  applications {
+    uuid id PK
+    uuid user_id FK "cascade"
+    text company
+    text role_title
+    text job_url
+    text job_key "derived server-side"
+    text source "autofill or manual"
+    text stage "applied ... rejected"
+    jsonb job_info
+    jsonb tailored_resume
+    jsonb answers
+    jsonb notes "array"
+    text raw_description
+    text extraction_version
+    jsonb requirement_evidence
+    jsonb bullet_provenance
+    text idempotency_key
+    timestamp created_at
+  }
+```
+
+- **`users`** is Better Auth's user table (`modelName: 'users'`). `session`, `account` and
+  `verification` are Better Auth's own. Every `user_id` foreign key cascades on delete.
+- **`applications` indexes:** `(user_id, job_url, created_at DESC)`,
+  `(user_id, job_key, created_at DESC)`, `(user_id, created_at DESC)`, and unique
+  `(user_id, idempotency_key)`.
+- **`stage`:** `applied` → `rejected_ats` → `phone_screen` → `onsite` → `offer` → `rejected`.
+
+Applications store _snapshots_ as jsonb, so an old row still reads correctly after prompts or schemas
+change. `PATCH /applications/:id` can never overwrite `stage`, `notes` or `source`: tracking data and
+provenance live outside the editable snapshot. Notes are added with `POST …/notes` and removed one at
+a time with `DELETE …/notes/:noteId`.
+
 ## `src/app.ts` / `src/index.ts`
 
 `app.ts` builds and returns the Hono app with every route module mounted, and installs an
-`onError` handler that renders every uncaught failure as a `BackendErrorBody` (from
-`@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack trace or a bare non-JSON
-body to the extension. `structuredCall.ts` handles its one retryable case locally, logs the safe
+`onError` handler that turns every uncaught failure into a response: 400 for a rejected body, an
+empty 499 for an aborted request, a Hono `HTTPException`'s own response, and otherwise a
+`BackendErrorBody` (from `@djobi/shared`'s `wire.ts`) with a 500 — so a route never leaks a stack
+trace or a bare non-JSON body to the extension. An unknown path gets a JSON 404 from `notFound`.
+`structuredCall.ts` handles its one retryable case locally, logs the safe
 attempt metadata, and exposes only the final message through the generic error body. It's a separate
 module from the entrypoint precisely so route tests can import the app without starting a server.
 
@@ -75,9 +218,9 @@ Most "the extension isn't working" questions end here. The Analysis Step now run
 against `POST /analyze`, which does the same sequencing server-side: extract Job Info, then tailor
 a Resume and draft Question Answers from it in parallel (`llm/analyzeApplication.ts`). It checkpoints
 Review as soon as that resolves. The three underlying operations still exist as their own routes
-(`/extract-job`, `/tailor-resume`, `/answer-questions`) — the Log tab's Duplicate Guard calls
-`/extract-job` alone, and an older extension build still uses the three-call sequence — so seeing
-`/extract-job` in this log without a following `/analyze` is normal for that path. If `/analyze` 500s
+(`/extract-job`, `/tailor-resume`, `/answer-questions`) — the Log tab and the dashboard's New application
+view call `/extract-job` alone, and an older extension build still uses the three-call sequence — so
+seeing `/extract-job` in this log without a following `/analyze` is normal for those paths. If `/analyze` 500s
 (usually a missing `OPENROUTER_API_KEY`), nothing downstream of extraction ran.
 
 Uncaught failures are already logged by `app.onError` with the method, path and stack.
@@ -156,7 +299,7 @@ cases relevant to that route; not every suite asserts the same 200 / 400 / 500 t
 reaches a route: the content-type guard in `app.ts` answers a state-changing request with the wrong
 `content-type` before any route runs, so route tests always send `content-type: application/json`.
 Every route below requires a session — `c.get('userId')`, set by `authMiddleware.ts` — except
-`/api/auth/*` itself.
+`/api/auth/*` itself and `GET /healthz`.
 
 Operation-specific transport bodies and aliases live in `@djobi/shared`'s `wire.ts`, so the backend
 and extension use the same contracts instead of private route schemas. Domain write shapes such as
@@ -165,31 +308,34 @@ and extension use the same contracts instead of private route schemas. Domain wr
 The five model-only routes below share one file, `routes/llm.ts` — each is a one-line
 `post(path, schema, operation)` registration rather than its own module; see that file's own header
 comment for why. `routes/profile.ts`, `routes/applications.ts` and `routes/render-resume-pdf.ts` each
-hold a REST resource's or a render cache's worth of actual logic, so they stay their own modules.
+hold a REST resource's or a binary PDF response's worth of actual logic, so they stay their own modules.
 
-| Route                           | Body                            | Delegates to             |
-| ------------------------------- | ------------------------------- | ------------------------ |
-| `* /api/auth/*`                 | Better Auth's own               | `auth.ts` (Better Auth)  |
-| `POST /extract-job`             | `ExtractJobRequest`             | `llm/extractJob`         |
-| `POST /tailor-resume`           | `TailorResumeRequest`           | `llm/tailorResume`       |
-| `POST /answer-questions`        | `AnswerQuestionsRequest`        | `llm/answerQuestions`    |
-| `POST /analyze`                 | `AnalyzeApplicationRequest`     | `llm/analyzeApplication` |
-| `POST /answer-chat`             | `AnswerChatRequest`             | `llm/answerChat`         |
-| `POST /render-resume-pdf`       | `RenderResumePdfRequest`        | `pdf/renderResume`       |
-| `GET`/`POST /profile`           | `Profile`                       | `db/profileStore`        |
-| `POST /profile/extract-resume`  | multipart, field `resume` (PDF) | `llm/extractResume`      |
-| `GET /applications`             | — (optional `?jobUrl=`)         | `db/applicationStore`    |
-| `GET /applications/:id`         | —                               | `db/applicationStore`    |
-| `POST /applications`            | `NewApplication`                | `db/applicationStore`    |
-| `PATCH /applications/:id`       | `ApplicationSnapshot`           | `db/applicationStore`    |
-| `PATCH /applications/:id/stage` | `UpdateApplicationStageRequest` | `db/applicationStore`    |
-| `POST /applications/:id/notes`  | `AddApplicationNoteRequest`     | `db/applicationStore`    |
+| Route                                    | Body                            | Delegates to                                          |
+| ---------------------------------------- | ------------------------------- | ----------------------------------------------------- |
+| `* /api/auth/*`                          | Better Auth's own               | `auth.ts` (Better Auth)                               |
+| `POST /extract-job`                      | `ExtractJobRequest`             | `llm/extractJob`                                      |
+| `POST /tailor-resume`                    | `TailorResumeRequest`           | `llm/tailorResume`                                    |
+| `POST /answer-questions`                 | `AnswerQuestionsRequest`        | `llm/answerQuestions`                                 |
+| `POST /analyze`                          | `AnalyzeApplicationRequest`     | `llm/analyzeApplication`                              |
+| `POST /answer-chat`                      | `AnswerChatRequest`             | `llm/answerChat`                                      |
+| `POST /render-resume-pdf`                | `RenderResumePdfRequest`        | `pdf/renderResume`                                    |
+| `GET`/`POST /profile`                    | `Profile`                       | `db/profileStore`                                     |
+| `POST /profile/extract-resume`           | multipart, field `resume` (PDF) | `llm/extractResume`                                   |
+| `GET /applications`                      | — (optional `?jobUrl=`)         | `db/applicationStore`                                 |
+| `GET /applications/:id`                  | —                               | `db/applicationStore`                                 |
+| `POST /applications`                     | `NewApplication`                | `db/applicationStore`                                 |
+| `PATCH /applications/:id`                | `ApplicationSnapshot`           | `db/applicationStore`                                 |
+| `PATCH /applications/:id/stage`          | `UpdateApplicationStageRequest` | `db/applicationStore`                                 |
+| `POST /applications/:id/notes`           | `AddApplicationNoteRequest`     | `db/applicationStore`                                 |
+| `DELETE /applications/:id/notes/:noteId` | —                               | `db/applicationStore`                                 |
+| `DELETE /applications/:id`               | —                               | `db/applicationStore`                                 |
+| `GET /healthz`                           | —                               | `app.ts` (public, for the Docker Compose healthcheck) |
 
 `POST /analyze` is the Analysis Step's own consolidated call — `extractJob`, then `tailorResume` and
 `answerQuestions` from it in parallel, in one round trip and one Profile-over-the-wire instead of
 three (`llm/analyzeApplication.ts`). It's additive alongside the three routes above, which stay: the
-Log tab's Duplicate Guard needs `extractJob` alone, and an extension build older than this route
-still needs the three-call sequence.
+Log tab and the dashboard's New application view need `extractJob` alone, and an extension build
+older than this route still needs the three-call sequence.
 
 `POST /applications` also honours an optional `idempotency-key` request header (see
 `db/postgresApplicationStore.ts`'s `create`): a retried Save Step after a lost or timed-out
@@ -236,8 +382,9 @@ screening, story, and resume data that their operation never reads. This keeps l
 and paid model context limited to relevant fields.
 
 `render-resume-pdf` returns raw PDF bytes with `content-type: application/pdf`, not JSON, which is
-why the extension has a separate `callBackendBinary` for it. The route retains one exact-input
-render promise, so Preview and Fill reuse completed or in-flight work without an unbounded cache.
+why the extension calls it through `@djobi/http-client`'s `binary()` transport rather than `json()`.
+The route keeps no render cache: every request renders. The Fill Step saves time by starting the
+render early, alongside its page scan.
 
 ## `src/db/` — persistence (Postgres via Drizzle)
 
@@ -260,7 +407,9 @@ Six tables:
   `answers` are jsonb snapshots of what was generated for that specific application, so past
   applications stay readable even if `Profile` or the tailoring prompt changes later. `stage`
   (`applied` → `rejected_ats` → `phone_screen` → `onsite` → `offer` → `rejected`) tracks how far it
-  got. `notes` is a jsonb array appended to over the life of the application, never overwritten.
+  got. `notes` is a jsonb array appended to over the life of the application. A note can be deleted
+  on its own (`DELETE /applications/:id/notes/:noteId`), but a snapshot re-save never overwrites
+  them.
   `rawDescription`, `extractionVersion`, `requirementEvidence` and `bulletProvenance` (all nullable)
   are the posting text an application was analyzed against and the matching provenance derived from
   it. `idempotencyKey` (nullable, migration `0012`) is a client-chosen token for one create attempt,
@@ -332,7 +481,7 @@ id and removes the random id default; `0005_curved_jackal.sql` adds the Duplicat
 nothing — the key is derived by `jobKeyForUrl`, which needs a URL parser, so existing rows keep a
 `NULL` key and go on matching by exact `job_url`. `0007_spooky_black_knight.sql` adds a plain
 `created_at` index; `0008_numerous_doorman.sql` adds the four Phase 19 provenance columns
-(`raw_description`, `extraction_version`, `requirement_evidence`, `bulletProvenance`).
+(`raw_description`, `extraction_version`, `requirement_evidence`, `bullet_provenance`).
 `0009_eminent_thunderbolt.sql` is Phase A of `docs/multi-tenant-auth.md`: creates `users`, inserts
 the bootstrap row, renames `profiles.id` to `profiles.user_id`, backfills and constrains
 `applications.user_id`, and rebuilds every application index with a `user_id` prefix.
@@ -392,7 +541,7 @@ The provider promise is the optimization; the local parse is the guarantee.
 and these schemas are not written in it: an omitted `revisedAnswer` and a defaulted `note` both mean
 something. Retiring it also removed the two findings that Anthropic's strict mode had raised
 (`minLength` from `z.string().min(1)`, and `["string","null"]` type arrays). The class of problem
-does not go away, though — every provider takes a different subset — so the four schemas have to
+does not go away, though — every provider takes a different subset — so the five schemas have to
 stay inside the common one, and the tests assert against the keywords most likely to fall outside
 it. Only a live call catches an unsupported keyword; a unit test only catches a regression.
 
@@ -412,10 +561,9 @@ reasoning tokens, cache reads and cost for `anthropic/claude-sonnet-5` before us
 numbers for capacity or pricing decisions. Every structured call already logs the resolved upstream,
 duration, token breakdown and cost needed for that comparison.
 
-The tool's `input_schema` is **derived from that same zod schema** via `zod-to-json-schema` (pinned
-exact at 3.24.6 to match the installed zod), with `$refStrategy: 'none'` so the schema stays flat —
-Anthropic's `input_schema` doesn't dereference `$ref`/`definitions`. There are no hand-maintained
-JSON Schema mirrors anywhere in this package; if one appears, it's a regression.
+The JSON Schema sent to the provider is **derived from that same zod schema** by the AI SDK's
+`generateObject`. There are no hand-maintained JSON Schema mirrors anywhere in this package; if one
+appears, it's a regression.
 
 Every call site goes through this one function, so a change of mechanism is a change to this file
 alone — which is how the `strict` and structured-outputs comparison above was made without touching
@@ -594,7 +742,8 @@ Same minimal Node-environment config as `packages/shared`.
 
 Template for the real `.env` (gitignored). Required: `DATABASE_URL` (any Postgres connection string — Docker, local, or a serverless cloud database),
 `OPENROUTER_API_KEY`, `BETTER_AUTH_SECRET` (the backend throws at first auth-route use if unset).
-Optional: `PORT` (defaults to 5391), `BETTER_AUTH_URL`, `PUBLIC_ORIGINS`, `NODE_ENV`, and
+Optional: `PORT` (defaults to 5391), `HOST` (defaults to `127.0.0.1`; Docker Compose sets
+`0.0.0.0`), `BETTER_AUTH_URL`, `PUBLIC_ORIGINS`, `NODE_ENV`, and
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google sign-in — see `docs/multi-tenant-auth.md`.
 
 The package has its own `tsconfig.json` and builds JSX with the automatic `react-jsx` runtime. Run

@@ -9,7 +9,7 @@
  * control here edits a plain in-memory `TailoredResume`; nothing is destructive until `onChange`
  * writes it back to the run.
  *
- * Source pairing (`matchBulletSource.ts`) is necessarily a best-effort *reading* — `sourceIndex`
+ * Source pairing (`matchBulletSource`, in `@djobi/shared`'s `bulletProvenance.ts`) is necessarily a best-effort *reading* — `sourceIndex`
  * pointers exist only inside `tailorResume.ts` and never reach the wire — so a bullet the candidate
  * typed here from scratch, with no Profile bullet resembling it, shows no "originally" line. That is
  * an honest gap, not a bug: this module cannot claim a trace it does not have.

@@ -4,8 +4,8 @@
 Ashby, Lever, Workday, ...) with an AI-tailored resume and drafted answers to freeform questions,
 backed by a local server and a persisted history of past applications.
 
-Domain vocabulary is in `CONTEXT.md`; per-package detail is in `README.md`, `apps/backend/README.md`
-and `packages/shared/README.md`.
+Domain vocabulary is in `CONTEXT.md`; per-package detail is in each app's and package's own README (`apps/*/README.md`,
+`packages/README.md`, `packages/shared/README.md`) and the root `README.md`.
 
 **Read this file at the start of a new session** to pick up where the last one left off. It records
 what the project _is_ now and what's planned next — not how it got here. Update it as work happens;
@@ -14,7 +14,8 @@ history belongs in git, not in this file.
 ## Current state
 
 Everything in this **Current state** section is built and tested, as is everything under
-**Shipped**; only **Planned** describes work that doesn't exist yet. Suite green at **2039 tests**
+**Shipped**. **Phase log** below is the per-phase record: its unchecked items are the only unbuilt
+work, and the file and identifier names inside it are as of when each phase landed. Suite green at **2039 tests**
 (316 shared / 40 http-client / 15 manual-log / 78 profile-editor / 377 backend / 840 extension / 373
 dashboard), `pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
@@ -37,16 +38,16 @@ anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
   view so both surfaces behave identically by construction.
 - **`packages/manual-log`** — the extract → review → save state machine behind manually logging an
   application, shared by the extension's Log tab and the dashboard's New application view.
-- **`apps/backend`** — Hono on `127.0.0.1:5391`. Four LLM calls (`extractJob`, `tailorResume`,
-  `answerQuestions`, `answerChat`) through `structuredCall.ts` — one seam over
-  the Vercel AI SDK and OpenRouter, routed per operation by `client.ts`'s `MODELS` — all grounded by
-  one `promptContext.ts` scaffold — each grounded in a Profile _projection_ the operation parses
+- **`apps/backend`** — Hono on `127.0.0.1:5391`. Five LLM operations (`extractJob`, `tailorResume`,
+  `answerQuestions`, `answerChat`, `extractResume`) through `structuredCall.ts` — one seam over
+  the Vercel AI SDK and OpenRouter, routed per operation by `routing.ts`'s `ROUTES` — the writing
+  calls grounded by one `promptContext.ts` scaffold, each in a Profile _projection_ the operation parses
   from `wire.ts` rather than restating, so widening one is a deliberate disclosure change. The
   Analysis Step's three-call sequence (`extractJob` → `tailorResume` + `answerQuestions` in
   parallel) also has a server-side consolidation, `POST /analyze` (`llm/analyzeApplication.ts`),
   which is what the extension actually calls now — one round trip and one Profile-over-the-wire
-  instead of three; the three separate routes stay, for the Log tab's Duplicate Guard and for an
-  older extension build. A one-page-fitting resume PDF renderer, and
+  instead of three; the three separate routes stay — `/extract-job` for the Log tab and the
+  dashboard's New application view, the other two for older extension builds. A one-page-fitting resume PDF renderer, and
   Postgres persistence (Drizzle, over the standard `pg` wire protocol — Docker, local, or Neon, see
   `docs/adr/0002-postgres-driver-for-local-dev.md`) for profiles and applications. `pnpm --filter
 backend build` compiles the shared package and emits a plain-Node production server to `dist/`.
@@ -94,9 +95,9 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
 ## Key decisions
 
 - **Models:** multi-provider through the Vercel AI SDK and OpenRouter, routed **per operation**
-  rather than by vendor tier. `google/gemini-3.1-flash-lite` serves `extractJob`;
+  rather than by vendor tier. `google/gemini-3.1-flash-lite` serves `extractJob` and `extractResume`;
   `anthropic/claude-sonnet-5` serves `tailorResume`, `answerQuestions` and `answerChat`, the three
-  calls where written judgement is the product. The map lives in `llm/client.ts` as `MODELS`, so a
+  calls where written judgement is the product. The map lives in `llm/routing.ts` as `ROUTES`, so a
   reroute is an edit to one object. There is no dual-client fallback path, deliberately: that is a
   code path with no test coverage waiting to be wrong. Anthropic model slugs prefer the `anthropic`
   upstream and may fall back only to `claude-on-aws`; every call logs its resolved upstream and its
@@ -115,7 +116,7 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   varies by model **and** by which upstream serves it, so calls route with
   `provider: { require_parameters: true }` to make incompatible hosts ineligible — the provider
   promise is the optimization, the local parse is the guarantee. `strict` is off, since these schemas use
-  optional and defaulted fields that its subset forbids; the four schemas must instead stay inside
+  optional and defaulted fields that its subset forbids; the five schemas must instead stay inside
   the JSON Schema subset **every** route can serve. No hand-maintained JSON Schema mirrors exist; if
   one appears, it's a regression.
 - **Prompt order keeps caching possible.** `cachedPrefix` means stable text first, varying text last.
@@ -154,7 +155,8 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   LLM call, and the candidate can override with "Analyze and apply anyway". A lookup that _errors_
   counts as no duplicates — the guard exists to save the candidate from re-applying, not to make a
   stopped backend the reason Analyze doesn't work.
-- **Application tracking is `stage` alone** (applied → phone_screen → onsite → offer → rejected).
+- **Application tracking is `stage` alone** (applied → rejected_ats → phone_screen → onsite →
+  offer → rejected).
   There was also a `status` field (draft/submitted) for "did this actually go out"; it was dropped
   in migration `0002` because nothing ever set `submitted` and the field was `draft` on all 28
   rows. The current Save Step does not establish whether employer submission happened. Notes are a
@@ -172,8 +174,8 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
   on the candidate having replaced a placeholder.
 - **Process:** this project is built test-first (red → green, one vertical slice at a time) — see
   the `mattpocock-skills:tdd` skill. Continue that pattern for new routes/modules.
-- **Repo:** pnpm workspace — `packages/shared` + `apps/backend` + `apps/extension` +
-  `apps/dashboard`. GitHub remote: `Akhtam/djobi`.
+- **Repo:** pnpm workspace — `packages/{shared,http-client,profile-editor,manual-log}` +
+  `apps/{backend,extension,dashboard}`. GitHub remote: `Akhtam/djobi`.
 - **The dashboard is a separate app, not an extension page.** It needs no `chrome.*` API, and
   keeping it out of the MV3 bundle means it can be developed with plain Vite HMR and, later,
   deployed somewhere the extension can't go.
@@ -208,7 +210,8 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   also undoes any _other_ write that succeeded while this one was in flight. It also resolves
   `true`/`false` rather than just `void`, because it swallows the rejection: a form that clears
   itself on an `await` returning would throw the user's typing away on every failure, and a
-  stopped backend is the everyday case. Both are covered in `App.test.tsx`.
+  stopped backend is the everyday case. Both are covered in
+  `lib/useApplicationStore.test.ts`.
 - **`apps/dashboard`'s theme reads `localStorage` and `matchMedia` through guards.** Neither exists
   in the jsdom environment its component tests run in, and a browser with site data blocked
   _throws_ on `localStorage` property access rather than returning null. The theme is read before
@@ -234,8 +237,9 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   DOM looking right and the model empty, which an ATS reports on submit as a missing required field.
   These verified counts exist only when the content script responds. If no frame answers, the run
   retains optimistic attempted counts but its outcome is `unverified`, never success.
-- **`runFill`'s `FILLABLE_FROM` list is the panel's own rule, restated where it is enforceable.**
-  It is `reviewOf`'s `canReview` set minus the two statuses the Fill button is disabled for, so
+- **The statuses a Fill Step may start from are derived once, in `lib/run/status.ts`'s `FACTS`.**
+  (That table replaced `runFill`'s old `FILLABLE_FROM` list.) It is the reviewable statuses minus
+  the two the Fill button is disabled for, so
   `review`/`fill-error`/`filled`/`save-error`/`saved` are in and `filling`/`saving` are out.
   `filled` and `saved` are in on purpose — re-filling after an edit is supported, and the Save Step
   updates the same record rather than creating a second. Narrowing the list to "only `review`"
@@ -254,12 +258,13 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   (`scripts/generateFonts.mts`), which is also the only remaining reason
   `@expo-google-fonts/noto-sans` is still a dev dependency. It is in `.prettierignore`; formatting a
   0.6 MB string literal is pure cost.
-- **`packages/shared`'s `exports` now resolves to `dist/`, so shared source edits need a build.**
-  `pnpm dev:backend` and `pnpm build:extension` run `pnpm --filter @djobi/shared build` first via
-  `pre*` hooks, but `tsx watch` does **not** re-run them — edit a schema in `packages/shared/src`
-  mid-session and the backend keeps serving the previously built copy until the filter is run again.
-  The `development` condition in that `exports` block is what keeps the extension's vite build and
-  vitest reading source directly.
+- **Every workspace package's `exports` resolves to `dist/` by default, so source edits need a
+  build.** `pnpm dev:backend` runs `build:shared` first, and the dashboard's `dev`/`build` and the
+  extension's `build` run `build:packages` (all four packages), via `pre*` hooks. `tsx watch` does
+  **not** re-run them — edit a schema in `packages/shared/src` mid-session and the backend keeps
+  serving the previously built copy until `pnpm build:shared` is run again. The `development`
+  condition in each `exports` block is what lets Vite's dev server and Vitest read source directly;
+  a production `vite build` resolves `dist/`, which is why those builds run `build:packages` first.
 - **The resume PDF fits itself to one page** by re-rendering down a four-step density ladder, never
   touching `fontSize` — leading and whitespace are spendable, legibility is not. Past ~5 roles × 6
   bullets it returns two pages with all content rather than truncating. Every step sits inside a
@@ -328,8 +333,9 @@ through the new client.
 
 ### A full Docker Compose stack (db + backend + built dashboard), one origin
 
-`docker compose up -d` (after `pnpm db:migrate` against it once) now brings up the whole server
-side with no Node/pnpm toolchain on the host: `db` (already shipped, see above), `backend` (the
+`docker compose up -d` now brings up the whole server side with no Node/pnpm toolchain on the
+host, migrations included (a one-shot `migrate` service runs `dist/db/migrate.js` before `backend`
+starts): `db` (already shipped, see above), `backend` (the
 same image built by the root `Dockerfile`'s `backend` target — a pruned, production `node
 dist/index.js`), and `dashboard` (nginx serving the static `vite build` output, reverse-proxying
 `/api`, `/applications`, `/profile` and `/extract-job` to `backend:5391` —
@@ -513,7 +519,7 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
   _first_ save needs this — every save after `run.applicationId` is set goes through
   `updateApplication`, which is idempotent by construction.
 
-## Planned
+## Phase log
 
 ### Phase 20 — Upload resume to populate a Profile (built; two items still open — see below)
 
