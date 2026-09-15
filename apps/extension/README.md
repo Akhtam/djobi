@@ -97,44 +97,91 @@ response header.
 
 ## Application Pipeline — run state machine
 
-A run lives in `chrome.storage.session` and is keyed by tab. Each step acquires it through
-`withRunClaim`. Analysis _replaces_ the run and mints a new `runId`. Fill and Save _transition_ it,
-and only when `expectedRunId` still matches.
+Each tab has at most one **run**, stored in `chrome.storage.session`. The run goes through three
+steps: **Analysis → Fill → Save**. Every step follows the same shape: a _running_ status, then a
+_succeeded_ or _failed_ one (`STEP_STATUS` in `lib/run/status.ts`).
 
 ```mermaid
-stateDiagram-v2
-  state "analyze-error" as analyzeError
-  state "fill-error" as fillError
-  state "save-error" as saveError
+flowchart LR
+  start((no run))
 
-  [*] --> analyzing : Analyze (from any status)
-  analyzing --> duplicate : jobKey match
-  analyzing --> analyzeError : LLM fail
-  analyzing --> review : /analyze ok
-  duplicate --> analyzing : apply anyway (force)
+  analyzing([analyzing])
+  review[review]
+  filling([filling])
+  filled[filled]
+  saving([saving])
+  saved[saved]
 
-  review --> filling : Fill
-  fillError --> filling : Fill
-  filled --> filling : re-fill
-  saveError --> filling : re-fill
-  saved --> filling : re-fill
-  filling --> filled : page result
-  filling --> fillError
+  duplicate[duplicate]
+  analyzeError[analyze-error]
+  fillError[fill-error]
+  saveError[save-error]
 
-  filled --> saving : Save / Submit
-  saveError --> saving : Save
-  saving --> saved : row id
-  saving --> saveError
-  saved --> filled : edit (UPDATE_RUN, changed)
+  %% Happy path
+  start -- Analyze --> analyzing
+  analyzing == ok ==> review
+  review == Fill ==> filling
+  filling == ok ==> filled
+  filled == Save ==> saving
+  saving == ok ==> saved
+
+  %% Side exits
+  analyzing -- already applied --> duplicate
+  analyzing -- failed --> analyzeError
+  filling -- failed --> fillError
+  saving -- failed --> saveError
+
+  %% Ways back
+  duplicate -. Apply anyway .-> analyzing
+  fillError -. retry .-> filling
+  saveError -. retry .-> saving
+  saved -. answer edited .-> filled
+
+  classDef busy fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+  classDef idle fill:#f3f4f6,stroke:#6b7280,color:#111827
+  classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+
+  class start,review,filled idle
+  class analyzing,filling,saving busy
+  class saved done
+  class duplicate warn
+  class analyzeError,fillError,saveError error
 ```
 
-Recovery: a new worker demotes runs stuck in `analyzing`/`filling`/`saving` to their `*-error`
-status (failure kind `temporary`) before it routes any message.
+**How to read it:** thick arrows are the happy path. Blue pills mean a step is running, green is
+done, amber means the run stopped on purpose, red means it failed. Dotted arrows go back.
 
-Allowed transitions all come from one table, `FACTS` in `lib/run/status.ts`: Fill starts from any
-reviewable, idle status; Save from a fill that isn't recorded yet. `fillOutcome` gets one of
-`complete · incomplete · nothing-filled · unverified · no-fields-detected`, based on what the page
-reported it kept.
+Two things aren't drawn, to keep the diagram readable: **Analyze** can restart from _any_ status,
+and **Fill** can also re-run from `filled`, `save-error` or `saved`. The table has the full rules.
+
+| Step         | Starts from                                                 | Running     | Succeeded                 | Failed          |
+| ------------ | ----------------------------------------------------------- | ----------- | ------------------------- | --------------- |
+| **Analysis** | any status, or no run                                       | `analyzing` | `review` (or `duplicate`) | `analyze-error` |
+| **Fill**     | `review` · `fill-error` · `filled` · `save-error` · `saved` | `filling`   | `filled`                  | `fill-error`    |
+| **Save**     | `filled` · `save-error`                                     | `saving`    | `saved`                   | `save-error`    |
+
+### Rules
+
+- **One table decides.** The "Starts from" column is derived from `FACTS` in `lib/run/status.ts`.
+  Fill needs a reviewable run that isn't busy. Save needs a fill that isn't busy and hasn't been
+  recorded yet. The panel's buttons and the worker's claims both read `canStart`, so they can't
+  disagree.
+- **Analysis replaces, Fill and Save transition.** Analysis mints a new `runId` and supersedes
+  whatever the tab held. Fill and Save go through `withRunClaim` with `expectedRunId`. If the run
+  was replaced or is busy, they refuse with `{ claimed: false, reason: 'stale-run' | 'busy' }`.
+- **`duplicate` is not an error.** The run stops before any LLM call because this job URL already
+  has a saved Application.
+- **Edits** (`UPDATE_RUN`) are accepted in every status except `saving`. An edit that changes a
+  `saved` run moves it back to `filled`, because the saved record no longer matches.
+- **Recovery.** When a new worker starts, it moves any run left in `analyzing`, `filling` or
+  `saving` to that step's `*-error` status (failure kind `temporary`). It does this before routing
+  any message.
+- **Failure kinds.** `pipelineFailure.ts` maps every error to one of
+  `cancelled · invalid-page · invalid-model-output · unauthorized · backend-unreachable · temporary · unknown`.
+- **Fill outcome.** Based on what the page reports it kept, a finished fill sets `fillOutcome` to
+  `complete · incomplete · nothing-filled · unverified · no-fields-detected`.
 
 ### Analysis Step (`runAnalysis`)
 
