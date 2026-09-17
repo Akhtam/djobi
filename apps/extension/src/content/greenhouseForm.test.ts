@@ -1,8 +1,9 @@
 /**
  * Detection and enrichment against a **real, unmodified Greenhouse posting**, captured live.
  *
- * `__fixtures__/brex-greenhouse.html` is the server-rendered markup of
- * `boards.greenhouse.io/embed/job_app?for=brex&token=8459783002`, and
+ * `__fixtures__/brex-greenhouse.html` is the server-rendered `<main>` element of
+ * `boards.greenhouse.io/embed/job_app?for=brex&token=8459783002`, verbatim — only the page chrome
+ * around it (`<head>` and the Remix hydration scripts, which `innerHTML` never runs) was dropped.
  * `__fixtures__/brex-greenhouse-api.json` is what the Greenhouse Job Board API answers for that same
  * posting. Both were fetched, not written — which is the point of this file. Every case below is a
  * defect the hand-written fixtures in `detectFields.test.ts` could not have caught, because each one
@@ -40,7 +41,7 @@ function fixture(name: string): string {
 }
 
 /**
- * The fixture's `<body>` loaded into this test's own document, rather than into a fresh `JSDOM`.
+ * The fixture loaded into this test's own document, rather than into a fresh `JSDOM`.
  *
  * Not incidental: `detectFields` resolves every DOM-class test through `ownerDocument.defaultView`,
  * and a document with no browsing context (a `DOMParser` one, say) has none — so it would report no
@@ -48,10 +49,7 @@ function fixture(name: string): string {
  * testing the wrong thing while looking like it passed.
  */
 function detect(): DetectedField[] {
-  document.body.innerHTML = fixture('brex-greenhouse.html').replace(
-    /^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g,
-    '',
-  );
+  document.body.innerHTML = fixture('brex-greenhouse.html');
   return detectFields(document);
 }
 
