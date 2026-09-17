@@ -88,10 +88,13 @@ services:
       - '127.0.0.1:5391:5391'
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:5391/healthz || exit 1']
-      interval: 2s
+      # Poll fast only while starting (so `dashboard` isn't kept waiting), then once a minute —
+      # a 2s steady-state interval floods the logs with /healthz requests.
+      interval: 60s
+      start_interval: 2s
+      start_period: 30s
       timeout: 5s
-      retries: 15
-      start_period: 10s
+      retries: 3
 
   dashboard:
     build:
