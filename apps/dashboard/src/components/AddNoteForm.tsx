@@ -1,8 +1,6 @@
 /**
- * The always-visible note composer.
- *
- * Not hidden behind an "Add note" button: recording what an interview asked is the main reason to
- * open an application, so the affordance for it should not cost a click to reveal.
+ * The always-visible note composer — recording what an interview asked is the main reason to open
+ * an application, so it shouldn't cost a click to reveal.
  */
 import { useState } from 'react';
 import type { NewNote, NoteCategory } from '@djobi/shared';
@@ -21,10 +19,8 @@ export function AddNoteForm({ onAdd }: { onAdd: (note: NewNote) => Promise<boole
 
     setSaving(true);
     try {
-      // Clearing unconditionally would throw the user's typing away on every failure: a rejected
-      // write is handled inside the store, so awaiting this tells you nothing unless it says so.
-      // A stopped backend is the everyday case here, and losing a paragraph of interview notes to
-      // it would be the worst failure this screen has.
+      // Clear only if the write landed: failures are handled inside the store, and losing a
+      // paragraph of interview notes to a stopped backend is the worst failure here.
       const added = await onAdd({ category, text: trimmed });
       // Only the text clears. The category is far more likely to repeat than to change — three
       // notes from one interview are usually all `technical`.

@@ -1,18 +1,7 @@
 /**
- * The words for one Run Notice.
- *
- * `reviewOf` (`lib/run/review.ts`) says which situation a run is in; this says the sentence. That
- * split is deliberate and predates this module — what changed is where the sentence lives. It used
- * to sit inside `AutofillTab.tsx` alongside detection state, the resume preview lifecycle and the
- * whole render tree, which meant the only way to reach one line of copy was to drive an entire
- * Application Pipeline run to the outcome that produces it. The wording is a product judgement —
- * "reload the page" versus "fill it in by hand" sends the candidate after two different problems —
- * and judgement worth arguing about deserves a seam you can render directly.
- *
- * The interface is the whole notice and one callback: the tab still owns *whether* a retry is
- * eligible and what it does, this owns only how the situation reads and which action it offers.
- * The `switch` stays exhaustive over `RunNotice['kind']`, so a notice added to `reviewOf` fails to
- * compile until it has copy here.
+ * The words for one Run Notice. `reviewOf` (`lib/run/review.ts`) names the situation; this says the
+ * sentence and offers the action, while the tab decides eligibility. The `switch` is exhaustive
+ * over `RunNotice['kind']`, so a new notice fails to compile until it has copy.
  */
 import { formatAppliedDate, formatStage } from '../lib/format';
 import type { RunFailureKind, RunNotice, RunNoticeAction, RunStep } from '../lib/run';
@@ -22,9 +11,8 @@ function assertNever(value: never): never {
 }
 
 /**
- * Why a step failed, in the candidate's terms. `step` matters because the same underlying failure
- * calls for different advice depending on what may have half-happened: a `temporary` failure during
- * Fill may have written to the page, and during Save may have already recorded the Application.
+ * Why a step failed, in the candidate's terms. `step` matters: a `temporary` failure during Fill
+ * may have written to the page, and during Save may have recorded the Application.
  */
 function failureReason(kind: RunFailureKind, step: RunStep): string {
   switch (kind) {
@@ -114,9 +102,7 @@ export function RunNoticeView({
         </div>
       );
 
-    // The other zero-filled outcome, and a different problem: the form was read fine and then
-    // kept none of what was written into it. Reloading is not the advice here — the list of
-    // fields to fill by hand is.
+    // The form was read but kept nothing: point to the field list, not a reload.
     case 'nothing-filled':
       return (
         <div className="state error" role="alert">

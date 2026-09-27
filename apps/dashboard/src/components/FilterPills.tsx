@@ -1,10 +1,6 @@
 /**
- * How many items fall under each option — the `counts` a {@link FilterPills} row renders.
- *
- * Lives beside the component that consumes it because both call sites (stages on the list, note
- * categories on the detail page) were writing the same `Object.fromEntries(...) as Record<T, …>`
- * by hand, cast included. The cast is unavoidable — `Object.fromEntries` widens the key back to
- * `string` — so it is worth having exactly once.
+ * Per-option counts for a {@link FilterPills} row. The `Record` cast (`Object.fromEntries` widens
+ * the key) lives here once.
  */
 import type { ReactNode } from 'react';
 
@@ -19,11 +15,8 @@ export function countByOption<Item, T extends string>(
 }
 
 /**
- * A one-of-many filter row, shared by the list's stage filter and the detail page's note-category
- * filter. Generic over the option type so both keep their own enums rather than stringly-typing
- * through a shared component.
- *
- * `null` is the "All" option in both uses.
+ * A one-of-many filter row (list stage filter, detail note-category filter), generic over the
+ * option type. `null` is "All".
  */
 export function FilterPills<T extends string>({
   options,

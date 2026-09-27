@@ -30,7 +30,10 @@ export function profileOutcomeMessage(outcome: ProfileSaveResult | ProfileUpload
 
 export interface ProfileWorkflow {
   draft: ProfileDraft;
-  /** Why loading failed (the draft falls back to an empty Profile); cleared by a successful load or save. */
+  /**
+   * Why loading failed (the draft falls back to an empty Profile); cleared by a successful load or
+   * save.
+   */
   loadError: unknown;
   saveResult: ProfileSaveResult | null;
   uploadResult: ProfileUploadResult | null;

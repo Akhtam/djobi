@@ -1,18 +1,8 @@
 /**
- * The Analytics view's requirements panel: every posting's requirement text, grouped by posting,
- * newest first — the half of `JobInfo.requirements` that cannot be aggregated (see
- * `PROGRESS.md`'s Phase 12 section). Whole sentences don't repeat across postings, so this stays a
- * readable list rather than a table of ones that would look like analysis and isn't.
- *
- * Owns its whole panel — head, required/preferred/years roll-up, and the scroll region — rather
- * than splitting the head into `Analytics.tsx`, because the head's subtitle ("N of M postings")
- * and title ("Requirements mentioning React") are both derived from state only this component
- * holds (the revealed count, the keyword match). Threading them back up as props would just be
- * this component's own derived state, relayed through a parent that has no other use for it.
- *
- * Its own scroll region, not the page's: a busy 60-day range can hold 100-200 postings, and a
- * full-height panel would swallow the page's own scroll. Revealing more as the reader approaches
- * the end is `useRevealOnScroll`'s job; this component owns only what to show and how to filter it.
+ * The Analytics requirements panel: every posting's requirement text grouped by posting, newest
+ * first — sentences don't aggregate, so it's a readable list, not a table. Owns its head (whose
+ * title and counts derive from its own state) and its own scroll region, revealed in batches by
+ * `useRevealOnScroll`.
  */
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -109,10 +99,8 @@ function RequirementTooltip({ label, text }: { label: string; text: string }) {
 }
 
 /**
- * Splits `text` on a case-insensitive match of `term`, wrapping each match in `<mark>`. Built with
- * `String.split` against a capturing regex rather than an HTML string and `dangerouslySetInnerHTML`
- * — the posting text is real data, and a term containing HTML-significant characters must not be
- * able to inject markup into the page.
+ * Wraps case-insensitive matches of `term` in `<mark>` via `split`, never HTML strings — posting
+ * text is data and mustn't inject markup.
  */
 function highlightTerm(text: string, term: string | null): ReactNode {
   if (!term) return text;
@@ -137,17 +125,11 @@ export function RequirementsPanel({
   /** Already scoped to range, stage, and keyword by the Analytics view. */
   report: RequirementsReport;
   /**
-   * The term selected from the keyword frequency table, or `null` for every posting in range.
-   * Matched via `normalizeKeyword` — the same grouping the frequency table itself uses — so
-   * selecting the displayed spelling still finds postings that used a case, whitespace or dash
-   * variant. Also the term highlighted inside each shown requirement's text.
+   * The keyword selected in the frequency table, or `null` for all postings. Matched via
+   * `normalizeKeyword` (like the table) and highlighted in each requirement.
    */
   selectedKeyword: string | null;
-  /**
-   * Changes whenever the range, stage or keyword selection does, so a previously revealed batch
-   * cannot outlive the result set it was revealed for. Owned by the caller because it alone knows
-   * the range and stage this component's already-filtered `applications` came from.
-   */
+  /** Changes with range, stage or keyword, so a revealed batch can't outlive its result set. */
   resetKey: string;
 }) {
   const [showExperience, setShowExperience] = useState(false);
@@ -326,13 +308,9 @@ export function RequirementsPanel({
                         <div className="analytics-req-group__title-row">
                           <h3
                             className={`analytics-req-group__title requirement-band requirement-band--${key}`}
-                            // `title` rather than a `RequirementTooltip` per group: this heading
-                            // repeats once per band *per posting* (a busy range can hold 100-200),
-                            // and the popover's own explanation already lives once in the
-                            // "Importance" summary card above. No `tabIndex` to go with it — a
-                            // browser renders `title` on hover only, never on keyboard focus, so
-                            // making a non-interactive heading focusable would buy a tab stop per
-                            // band per posting and show the reader nothing when they landed on it.
+                            // `title`, not a tooltip component: this repeats per band per posting,
+                            // and the explanation lives once in the "Importance" card. Not
+                            // focusable, since `title` never shows on keyboard focus.
                             title={
                               key !== UNBANDED
                                 ? IMPORTANCE_HELP[key]
@@ -358,9 +336,7 @@ export function RequirementsPanel({
                                   {verdict && verdict.verdict !== 'direct-evidence' ? (
                                     <span
                                       className={`requirement-verdict requirement-verdict--${verdict.verdict}`}
-                                      // See the group heading above — same reasoning, and the badge
-                                      // label ("Skill only", "Unsupported") carries the meaning on
-                                      // its own. `RequirementList` renders this badge bare.
+                                      // Same as the heading above; the badge label carries meaning.
                                       title={EVIDENCE_HELP[verdict.verdict]}
                                     >
                                       {EVIDENCE_LABELS[verdict.verdict]}

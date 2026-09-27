@@ -64,29 +64,19 @@ const STRONG_SELECTORS = [
   '[id*="jobDescription" i]',
   '[class*="job-description" i]',
   '[class*="jobDescription" i]',
-  // The substring match is separator-literal, so the camel and hyphen forms above do not cover BEM
-  // naming: Greenhouse's `job-boards` host wraps the posting body in `div.job__description`, which
-  // contains neither `job-description` nor `jobdescription`. That page carries no JSON-LD either,
-  // so this selector is the only thing standing between it and the `<main>` fallback — and `<main>`
-  // there is the posting *plus* the whole application form.
+  // Greenhouse's `job-boards` host uses BEM `job__description` and has no JSON-LD; without this the
+  // `<main>` fallback would include the application form.
   '[class*="job__description" i]',
   '[class*="job_description" i]',
   '[id*="job__description" i]',
   '[id*="job_description" i]',
-  // Rippling renders the posting body into `.ATS_htmlPreview`. It names the container's purpose
-  // rather than its styling, which is what makes it usable here: every other class on the page is
-  // an Emotion hash (`css-1nb1zny`) that changes on their next build.
+  // Rippling's posting body; its other classes are build-specific Emotion hashes.
   '[class*="htmlPreview" i]',
 ].join(',');
 
 /**
- * Headings that mark a section of a job posting.
- *
- * The second half of the alternation is the conversational register — "You can expect to:",
- * "Nice to have:" — which several ATS templates use in place of "Responsibilities" and
- * "Qualifications". Matching only the formal wording made a posting invisible to both the
- * heading-ancestor search below and to {@link scoreElement}'s heading credit, which together are
- * most of what separates a real posting from page furniture.
+ * Headings that mark a posting section, formal ("Responsibilities") or conversational ("You can
+ * expect to:", "Nice to have:").
  */
 const SEMANTIC_HEADING =
   /\b(?:about (?:the )?(?:company|role|job|team|opportunity|us)|about you|company overview|the role|the opportunity|in this role|great for this role|what you(?:'|’)ll do|what you(?:'|’)ll be doing|what you(?:'|’)ll bring|what we(?:'|’)re looking for|who you are|who we are|why join|your impact|you can expect to|day[ -]to[ -]day|responsibilities|requirements|qualifications|nice to have|bonus points|skills|experience|benefits|perks|compensation)\b/i;
@@ -94,18 +84,9 @@ const SEMANTIC_HEADING =
 const MAX_PSEUDO_HEADING_LENGTH = 80;
 
 /**
- * Bold lines that a posting uses *as* a heading, where the markup offers no `h1`-`h6`.
- *
- * Greenhouse's own board is the case that forced this: its sections are `<p><strong>Who We Are
- * </strong></p>`, and the page's only real headings are the job title and the application form's
- * own — so both the heading-ancestor search and {@link scoreElement}'s heading credit saw a posting
- * with zero recognizable sections and left the description container unnominated.
- *
- * The standalone-line test is what keeps this from crediting inline emphasis: a `<b>` in the middle
- * of a sentence ("five years of <b>experience</b> with Docker") leaves other text in its block and
- * is rejected, so prose that merely bolds a recognized word does not read as a sectioned posting.
- * Combined with the length guard and {@link SEMANTIC_HEADING}'s fixed wording, this stays as narrow
- * as the "recognized headings only" rule the scoring comment below describes.
+ * Bold standalone lines used as headings where the markup has no `h1`–`h6` (Greenhouse's
+ * `<p><strong>Who We Are</strong></p>`). A bold word inside a sentence doesn't count, and the same
+ * {@link SEMANTIC_HEADING} wording applies.
  */
 function pseudoHeadings(root: ParentNode): Element[] {
   return [...root.querySelectorAll('strong,b')].filter((element) => {
@@ -192,10 +173,8 @@ function structuredValue(value: unknown, document: Document): string {
   }
   if (typeof value !== 'string') return '';
 
-  // Some publishers mix valid HTML with one or more entity-encoded HTML layers in the same
-  // JobPosting.description. Decode entities in an RCDATA element first: unlike taking a parsed
-  // fragment's textContent, this keeps already-valid `<p>`/`<strong>` markup intact while turning
-  // Brex-style `&amp;lt;/p&amp;gt;` back into tags for the real parse below.
+  // Some publishers mix real HTML with entity-encoded layers (`&amp;lt;/p&amp;gt;`). Decoding
+  // entities in an RCDATA element keeps valid markup intact while restoring encoded tags.
   let html = value;
   for (let depth = 0; depth < 3; depth += 1) {
     const decoder = document.createElement('textarea');
@@ -265,7 +244,8 @@ function structuredCandidate(document: Document): ScrapedJobDescription | null {
     try {
       findJobPostings(JSON.parse(script.textContent ?? ''), postings);
     } catch {
-      // One malformed analytics block must not prevent DOM extraction or another valid JSON-LD block.
+      // One malformed analytics block must not prevent DOM extraction or another valid JSON-LD
+      // block.
     }
   }
 
@@ -324,9 +304,8 @@ function structuredCandidate(document: Document): ScrapedJobDescription | null {
     .sort(byScore);
   if (exactMatches[0]) return scrapedCandidate(exactMatches[0]);
 
-  // An explicit URL for another posting is never allowed to win on text length. For URL-less
-  // entries, use a unique page-title match; if several remain indistinguishable, let the focused DOM
-  // extractor decide rather than selecting a related/stale posting arbitrarily.
+  // A URL for another posting never wins on length. For URL-less entries, take a unique page-title
+  // match; if still ambiguous, defer to the DOM extractor rather than guess.
   const unknown = candidates.filter((candidate) => candidate.urlMatch === 'unknown');
   const [onlyUnknown] = unknown;
   if (unknown.length === 1 && onlyUnknown) return scrapedCandidate(onlyUnknown);
@@ -369,12 +348,8 @@ function scoreElement(element: Element, text: string, strong: boolean): number {
   let score = Math.min(30, Math.floor(text.length / 350));
   if (strong) score += 55;
   if (element.matches('main,article,[role="main"]')) score += 18;
-  // Deliberately only the *recognized* headings — `h1`-`h6` and the bold standalone lines
-  // {@link pseudoHeadings} accepts, both gated on the same wording. Crediting any `h1`-`h6` was
-  // tried, to reach a posting whose sections this file couldn't name; it also lifted an
-  // encyclopedia entry and a documentation page over the threshold, because "prose split into
-  // sections" describes them just as well. Widening SEMANTIC_HEADING above, and reading bold lines
-  // as headings, reach the same postings and still say no to those.
+  // Only *recognized* headings earn credit — crediting any `h1`–`h6` also lifted encyclopedia and
+  // docs pages over the threshold.
   score += Math.min(36, headings * 9);
   score += Math.min(12, paragraphs * 2);
   score += Math.min(12, listItems);

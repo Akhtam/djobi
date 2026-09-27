@@ -3,14 +3,8 @@ import type { ListEditor } from './listEditing.js';
 import type { ListSectionChrome } from './listSectionChrome.js';
 
 /**
- * The chrome around one editable list: a section, a numbered removable entry per item, and an Add
- * button — the list-level counterpart to `profileFieldBodies.tsx`'s field bodies.
- *
- * Both apps used to hand-roll this identically down to the prop names, differing only in how much
- * of the presentation `chrome` now owns: the extension shows an item count and collapses an
- * entry's fields behind its `summary`; the dashboard shows neither. What was actually shared —
- * entry numbering, the Remove button's wiring, the empty-state message, the Add button — now lives
- * here exactly once; what genuinely differs stays behind `chrome`, mirroring `FieldChrome`.
+ * One editable list: a section, a numbered removable entry per item, the empty state and an Add
+ * button. Presentation differences (item count, collapsible entries) come from `chrome`.
  */
 export function ListSection<T>({
   chrome,

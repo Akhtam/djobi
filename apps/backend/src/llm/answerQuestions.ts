@@ -17,24 +17,13 @@ import { groundingContext, jobContext, sanitizeXmlContent } from './promptContex
 import { callStructured } from './structuredCall.js';
 
 /**
- * Wraps `QuestionAnswer[]` in an object, since the forced tool call needs a top-level object shape.
- *
- * `question` is omitted from what the model returns. `reconcileAnswers` keys on `fieldId` and takes
- * the question text from the authoritative input — it has never read the model's copy — so asking
- * for it bought nothing and cost output tokens on every answer, which is the one thing this
- * operation's latency is made of. Measured at ~16% of the output tokens per call.
+ * The model's output: answers without `question` (reconciliation takes it from the input by
+ * `fieldId`, and omitting it saves output tokens).
  */
 const AnswerQuestionsOutputSchema = z.object({
   /**
-   * `answer` is **required**. It was optional while this operation sent one call for the whole
-   * form, where a missing answer had to cost one item rather than discard its valid siblings.
-   * Fanning out removed the siblings: one call answers one question, so an item without an answer
-   * is the entire call having produced nothing.
-   *
-   * Leaving it optional was actively harmful once generation stopped being a forced tool call. A
-   * live provider returned `{"fieldId":"q1","sourceStoryIds":[...]}` with no `answer`, which
-   * validated, reconciled to nothing, and surfaced as a form the model had declined to answer
-   * rather than as a failure. Required, the same omission is an `invalid-input` that says so.
+   * `answer` is required: each call answers one question, so an answer-less item means the call
+   * produced nothing and should fail as `invalid-input`, not pass silently.
    */
   answers: z.array(QuestionAnswerSchema.omit({ question: true })),
 });
@@ -121,10 +110,7 @@ function reconcileAnswers(
   return questions.flatMap((question) => {
     if (inputCounts.get(question.fieldId) !== 1) return [];
 
-    // A stated fact needs no model output to resolve, and never did: `matchKnownAnswer` is local
-    // matching over this form's own options, and the draft the model used to return alongside it
-    // was read for nothing but `sourceStoryIds` — which a stated fact has none of. Resolving it
-    // here is what lets `answerQuestions` skip the call entirely.
+    // A stated fact resolves by local matching over this form's options; no model call needed.
     if (question.knownAnswer) {
       const answer = question.options ? matchKnownAnswer(question) : question.knownAnswer;
       return answer
@@ -154,13 +140,8 @@ function reconcileAnswers(
 }
 
 /**
- * How many questions may be in flight at once.
- *
- * One request per question is what makes this operation fast — the answers are written in parallel
- * instead of one after another — but it is also a burst of requests from a single candidate's single
- * click, and an application form with thirty questions should not become thirty simultaneous
- * requests. Eight covers the forms this runs against with room to spare; beyond it, questions go in
- * waves and the operation degrades to something slower rather than to something rate-limited.
+ * Questions in flight at once. One request per question keeps latency at the longest answer; the
+ * cap stops a 30-question form becoming 30 simultaneous requests.
  */
 const MAX_CONCURRENT_QUESTIONS = 8;
 
@@ -187,11 +168,8 @@ async function mapWithConcurrency<T, R>(
 }
 
 /**
- * The instructions and the Profile — everything that is identical for every question on the form.
- *
- * Kept apart from the per-question half so it can be sent as a cached prefix. The rules here are
- * about *how* to answer and are the same whichever question is being answered; the job, the
- * question and the rules that depend on the question live in {@link questionPrompt}.
+ * Instructions and Profile — identical for every question — sent as a cacheable prefix. The job and
+ * per-question rules are in {@link questionPrompt}.
  */
 function sharedPrompt(profile: object): string {
   return `Draft the candidate's answer to one job application question, written in their own voice as implied by their profile. Ground the answer in the candidate's actual work experience and stories — pick the 1-3 most relevant stories by matching the question against each story's tags and content, and set sourceStoryIds accordingly (empty array if no story fits and you drew on general profile info instead). Do not fabricate experience not present in the profile.
@@ -219,28 +197,18 @@ Return exactly one answer, with fieldId copied from the question.`;
 }
 
 /**
- * Drafts answers to application questions, including freeform and choice questions, in the
- * candidate's voice.
+ * Drafts answers to freeform and choice questions in the candidate's voice.
  *
- * **One model call per question, run concurrently.** A single call had to write every answer in
- * sequence, and since a structured call spends its wall clock almost entirely on output tokens, its
- * latency grew linearly with the number of questions — six questions measured ~17s, which is the
- * whole Analysis Step waiting on the slowest of its three calls. Fanning out makes the operation
- * cost the *longest* answer instead of the sum of all of them: the same six measured ~4s. The
- * prompt never asked the model to consider the questions together — it picks stories per question,
- * by that question's own text — so there is no cross-question reasoning to lose.
+ * One model call per question, run concurrently, so latency is the longest answer rather than the
+ * sum (stories are picked per question, so nothing is lost). Questions with a `knownAnswer` are
+ * resolved locally by `matchKnownAnswer` and never sent.
  *
- * A question the Profile already answers (`knownAnswer`) is not sent at all. Its answer comes from
- * `matchKnownAnswer`, which is local matching; the model's draft for it was never read.
- *
- * @param profile - The Profile projection used for answers, including reusable `stories`.
- * @param jobInfo - The job being applied to, for context.
- * @param questions - The application questions to answer, in authoritative output order.
- * @returns Valid drafted answers in input-question order. A choice answer with no unambiguous
- *   matching option is omitted, so output count can be smaller than input count. Returns `[]`
- *   immediately (no API call) when `questions` is empty.
- * @throws The first call's error if *every* question's call failed — one failure is survivable and
- *   costs one answer, but a whole failed batch must not be reported as a form that needed none.
+ * @param profile - The Profile projection used for answers, including `stories`.
+ * @param jobInfo - The job being applied to.
+ * @param questions - The questions to answer, in output order.
+ * @returns Answers in input order. A choice answer with no unambiguous option is omitted. `[]` with
+ *   no API call when `questions` is empty.
+ * @throws The first error if *every* call failed; individual failures just cost that answer.
  */
 export async function answerQuestions(
   profile: AnswerQuestionsProfile,
@@ -270,12 +238,8 @@ export async function answerQuestions(
       });
       return result.answers;
     } catch (error) {
-      // One question's failure costs one answer, not the form. The candidate reviews every drafted
-      // answer anyway, and a missing one is visibly missing — where a thrown error takes down the
-      // Analysis Step that the tailored resume and the fit report were also waiting on.
-      //
-      // An abandoned request is not one of those failures: every question aborts at once, and one
-      // line each for a candidate closing the panel buries the real ones.
+      // One failure costs one (visibly missing) answer, not the whole Analysis Step. Aborts aren't
+      // logged: every question aborts at once when the candidate leaves.
       if (!signal?.aborted) {
         console.warn('[djobi] answer_question_failed', {
           fieldId: question.fieldId,
@@ -287,10 +251,8 @@ export async function answerQuestions(
     }
   });
 
-  // Every question failing is not a form that needed no answers — it is the model or the provider
-  // being unavailable, and it has to reach the caller as the failure it is. The first error is
-  // rethrown rather than a summary of them: it carries the actual cause, and a `StructuredCallError`
-  // keeps the kind and request id that `app.onError` logs.
+  // All failing means the model or provider is down; rethrow the first error, which keeps the kind
+  // and request id `app.onError` logs.
   if (settled.every((answers) => answers === null)) throw firstFailure;
 
   return reconcileAnswers(

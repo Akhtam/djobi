@@ -4,13 +4,8 @@ import { fakeChrome } from '../lib/fakeChrome';
 import { useActiveTab } from './useActiveTab';
 
 /**
- * These four `chrome.tabs` touchpoints used to live inline in `panel/App.tsx`, where reaching them
- * meant rendering the whole panel with a profile loaded. The extraction is what makes the
- * tab-following rules assertable on their own.
- *
- * The fake itself is `lib/fakeChrome.ts` — the same one the panel's harness installs, so a change
- * to how Chrome is faked lands in one place. {@link stubDeferredChrome} below is the exception it
- * documents.
+ * Tab-following rules at the hook's interface, on `lib/fakeChrome.ts`. {@link stubDeferredChrome}
+ * below is the deferred-callback exception.
  */
 function stubChrome(initial: { id?: number; url?: string } = { id: 1, url: 'https://acme.com/a' }) {
   const { knowTab, activate, navigate } = fakeChrome({

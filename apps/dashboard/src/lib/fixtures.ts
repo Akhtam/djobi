@@ -1,28 +1,12 @@
 /**
- * Applications for the test suite. **Not shipped** — nothing under `main.tsx` imports this, and the
- * running app always talks to the real backend.
+ * Test fixtures — **not shipped**. Typed as `Application[]` so schema changes break the build here.
  *
- * Typed as `Application[]` rather than left inferred on purpose: these stand in for rows the
- * backend produces, so a change to `ApplicationSchema` must break this file's build rather than
- * quietly leave the UI developed against a shape that no longer exists.
+ * Chosen to cover every UI branch: one row per stage, both sources, empty and three-category notes
+ * logs, no answers, and one oversized row for layout. Requirements/keywords use the current shape,
+ * except the Stripe row's legacy bare strings, parsed through `JobInfoSchema` to exercise the
+ * tolerant read.
  *
- * The set is chosen to cover every branch the UI has, not to look plausible:
- * one row per `ApplicationStage`, both `ApplicationSource`s, an empty notes log, a log with all
- * three note categories, an application with no drafted answers, and one deliberately oversized row
- * (long role title, twelve resume bullets, long answers) to stress the layout.
- *
- * Most `jobInfo.requirements`/`.keywords` below are written directly in the shape `JobInfoSchema`
- * now states — `{ text, kind, yearsOfExperience }` and `{ term, category }` — with enough spread
- * across `kind` and `category` to exercise the required/preferred roll-up and category grouping.
- * The Stripe row is deliberately left as bare strings, its earliest `createdAt` standing in for a
- * row logged before this shape existed, and is run through `JobInfoSchema.parse` so it exercises
- * the tolerant read the same way a stored row would rather than merely satisfying the type.
- *
- * `fixtureProfile` below is `getProfile`'s "ready" state — the third state, `null`, is what
- * `createFixtureDashboardClient` defaults to, since most existing callers neither know nor care
- * about it. Its `skills` deliberately cover some of the terms `fixtureApplications` extracts
- * (TypeScript, React, GraphQL, Go) and miss others (Java, Ruby, Next.js, observability, ...), so a
- * coverage report built over it has both verdicts to show rather than a wall of one.
+ * `fixtureProfile` covers some extracted keywords and misses others, so coverage has both verdicts.
  */
 import { JobInfoSchema } from '@djobi/shared';
 import type { Application, ExtractedProfile, Profile } from '@djobi/shared';
@@ -215,11 +199,7 @@ export const fixtureApplications: Application[] = [
         createdAt: '2026-03-22T10:30:00.000Z',
       },
     ],
-    /*
-     * The one fixture carrying the posting it was analyzed from. Every other row leaves it `null`,
-     * standing in for the rows written before the column existed — so the detail page's Posting tab
-     * has both cases to render, and the empty one is not a hypothetical.
-     */
+    /* The one fixture with posting text, so the Posting tab renders both cases. */
     rawDescription: [
       'About the role',
       '',
@@ -236,12 +216,9 @@ export const fixtureApplications: Application[] = [
     ].join('\n'),
     extractionVersion: 'extract-job@3',
     /*
-     * The scored row. Every other fixture leaves this `null`, standing in for the rows written
-     * before the field existed — so the analytics roll-up has the mixed history that is the normal
-     * case to report over, not a uniformly scored set that would never exercise its own caveat.
-     * One entry per requirement above, in the same order, carrying the three verdicts the
-     * requirements panel renders differently: the dropped bullet is in `fixtureProfile` and
-     * missing from this row's `tailoredResume`, which is exactly what that verdict means.
+     * The one scored row (others are `null`, like older history), one entry per requirement above,
+     * covering the verdicts the panel renders differently. The dropped bullet is in
+     * `fixtureProfile` but not this row's `tailoredResume`.
      */
     requirementEvidence: [
       {
@@ -780,9 +757,8 @@ export const fixtureProfile: Profile = {
 };
 
 /**
- * `extractResume`'s default fixture answer — a plausible draft with a couple of fields the
- * fixture Profile above doesn't have (a summary, a project), so a test can tell "the extraction
- * populated this" apart from "the seeded Profile already had it."
+ * `extractResume`'s default answer, with fields the fixture Profile lacks (summary, a project) so
+ * tests can tell extraction from existing data.
  */
 export const fixtureExtractedProfile: ExtractedProfile = {
   fullName: 'Jordan Rivera',

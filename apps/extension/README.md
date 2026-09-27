@@ -43,9 +43,11 @@ flowchart LR
   end
 
   subgraph worker["Service worker · background/"]
-    sw("service-worker.ts<br/>envelope parse · recoveryReady<br/>tab cleanup · side-panel behavior")
+    sw("service-worker.ts<br/>recoveryReady<br/>tab cleanup · side-panel behavior")
+    listener("messageListener.ts<br/>envelope parse · reply rules")
     router("router.ts<br/>handleTypedMessage switch<br/>withWorkerKeptAlive")
     pipeline("applicationPipeline.ts<br/>runAnalysis · runFill<br/>runSaveApplication")
+    fillPlan("fillPlan.ts<br/>planFill · fillReport (pure)")
     claim("runClaim.ts<br/>lock + abort")
     failure("pipelineFailure.ts<br/>failure → run vocabulary")
     detected("detectedFields.ts + apiDetectors.ts<br/>recordReport · snapshotForRun · frameForFill<br/>enrichWithApiOracle")
@@ -68,13 +70,14 @@ flowchart LR
     autofill("AutofillTab")
     logTab("LogApplication")
     ask("AskTab")
-    hooks("hooks<br/>usePipelineRun · useActiveRun · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands")
+    hooks("hooks<br/>usePipelineRun (runView.ts) · useActiveRun · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands")
     options("options/App<br/>Profile editor · Login · resume upload")
   end
 
   cIndex -- "REPORT_JOB_PAGE · REPORT_SUBMISSION" --> sw
-  sw --> router --> pipeline
+  sw --> listener --> router --> pipeline
   pipeline --> claim
+  pipeline --> fillPlan
   pipeline -- "checkpoint" --> tabStore
   pipeline -. "SCAN_PAGE · FILL_FORM · SHOW_SAVED_TOAST" .-> pageClient
   pageClient -.-> cIndex
@@ -98,7 +101,7 @@ flowchart LR
   classDef entry fill:#e0e7ff,stroke:#6366f1,stroke-width:1.5px,color:#312e81
   classDef danger fill:#ffe4e6,stroke:#f43f5e,stroke-width:1.5px,color:#881337
   class cIndex,detect,detectFields,signals,extractJd,fill,submit,toast page
-  class sw,router,pipeline,claim,failure,detected,badge worker
+  class sw,listener,router,pipeline,fillPlan,claim,failure,detected,badge worker
   class tabStore,run,pageClient,keepAlive,disposition,messages data
   class backendClient,auth http
   class panelApp,autofill,logTab,ask,hooks,options ui
@@ -112,7 +115,8 @@ flowchart LR
 ```
 
 Messages go one way on each channel. Panel and content script send typed messages _to_ the worker
-(`lib/messages.ts`, validated against the envelope). Request/response commands go _to_ content
+(`lib/messages.ts`); `background/messageListener.ts` validates the envelope and decides which
+messages get a real reply — the same listener the panel tests drive. Request/response commands go _to_ content
 scripts through `lib/pageClient.ts`: from the worker (`SCAN_PAGE`, `FILL_FORM`, and the
 fire-and-forget `SHOW_SAVED_TOAST`), and from the panel for `SCRAPE_JOB_DESCRIPTION`. Only
 `UPDATE_RUN`, `START_FILL` and `START_SAVE_APPLICATION` reply to the panel, because a refusal writes
@@ -274,7 +278,8 @@ and **Fill** can also re-run from `filled`, `save-error` or `saved`. The table h
 - Picks each value via `autofillSource(category)` (`lib/fieldDisposition.ts`): question / profile /
   resume / unsupported.
 - Checks `claim.stillOurs()` immediately before the irreversible `FILL_FORM`.
-- Computes `unresolvedRequiredFields` and `filledFieldCount` from the page's response.
+- `fillPlan.ts` holds the pure decisions: `planFill` (what to write) and `fillReport`
+  (`unresolvedRequiredFields`, `filledFieldCount` and `fillOutcome` from the page's response).
 
 ### Save Step (`runSaveApplication`)
 

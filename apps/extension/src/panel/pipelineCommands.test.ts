@@ -1,11 +1,6 @@
 /**
- * The three commands, and the two things that are only true of them here: each pairs its message
- * with the optimistic status it raises, and each names the run it is about.
- *
- * The Autofill Tab's own tests drive these through its buttons, which is where the *eligibility*
- * rules live. What that surface cannot reach is the state before Chrome has named a tab — the
- * Analyze button is rendered and enabled there, since whether it is enabled depends on the Job
- * Description rather than on the tab.
+ * The three commands: each pairs its message with its optimistic status and names its run. Covers
+ * the state before Chrome names a tab, which the tab's own tests can't reach.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeChrome } from '../lib/fakeChrome';

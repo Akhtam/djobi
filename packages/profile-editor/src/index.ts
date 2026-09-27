@@ -1,34 +1,19 @@
 /**
- * `@djobi/profile-editor` — the behavior behind editing a Profile as a form: the draft itself, the
- * per-section list operations, and the work-experience bullet rules. Both `apps/extension/src/
- * options/App.tsx` and `apps/dashboard/src/views/Profile.tsx` edit the same Profile and used to
- * hand-roll all of this identically; only the chrome around it — the panel/card shell, the save
- * affordance, how a 401 is reported — is genuinely different between the two, and stays in each app.
+ * `@djobi/profile-editor` — Profile-editing behavior shared by the extension's options page and the
+ * dashboard's Profile view. Each app keeps its shell, save affordance and 401 handling.
  *
- * - `useProfileDraft.ts` — the draft itself: what's being edited, whether it's dirty, the revision
- *   guard that keeps a save's response from clobbering an edit made after it started, and the
- *   resume upload that fills the draft in.
- * - `useProfileWorkflow.ts` — the page workflow on top of the draft: first load, upload, save,
- *   their results and default wording, and 401 detection, behind a `ProfilePagePort` each app
- *   adapts its client to.
- * - `listEditing.ts` — `listEditor`/`ListEditor<T>` (add/update/remove for one Profile list key)
- *   and `credentialItems` (the combined Certifications & Awards view).
- * - `profileLists.ts` — every list section's editor bound to one draft in one call, including the
- *   combined Certifications & Awards dispatcher.
- * - `bulletEditing.ts` — starring a work-experience bullet, and parsing its per-role bullet cap.
- * - `profileDraft.ts` — normalizing a Profile draft into the shape persisted by the backend,
- *   applying a resume extraction onto one, the screening-answer/credential-kind edits, and the
- *   per-field operations both editors share (comma lists, project bullets, skills).
- * - `profileSections.ts` — which sections the editor has, in what order, and scrolling to one.
- * - `fieldChrome.ts` — the `FieldChrome`/`BulletListClassNames` shape each app supplies to render
- *   the field bodies below through its own markup.
- * - `profileFieldBodies.tsx` — the controlled field bodies themselves: one component per section or
- *   per entry, rendering through the caller's `FieldChrome` rather than choosing its own wrapper.
- * - `listSectionChrome.ts` — the `ListSectionChrome` shape each app supplies to render one
- *   editable list's section and entry chrome through its own markup, the list-level counterpart to
- *   `FieldChrome`.
- * - `listSection.tsx` — `ListSection`, the shared shell around one editable list: entry numbering,
- *   the Remove button's wiring, the empty-state message, and the Add button.
+ * - `useProfileDraft.ts` — the draft, dirty state, stale-save guard and resume-upload apply.
+ * - `useProfileWorkflow.ts` — first load, upload, save and their messages, behind
+ *   `ProfilePagePort`.
+ * - `listEditing.ts` / `profileLists.ts` — add/update/remove per list, bound to one draft,
+ *   including the combined Certifications & Awards list.
+ * - `bulletEditing.ts` — starring bullets and parsing a role's bullet cap.
+ * - `profileDraft.ts` — normalizing a draft for saving, applying a resume extraction, and shared
+ *   per-field edits.
+ * - `profileSections.ts` — the section inventory, order and `scrollToSection`.
+ * - `fieldChrome.ts` / `listSectionChrome.ts` — the wrapper renderers each app supplies.
+ * - `profileFieldBodies.tsx` / `profileSectionBodies.tsx` / `listSection.tsx` — the shared field,
+ *   section and list components.
  */
 export * from './useProfileDraft.js';
 export * from './useProfileWorkflow.js';

@@ -176,14 +176,7 @@ describe('the Log tab', () => {
     ]);
   });
 
-  /**
-   * `jobUrl` is `.url()`-validated by `NewApplicationSchema` and is the duplicate guard's key, so a
-   * bad one has to stop in the panel rather than come back as a 400.
-   */
-  /**
-   * The panel outlives a navigation. Seeding the field only on mount filed the row under whichever
-   * posting was open when the panel was, which is also the URL the duplicate guard then checked.
-   */
+  /** The panel outlives navigation, so the URL field must follow the tab until edited. */
   it('follows the tab while the URL is still the prefill', async () => {
     stubBackend();
     const { rerender } = renderTab();
@@ -223,6 +216,10 @@ describe('the Log tab', () => {
     expect(screen.queryByText(/jobs\/456/)).not.toBeInTheDocument();
   });
 
+  /**
+   * An http(s) URL is required (and is the Duplicate Guard's key), so a bad one stops here, not as
+   * a 400.
+   */
   it('will not extract without a usable URL', async () => {
     stubBackend();
     renderTab(null);

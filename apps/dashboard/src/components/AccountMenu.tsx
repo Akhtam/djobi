@@ -1,23 +1,15 @@
 /**
- * The header's account control: an avatar-initial trigger — no "Account" label — that opens a small
- * menu with "Profile" (routes to `#/profile`) and "Sign out". Replaces what used to be a bare Sign
- * out button once there were two account-level actions to reach, not one.
- *
- * The initial comes from the Profile's name (falling back to its email) fetched once on mount —
- * there is no separate "current session user" endpoint to read it from, and the Profile is the
- * closest thing to one. A silent failure here (401 included) is deliberately not surfaced: the
- * store's own load already 401s at effectively the same moment and drives the real redirect to
- * `#/login` (`App.tsx`'s `unauthorized` effect) — this is decoration, not the source of truth for
- * whether the session is still good.
- *
- * Hand-rolled rather than `<details>`/`<summary>`: a `<details>` menu has no "close on outside
- * click" for free, and the workaround is the same document listener this uses anyway — so there is
- * nothing to save by starting from `<details>`.
+ * The header's account control: an avatar-initial trigger opening a menu with "Profile" and "Sign
+ * out". The initial comes from the Profile's name (else email), fetched once; failures are ignored
+ * since the store's own load drives the real 401 redirect. Hand-rolled rather than `<details>`,
+ * which needs the same outside-click listener anyway.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { DashboardClient } from '../lib/dashboardClient';
 
-/** The avatar's letter: the Profile's name, falling back to its email, first character, upper-cased. */
+/**
+ * The avatar's letter: the Profile's name, falling back to its email, first character, upper-cased.
+ */
 function initialOf(source: string | null | undefined): string | null {
   const trimmed = source?.trim();
   return trimmed ? trimmed.charAt(0).toUpperCase() : null;

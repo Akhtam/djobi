@@ -323,14 +323,14 @@ describe('usePipelineRun', () => {
     const { result } = renderHook(() => usePipelineRun(1));
     await settleInitialRead();
 
-    let undeliveredFill!: (message: string) => void;
+    let undeliveredFill!: () => void;
     act(() => {
       undeliveredFill = result.current.beginCommand('fill');
     });
     act(() => {
       result.current.beginCommand('save');
     });
-    act(() => undeliveredFill('Could not establish connection.'));
+    act(() => undeliveredFill());
 
     expect(result.current.status).toBe('saving');
     expect(result.current.failure).toBeNull();
@@ -345,7 +345,7 @@ describe('usePipelineRun', () => {
     await settleInitialRead();
 
     act(() => result.current.beginCommand('fill'));
-    act(() => result.current.beginCommand('fill')('Could not establish connection.'));
+    act(() => result.current.beginCommand('fill')());
 
     expect(result.current.status).toBe('fill-error');
     expect(result.current.failure).toEqual({
@@ -360,7 +360,7 @@ describe('usePipelineRun', () => {
     const { result } = renderHook(() => usePipelineRun(1));
     await settleInitialRead();
 
-    act(() => result.current.beginCommand('fill')('Could not establish connection.'));
+    act(() => result.current.beginCommand('fill')());
     await act(() => writeFromBackground(1, { ...run, status: 'filling' }));
 
     expect(result.current.status).toBe('filling');
@@ -377,7 +377,7 @@ describe('usePipelineRun', () => {
     const { result } = renderHook(() => usePipelineRun(1, 1, () => false));
     await settleInitialRead();
 
-    act(() => result.current.beginCommand('analysis')('Could not establish connection.'));
+    act(() => result.current.beginCommand('analysis')());
 
     expect(result.current.run).toBeNull();
     expect(result.current.status).toBe('analyze-error');

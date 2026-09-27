@@ -12,17 +12,17 @@ import { groundingContext, jobContext, sanitizeXmlContent } from './promptContex
 import { callStructured } from './structuredCall.js';
 
 /**
- * Integer-valued, checked locally. Not `.int()`: zod 4 renders that into the JSON schema as
- * safe-integer `minimum`/`maximum` bounds, outside the keyword subset every route serves. `.meta`
- * restores the plain `"type": "integer"` the model saw under zod 3. An index out of range is
- * already rejected where it's looked up (`bulletsFor`, `tailorResume`).
+ * Integer index, checked locally. Not `.int()`: zod 4 emits safe-integer bounds some routes don't
+ * support; `.meta` gives plain `"type": "integer"`. Range is checked at lookup.
  */
 const SourceIndexSchema = z
   .number()
   .refine(Number.isInteger, 'sourceIndex must be an integer')
   .meta({ type: 'integer' });
 
-/** Compact model output: source indices replace work-experience metadata the backend already owns. */
+/**
+ * Compact model output: source indices replace work-experience metadata the backend already owns.
+ */
 const TailoredResumeOutputSchema = z.object({
   workExperience: z.array(
     z.object({
@@ -96,9 +96,8 @@ function bulletsFor(
       return [{ text: sourceText, starred: true }];
     }
     const text = bullet.text?.trim();
-    // A rewrite that introduces a number or named specific the source bullet never stated reverts to
-    // the source itself, verbatim — see bulletTruthfulness.ts. This can only ever fall back to a real
-    // sentence the candidate wrote, never to nothing: the pointer was already resolved above.
+    // A rewrite adding numbers or named specifics the source lacks reverts to the source verbatim
+    // (see bulletTruthfulness.ts).
     return text ? [{ text: verifyBulletRewrite(text, sourceText), starred: false }] : [];
   });
 
@@ -117,14 +116,9 @@ function bulletsFor(
 }
 
 /**
- * Rejoins compact, untrusted model output to authoritative Profile fields.
- *
- * Role order always matches `profile.workExperience` — conventional reverse-chronological order is
- * the candidate's own authored fact, not a tailoring decision, so a `sourceIndex` only ever selects
- * *which* role's bullets to use, never *where* that role sits. Only bullets within a role are
- * reordered/selected; see `bulletsFor`. A `sourceIndex` repeated, missing, or out of range for a
- * role still falls back to that role's own authored-order bullets — malformed pointers are a
- * tailoring failure to recover from, not an instruction to drop a real role.
+ * Rejoins compact, untrusted model output to authoritative Profile fields. Role order always
+ * follows the Profile; only bullets within a role are selected and reordered. Bad `sourceIndex`
+ * pointers fall back to the role's authored bullets rather than dropping the role.
  */
 function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume): TailoredResume {
   const roleCounts = new Map<number, number>();
@@ -160,15 +154,9 @@ function reconcileResume(profile: TailorResumeProfile, modelResume: ModelResume)
 }
 
 /**
- * A deterministic, pre-computed reading of what the Profile's *full, uncapped* bullet bank already
- * evidences for each requirement, most decisive first, so the model spends its selection budget on
- * requirements the Profile can actually support instead of re-deriving that itself from scratch.
- *
- * Run against `baseResumeOf(grounding)` rather than the eventual tailored output: this runs before
- * the model call, so there is no tailored resume yet, and the question worth answering is "can the
- * Profile support this at all", not "does today's selection happen to".
- *
- * `''` when the posting stated no requirements, so an empty tag is never added to the prompt.
+ * What the Profile's full, uncapped bullet bank evidences for each requirement, most decisive
+ * first, so the model spends its selection budget where the Profile can support it. Computed
+ * before the model call against `baseResumeOf(grounding)`. `''` when there are no requirements.
  */
 function requirementEvidenceContext(grounding: TailorResumeProfile, jobInfo: JobInfo): string {
   const evidence = requirementEvidence(baseResumeOf(grounding), jobInfo, grounding);
@@ -177,9 +165,7 @@ function requirementEvidenceContext(grounding: TailorResumeProfile, jobInfo: Job
   const summary = evidence.map(({ requirement, verdict, evidence: match }) => ({
     requirement: requirement.text,
     kind: requirement.kind,
-    // Carried because the order below is now the band's, so a model told only the `kind` could not
-    // see why the list is arranged as it is. `null` on a posting extracted before importance
-    // existed, which is why the instruction leans on the ordering rather than on the field.
+    // Shown so the model knows why the list is ordered this way; `null` on older extractions.
     importance: requirement.importance,
     verdict,
     evidencedBy: match,
@@ -197,11 +183,8 @@ export async function tailorResume(
     return { skills: profile.skills, workExperience: [] };
   }
 
-  // Applied, not restated. The route parses the same schema on the way in, so this is redundant for
-  // an HTTP caller — and load-bearing for every other one: a full `Profile` is structurally
-  // assignable to `TailorResumeProfile`, so a direct caller passing one put the candidate's phone,
-  // location and screening declarations into the prompt with nothing to notice. The projection is
-  // enforced where the grounding is built, by the schema that states it.
+  // Enforce the projection here: a direct caller passing a full `Profile` would otherwise leak
+  // phone, location and screening answers into the prompt.
   const grounding = TailorResumeProfileSchema.parse(profile);
   const instructions = `Tailor the candidate's resume to this job. Reorder and concisely reword existing non-starred bullets to emphasize job_info requirements and keywords, using natural language that does not sound robotic. Never invent experience, skills, or achievements. A role's maxBullets overrides maxBulletsPerRole; both are maximums, never targets, so do not pad a role with weak or fabricated content.
 

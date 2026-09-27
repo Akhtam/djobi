@@ -11,10 +11,8 @@ import type {
 export type CredentialKind = 'certification' | 'award';
 
 /**
- * Moves one row between a Profile's `certifications` and `awards` arrays. The two share
- * `name`/`issuer`/`date`; only `description` is award-only, so a conversion carries the three
- * shared fields and drops or gains that one. The row reappears at the end of its new array —
- * there is no shared ordering field between the two for "keep the same position" to answer.
+ * Moves a row between `certifications` and `awards`, carrying `name`/`issuer`/`date` and
+ * dropping or adding `description`. The row goes to the end of its new list.
  */
 export function changeCredentialKind(
   profile: Profile,
@@ -57,11 +55,7 @@ export function optionalText(value: string): string | null {
 }
 
 /**
- * The list behind a comma-separated text input — a Story's tags, a project's technologies.
- *
- * One rule, not one per field. This was `storyTags`, and the identical three operations sat inline
- * beside it in both editors for a project's technologies, so "trim the spaces, drop the empties"
- * had two definitions that could drift.
+ * The list behind a comma-separated input (story tags, project technologies): trimmed, no blanks.
  */
 export function commaList(value: string): string[] {
   return value
@@ -70,23 +64,13 @@ export function commaList(value: string): string[] {
     .filter(Boolean);
 }
 
-/**
- * {@link commaList} for a field the Profile stores as `null` when empty rather than as `[]` — a
- * project's `technologies`. The distinction is the schema's, not the input's: the field itself
- * cannot tell "no technologies" from "none entered yet."
- */
+/** {@link commaList}, but `null` when empty — for fields the Profile stores as nullable. */
 export function optionalList(value: string): string[] | null {
   const items = commaList(value);
   return items.length ? items : null;
 }
 
-/**
- * {@link spliceWorkBullets} for a project's bullets: the same splice with no starred-index
- * bookkeeping, because a project has no starring concept to remap.
- *
- * Both editors wrote the edit, remove and add cases out separately — a `map`, a `filter` and a
- * spread — six inline copies of three operations that are one call each to this.
- */
+/** {@link spliceWorkBullets} for project bullets, which have no starred indices to remap. */
 export function spliceProjectBullets(
   project: Project,
   index: number,
@@ -104,19 +88,17 @@ export function spliceProjectBullets(
 }
 
 /**
- * Appends a skill.
- *
- * Neither trims nor deduplicates: the chip list is keyed by the string itself, and quietly altering
- * or dropping what the candidate typed is worse than showing it back to them exactly as entered. An
- * empty entry is the one thing refused, because the add button is reachable with the field
- * untouched.
+ * Appends a skill exactly as typed (no trim or dedupe — altering input is worse than showing it).
+ * Empty is refused, since the add button works with the field untouched.
  */
 export function addSkill(profile: Profile, skill: string): Profile {
   if (!skill) return profile;
   return { ...profile, skills: [...profile.skills, skill] };
 }
 
-/** Removes every chip equal to `skill` — the list is keyed by value, so equal strings are one chip. */
+/**
+ * Removes every chip equal to `skill` — the list is keyed by value, so equal strings are one chip.
+ */
 export function removeSkill(profile: Profile, skill: string): Profile {
   return { ...profile, skills: profile.skills.filter((entry) => entry !== skill) };
 }
@@ -144,18 +126,9 @@ export function spliceWorkBullets(
 }
 
 /**
- * Copies a resume extraction's fields onto a Profile draft, field by field — never a blanket
- * replace. A field the extraction found populates the draft; a field it left null or empty (a
- * section the resume didn't have, or one the model couldn't confidently read) leaves the draft
- * exactly as it was.
- *
- * This is deliberately not a smart merge: there is no attempt to reconcile a field where both the
- * draft and the extraction have something, and the extraction always wins there. That is what
- * "review before save" is for (Phase 20 in `PROGRESS.md`) — the candidate sees the result in the
- * same editable fields as any other Profile edit and corrects anything wrong before saving; this
- * function only has to decide "did the extraction find something," not "which of two answers is
- * right." `||` rather than `??` throughout: an extracted `''` is exactly as much "nothing found" as
- * `null` is, for a field the candidate may already have filled in by hand.
+ * Copies a resume extraction onto a draft field by field: anything found overwrites, anything null
+ * or empty leaves the draft alone. No smart merge — the candidate reviews before saving. Uses `||`
+ * so an extracted `''` counts as nothing found.
  */
 export function applyExtractedProfile(profile: Profile, extracted: ExtractedProfile): Profile {
   return {
@@ -170,9 +143,7 @@ export function applyExtractedProfile(profile: Profile, extracted: ExtractedProf
       github: extracted.links.github || profile.links.github,
     },
     summary: extracted.summary || profile.summary,
-    // A resume's own work-experience/education entries carry no tailoring-selection controls
-    // (`ExtractedProfileSchema` uses `ResumeWorkExperienceSchema`, not the full `WorkExperience`) —
-    // every extracted role gets this Profile's defaults, the same ones a freshly added role gets.
+    // Extracted roles carry no selection controls, so each gets the same defaults as a new role.
     workExperience: extracted.workExperience.length
       ? extracted.workExperience.map((role) => ({
           ...role,

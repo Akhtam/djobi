@@ -1,18 +1,11 @@
 /**
- * The candidate's chance to accept, edit, reorder or reject what `tailorResume` selected — before
- * it reaches Fill.
+ * The candidate's chance to accept, edit, reorder or reject tailored bullets before Fill.
+ * `bulletTruthfulness.ts` already guarantees traceability; this adds judgment: does a truthful
+ * rewrite read right, does a bullet belong, which should lead. Edits stay in memory until
+ * `onChange`.
  *
- * `bulletTruthfulness.ts` already guarantees every bullet here traces to a real Profile sentence,
- * reverted to it verbatim wherever a rewrite invented a number or a named specific. What this adds
- * is judgment the backend cannot supply: whether a *truthful* rewrite still reads right, whether a
- * bullet belongs in this posting's resume at all, and which of a role's bullets should lead. Every
- * control here edits a plain in-memory `TailoredResume`; nothing is destructive until `onChange`
- * writes it back to the run.
- *
- * Source pairing (`matchBulletSource`, in `@djobi/shared`'s `bulletProvenance.ts`) is necessarily a best-effort *reading* — `sourceIndex`
- * pointers exist only inside `tailorResume.ts` and never reach the wire — so a bullet the candidate
- * typed here from scratch, with no Profile bullet resembling it, shows no "originally" line. That is
- * an honest gap, not a bug: this module cannot claim a trace it does not have.
+ * "Originally: …" uses `matchBulletSource` — best-effort, since `sourceIndex` never leaves the
+ * backend — so a bullet typed from scratch shows none.
  */
 import { matchBulletSource, sourceRoleFor, type Profile, type TailoredResume } from '@djobi/shared';
 
@@ -30,10 +23,9 @@ function moveWithin<T>(list: T[], index: number, delta: number): T[] {
 
 /**
  * @param tailoredResume - The run's current resume; edits are relative to this.
- * @param profile - Where "originally: …" and "revert" pull their text from.
- * @param editable - Whether controls are live. `false` while a fill/save is in flight, matching
- *   the answer cards' own `editEnabled` gate — the run must not change under a request already using it.
- * @param onChange - Called with the whole edited resume; the caller decides how to persist it.
+ * @param profile - Source of "originally: …" and "revert" text.
+ * @param editable - `false` while a fill/save is in flight, like the answer cards.
+ * @param onChange - Called with the whole edited resume; the caller persists it.
  */
 export function ResumeReview({
   tailoredResume,
@@ -58,10 +50,7 @@ export function ResumeReview({
     onChange({ ...tailoredResume, workExperience });
   }
 
-  // A capped resume, or one whose bullets all got reverted or dropped, can legitimately land here
-  // with nothing to show. Staying visible (and open) rather than rendering nothing is the point:
-  // this is exactly the case where the candidate needs to see, before Fill, that the resume about
-  // to be attached carries no bullets at all.
+  // Stay visible even with no bullets: the candidate should see that before Fill attaches it.
   return (
     <details className="resume-review" open={totalBullets === 0 ? true : undefined}>
       <summary className="eyebrow">Review resume bullets</summary>

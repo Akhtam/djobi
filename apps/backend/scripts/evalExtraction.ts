@@ -1,19 +1,10 @@
 /**
- * Real-posting evaluation corpus: runs the actual Analysis Step (`extractJob` + `tailorResume`)
- * against a small, fixed set of realistic job postings and one sample Profile, then reports
- * `requirementEvidence`/`bulletProvenance` for each — the same deterministic checks
- * `applicationPipeline.ts` runs at save time — so the whole extraction-to-matching chain can be
- * eyeballed against real model output, not just fake-model unit tests.
+ * Real-posting evaluation: runs `extractJob` and `tailorResume` on a fixed set of realistic,
+ * hand-written postings and one sample Profile, then reports `requirementEvidence`,
+ * `bulletProvenance` and Importance Gate behavior for eyeballing live model output.
  *
- * **Not shipped, not run in CI.** Live LLM calls cost money and are non-deterministic; this is a
- * developer tool for judging a prompt change before it ships, per the audit's "build a real-posting
- * evaluation corpus" recommendation. Run it by hand: `pnpm --filter backend eval:extraction`.
- *
- * The postings below are hand-written to *read* like real listings (structure, headings, section
- * splits), not scraped from any real employer — this repo has no need to hold a real company's
- * posting text just to exercise extraction. Extend `POSTINGS` with more shapes
- * (no explicit Requirements/Nice-to-have split, a posting with several stated years figures, a very
- * short one) as new extraction cases turn up worth guarding against a regression.
+ * A developer tool — live calls cost money and aren't deterministic, so it's not in CI. Run with
+ * `pnpm --filter backend eval:extraction`. Add postings to `POSTINGS` as new cases turn up.
  */
 import 'dotenv/config';
 import {
@@ -127,10 +118,7 @@ Nice to have
 - Open-source contributions`,
   },
   {
-    // No must-have wording and no Requirements/Nice-to-have headings anywhere, so nothing here can
-    // be `stated` and very little can be `structural`. Every band the model wants to call decisive
-    // has to come from market knowledge — which is exactly what the cap refuses. A `critical` or
-    // `high` row in this posting's output means the gate leaked.
+    // No must-have wording or headings, so any `critical`/`high` band here means the gate leaked.
     label: 'no must-have wording at all — exercises the inferred cap',
     text: `Engineer, Growth
 Umbrella · Remote
@@ -164,9 +152,7 @@ async function evaluatePosting(posting: { label: string; text: string }): Promis
 
   const tailoredResume = await tailorResume(SAMPLE_PROFILE, jobInfo);
 
-  // The quote check `normalizeRequirementImportance` already applied inside `extractJob`, re-run
-  // here only to report it. A `stated` band that survived extraction has a findable quote by
-  // construction, so a line printed below means the gate itself is not doing what it claims.
+  // Re-runs the quote check `extractJob` already applied; any line printed means the gate failed.
   const normalizedPosting = normalizeQuote(posting.text);
   const laundered = jobInfo.requirements.filter(
     (requirement) =>
@@ -187,10 +173,7 @@ async function evaluatePosting(posting: { label: string; text: string }): Promis
     );
   }
 
-  // Keyed on the band rather than on `kind`, because the band is what the gate has vouched for: a
-  // `critical` or `high` row rests on the posting's own words or structure, never on a guess about
-  // the market. Flagging on `kind` would let a boilerplate line under a "Requirements" heading
-  // raise the same alarm as a genuine must-have.
+  // Flag by band, not `kind`: only decisive bands are vouched for by the gate.
   const flaggedDecisive = evidence.filter(
     (entry) =>
       entry.requirement.importance !== null &&

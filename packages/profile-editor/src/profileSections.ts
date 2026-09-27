@@ -1,14 +1,6 @@
 /**
- * The Profile editor's sections, in the order both editors present them.
- *
- * One inventory rather than a `PANEL_ORDER` per app: the two had the same thirteen entries in the
- * same order, differing only in how each *renders* a quick-nav from them, so adding a section meant
- * remembering to add it twice — and a section added to one and not the other would look like a
- * deliberate difference rather than an omission.
- *
- * What is here is what both apps agree on: identity, order, copy, body kind, and which half of the
- * editor a section belongs to. The shells, controls, summaries, and app-owned upload/skills bodies
- * stay in each app.
+ * The Profile editor's sections in display order, with identity, copy, body kind and group. Shells,
+ * controls, summaries and app-owned bodies (upload, skills) stay in each app.
  */
 
 /** Which half of the editor a section belongs to — see {@link ProfileSection.group}. */
@@ -35,8 +27,7 @@ export type ProfileSectionBodyKind = 'app' | 'fields' | 'list';
 export interface ProfileSection {
   key: ProfileSectionKey;
   /**
-   * The section's DOM id, and the anchor {@link scrollToSection} scrolls to. Prefixed `section-`
-   * because it is a document id shared with the stylesheet, not a key.
+   * DOM id and {@link scrollToSection} target; `section-` prefixed since the stylesheet shares it.
    */
   anchor: string;
   /** What the quick-nav calls it — shorter than the section's own heading. */
@@ -47,9 +38,8 @@ export interface ProfileSection {
   noun?: string;
   addLabel?: string;
   /**
-   * `intake` is the resume upload: a way to *fill* the form rather than a part of it, which is why
-   * the dashboard renders it outside the `<form>` and lists it in no tab. `profile` and `prep` are
-   * the dashboard's two tabs; the options page renders every group in one scroll and ignores this.
+   * `intake` (resume upload) fills the form rather than being part of it; `profile` and `prep` are
+   * the dashboard's tabs. The options page renders every group in one scroll.
    */
   group: ProfileSectionGroup;
 }
@@ -315,12 +305,8 @@ export function sectionsInGroup(group: ProfileSectionGroup): readonly ProfileSec
 }
 
 /**
- * Scrolls to a section without touching `location.hash`.
- *
- * A plain `<a href="#section-x">` would fire `hashchange`, which the dashboard's `useHashRoute`
- * reads as an unrecognised route and answers by bouncing the candidate off the profile page
- * entirely. The options page has no router to confuse, but a quick-nav click should not add a
- * history entry there either.
+ * Scrolls to a section without touching `location.hash` — a hash change would be read by the
+ * dashboard's router as an unknown route.
  */
 export function scrollToSection(anchor: string): void {
   document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });

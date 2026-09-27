@@ -1,9 +1,6 @@
 /**
- * When a tab's record is dropped: navigation, and the tab closing.
- *
- * Navigation is not a clear. Frames are page-specific and always go, while the run and the retained
- * Job Context survive a move between routes of the same posting — which is why cleanup is a rule
- * here rather than a `removeRecord` on every event.
+ * When a tab's record is dropped. Navigation always drops frames but keeps the run and Job Context
+ * within the same posting; a different posting or closing the tab clears everything.
  */
 import { isSameJobUrl } from '../jobContext';
 import { read, removeRecord, withTabLock, write } from './record';
@@ -12,10 +9,7 @@ export async function clearTabState(tabId: number): Promise<void> {
   return removeRecord(tabId);
 }
 
-/**
- * Drops page-specific frames on every navigation while retaining data that still belongs to the
- * same job. A different posting clears everything; closing the tab always clears everything.
- */
+/** Drops frames on navigation, keeping same-job data; a different posting clears everything. */
 export async function handleTabNavigation(tabId: number, nextUrl: string): Promise<void> {
   return withTabLock(tabId, async () => {
     const state = await read(tabId);

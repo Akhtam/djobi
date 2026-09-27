@@ -17,48 +17,23 @@ function field(overrides: Partial<DetectedField>): DetectedField {
 }
 
 /**
- * Timing collapsed to near-nothing. These knobs were module constants until they became
- * {@link FillOptions}, so every test that awaited a fill paid the real 300ms settle, and the
- * "options never arrive" case paid the whole 20 × 50ms poll budget.
- */
-/**
- * Timing config for tests. Every `fillForm` call in this file passes it, and every call is
- * **awaited** — both are load-bearing rather than stylistic.
- *
- * `fillForm` is `async`. Thirteen calls here used to be made without `await`, which left a promise
- * running after its own test had finished and its `document.body.innerHTML` had been replaced by
- * the next one's. The stray walk then resolved against whichever DOM happened to be mounted and
- * wrote into it — the observed symptom was `expected 'Maybe' to be 'No'` in the combobox test,
- * `'Maybe'` being a value from a select test three cases earlier. It reproduced roughly one run in
- * five, and only under the CPU contention of a full-workspace `pnpm test`, which is exactly the
- * shape of failure that gets re-run until green rather than fixed.
- *
- * Two of those calls were wrapped in `expect(() => fillForm(...)).not.toThrow()`, which cannot
- * observe an async rejection at all: they asserted nothing while leaking the promise.
- *
- * `FAST` is what keeps awaiting cheap — the real default is `settleMs: 300`, and awaiting that in
- * every case took the file from 391 ms to 5.8 s.
+ * Near-zero timing for tests. Every `fillForm` call here passes it and is **awaited**: an unawaited
+ * fill keeps running into the next test's DOM (a real flake), and `expect(...).not.toThrow()` can't
+ * see async rejections.
  */
 const FAST = { settleMs: 0, optionWaitAttempts: 3, optionWaitIntervalMs: 1 };
 
 /**
- * Renders a stand-in for a **react-select** combobox — the widget Greenhouse's current job boards
- * are built on, and the one this module kept reporting as filled while the ATS rejected it as empty.
+ * A stand-in for a **react-select** combobox (Greenhouse's current boards), modelled on its shipped
+ * behavior:
  *
- * Modelled on its actual contract, read off the shipped bundle rather than imagined, because every
- * one of these is a way the old fill path came apart:
+ * - the control opens on **`mousedown`**; only options respond to `click`,
+ * - the trigger is a search `<input>`, `readOnly` when not searchable,
+ * - choosing **clears that input** and renders the label in a separate element,
+ * - a hidden `<input required>` sits beside it while it holds no value,
+ * - the announcement region and field label nearby carry answer-like text.
  *
- * - the control opens on **`mousedown`**; the only thing bound to `click` is an option,
- * - the trigger is a search `<input>`, and `isSearchable={false}` makes it `readOnly`,
- * - accepting a choice **clears that input** (`onInputChange('', { action: 'set-value' })`) and
- *   renders the label into a separate element,
- * - a hidden `<input required>` sits beside the widget exactly while it holds no value — the
- *   element behind every "This field is required." under a visibly-filled dropdown,
- * - the announcement region and the field's own label are near neighbours of all of it, and both
- *   carry text that reads like an answer.
- *
- * `ignoreSelect` models a press the widget doesn't act on, which is the case that has to verify
- * `false` however convincing the leftover search text looks.
+ * `ignoreSelect` models a press the widget ignores, which must verify `false`.
  */
 function reactSelect(
   optionLabels: string[],
@@ -1088,9 +1063,10 @@ describe('attachResumeFile', () => {
   });
 
   it("exposes the file through the drop event's `dataTransfer.items`, the list react-dropzone reads", () => {
-    // Regression: `items` used to be `{ add: () => {} }` — truthy, so react-dropzone's file-selector
-    // took its `items` branch, found no `length`, and extracted zero files while ignoring `files`
-    // entirely. Ashby's uploader is react-dropzone, so the resume silently never attached.
+    // Regression: `items` used to be `{ add: () => {} }` — truthy, so react-dropzone's
+    // file-selector took its `items` branch, found no `length`, and extracted zero files while
+    // ignoring `files` entirely. Ashby's uploader is react-dropzone, so the resume silently never
+    // attached.
     document.body.innerHTML = `<input type="file" id="resume" />`;
     const input = document.querySelector<HTMLInputElement>('#resume')!;
     const file = new File(['%PDF-1.4 ...'], 'resume.pdf', { type: 'application/pdf' });

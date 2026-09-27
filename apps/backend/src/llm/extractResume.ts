@@ -4,10 +4,8 @@ import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /**
- * A PDF with no extractable text layer — scanned/image-based pages, or a corrupt file. Distinct
- * from a validation error: the upload itself was a well-formed request, the file just has nothing
- * this route can read. The route (20.3) maps this to a 400 the candidate can act on rather than the
- * generic 500 an unrelated PDF-parsing failure would otherwise become.
+ * The PDF has no extractable text (scanned, corrupt, or not really a PDF). The route answers 400
+ * so the candidate can act on it.
  */
 export class NoResumeTextError extends Error {
   constructor() {
@@ -17,22 +15,12 @@ export class NoResumeTextError extends Error {
 }
 
 /**
- * Extracts a draft {@link ExtractedProfile} from an uploaded resume PDF's text.
+ * Extracts a draft {@link ExtractedProfile} from an uploaded resume PDF. The text is untrusted, so
+ * it goes through `sanitizeXmlContent` before reaching the model. Multi-column and table layouts
+ * may extract imperfectly; the candidate reviews the draft before saving.
  *
- * Text extraction uses the shared `extractPdfText` helper `pdf/preflightResume.ts` already uses.
- * Unlike that module's use of it, this is the first time this codebase asks it to cope with an
- * arbitrary, real-world resume's layout (columns, tables) rather than the app's own well-formed,
- * self-generated PDFs — see the phase plan in `PROGRESS.md` for why that's flagged as unproven, not
- * assumed solved.
- *
- * The extracted text is untrusted, attacker-authored input exactly like a pasted job description,
- * so it goes through `sanitizeXmlContent` before it reaches the model — the same prompt-injection
- * guard `extractJob.ts` already applies.
- *
- * @param pdfBytes - The uploaded file's raw bytes.
- * @returns The extracted, validated {@link ExtractedProfile} draft.
  * @throws {NoResumeTextError} If the PDF has no extractable text.
- * @throws If the model doesn't return a tool call, or returns one that fails validation.
+ * @throws If the model returns no valid object.
  */
 export async function extractResume(
   pdfBytes: Uint8Array,
@@ -42,9 +30,7 @@ export async function extractResume(
   try {
     text = await extractPdfText(pdfBytes);
   } catch {
-    // A file that isn't really a PDF (a renamed extension, a spoofed content-type the route's own
-    // check let through) fails here, not later — from the candidate's side this has the same remedy
-    // as a scanned/image-only PDF, so it surfaces as the same error rather than an unrelated 500.
+    // Not really a PDF: same remedy as an image-only one, so the same error.
     throw new NoResumeTextError();
   }
 

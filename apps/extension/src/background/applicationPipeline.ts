@@ -1,18 +1,9 @@
 /**
- * The Application Pipeline: Analysis, Fill and explicit Save Steps, checkpointed into
- * `lib/tabStore/pipelineRun.ts`.
+ * The Application Pipeline: the Analysis, Fill and explicit Save Steps.
  *
- * It runs in the background service worker rather than the panel, so an in-flight step survives the
- * panel that requested it closing mid-run — a panel-driven version drops the result on the floor in
- * that case, because closing the panel tears down the `chrome.runtime.sendMessage` port a direct
- * call would be waiting on. Progress is checkpointed into `lib/tabStore/pipelineRun.ts` as it
- * happens; the panel observes it via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`) rather
- * than a message response.
- *
- * Each step returns the patch it checkpoints, and the run's shape lives only in
- * `lib/tabStore/pipelineRun.ts`. Splitting the steps from their checkpointing models a run twice —
- * every new step output then has to be added to the step, to whatever spreads its result, and to
- * the store.
+ * Runs in the service worker so a step survives the panel closing. Each step returns the patch it
+ * checkpoints into `lib/tabStore/pipelineRun.ts` (the one place the run's shape lives); the panel
+ * observes it through `chrome.storage.onChanged`.
  */
 import {
   autofillApplicationPayload,
@@ -21,18 +12,18 @@ import {
   resumeFileName,
   splitPreparedQuestions,
 } from '@djobi/shared';
-import type { DetectedField, JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
-import { frameForFill, mergeRescan, snapshotForRun } from './detectedFields';
+import type { JobInfo, Profile, QuestionAnswer } from '@djobi/shared';
+import { frameForFill, snapshotForRun } from './detectedFields';
+import { asksForResume, fillReport, planFill } from './fillPlan';
 import { httpBackendClient, type BackendClient } from '../lib/backendClient';
-import { autofillSource, valueForCategory } from '../lib/fieldDisposition';
-import { answersFor, STEP_STATUS } from '../lib/run';
+import { autofillSource } from '../lib/fieldDisposition';
+import { STEP_STATUS } from '../lib/run';
 import type { ClaimResult, JobPageData, ShowSavedToastCommandMessage } from '../lib/messages';
 import { chromePageClient, notifyPage, type PageClient } from '../lib/pageClient';
 import type { DetectedFrameRef } from '../lib/tabStore/detectedPage';
 import {
   type AnalyzedRun,
   type DuplicateApplication,
-  type FillOutcome,
   type PipelineRunState,
   asAnalyzedRun,
 } from '../lib/run';
@@ -40,70 +31,55 @@ import { withRunClaim, type RunClaim } from './runClaim';
 import { showSavedBadge } from './saveBadge';
 
 /**
- * The tab's Detected Fields, as the pipeline needs to read them — the two calls into
- * `background/detectedFields.ts` that are genuinely I/O (a `chrome.storage.session` read, and a
- * wait on an in-flight oracle enrichment) rather than the pure merge {@link mergeRescan} does.
- * `mergeRescan` stays a plain import for that reason: substituting it buys nothing a fake couldn't
- * get for free by calling the real thing.
+ * The tab's Detected Fields as the pipeline reads them — the two I/O calls into
+ * `background/detectedFields.ts`. The pure `mergeRescan` is imported directly.
  */
 export interface DetectedFieldsPort {
   snapshotForRun(tabId: number): Promise<JobPageData>;
   frameForFill(tabId: number): Promise<DetectedFrameRef | null>;
 }
 
+/** The backend routes the Application Pipeline calls, and only those. */
+export type PipelineBackend = Pick<
+  BackendClient,
+  | 'analyzeApplication'
+  | 'renderResumePdf'
+  | 'getProfile'
+  | 'saveApplication'
+  | 'updateApplication'
+  | 'findApplicationDuplicates'
+>;
+
+/** The page calls the pipeline makes. Posting extraction (`readPosting`) is the panel's. */
+export type PipelinePage = Pick<PageClient, 'fill' | 'scan'>;
+
 /**
- * Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole.
- *
- * Three collaborators, not the seven loose methods this used to be. Four of those were one-line
- * wrappers over `callBackend`, so the interface grew a method for every backend route the pipeline
- * touched while hiding nothing, and every test had to supply all seven to exercise any one of them.
- * The three things that genuinely vary here are *which backend*, *which page*, and *which tab's
- * detection* — so those are the three names. `detection` was added after `fillStep`/`runAnalysis`
- * were found reaching straight past this interface into `background/detectedFields.ts`'s module
- * singleton, which made the claim above untrue for exactly those two calls.
+ * Everything the Application Pipeline reaches outside itself for — the seam a test replaces whole:
+ * which backend, which page, and which tab's detection.
  */
 export interface PipelineDeps {
-  backend: BackendClient;
-  page: PageClient;
+  backend: PipelineBackend;
+  page: PipelinePage;
   detection: DetectedFieldsPort;
-  /**
-   * How a completed save is announced to the candidate. Optional, and the only optional member
-   * here, because it is pure output: a test that doesn't care what the toolbar and the page were
-   * told shouldn't have to supply a fake to exercise the write that matters.
-   */
+  /** How a completed save is announced. Optional: it's pure output that tests may ignore. */
   saveNotice?: SaveNotice;
 }
 
 /**
- * Telling the candidate their application was recorded, on the two surfaces that outlive the
- * submission — see `background/saveBadge.ts` and `content/savedToast.ts`.
- *
- * A seam of its own rather than a method on {@link PageClient}: one of the two surfaces isn't the
- * page at all, and neither has a response to wait on, where every `PageClient` call does.
+ * Announces a recorded application on the surfaces that outlive the submission
+ * (`background/saveBadge.ts`, `content/savedToast.ts`). Separate from {@link PageClient} since the
+ * badge isn't the page and neither call awaits a reply.
  */
 export interface SaveNotice {
   announce(tabId: number, job: { company: string; roleTitle: string }): void;
 }
 
-/**
- * The production adapter: the local backend, the tab's own content script, and the tab's real
- * Detected Fields.
- */
+/** The production detection adapter: the tab's real Detected Fields. */
 export const productionDetection: DetectedFieldsPort = { snapshotForRun, frameForFill };
 
 /**
- * The production adapter: the local backend, and the tab's own content script.
- *
- * Exported so `background/router.ts` can name it as its own default — the seam is widened to the
- * dispatch above these functions, not just to each of them, so a caller substituting the adapter
- * substitutes it once for the whole protocol.
- */
-/**
- * The production announcement: a toolbar badge on the tab, and a toast in whichever frame is still
- * there to render one.
- *
- * Both are fire-and-forget. A save that succeeded is saved whether or not the candidate's tab was
- * still around to be told about it, so nothing here is allowed to reject into the Save Step.
+ * The production announcement: a toolbar badge plus a toast in whichever frame still exists. Both
+ * are fire-and-forget and never reject into the Save Step.
  */
 export const productionSaveNotice: SaveNotice = {
   announce(tabId, job) {
@@ -117,6 +93,7 @@ export const productionSaveNotice: SaveNotice = {
   },
 };
 
+/** The production adapters; `background/router.ts` uses them as its default. */
 export const productionDeps: PipelineDeps = {
   backend: httpBackendClient,
   page: chromePageClient,
@@ -130,15 +107,9 @@ type AnalysisResult = Pick<
 > & { jobInfo: JobInfo };
 
 /**
- * The Analysis Step: Job Info, then a Tailored Resume and Question Answers drafted from it.
- *
- * The three model calls this used to make one after another — `extractJob`, then
- * `Promise.all([tailorResume, answerQuestions])` — are now one round trip against
- * `BackendClient.analyzeApplication` (`POST /analyze`, see `apps/backend/src/llm/analyzeApplication.ts`),
- * with the same sequencing run server-side. Everything below stays here regardless: which fields on
- * the page are questions, the prepared-answer split, which questions are worth a model call at all,
- * reconstructing the page's own answer order, and measuring Keyword Coverage all depend on Detected
- * Fields or the full Profile, neither of which the backend endpoint receives or needs.
+ * The Analysis Step: one `POST /analyze` round trip for Job Info, Tailored Resume and Question
+ * Answers. Question selection, the prepared-answer split, page answer order and Keyword Coverage
+ * stay here — they need Detected Fields or the full Profile, which the backend doesn't receive.
  */
 async function analysisStep(
   jobDescription: string,
@@ -149,9 +120,8 @@ async function analysisStep(
 ): Promise<AnalysisResult> {
   const questions = jobPageData.fields
     .filter((field) => autofillSource(field.category) === 'question')
-    // Only the labels cross to the backend — a choice's DOM selector is meaningless there, and
-    // the drafted answer comes back as one of these label strings, which `fillForm.ts` matches
-    // against this same `field.options` array to recover the element.
+    // Only labels cross to the backend; answers come back as one of them, and `fillForm.ts` matches
+    // against this same `field.options` to find the element.
     .map((field) => ({
       fieldId: field.id,
       question: field.label,
@@ -162,15 +132,10 @@ async function analysisStep(
   // knows but can't map onto this form's wording still goes to the model, carrying the fact.
   const { resolved, forModel } = splitPreparedQuestions(profile, questions);
 
-  // Only a required question is worth a *model call*. An optional one is a box the candidate can
-  // leave empty, and drafting it costs the same wall clock as a required one — on the Analysis
-  // Step's slowest call, where every answer is written before any of them arrives.
-  //
-  // A question the profile already answers is not filtered out, whichever half of the split it fell
-  // into. `resolved` never reaches the model at all; a `knownAnswer` one nominally does, but
-  // `answerQuestions` settles it locally by matching the stated fact onto this form's options and
-  // asks the model nothing about it — so dropping it here would not save a token, it would only
-  // leave a question the candidate has answered blank on the page.
+  // Only required questions are worth a model call. Profile-answered questions are kept whichever
+  // half of the split they fell into: `resolved` never reaches the model, and `knownAnswer` ones
+  // are settled locally by `answerQuestions` — dropping them would only leave answered questions
+  // blank.
   const requiredFieldIds = new Set(
     jobPageData.fields.filter((field) => field.required).map((field) => field.id),
   );
@@ -178,9 +143,7 @@ async function analysisStep(
     (question) => question.knownAnswer !== undefined || requiredFieldIds.has(question.fieldId),
   );
 
-  // Not even a round trip's worth of drafting when the profile answered everything the form asks:
-  // `toDraft` can be empty, and `answerQuestions` returns `[]` on the backend with no model call —
-  // the Analysis Step is the wrong place to spend a request establishing that itself.
+  // `toDraft` may be empty; the backend then answers `[]` without a model call.
   const {
     jobInfo,
     tailoredResume,
@@ -204,22 +167,17 @@ async function analysisStep(
     .map((question) => answerByFieldId.get(question.fieldId))
     .filter((answer): answer is QuestionAnswer => answer !== undefined);
 
-  // Measured here rather than in the panel so the report is of the resume this run actually
-  // produced, and is checkpointed with it — a panel that recomputed on render would re-measure a
-  // restored run against whatever the module happened to say by then. Pure and synchronous: it
-  // costs no backend call and adds nothing to the worker's fetch exposure.
+  // Measured here and checkpointed with the run, so a restored run shows the report for the resume
+  // it actually produced. Pure; no backend call.
   const coverage = keywordCoverage(tailoredResume, jobInfo, profile);
 
   return { status: STEP_STATUS.analysis.succeeded, jobInfo, tailoredResume, answers, coverage };
 }
 
 /**
- * The Fill Step for an already-analyzed run.
- *
- * Takes the claim rather than the run plus a loose signal: the run is the unit that crosses this
- * seam anyway, and the two identity gates below are only correct in the positions this step puts
- * them in, so it is this step — not the claim — that decides where they go. {@link AnalyzedRun}
- * carries the precondition (Analysis Step finished) in the type, so it can't be skipped here.
+ * The Fill Step for an analyzed run. Takes the claim because the identity gates below are only
+ * correct where this step places them; {@link AnalyzedRun} encodes the Analysis-finished
+ * precondition.
  */
 async function fillStep(
   claim: RunClaim<AnalyzedRun>,
@@ -236,28 +194,21 @@ async function fillStep(
   | 'failure'
 > | null> {
   const { run, signal } = claim;
-  const { jobPageData, jobInfo, tailoredResume, tabUrl } = run;
+  const { jobPageData, tailoredResume } = run;
 
-  // Fill what the page holds *now*, not what it held when the Analysis Step started. The run's own
-  // detection is the fallback for a page that can't be re-scanned (no content script — the tab was
-  // open across an extension reload), and it's the only source at all for a run analyzed from a
-  // pasted job description before the form had rendered, where it is empty.
-  // Address the frame that reported the form. If navigation destroyed that frame, retry only this
-  // read-only scan as a broadcast and use broadcast addressing for the single fill attempt below.
-  // Retrying fill itself would be unsafe: clicks and uploads are not idempotent.
-  // Render the resume alongside the scan rather than after it when the analyzed form already asked
-  // for one — the PDF is the slowest request in this step, and the scan rarely changes the answer.
-  // If the fresh scan turns out not to need it, the bytes are simply dropped; if it needs one this
-  // didn't anticipate, it is rendered below as before. The `catch` keeps an abandoned render (run
-  // superseded, resume not needed) from surfacing as an unhandled rejection; a render that is used
-  // is awaited through `early` and still throws there.
-  // Its own controller, linked to the step's signal: a superseding run still aborts it, and so does
-  // this step when it drops the render (resume not needed, or the run stopped being ours).
+  // Rescan the frame that reported the form (so we fill what's there now); if navigation destroyed
+  // it, retry only this read-only scan as a broadcast — never the fill itself, since clicks and
+  // uploads aren't idempotent. The run's own detection is the fallback when nothing answers.
+  //
+  // When the analyzed form already asked for a resume, render it alongside the scan (it's the
+  // slowest request here). Its own controller, linked to the step's signal, aborts it if the run is
+  // superseded or the fresh scan doesn't need it; the `catch` keeps a dropped render from becoming
+  // an unhandled rejection, while a used one still throws through `early`.
   const earlyAbort = new AbortController();
   const abortEarly = () => earlyAbort.abort();
   signal.addEventListener('abort', abortEarly, { once: true });
   if (signal.aborted) abortEarly();
-  const early = jobPageData.fields.some((field) => autofillSource(field.category) === 'resume')
+  const early = asksForResume(jobPageData.fields)
     ? deps.backend.renderResumePdf(profile, tailoredResume, earlyAbort.signal)
     : undefined;
   early?.catch(() => {});
@@ -275,52 +226,9 @@ async function fillStep(
     abortEarly();
     throw error;
   }
-  // The fresh scan has the right elements; the analyzed run has the right wording. `mergeRescan`
-  // keeps both — without it the re-scan silently discarded every API-supplied option label and
-  // `required` flag, because enrichment only ever attached on the report path, never on `SCAN_PAGE`.
-  const fields = scanned?.fields.length
-    ? mergeRescan(scanned.fields, jobPageData.fields)
-    : jobPageData.fields;
-  // Resolved through the run, so the panel's warning and this fill agree by construction — see
-  // `lib/run/answers.ts`. `run` is the analyzed snapshot, which is the only correct source for the
-  // labels: `fields` above is the *fresh* scan.
-  const drafted = answersFor(run);
+  const plan = planFill(run, scanned?.fields ?? null, profile);
+  const { fields, values, needsResume } = plan;
 
-  // Analysis may have happened on an ATS overview route before its application questions mounted,
-  // so the fresh scan can hold questions this run never drafted an answer for. Those are left
-  // blank for the candidate to write themselves rather than blocking the whole fill: everything
-  // that *does* have a reviewed answer still lands, and an unanswered required question comes back
-  // in `unresolvedRequiredFields` below, which is what the panel lists.
-  const values: Record<string, string> = {};
-  for (const field of fields) {
-    // Every category has a disposition, and `lib/fieldDisposition.ts` is where it is stated. A
-    // category this app deliberately leaves alone — a cover letter — takes the same path as one
-    // nothing recognizes, which is what it did before; the difference is that saying so is now a
-    // table entry rather than a `default` branch indistinguishable from an oversight.
-    switch (autofillSource(field.category)) {
-      case 'question': {
-        const answer = drafted.valueFor(field);
-        if (answer !== undefined) values[field.id] = answer;
-        break;
-      }
-      case 'profile': {
-        const value = valueForCategory(field.category, profile);
-        if (value !== undefined) values[field.id] = value;
-        break;
-      }
-      // The resume is attached as a file rather than written as a value, below; `unsupported` is
-      // the recorded decision not to fill this category at all.
-      case 'resume':
-      case 'unsupported':
-        break;
-    }
-  }
-
-  // Whether to render a resume at all — not which input it lands on. An ATS can render several
-  // `resume_upload`-classified inputs (Ashby pairs an unlabeled decoy with the real, required one),
-  // and picking between them needs the live page, so `content/fillForm.ts` does it. This module used
-  // to pick one too, purely to decide this boolean, and the two copies of that rule could disagree.
-  const needsResume = fields.some((field) => autofillSource(field.category) === 'resume');
   // Rendering and filling can outlive a navigation or replacement analysis. Re-check after the
   // awaited scan before either operation can produce an upload or click against the wrong page.
   if (!needsResume) abortEarly();
@@ -342,7 +250,8 @@ async function fillStep(
   signal.removeEventListener('abort', abortEarly);
 
   // PDF rendering is another await, so the run may have been superseded while it was in flight.
-  // Keep this adjacent to the irreversible page command; there is no await between the check and it.
+  // Keep this adjacent to the irreversible page command; there is no await between the check and
+  // it.
   if (!(await claim.stillOurs())) return null;
 
   // No frame can own an empty command, so sending it would necessarily return `null` and erase the
@@ -352,44 +261,11 @@ async function fillStep(
       ? { ok: true as const, filledFieldIds: [], resumeAttached: false }
       : await deps.page.fill(tabId, { runId: run.runId, fields, values, resume }, frameId);
 
-  // What the page confirmed it kept. A run whose content script didn't answer at all (`null`) has
-  // no such account, and falling back to the drafted values is the honest reading there: the fill
-  // may well have worked, and reporting every field as unresolved would be its own lie.
-  const resumeFieldIds = new Set(
-    fields.filter((field) => autofillSource(field.category) === 'resume').map((field) => field.id),
+  const { unresolvedRequiredFields, filledFieldCount, fillOutcome } = fillReport(
+    plan,
+    filled,
+    resume !== undefined,
   );
-  const landed = filled
-    ? new Set(filled.filledFieldIds.filter((fieldId) => !resumeFieldIds.has(fieldId)))
-    : new Set(Object.keys(values));
-  const resumeLanded = filled ? filled.resumeAttached : resume !== undefined;
-
-  // A required field is unresolved if this run never drafted a value for it *or* the page didn't
-  // keep the one it was given. The second half is the case that used to go unreported: an ATS
-  // whose form model discards a programmatic write (see `content/fillForm.ts`) rejects the
-  // submission for a field the panel had just shown as filled, leaving the user to work out which
-  // one from the ATS's own error banner.
-  const unresolvedRequiredFields = fields.filter(
-    (field) =>
-      field.required &&
-      (autofillSource(field.category) === 'resume' ? !resumeLanded : !landed.has(field.id)),
-  );
-
-  // How much this run actually wrote. `unresolvedRequiredFields` can't answer that on its own:
-  // it's derived by filtering `fields`, so a run that detected nothing at all produces an empty
-  // list — indistinguishable from a run that filled everything perfectly, and the panel rendered
-  // both as an unqualified success. The resume counts as a filled field because it's attached by
-  // `attachResumeFile` rather than through `values`.
-  const filledFieldCount = landed.size + (resumeLanded ? 1 : 0);
-
-  // The page response is the only evidence that can distinguish success from an unanswered
-  // message. Keep that fact whole on the run instead of asking the panel to infer certainty from
-  // counts that deliberately remain optimistic when no frame answers.
-  let fillOutcome: FillOutcome;
-  if (fields.length === 0) fillOutcome = 'no-fields-detected';
-  else if (filled === null) fillOutcome = 'unverified';
-  else if (filledFieldCount === 0) fillOutcome = 'nothing-filled';
-  else if (unresolvedRequiredFields.length > 0) fillOutcome = 'incomplete';
-  else fillOutcome = 'complete';
 
   // The re-scan is checkpointed back onto the run so the panel reports what was actually filled —
   // `unresolvedRequiredFields` above is derived from these fields, and the panel lists them.
@@ -404,22 +280,12 @@ async function fillStep(
 }
 
 /**
- * Saves the current filled snapshot, creating it once and replacing it after later edits or fills.
+ * Saves the current filled snapshot: creates it once, then replaces it on later saves.
  *
- * **`cancellation: 'none'`, and that is a decision rather than an omission.** This is the one step
- * whose work is a write the server may already have committed. Aborting the request in flight
- * cannot establish whether the row landed, and a run whose `applicationId` is still null writes a
- * *second* Application on the next save — the exact duplicate an update-in-place exists to prevent.
- * A superseding run leaves this one to finish; its checkpoint is dropped by run identity if the tab
- * has moved on, which costs nothing.
- *
- * The create call below sends `run.runId` as the idempotency key, which is what actually closes the
- * duplicate-write hole a dropped or superseded save otherwise left open: a retried create for a run
- * whose first attempt already landed gets that same row back rather than a second one. `runId` is
- * stable for the run's whole lifetime and assigned once per Analysis Step
- * (`runClaim.ts`), and the key only matters for the *first* save — every save after
- * `run.applicationId` is set goes through `updateApplication`, which is idempotent by construction
- * (it replaces the row at that id).
+ * `cancellation: 'none'`: aborting an in-flight write can't tell whether the row landed, so a
+ * superseding run lets it finish (its checkpoint is dropped by run identity). The create sends
+ * `run.runId` as the idempotency key, so a retried first save returns the same row; later saves go
+ * through `updateApplication`, which is idempotent.
  */
 export async function runSaveApplication(
   tabId: number,
@@ -438,11 +304,8 @@ export async function runSaveApplication(
       onClaimed,
     },
     async ({ run }) => {
-      // Best-effort, not load-bearing: a Profile that can't be read at save time (deleted, or the
-      // backend briefly unreachable between Fill and Save) means the two provenance fields below go
-      // in as `null` rather than failing a write the candidate is actively waiting on. Fetched fresh
-      // here rather than threaded from Analysis, since the Profile a save should be judged against
-      // is the one that exists *now*, not the one tailoring ran against.
+      // Read fresh at save time; if it can't be read, provenance fields are stored as `null` rather
+      // than failing the save.
       const profile = await deps.backend.getProfile().catch(() => null);
       const payload = autofillApplicationPayload(run, profile);
 
@@ -463,15 +326,11 @@ export async function runSaveApplication(
 }
 
 /**
- * Starts a run: analyzes `jobDescription` and drafts everything the Fill Step will write.
+ * Starts a run: analyzes the candidate-reviewed `jobDescription` (the only posting input — the page
+ * is consulted only for its form) and drafts everything the Fill Step will write.
  *
- * `jobDescription` is the candidate-reviewed posting text, and it is the only thing analyzed. The page
- * is consulted solely for the *form* — which fields exist to be filled — and a tab with no
- * detection yet still analyzes fine, because the Fill Step re-scans the live page anyway.
- *
- * Unless `force` is set, a job URL the candidate already saved an application for ends the run at
- * `duplicate` before a single LLM call — the guard lives here, rather than in the panel, because
- * every entry point (Analyze, Re-analyze, Try again) already funnels through this function.
+ * Unless `force` is set, a posting already saved ends the run at `duplicate` before any LLM call.
+ * The guard lives here because Analyze, Re-analyze and Try again all funnel through this function.
  */
 export async function runAnalysis(
   tabId: number,
@@ -489,9 +348,8 @@ export async function runAnalysis(
       step: 'analysis',
       mode: 'replace',
       cancellation: 'supersede',
-      // The only step that mints a run: Analyze is the sole entry point that starts one, and it
-      // takes the tab from whatever was there. Every completion below is scoped to this identity,
-      // so a later Analyze click or a navigation can supersede it safely.
+      // The only step that mints a run identity; every later completion is scoped to it, so a new
+      // Analyze or a navigation supersedes it safely.
       seed: (runId) => ({
         runId,
         status: STEP_STATUS.analysis.running,
@@ -512,11 +370,8 @@ export async function runAnalysis(
       }),
     },
     async (claim) => {
-      // Waits for an API-oracle enrichment still in flight for this tab. Clicking Analyze the
-      // instant a page loads used to snapshot DOM-only fields, so the questions crossing to the
-      // backend carried the page's wording of a combobox's choices instead of the API's — and the
-      // answers drafted from them then matched no element at fill time. See
-      // `background/detectedFields.ts`.
+      // Waits (bounded) for in-flight API-oracle enrichment, so questions carry the API's wording
+      // of choices — otherwise drafted answers may match no element at fill time.
       const [jobPageData, duplicateOf]: [JobPageData, DuplicateApplication | null] =
         await Promise.all([
           deps.detection.snapshotForRun(tabId),

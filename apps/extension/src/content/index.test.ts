@@ -14,13 +14,8 @@ describe('content script', () => {
   }
 
   /**
-   * Lets the re-report debounce in `content/detect.ts` elapse, without spending it.
-   *
-   * The two cases below assert that *nothing* was reported, which can only be established by
-   * letting the settle window pass — and a real 800ms sleep per case is both 1.6s of the suite and
-   * a flake waiting for a loaded CI machine, since a slow tick makes "nothing happened yet" and
-   * "nothing will happen" indistinguishable. Advancing the clock makes the window pass exactly, and
-   * `…Async` flushes the microtasks the MutationObserver delivers on in between.
+   * Lets `detect.ts`'s re-report debounce elapse on fake timers, flushing the observer's microtasks
+   * — asserting "nothing reported" needs the window to actually pass.
    */
   async function letTheDebounceSettle() {
     vi.useFakeTimers();
@@ -214,7 +209,8 @@ describe('content script', () => {
     });
 
     await loadContentScript();
-    // Mounted *after* the page was first reported — exactly what the Fill Step would otherwise miss.
+    // Mounted *after* the page was first reported — exactly what the Fill Step would otherwise
+    // miss.
     document.querySelector('form')!.innerHTML += `
       <label for="email-field">Email</label>
       <input id="email-field" type="text" />
@@ -325,7 +321,8 @@ describe('content script', () => {
         {},
         sendResponse,
       ),
-      // `false`, not `true`: no async reply is coming, so the message channel must not be held open.
+      // `false`, not `true`: no async reply is coming, so the message channel must not be held
+      // open.
     ).toBe(false);
     // Given a moment in case a reply were on its way — the point is that none ever is.
     await Promise.resolve();

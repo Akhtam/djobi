@@ -1,24 +1,11 @@
 /**
- * The panel shell, mounted by `panel/main.tsx` as the side panel's sole content (see `manifest.ts`'s
- * `side_panel.default_path` — there's no popup).
+ * The side panel shell (mounted by `panel/main.tsx`). It owns only the Profile bootstrap, the tab
+ * switch, and the hand-off from a question card to the Ask Tab; each flow is its own module
+ * (`AutofillTab`, `LogApplication`, `AskTab`).
  *
- * It owns three things and no flow: the Profile bootstrap every tab needs before it can do
- * anything, the tab switch, and the hand-off from a question card to the Ask Tab. Each flow is its
- * own module — `AutofillTab`, `LogApplication`, `AskTab` — so adding a fourth costs a module and a
- * button rather than another meaning threaded through this one.
- *
- * The run itself is not the shell's either: `useActiveRun` owns it, because two tabs read it (the
- * Autofill Tab renders it; the Ask Tab grounds answers in its Job Info and writes one back) and one
- * copy of a run in the panel is the point. What the shell does with it is one thing — the header
- * pill.
- *
- * `client` is a prop rather than something this module constructs, so a test drives the whole panel
- * through a fake adapter with no network — `panel/main.tsx` is the only place the real one is
- * named. The Application Pipeline has always taken its backend this way (`PipelineDeps`); this is
- * the panel half of the same seam.
- *
- * The panel survives switching tabs, unlike a popup, which is destroyed on any outside click. It
- * re-tracks the active tab rather than remounting; `useActiveRun` is where that is handled.
+ * The run is `useActiveRun`'s (the Autofill and Ask tabs share one copy); the shell only shows its
+ * header pill. `client` is a prop so tests drive the whole panel through a fake. The panel survives
+ * tab switches and re-tracks the active tab.
  */
 import type { Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
@@ -32,26 +19,20 @@ import { AutofillTab } from './AutofillTab';
 import { LogApplication } from './LogApplication';
 import { useActiveRun } from './useActiveRun';
 
-/** Where the Profile bootstrap has got to. Everything past it belongs to a tab, not to the shell. */
+/**
+ * Where the Profile bootstrap has got to. Everything past it belongs to a tab, not to the shell.
+ */
 type BootstrapStatus = 'loading' | 'unauthorized' | 'profile-error' | 'no-profile' | 'ready';
 
 /**
- * What `loadProfile`'s catch branch learned about a failed `getProfile` — same split
- * `options/App.tsx`'s own bootstrap makes, and for the same reason: a 401 that survived
- * `withSessionRecovery`'s own adopt-and-retry is "go sign in somewhere," not "the backend is
- * broken," and the two need different copy and a different fix, not one generic banner that always
- * points at the backend regardless of which one actually happened.
+ * Why `getProfile` failed. A 401 that survived session recovery means "sign in", not "backend
+ * broken", so the two get different copy.
  */
 type ProfileLoadError = { kind: 'unauthorized' } | { kind: 'other'; message: string };
 
 /**
- * Which of the panel's flows is showing. Tabs rather than modes on one flow: neither Log nor Ask
- * shares state with the Application Pipeline — no detected form, no `PipelineStatus` — so folding
- * either in would mean threading a second meaning through every branch of `reviewOf`.
- *
- * Ask is reachable at any point in a run, including before there is one, since a question needs no
- * run to be worth answering. What it *can* do grows with the run: a question card hands it a seed,
- * and with one it can write an answer back.
+ * Which flow is showing. Tabs, not modes: Log and Ask share no pipeline state. Ask works at any
+ * point, even with no run; a question card can seed it and receive the answer back.
  */
 type PanelTab = 'autofill' | 'log' | 'ask';
 
@@ -87,10 +68,7 @@ export function App({ client }: { client: BackendClient }) {
 
     void (async () => {
       try {
-        // Session recovery — adopting a shared dashboard session and retrying once on a 401 — is
-        // `client`'s own concern now (`backendClient.ts`'s `withSessionRecovery`), not just this
-        // bootstrap call's. Every route gets the same one shot at recovery before a 401 means
-        // there really is nothing to sign in with.
+        // Session recovery (adopt the dashboard session, retry once on 401) is inside `client`.
         const loadedProfile = await client.getProfile();
         if (requestToken !== profileRequestRef.current) return;
         setProfile(loadedProfile);
@@ -127,9 +105,8 @@ export function App({ client }: { client: BackendClient }) {
   }, []);
 
   /**
-   * Hands one drafted answer to the Ask Tab and switches to it. Which answers may be handed over is
-   * the Autofill Tab's call — it is the module that knows which Detected Field each answer came
-   * from, and only a freeform one can take a rewritten answer back.
+   * Hands one drafted answer to the Ask Tab. The Autofill Tab decides which answers qualify
+   * (freeform only).
    */
   function refineAnswer(fieldId: string, question: string, currentAnswer: string) {
     const runId = activeRun.run?.runId;
@@ -138,9 +115,8 @@ export function App({ client }: { client: BackendClient }) {
     setTab('ask');
   }
 
-  // The pill describes the Application Pipeline run, so it is suppressed on every other tab —
-  // there is no run there for it to be about — and while the panel is still booting, so a hydrated
-  // run doesn't flash its pill before we know there's a Profile to act with.
+  // The pill describes the pipeline run, so it shows only on the Autofill tab and only after
+  // bootstrap (a hydrated run shouldn't flash before we know there's a Profile).
   const pill = bootstrap === 'ready' && tab === 'autofill' ? activeRun.review.pill : null;
 
   return (

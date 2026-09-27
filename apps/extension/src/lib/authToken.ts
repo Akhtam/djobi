@@ -1,12 +1,7 @@
 /**
- * The extension's bearer token — `chrome.storage.session`, not `storage.local`.
- *
- * `docs/multi-tenant-auth.md`, Phase D: session storage is in-memory, is not written to disk, and
- * is not exposed to content scripts, and it survives service worker eviction, which is exactly the
- * property the MV3 durability work already relies on for a pipeline run. `storage.local` is
- * unencrypted on disk and currently holds only the theme; it should not start holding credentials.
- * The cost — re-authenticating after the browser restarts — is a trade made deliberately, not by
- * default.
+ * The extension's bearer token, in `chrome.storage.session`: in memory, never on disk, hidden from
+ * content scripts, and it survives worker eviction. The trade-off — signing in again after a
+ * browser restart — is deliberate.
  */
 const STORAGE_KEY = 'authToken';
 

@@ -1,32 +1,15 @@
 /**
- * One tab's Detected Fields, from the content script's first report to the snapshot a run is
- * analyzed against.
+ * One tab's Detected Fields, from the content script's report to the snapshot a run is analyzed
+ * against — the module that owns the order things happen in.
  *
- * That lifecycle used to be reconstructed by whoever needed part of it. `background/router.ts`
- * bumped a frame's revision and then fired an API-oracle fetch it did not wait for;
- * `lib/tabStore/detectedPage.ts` held the revisions, the stale-enrichment guard and the best-frame
- * rule; `background/apiDetectors.ts` knew how to carry enrichment onto a later scan; and
- * `background/applicationPipeline.ts` took the snapshot. No module knew the whole sequence, so
- * nothing was in a position to notice that its two ends disagreed about *when* fields are ready.
+ * Enrichment is asynchronous, so an Analyze click right after load could otherwise snapshot
+ * DOM-only fields: no API `required` flags or choice wording, and answers drafted against choices
+ * the Fill Step can't match. {@link snapshotForRun} waits (bounded) for in-flight enrichment. The
+ * Fill Step deliberately doesn't read fresher enrichment; it matches the analyzed wording (see
+ * `carryEnrichment`).
  *
- * They disagreed like this. Enrichment is asynchronous — the oracle is an HTTP call to the ATS — and
- * the Analysis Step read the frame store the moment the candidate clicked Analyze. Click before the
- * oracle answered and the run was analyzed against DOM-only fields: no API `required` flags, and no
- * API wording for a combobox's choices. Question Answers were then drafted against choices the
- * backend never saw, and the Fill Step, which carries enrichment forward from the run's own
- * snapshot, had nothing to carry. The enriched fields were sitting in storage the whole time.
- *
- * The fix is a snapshot that knows whether the fields are finished, which is what
- * {@link snapshotForRun} is. It is deliberately *not* "have the Fill Step read the fresher store
- * instead": the answers were drafted against the analyzed run's labels, so that snapshot is by
- * definition the right thing to match them against, and swapping in different wording at fill time
- * would break the match and report the field as unresolved. See `carryEnrichment` in
- * `background/apiDetectors.ts`, which makes the same argument from the other side.
- *
- * `lib/tabStore/detectedPage.ts` keeps the storage primitives underneath this — the per-frame
- * revision, the atomic write (`tabStore/record.ts`), the best-frame choice. Deleting them would
- * only move that complexity into callers. What was missing was a module *above* them that owns the
- * order things happen in.
+ * Storage primitives (per-frame revision, atomic writes, best-frame choice) stay in
+ * `lib/tabStore/detectedPage.ts`.
  */
 import type { DetectedField } from '@djobi/shared';
 import type { JobPageData } from '../lib/messages';
@@ -40,42 +23,23 @@ import {
 import { enrichWithApiOracle } from './apiDetectors';
 
 /**
- * The re-scan merge, under the name the rest of the pipeline knows it by.
- *
- * The implementation stays in `background/apiDetectors.ts` because it is that module's `applyPatches`
- * with the earlier scan standing in for the oracle, and pulling it out would mean exporting three
- * label-matching internals to move one function — widening one seam to narrow another. What belongs
- * here is the *interface*: a caller working with a tab's Detected Fields now learns one module name
- * for the whole lifecycle instead of importing the middle of the oracle's.
+ * The re-scan merge. Implemented in `apiDetectors.ts` (it's `applyPatches` with the earlier scan as
+ * the oracle); re-exported so callers learn one module for the whole lifecycle.
  */
 export { carryEnrichment as mergeRescan } from './apiDetectors';
 
 /**
- * How long {@link snapshotForRun} will wait for an oracle that hasn't answered.
- *
- * Bounded because the wait is on a fetch to a third party: `enrichWithApiOracle` has no timeout of
- * its own, so an ATS host that accepts a connection and then stalls would otherwise hang Analyze
- * indefinitely — trading a degraded analysis for no analysis at all. Long enough for a normal
- * response, short enough that the candidate reads it as the click taking effect.
- *
- * Proceeding on baseline fields when it expires is the same judgement `apiDetectors.ts` already
- * makes for a failed fetch or an unparseable body: enrichment improves an analysis, and must never
- * be the reason there isn't one.
+ * How long {@link snapshotForRun} waits for an oracle. Bounded because `enrichWithApiOracle` has no
+ * timeout and a stalled ATS host must not block Analyze; on expiry the baseline fields are used.
  */
 const ENRICHMENT_WAIT_MS = 3_000;
 
 /**
- * The reports still settling, per tab — from the storage write through the oracle call after it.
+ * Reports still settling per tab, from storage write through oracle call.
  *
- * **In memory, never persisted, and that is the point.** A "pending" marker written into
- * `chrome.storage.session` would outlive the worker that was waiting on it — MV3 evicts one after
- * ~30s idle, and it can be evicted mid-fetch — leaving a flag no one will ever clear and an Analysis
- * Step that waits the full timeout on every subsequent run. An empty map after an eviction says
- * exactly the right thing: whatever was in flight died with the worker, and nothing is coming.
- *
- * Keyed by tab and holding a set, because the content script runs in every frame and an ATS form
- * and its host page report at nearly the same instant. A run is analyzed against whichever frame
- * detected the most fields, and which one that is isn't known until they have all settled.
+ * In memory on purpose: a persisted "pending" flag would outlive an evicted worker and make every
+ * later run wait out the timeout. A set per tab, since every frame reports and the best frame isn't
+ * known until all settle.
  */
 const inFlight = new Map<number, Set<Promise<void>>>();
 
@@ -96,13 +60,8 @@ function track(tabId: number, work: Promise<void>): Promise<void> {
 }
 
 /**
- * Waits for this tab's in-flight reports, or for `waitMs`, whichever comes first.
- *
- * Re-reads the registry each pass rather than racing one snapshot of it. A form mounts in pieces and
- * the content script re-reports as it does, so a report can be registered *while* this is already
- * waiting on an earlier one — and returning at that point takes the snapshot with the newer one
- * still outstanding, which is precisely the failure this module exists to prevent. One deadline
- * spans the whole loop, so a stream of reports still cannot extend the bounded wait.
+ * Waits for this tab's in-flight reports or `waitMs`, whichever comes first. Re-reads the registry
+ * each pass (forms re-report as they mount) under one overall deadline.
  */
 async function settled(tabId: number, waitMs: number): Promise<void> {
   let expire: ReturnType<typeof setTimeout> | undefined;
@@ -142,19 +101,12 @@ async function storeAndEnrich(
 }
 
 /**
- * Records what one frame detected, then upgrades it with whatever the platform's API knows.
+ * Records one frame's fields, then enriches them from the platform API. The DOM-only fields are
+ * readable once the write lands; the promise covers both halves so the service worker sees any
+ * rejection.
  *
- * The returned promise covers both halves, so `background/service-worker.ts` sees a terminal
- * rejection from either. It is not what makes the fields *usable*: the DOM-only fields are stored
- * and readable as soon as the write lands, and the oracle only ever adds to them.
- *
- * Registered as in-flight *before* the write rather than after it, because {@link snapshotForRun}
- * waits on that registry: a report whose storage write hasn't resolved yet is as invisible to the
- * wait as one whose oracle call hasn't, and a run starting in that window is analyzed against a
- * frame this report was in the middle of replacing.
- *
- * `url` is the *reporting document's* URL, not the tab's — see `background/router.ts`, which has the
- * `sender` to tell them apart and the reason it matters.
+ * Registered as in-flight *before* the write, so {@link snapshotForRun} can't miss a report
+ * mid-write. `url` is the reporting document's URL, not the tab's (see `background/router.ts`).
  */
 export function recordReport(
   tabId: number,
@@ -166,18 +118,11 @@ export function recordReport(
 }
 
 /**
- * The tab's detected form, as a run should be analyzed against it: enriched, if enrichment is on its
- * way and arrives in time.
+ * The tab's form as a run should be analyzed against it — the one read that waits for enrichment,
+ * since every answer is drafted against this snapshot. An empty form (not `null`) when nothing
+ * reported: a run from a pasted description before the form rendered is normal.
  *
- * This is the one read that waits. The Analysis Step's snapshot is the point of no return for a
- * run's field wording — every Question Answer is drafted against it and the Fill Step matches back
- * to it — so it is worth a bounded pause, where no other read is.
- *
- * Returns an empty form rather than `null` for a tab nothing has reported: a run analyzed from a
- * pasted Job Description before the form rendered has no fields, and that is a normal run, not a
- * missing one.
- *
- * @param waitMs - Overridable so tests don't spend {@link ENRICHMENT_WAIT_MS} proving the timeout.
+ * @param waitMs - Overridable so tests don't wait out {@link ENRICHMENT_WAIT_MS}.
  */
 export async function snapshotForRun(
   tabId: number,
@@ -188,12 +133,8 @@ export async function snapshotForRun(
 }
 
 /**
- * The frame holding this tab's form, for the Fill Step to address its commands to.
- *
- * Deliberately does *not* wait on enrichment, unlike {@link snapshotForRun}. The Fill Step re-scans
- * the live page and carries wording forward from the run it is filling, so a fresher enrichment in
- * the store would be the wrong wording to fill with even if it arrived — all this needs from the
- * store is which frame to talk to, and that is settled by the report itself.
+ * The frame holding this tab's form, for Fill Step commands. Doesn't wait on enrichment: the fill
+ * uses the run's analyzed wording, not fresher enrichment.
  */
 export function frameForFill(tabId: number): Promise<DetectedFrameRef | null> {
   return getDetectedFrame(tabId);

@@ -1,9 +1,4 @@
-/**
- * The sign-up view — `#/signup`, `docs/multi-tenant-auth.md` Phase C (public signup).
- *
- * Email/password only, matching `Login`: Better Auth is configured for it (`apps/backend/src/
- * auth.ts`), and neither Google nor GitHub has real credentials registered yet.
- */
+/** The public sign-up view (`#/signup`): email/password, like `Login`. */
 import { useState, type FormEvent } from 'react';
 import { userMessage } from '@djobi/http-client';
 import { SignUpRequestSchema } from '@djobi/shared';
@@ -37,7 +32,8 @@ export function SignUp({
 
     try {
       await onSignUp(email, password, name);
-      // No `finally`-set `submitting(false)` on the success path — see `Login.tsx`'s identical note.
+      // No `finally`-set `submitting(false)` on the success path — see `Login.tsx`'s identical
+      // note.
     } catch (err) {
       setError(userMessage(err));
       setSubmitting(false);

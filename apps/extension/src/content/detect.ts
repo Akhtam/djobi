@@ -1,24 +1,16 @@
 import { getSignal } from './pageSignals';
 
 /**
- * A field label that only appears on a job application: the things a candidate is asked to hand
- * over. Matched against a form control's *own* label, never the page's prose — a job posting
- * describes the resume it wants, and only the application form has a field asking for one.
+ * Labels only an application form has (resume, CV, cover letter, LinkedIn). Matched against a
+ * control's own label, never page prose — a posting *describes* the resume it wants.
  */
 const APPLICATION_FIELD_SIGNAL = /re[sz]ume|\bcv\b|cover letter|linkedin/i;
 
 /**
- * Heuristic: is this page an actual job application form, not a marketing/listing/login page or
- * an unrelated site? No `<form>` ancestor is required, since embedded ATS widgets (e.g. Ashby's
- * embed script rendering into a plain `<div id="ashby_embed">` on a company's own domain) often
- * don't use a native `<form>` element.
- *
- * A resume file upload input is the strongest signal, and the cheap one, so it's checked first. It
- * is not sufficient on its own, though: an ATS can render its upload control as a button that only
- * creates an `<input type="file">` once clicked, or drive it through the File System Access API
- * with no input element at all — and a form like that was previously invisible to this extension no
- * matter how many ordinary fields it had. So a control *labelled* as one of the things only a job
- * application asks for counts too.
+ * Heuristic: is this page an actual job application form? No `<form>` ancestor is required
+ * (embedded ATS widgets often lack one). A resume file input is the cheap, strong signal; a control
+ * labelled as an application-only field also counts, since some ATSes create the file input only on
+ * click.
  */
 export function isJobApplicationPage(doc: Document): boolean {
   if (doc.querySelector('input[type="file"]') !== null) return true;
@@ -29,39 +21,30 @@ export function isJobApplicationPage(doc: Document): boolean {
 }
 
 export interface WatchOptions {
-  /** How long one arming window waits for the page to become a job application page. Default 10s. */
+  /**
+   * How long one arming window waits for the page to become a job application page. Default 10s.
+   */
   timeoutMs?: number;
-  /** Quiet period after a DOM change before re-reporting, once the page has qualified. Default 500ms. */
+  /**
+   * Quiet period after a DOM change before re-reporting, once the page has qualified. Default
+   * 500ms.
+   */
   settleMs?: number;
   /** How often to check for a client-side route change. Default 1s. */
   urlPollMs?: number;
 }
 
 /**
- * Calls `onDetected` once `isJobApplicationPage(doc)` becomes true, and **again** — debounced by
- * `settleMs` — every time the DOM subsequently changes, so a caller always has a current picture of
- * the form rather than a snapshot of whatever happened to be mounted at the first qualifying instant.
+ * Calls `onDetected` once the page qualifies, then again (debounced by `settleMs`) on every DOM
+ * change, so callers always have a current picture of the form. Handles:
  *
- * Three things this has to survive, all of which used to leave a tab permanently undetected because
- * detection was one-shot and gave up after a fixed window:
+ * 1. **Late-mounting forms** — a MutationObserver during the arming window.
+ * 2. **Partial mounts** — re-reporting on every settled change, not just the first hit.
+ * 3. **Client-side routes** (Ashby's `pushState` to `/application`) — a URL poll re-arms on any
+ *    `location.href` change (a content script can't patch the page's own `pushState`).
  *
- * 1. **Late-mounting forms.** An ATS embed widget renders its form well after `document_idle`, so a
- *    check at load misses it. Hence the arming window's MutationObserver.
- * 2. **Partial mounts.** A form's file input can appear a frame or two before the rest of its
- *    fields. Firing once at that instant reports a form with almost nothing in it — and nothing ever
- *    corrects it. Hence re-reporting on every settled change rather than stopping at the first hit.
- * 3. **Client-side routes.** Ashby's posting page and its `/application` form are one document; the
- *    "Apply" click is a `pushState`, so no new content script runs. If the arming window had already
- *    elapsed, the form was never seen. Hence the URL poll, which re-arms on any `location.href`
- *    change. (Polling, not a `history.pushState` patch: a content script's patch lands in its
- *    isolated world and never sees the page's own calls.)
- *
- * The arming window still exists, and still gives up quietly, because this content script runs on
- * *every* page: an observer left connected indefinitely on the vast majority of pages that are not
- * job postings is a cost paid for nothing. Once a page qualifies it is a job application page, and
- * the observer stays connected for as long as it remains one.
- *
- * Returns a `stop()` function that cancels everything, including the URL poll.
+ * The arming window gives up quietly on non-qualifying pages, since this runs on every page.
+ * Returns `stop()`, which cancels everything.
  */
 export function watchForJobApplicationPage(
   doc: Document,
@@ -79,7 +62,9 @@ export function watchForJobApplicationPage(
     clearTimeout(settleId);
   }
 
-  /** Re-reports once the DOM has been quiet for `settleMs` — a React re-render is many mutations. */
+  /**
+   * Re-reports once the DOM has been quiet for `settleMs` — a React re-render is many mutations.
+   */
   function reportWhenSettled(): void {
     clearTimeout(settleId);
     settleId = setTimeout(() => {
@@ -87,7 +72,9 @@ export function watchForJobApplicationPage(
     }, settleMs);
   }
 
-  /** Switches from "waiting for a form" to "watching the form we found" — no timeout from here on. */
+  /**
+   * Switches from "waiting for a form" to "watching the form we found" — no timeout from here on.
+   */
   function watchQualifiedPage(): void {
     clearTimeout(timeoutId);
     observer?.disconnect();

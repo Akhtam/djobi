@@ -1,10 +1,6 @@
 /**
- * What an Application Pipeline run *is* — the record the pipeline checkpoints and the panel renders.
- *
- * Types and pure narrowing only. How a run is stored is `lib/tabStore/pipelineRun.ts`, one layer
- * up; how it is read for a candidate is `lib/run/review.ts`, beside this. Keeping the shape apart
- * from its persistence is what lets the panel and the background agree on a run without either
- * importing the other's storage.
+ * What a pipeline run *is* — the record the pipeline checkpoints and the panel renders. Types and
+ * pure narrowing only; storage is `lib/tabStore/pipelineRun.ts`, presentation `lib/run/review.ts`.
  */
 import type {
   DetectedField,
@@ -14,9 +10,7 @@ import type {
   QuestionAnswer,
   TailoredResume,
 } from '@djobi/shared';
-// A type-only import of a plain data shape — the fields a scan produced. `lib/messages.ts` declares
-// it because the content script's report carries it; nothing about the transport comes with it, and
-// there is no import back the other way.
+// Type-only: a plain data shape declared beside the content script's report.
 import type { JobPageData } from '../messages';
 import type { RunStep } from './status';
 
@@ -47,9 +41,7 @@ export interface PipelineFailure {
   kind: RunFailureKind;
 }
 
-// `DuplicateApplication` is `@djobi/shared`'s now — re-exported below so nothing importing it from
-// `../lib/run` has to know it moved. It's shape a run just happens to carry, not something specific
-// to this run-state module.
+// Re-exported for importers of `../lib/run`.
 export type { DuplicateApplication };
 
 export interface PipelineRunState {
@@ -59,26 +51,21 @@ export interface PipelineRunState {
   tabUrl: string | null;
   jobPageData: JobPageData;
   /**
-   * The job description shown in the panel's editor. Starts equal to {@link analyzedJobDescription}
-   * but can drift from it: the candidate may edit this text after Analysis has already produced
-   * `jobInfo`/`tailoredResume`, and editing alone does not re-run Analysis. Kept on the run so the
-   * panel can show it back for editing and a re-analysis, and so a reopened panel doesn't lose it.
+   * The description in the panel's editor. Starts as {@link analyzedJobDescription} and may be
+   * edited afterwards without re-running analysis.
    */
   jobDescription: string;
   /**
-   * The exact text passed to `extractJob` for this run's `jobInfo`/`tailoredResume` — frozen at the
-   * start of the Analysis Step, unlike {@link jobDescription}, which the candidate can keep editing
-   * afterward. This is what Save persists as `rawDescription`, so that field always names the
-   * posting text the pipeline's output actually reflects, even if the editor has since diverged.
+   * The exact text analyzed, frozen at the Analysis Step. Saved as `rawDescription`, so it always
+   * matches what produced `jobInfo`/`tailoredResume`.
    */
   analyzedJobDescription: string;
   jobInfo: JobInfo | null;
   tailoredResume: TailoredResume | null;
   answers: QuestionAnswer[];
   /**
-   * What `tailoredResume` evidences of `jobInfo.keywords`, computed in the Analysis Step. Empty
-   * before it completes, and empty for a posting whose extraction found no keywords — the panel
-   * shows nothing in both cases, which is the honest reading of each.
+   * What `tailoredResume` evidences of `jobInfo.keywords`, from the Analysis Step. Empty before
+   * then or when there are no keywords.
    */
   coverage: KeywordCoverage[];
   /** Set alongside an `analyze-error`/`fill-error` status; cleared on every fresh attempt. */
@@ -88,9 +75,8 @@ export interface PipelineRunState {
   /** Set by the Fill Step from the page's response; `null` before it completes. */
   fillOutcome: FillOutcome | null;
   /**
-   * How many fields the Fill Step wrote when a frame confirmed the result, resume included. For an
-   * `unverified` outcome this is the optimistic attempted count. Zero can mean no fields were
-   * detected, which `unresolvedRequiredFields` alone cannot distinguish from success.
+   * Fields the Fill Step wrote, resume included (attempted count if `unverified`). Zero may mean
+   * nothing was detected, which `unresolvedRequiredFields` alone can't show.
    */
   filledFieldCount: number;
   /** The permanent record created by the first explicit save, if any. */
@@ -99,29 +85,22 @@ export interface PipelineRunState {
   duplicateOf: DuplicateApplication | null;
 }
 
-/**
- * A run whose Analysis Step has completed. Encoding the Fill Step's precondition as a type means a
- * caller can't forget to check it — the narrowing happens once, where the run is read.
- */
+/** A run whose Analysis Step completed — the Fill Step's precondition as a type. */
 export type AnalyzedRun = PipelineRunState & {
   jobInfo: JobInfo;
   tailoredResume: TailoredResume;
 };
 
-/** Narrows a run to one the Fill Step can act on, or `null` if the Analysis Step hasn't finished. */
+/**
+ * Narrows a run to one the Fill Step can act on, or `null` if the Analysis Step hasn't finished.
+ */
 export function asAnalyzedRun(run: PipelineRunState | null): AnalyzedRun | null {
   return run?.jobInfo && run.tailoredResume ? (run as AnalyzedRun) : null;
 }
 
 /**
- * The run fields a candidate edits directly — everything else is the background's to checkpoint.
- *
- * The single fact `lib/tabStore/record.ts` and `panel/usePipelineRun.ts` each need in order to tell
- * a candidate's own edit apart from the background's progress. Stated once, here, because the two
- * sides restating it independently is exactly how `tailoredResume` ended up panel-writable per one
- * list and background-owned per the other — a mid-fill resume edit read as background progress and
- * stood the optimistic "Filling…" status down early, silently, since nothing forced the two lists to
- * agree.
+ * The run fields a candidate edits directly; everything else is the background's. Shared by
+ * `tabStore/record.ts` and `usePipelineRun.ts` to tell a candidate edit from background progress.
  */
 export const PANEL_EDITABLE_FIELDS = ['answers', 'jobDescription', 'tailoredResume'] as const;
 type PanelEditableField = (typeof PANEL_EDITABLE_FIELDS)[number];
@@ -133,7 +112,9 @@ export function panelEditsOf(run: PipelineRunState): Pick<PipelineRunState, Pane
   return Object.fromEntries(entries) as Pick<PipelineRunState, PanelEditableField>;
 }
 
-/** The run fields the background checkpoints, for `lib/tabStore/record.ts`'s movement classifier. */
+/**
+ * The run fields the background checkpoints, for `lib/tabStore/record.ts`'s movement classifier.
+ */
 export function backgroundProgressOf(
   run: PipelineRunState,
 ): Omit<PipelineRunState, PanelEditableField> {

@@ -1,25 +1,16 @@
 /**
- * The dashboard's view of its data source, and the only place in this app that names a backend
- * path.
- *
- * Two implementations sit behind one interface, exactly as `BackendClient` / `httpBackendClient` do
- * in `apps/extension/src/lib/backendClient.ts`, for the same reason: it turns the boundary into
- * something a test can substitute, so the views are exercised end to end with no network.
- *
- * `httpDashboardClient` is what the app runs on. `createFixtureDashboardClient` exists for the test
- * suite — it is not wired into `main.tsx`, deliberately: a runtime flag that swaps the real backend
- * for fake data is a flag that can be left on, and an app that looks like it is saving while
- * writing to memory is worse than one that visibly can't reach its backend.
+ * The dashboard's data-source port — the only place in this app that names a backend path.
+ * `httpDashboardClient` is what the app runs on; `createFixtureDashboardClient` is for tests only,
+ * never wired into `main.tsx` (a runtime fake-data flag could be left on).
  */
-import { createHttpTransport, HttpError } from '@djobi/http-client';
 import {
-  DuplicateApplicationSummarySchema,
-  type DuplicateApplicationSummary,
+  backendRoutes,
+  createHttpTransport,
+  HttpError,
+  type BackendRoutes,
+} from '@djobi/http-client';
+import {
   type ExtractedProfile,
-  ExtractResumeResponseSchema,
-  type ExtractJobRequest,
-  type JobInfo,
-  JobInfoSchema,
   type AddApplicationNoteRequest,
   AddApplicationNoteResultSchema,
   type AddApplicationNoteResult,
@@ -35,8 +26,6 @@ import {
   type NewApplicationRequest,
   type Note,
   type Profile,
-  ProfileSchema,
-  type SaveProfileRequest,
   type SignInRequest,
   SignInResultSchema,
   SignOutResultSchema,
@@ -49,107 +38,45 @@ import {
 import { fixtureExtractedProfile } from './fixtures.js';
 
 /**
- * What `GET /profile` answers with. Nullable rather than optional: `null` is the real answer for a
- * candidate who hasn't set a Profile up yet, not a missing response — the same schema
- * `apps/extension/src/lib/backendClient.ts` builds for the same route.
+ * Everything the dashboard needs from the backend. No `getApplication(id)`: every view reads the
+ * one array in `useApplicationStore`, so records can't disagree. The shared routes' contract is
+ * `BackendRoutes`'s.
  */
-const MaybeProfileSchema = ProfileSchema.nullable();
-
-/**
- * Everything the dashboard needs from the outside world.
- *
- * There is deliberately no `getApplication(id)`. Both views read from one loaded array held by
- * `useApplicationStore`, so a single-record fetch would only introduce a second copy of a record
- * that can disagree with the list. See that module for why.
- */
-export interface DashboardClient {
+export interface DashboardClient extends Pick<
+  BackendRoutes,
+  'extractJob' | 'getProfile' | 'saveProfile' | 'extractResume' | 'findApplicationDuplicates'
+> {
   listApplications(): Promise<Application[]>;
-  /** Extracts the reviewable job details used by a manual dashboard entry. */
-  extractJob(jobDescription: string): Promise<JobInfo>;
   /**
-   * Creates a manual application and returns the full authoritative row.
-   *
-   * `idempotencyKey` should be the same string across every retry of one logical save attempt —
-   * `NewApplication.tsx` generates it once per extraction and reuses it for every submit while that
-   * review is on screen — so a resend after a timeout lands the same row back instead of a second
-   * one. See `applicationStore.ts`'s `create`.
+   * Creates a manual Application and returns the full row. Reuse `idempotencyKey` across retries of
+   * one save (`NewApplication.tsx` keeps one per extraction) so a resend returns the same row.
    */
   createApplication(payload: NewApplicationRequest, idempotencyKey: string): Promise<Application>;
-  /** Existing rows saved against the exact posting URL, for the manual-entry warning. */
-  findApplicationDuplicates(jobUrl: string): Promise<DuplicateApplicationSummary>;
   /** Resolves with the authoritative Stage after an optimistic write. */
   updateStage(id: string, stage: ApplicationStage): Promise<UpdateApplicationStageResult>;
   /** Appends to the notes log. `id`/`createdAt` are assigned by the server, never sent. */
   addNote(id: string, note: NewNote): Promise<AddApplicationNoteResult>;
-  /**
-   * Removes one note from the log. Rejects when the note is not there — the route answers 404 for
-   * a note it cannot find, and an optimistic caller has to be able to tell that apart from a
-   * delete that worked.
-   */
+  /** Removes one note. Rejects (404) if it isn't there, so optimistic callers can tell. */
   deleteNote(id: string, noteId: string): Promise<DeleteApplicationNoteResult>;
-  /**
-   * Deletes an Application outright. Rejects when there's no such row — the route 404s the same
-   * way it does for a note it can't find, and an optimistic caller has to be able to tell that
-   * apart from a delete that worked.
-   */
+  /** Deletes an Application. Rejects (404) if there's no such row. */
   deleteApplication(id: string): Promise<DeleteApplicationResult>;
-  /**
-   * The single stored Profile, or `null` before the candidate has saved one.
-   *
-   * The first thing the dashboard needs beyond Applications — fetched only by the Analytics view's
-   * coverage report, so the list and detail views must not start paying for it.
-   */
-  getProfile(): Promise<Profile | null>;
-  /** Persists the full Profile and returns the authoritative saved row. */
-  saveProfile(profile: Profile): Promise<Profile>;
-  /**
-   * Parses an uploaded resume PDF into a draft extraction for the candidate to review — never
-   * saved on its own; `saveProfile` above is still the only write path.
-   */
-  extractResume(file: File): Promise<ExtractedProfile>;
-  /**
-   * Establishes a session — the httpOnly cookie Better Auth's response sets — or rejects with an
-   * `HttpError` (401 on bad credentials). Resolves to nothing: the caller doesn't need the user
-   * record back, only whether it can now make authenticated requests.
-   */
+  /** Establishes a session (Better Auth's httpOnly cookie), or rejects with a 401 `HttpError`. */
   signIn(email: string, password: string): Promise<void>;
-  /**
-   * Creates a new account and establishes a session for it in the same call — Better Auth's
-   * `/sign-up/email` sets the same session cookie `/sign-in/email` does, so a fresh sign-up lands
-   * the candidate straight in the dashboard rather than requiring a second sign-in.
-   */
+  /** Creates an account and signs it in (sign-up sets the same session cookie). */
   signUp(email: string, password: string, name: string): Promise<void>;
   /** Ends the session. */
   signOut(): Promise<void>;
 }
 
-/**
- * The backend's real origin — used only to name it in {@link transport}'s `unreachableMessage`, not
- * as the transport's `baseUrl`. See that constant for why the two are no longer the same value.
- */
+/** The backend's real origin, used only in the unreachable message (requests are relative). */
 const BACKEND_ORIGIN = import.meta.env.VITE_BACKEND_ORIGIN ?? 'http://127.0.0.1:5391';
 
 /**
- * The protocol — deadline, status-before-parse, error-body extraction, schema validation — comes
- * from `@djobi/http-client`, because the extension talks to this same backend and had all of it a
- * second time. The two had already drifted: this module's deadline covered its body reads and the
- * extension's did not, and the actionable "is it running?" message lived here rather than in the app
- * more likely to hit it. Both are now one implementation and both apps get the better half.
- *
- * `baseUrl` is relative (`''`), not `BACKEND_ORIGIN`, so every call this app makes is same-origin
- * from the browser's point of view. It was `BACKEND_ORIGIN` originally, and that broke real login:
- * the dashboard (`:5174`) and the backend (`:5391`) are different origins, which makes the session
- * cookie a *third-party* cookie — Chrome partitions/blocks those by default no matter what
- * `SameSite`/`Secure` say. Sign-in still appeared to succeed (`Set-Cookie` on the response is never
- * blocked), but the very next authenticated call came back 401 because the cookie was never sent
- * back. `vite.config.ts`'s dev-server `proxy` is the other half of this fix — it forwards these
- * relative paths to the real backend server-side, invisibly to the browser, which is also exactly
- * what production looks like once `docs/multi-tenant-auth.md`'s ADR-0001 (dashboard served from the
- * same Worker as the API) ships: this was always the eventual shape, not a dev-only workaround.
- *
- * `credentials: 'include'` is kept anyway: harmless once same-origin (`fetch`'s own default,
- * `'same-origin'`, would behave identically here), and it's what carries the session correctly for
- * anyone running this against a genuinely cross-origin backend without the proxy in front of it.
+ * The dashboard's `@djobi/http-client` transport. `baseUrl` is relative so every call is
+ * same-origin — cross-origin, the session cookie is a third-party cookie that Chrome blocks, and
+ * sign-in would appear to work while every later call 401s. In dev, `vite.config.ts`'s proxy
+ * forwards these paths; in production the dashboard is served with the API (ADR-0001, or nginx in
+ * Docker Compose). `credentials: 'include'` still covers a genuinely cross-origin backend.
  */
 const transport = createHttpTransport({
   baseUrl: '',
@@ -157,25 +84,18 @@ const transport = createHttpTransport({
   credentials: 'include',
 });
 
+/** Routes the extension calls identically, from `@djobi/http-client`'s `backendRoutes`. */
+const sharedRoutes = backendRoutes(transport);
+
 /**
- * The production adapter: the same local Hono server the extension talks to.
- *
- * Full rows are parsed through `ApplicationSchema` rather than cast. Tracking writes request compact
- * acknowledgements; manual creation deliberately asks for the full row so the shared dashboard store
- * can insert it without another list request.
- *
- * Write bodies are built against the shared wire schemas via `satisfies`, the same way
- * `apps/extension/src/lib/backendClient.ts` does it: a drift between what this sends and what the
- * route accepts becomes a compile error rather than a field zod silently strips in transit.
+ * The production adapter. Rows are parsed through `ApplicationSchema`; tracking writes ask for
+ * compact acknowledgements, while manual creation asks for the full row so the store can insert it
+ * directly.
  */
 export const httpDashboardClient: DashboardClient = {
   listApplications: () => transport.json('/applications', ApplicationSchema.array()),
 
-  extractJob: (jobDescription) =>
-    transport.json('/extract-job', JobInfoSchema, {
-      method: 'POST',
-      body: { jobDescription } satisfies ExtractJobRequest,
-    }),
+  extractJob: sharedRoutes.extractJob,
 
   createApplication: (payload, idempotencyKey) =>
     transport.json('/applications', ApplicationSchema, {
@@ -184,11 +104,7 @@ export const httpDashboardClient: DashboardClient = {
       idempotencyKey,
     }),
 
-  findApplicationDuplicates: (jobUrl) =>
-    transport.json(
-      `/applications?jobUrl=${encodeURIComponent(jobUrl)}&response=compact`,
-      DuplicateApplicationSummarySchema,
-    ),
+  findApplicationDuplicates: sharedRoutes.findApplicationDuplicates,
 
   updateStage: (id, stage) =>
     transport.json(
@@ -216,19 +132,9 @@ export const httpDashboardClient: DashboardClient = {
       method: 'DELETE',
     }),
 
-  getProfile: () => transport.json('/profile', MaybeProfileSchema),
-
-  saveProfile: (profile) =>
-    transport.json('/profile', ProfileSchema, {
-      method: 'POST',
-      body: profile satisfies SaveProfileRequest,
-    }),
-
-  extractResume: (file) => {
-    const formData = new FormData();
-    formData.set('resume', file);
-    return transport.upload('/profile/extract-resume', ExtractResumeResponseSchema, formData);
-  },
+  getProfile: sharedRoutes.getProfile,
+  saveProfile: sharedRoutes.saveProfile,
+  extractResume: sharedRoutes.extractResume,
 
   signIn: async (email, password) => {
     await transport.json('/api/auth/sign-in/email', SignInResultSchema, {
@@ -257,11 +163,8 @@ const FIXTURE_EMAIL = 'jane@example.com';
 const FIXTURE_PASSWORD = 'correct horse battery staple';
 
 /**
- * How a fixture client's session starts, and what credentials `signIn` accepts against it.
- *
- * `signedIn` defaults to `true` — most of this suite drives the app past login, the same reason
- * `profile` defaults to `null` below rather than the reverse: the common case costs a caller
- * nothing, and a test of the login flow itself is the one that opts out.
+ * How a fixture client's session starts and which credentials `signIn` accepts. `signedIn`
+ * defaults to `true`; login tests opt out.
  */
 export interface FixtureAuthOptions {
   signedIn?: boolean;
@@ -270,10 +173,7 @@ export interface FixtureAuthOptions {
 }
 
 /**
- * What `extractResume` resolves or rejects with — a config bag for the same reason
- * {@link FixtureAuthOptions} is one: a case that cares picks one field, everything else keeps a
- * sensible default. `error` takes priority when both are given, since a case testing the failure
- * path has no use for a draft that's never returned.
+ * What `extractResume` resolves or rejects with; `error` wins if both are given.
  */
 export interface FixtureResumeUploadOptions {
   /** Defaults to `fixtureExtractedProfile` — a populated sample draft. */
@@ -283,20 +183,9 @@ export interface FixtureResumeUploadOptions {
 }
 
 /**
- * The fixture adapter: the whole interface over an in-memory copy of `fixtures.ts`.
- *
- * Writes mutate that copy, so a stage change or an added note survives navigating away and back
- * within a session — which is what makes the UI genuinely exercisable with no backend at all.
- * Each call returns a *fresh* copy so a caller holding a previous result can't observe a mutation
- * it didn't ask for, matching how a real HTTP response behaves.
- *
- * `id` and `createdAt` on an appended note are generated here rather than accepted from the caller,
- * mimicking the rule `NoteSchema` states and `POST /applications/:id/notes` enforces: a note whose timestamp
- * the sender chose isn't trustworthy history.
- *
- * `profile` defaults to `null` — no Profile saved — rather than to a populated one, since that is
- * the state most existing fixture callers neither know nor care about; a case that does pass it
- * explicitly.
+ * The fixture adapter over an in-memory copy of `fixtures.ts`. Writes persist within the instance;
+ * each read returns a fresh copy, like HTTP. Notes get server-style `id`/`createdAt`. `profile`
+ * defaults to `null`.
  */
 export function createFixtureDashboardClient(
   seed: Application[],
@@ -308,14 +197,9 @@ export function createFixtureDashboardClient(
   const { extraction = fixtureExtractedProfile, error: extractionError } = resumeUpload;
   let applications: Application[] = structuredClone(seed);
   let currentProfile: Profile | null = profile;
-  // Every other piece of state here (`applications`, `profile`) is scoped to one fixture instance,
-  // matching one browser holding one cookie — the same reason it is a closure variable rather than
-  // module-level: two tests must not be able to see each other's session any more than two browsers
-  // sharing a fixture would share each other's applications.
+  // Per instance, like one browser's cookie, so tests can't see each other's session.
   let hasSession = signedIn;
-  // The one account this fixture will accept a sign-up for, so a test can drive the whole sign-up
-  // flow without a second `FixtureAuthOptions` shape — signing up simply reassigns `email`/`password`
-  // to whatever the form submitted, exactly as a real account creation would.
+  // Signing up reassigns the accepted credentials, like creating a real account.
   let currentEmail = email;
   let currentPassword = password;
   // Mirrors `applicationStore.ts`'s in-memory adapter: a same-keyed `createApplication` retry
@@ -323,16 +207,8 @@ export function createFixtureDashboardClient(
   const applicationsByIdempotencyKey = new Map<string, Application>();
 
   /**
-   * `requireAuth()`'s own answer, reproduced here: `app.ts` puts every route this client calls
-   * behind that middleware, so a fixture that never rejects would let a test drive the signed-out
-   * UI as if `deps.requireAuth` did not exist. `HttpError`'s `kind`/`status` are what
-   * `useApplicationStore`'s `isUnauthorized` actually switches on, so this has to be the same shape
-   * a real 401 arrives in, not merely an `Error` with a similar message.
-   *
-   * Returns a rejected `Promise` rather than throwing: every real `DashboardClient` method fails by
-   * rejecting, and a caller like `useApplicationStore`'s load effect only attaches `.catch` to the
-   * `Promise` a method returns. A synchronous throw here would escape that chain entirely and crash
-   * the render instead of reaching it.
+   * `requireAuth`'s 401, as an `HttpError` (what `isUnauthorized` checks). Returned as a rejected
+   * promise, not thrown, so callers' `.catch` sees it.
    */
   function unauthorized<T>(path: string): Promise<T> {
     return Promise.reject(
@@ -438,9 +314,7 @@ export function createFixtureDashboardClient(
       if (!hasSession) return unauthorized(`/applications/${id}/notes/${noteId}`);
       const application = mustFind(id);
       const remaining = application.notes.filter((note) => note.id !== noteId);
-      // Rejects rather than resolving quietly, because the route 404s for a note it cannot find
-      // and a fixture that shrugged would let a caller's "did this land" logic pass here and fail
-      // against the real backend.
+      // Rejects like the real route's 404, so "did this land" logic is tested honestly.
       if (remaining.length === application.notes.length) {
         return Promise.reject(new Error(`No note ${noteId} on application ${id}`));
       }

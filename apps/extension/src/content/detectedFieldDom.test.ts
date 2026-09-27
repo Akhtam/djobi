@@ -1,11 +1,6 @@
 /**
- * The **detect→fill crossing**: every case here runs the real {@link detectFields} and then resolves
- * against the same document, which is the one thing neither module's own suite does.
- *
- * `fillForm.test.ts` hand-builds its Detected Fields with a `field()` factory and never calls
- * `detectFields`, so a rule the two halves disagree about is invisible to it — both halves can be
- * green while the pair is broken. Until this file, the only tests exercising both were the two
- * captured-fixture suites, which run whole real postings and cannot isolate a single rule.
+ * The detect→fill crossing: each case runs the real {@link detectFields} and resolves against the
+ * same document — the rule-by-rule check neither module's own suite makes.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DetectedField } from '@djobi/shared';
@@ -17,7 +12,9 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-/** The one detected field whose label contains `needle`; throws rather than asserting on nothing. */
+/**
+ * The one detected field whose label contains `needle`; throws rather than asserting on nothing.
+ */
 function fieldFor(fields: DetectedField[], needle: string): DetectedField {
   const matches = fields.filter((field) =>
     field.label.toLowerCase().includes(needle.toLowerCase()),
@@ -131,9 +128,9 @@ describe('resolving a drafted answer back onto the page it was detected from', (
 
   it('takes the native input when a group renders an ARIA proxy beside it under the same label', () => {
     // The two halves used to grade this differently. Detection prefers native inputs and falls back
-    // to ARIA only when there are none; the Fill Step hand-concatenated both selector lists into one
-    // literal and queried them together — so it saw two choices labelled "Yes", matched neither, and
-    // left the field blank.
+    // to ARIA only when there are none; the Fill Step hand-concatenated both selector lists into
+    // one literal and queried them together — so it saw two choices labelled "Yes", matched
+    // neither, and left the field blank.
     document.body.innerHTML = `
       <fieldset>
         <legend>Are you over 18?</legend>
@@ -178,9 +175,10 @@ describe('resolving a drafted answer back onto the page it was detected from', (
 
   it('fills a form in another realm end to end, where every bare instanceof silently read false', async () => {
     // The resolution half was always realm-safe. The filling half was not: `isChosen` fell through
-    // to the ARIA branch for a native radio and reported a good fill as unfilled, and the `<select>`
-    // branch missed entirely, so a select was driven as if it were a text input. Both only show up
-    // in the round trip, which is why this asserts through `fillForm` rather than `resolveChoice`.
+    // to the ARIA branch for a native radio and reported a good fill as unfilled, and the
+    // `<select>` branch missed entirely, so a select was driven as if it were a text input. Both
+    // only show up in the round trip, which is why this asserts through `fillForm` rather than
+    // `resolveChoice`.
     document.body.innerHTML = `<iframe></iframe>`;
     const inner = document.querySelector('iframe')!.contentDocument!;
     inner.body.innerHTML = `

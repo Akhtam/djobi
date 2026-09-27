@@ -1,35 +1,15 @@
 /**
- * The "Ask" tab: one conversation about one application question.
+ * The "Ask" tab: one conversation about one application question. Cold asks and refinements of a
+ * drafted answer are the same component and route, differing only by {@link AskSeed}: with a seed,
+ * "Use this answer" writes back to the run's answer; without one, there's a copy button. Never
+ * writes to the page.
  *
- * It is the panel's only chat surface, and deliberately so. Asking cold — a question the detector
- * missed, or one from a form on another screen entirely — and refining an answer the Analysis Step
- * already drafted are the same conversation with a different starting state, so they are the same
- * component talking to the same route. Building them apart would have put two chat implementations
- * in one panel.
+ * The question is typed into the same composer as every turn, but sent as the request's `question`
+ * (see `Turn.opening`). The thread is React-local and lost when the panel closes; an answer applied
+ * to the run survives.
  *
- * What separates the two here is the {@link AskSeed}. With one, the thread is *about* a specific
- * drafted answer in the current run, and "Use this answer" writes back to it. Without one, there is
- * no field to write to, so the answer gets a copy button instead. This tab never writes to the
- * page: filling stays the Fill Step's job, from detected fields.
- *
- * The layout is a transcript with one composer pinned under it, rather than a form whose fields
- * grow as the exchange goes on. That is why the *question* is typed into the composer too: a cold
- * ask's first message is the question, so there is one place to type on every turn instead of a
- * question box that stops mattering after the first send. It is sent as the request's `question`
- * rather than as a thread message — hence `Turn.opening` in `panel/useAskThread.ts`, which marks
- * the one turn the transcript shows but the wire doesn't carry.
- *
- * The thread is React-local and lost when the panel closes. A cold ask has no run to hang off, and
- * `PipelineRunState` is keyed by tab — the wrong shape for a conversation that may be about no page
- * at all. A seeded thread plausibly belongs there, but persisting only half the tab's threads would
- * make "will this still be here later" depend on where the thread started, which is worse than a
- * rule the candidate can hold: the answer applied to the run survives, the conversation doesn't.
- *
- * The conversation itself is `panel/useAskThread.ts`. What is left here is the surface: the
- * transcript, the composer that grows with what is typed into it, the scroll, the clipboard and the
- * copy. The two were one module, which meant the thread's rules — which turn is the scaffold's,
- * which answers belong to a thread that has been replaced, what crosses the wire — could only be
- * reached by rendering and typing.
+ * The conversation logic is `panel/useAskThread.ts`; this is the transcript, composer, scroll and
+ * clipboard.
  */
 import type { JobInfo, Profile } from '@djobi/shared';
 import { useEffect, useRef, useState } from 'react';
@@ -55,11 +35,8 @@ export function AskTab({
   activeRunId: string | null;
   seed: AskSeed | null;
   /**
-   * Writes an answer back onto the run's question card. Still hand-editable there afterward.
-   *
-   * `runId` travels with it: which run an answer belongs to is a fact about the answer, and
-   * checking it only while rendering left a write-back racing a tab switch able to land on
-   * whichever run was current when the click was handled.
+   * Writes an answer back onto the run's question card (still editable there). `runId` travels with
+   * it, so a write-back racing a tab switch can't land on another run.
    */
   onUseAnswer: (runId: string, fieldId: string, answer: string) => void;
 }) {
@@ -90,9 +67,8 @@ export function AskTab({
     transcriptEndRef.current?.scrollIntoView?.({ block: 'end' });
   }, [turns.length, pending, error]);
 
-  // The composer grows with what's typed into it, between the floor and cap in `App.css`.
-  // `scrollHeight` excludes the border, and the box is `border-box`, so the border is added back —
-  // without it the field ends up two pixels short of its own content and scrolls by one line.
+  // Auto-grow the composer between the `App.css` floor and cap. `scrollHeight` excludes the border
+  // on a `border-box` element, so add it back.
   useEffect(() => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -107,7 +83,9 @@ export function AskTab({
     setCopiedTurnId(null);
   }
 
-  /** Sends what's in the composer — the question on the first turn of a cold ask, a message after. */
+  /**
+   * Sends what's in the composer — the question on the first turn of a cold ask, a message after.
+   */
   function submit() {
     const text = draft.trim();
     if (!text || pending) return;

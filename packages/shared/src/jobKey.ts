@@ -1,18 +1,7 @@
 /**
- * A URL identity for a *job posting*, rather than for the ATS screen the candidate happens to be
- * looking at.
- *
- * Two things depend on this being stable across screens of one posting:
- *
- * - The extension scopes a Job Description draft to it, so collecting the posting on an overview
- *   route and then navigating to the application route doesn't erase the draft.
- * - The backend stores it alongside `job_url` and matches the Duplicate Guard on it, so a posting
- *   revisited through an ad link (`?gh_src=…`, `?utm_campaign=…`) is still recognized as one the
- *   candidate already applied to. Matching the raw URL alone missed exactly that case, and missing
- *   it costs three LLM calls and a re-application.
- *
- * It lives in `@djobi/shared` because both sides have to agree on it: a key the extension computes
- * one way and the backend another would silently stop matching.
+ * A URL identity for a *job posting*, stable across that posting's ATS screens and ad-link query
+ * params. The extension scopes Job Context to it; the backend stores it and matches the Duplicate
+ * Guard on it. Shared so both sides derive it identically.
  */
 
 const APPLICATION_ROUTE = /\/(?:application|apply)\/?$/i;
@@ -29,16 +18,11 @@ function normalizeRoute(url: URL): void {
 }
 
 /**
- * Returns a URL identity for the job rather than for the current ATS screen.
+ * A URL identity for the job rather than the current ATS screen: strips Ashby's `/application`
+ * and Lever's `/apply` suffixes and tracking params, but keeps the rest of the path and meaningful
+ * query params (e.g. Workday's `?jobId=`) so distinct postings stay distinct.
  *
- * Ashby changes `/org/posting-id` to `/org/posting-id/application` with `pushState`; Lever uses a
- * similar `/apply` suffix. Treating those as separate pages is what used to erase the posting just
- * before it was needed. Other URLs retain their full path and meaningful query parameters, so a
- * navigation to another posting does not inherit stale data — and so a board that distinguishes two
- * postings by query string (Workday's `?jobId=`) keeps distinguishing them here.
- *
- * @param value - A browser URL, or nothing.
- * @returns The normalized key, or `null` if `value` is absent or isn't an http(s) URL.
+ * @returns The key, or `null` if `value` is absent or not an http(s) URL.
  */
 export function jobKeyForUrl(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -47,9 +31,7 @@ export function jobKeyForUrl(value: string | null | undefined): string | null {
     const url = new URL(value);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
 
-    // Ordinary fragments are document anchors and do not identify a job. `#/...` and `#!/...`,
-    // however, are SPA routes: dropping them would make every job in a hash-routed careers app
-    // share one context and carry the previous posting's resume/answers into the next one.
+    // Plain fragments are anchors and dropped; `#/…` and `#!/…` are SPA routes that identify a job.
     const hashRoutePrefix = url.hash.startsWith('#!/')
       ? '#!'
       : url.hash.startsWith('#/')

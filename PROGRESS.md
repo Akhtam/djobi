@@ -15,9 +15,9 @@ history belongs in git, not in this file.
 
 Everything in this **Current state** section is built and tested, as is everything under
 **Shipped**. **Phase log** below is the per-phase record: its unchecked items are the only unbuilt
-work, and the file and identifier names inside it are as of when each phase landed. Suite green at **2039 tests**
-(316 shared / 40 http-client / 15 manual-log / 78 profile-editor / 377 backend / 840 extension / 373
-dashboard), `pnpm test` from the repo root. A green run prints nothing: every
+work, and the file and identifier names inside it are as of when each phase landed. Suite green at
+**2058 tests** (316 shared / 44 http-client / 15 manual-log / 78 profile-editor / 377 backend / 855
+extension / 373 dashboard), `pnpm test` from the repo root. A green run prints nothing: every
 deliberate log line a failure path writes is either asserted or silenced where it is expected, so
 anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
 `format:check`, `typecheck`, `build` and `test` on Linux for every PR and every push to `main`.
@@ -32,7 +32,9 @@ anything that does appear is a surprise. CI (`.github/workflows/ci.yml`) runs
   Importance Gate), and `resumeFileName.ts`.
 - **`packages/http-client`** — the one shared transport (`createHttpTransport`) both `callBackend.ts`
   (extension) and `dashboardClient.ts` (dashboard) build their client on, carrying auth
-  (bearer/cookie), the upload content-type wrinkle, and now an `idempotency-key` passthrough.
+  (bearer/cookie), the upload content-type wrinkle and an `idempotency-key` passthrough — plus
+  `backendRoutes`, the routes both apps call identically (`/extract-job`, `/profile`,
+  `/profile/extract-resume`, the Duplicate Guard lookup), written once with parsed request bodies.
 - **`packages/profile-editor`** — the profile onboarding/editing form (fields, list sections, the
   load/upload/save workflow), shared by the extension's options page and the dashboard's Profile
   view so both surfaces behave identically by construction.
@@ -60,10 +62,12 @@ backend build` compiles the shared package and emits a plain-Node production ser
   every view is exercised without a network while the running app always talks to Postgres.
 - **`apps/extension`** — MV3, Vite + `@crxjs/vite-plugin` + React. Content scripts detect the form
   (`detect.ts`) and classify its fields (`detectFields.ts`) and fill them (`fillForm.ts`); the
-  service worker (`background/service-worker.ts` → `background/router.ts`) runs the pipeline
-  (`applicationPipeline.ts`, each step held by `background/runClaim.ts`); the options page edits the
-  Profile; the side panel is the review surface, sending its three commands through
-  `panel/pipelineCommands.ts` and holding one conversation in `panel/useAskThread.ts`. A tab's
+  service worker (`background/service-worker.ts` → `background/messageListener.ts` →
+  `background/router.ts`) runs the pipeline (`applicationPipeline.ts`, each step held by
+  `background/runClaim.ts`, the Fill Step's pure decisions in `background/fillPlan.ts`); the options
+  page edits the Profile; the side panel is the review surface, reconciling its run view in
+  `panel/runView.ts`, sending its three commands through `panel/pipelineCommands.ts` and holding one
+  conversation in `panel/useAskThread.ts`. A tab's
   stored record is one entry under one lock behind four focused interfaces (`lib/tabStore/`). Light/dark theme shared by both pages (`lib/theme.tsx`), persisted in
   `chrome.storage.local`. `content/submitWatch.ts` watches a filled form for the candidate's own
   submit click and auto-saves — see "Auto-save on the ATS's own submit" under Shipped.
@@ -105,8 +109,8 @@ candidate edits it. **Ask** drafts or revises one application answer without wri
 - **DB:** Postgres, accessed via Drizzle ORM over the standard wire protocol (`pg`) — Docker, a
   local install, or Neon all work unchanged (`docs/adr/0002-postgres-driver-for-local-dev.md`). The
   backend itself always runs locally as a Node process. Duplicate Guard lookups match a derived
-  `job_key` — the posting's URL identity — backed by a `(job_key, created_at DESC)` index, falling
-  back to `(job_url, created_at DESC)` for rows written before the key existed. PGlite integration
+  `job_key` — the posting's URL identity — backed by a `(user_id, job_key, created_at DESC)` index,
+  falling back to `(user_id, job_url, created_at DESC)` for rows written before the key existed. PGlite integration
   tests execute the optimized query and singleton/index migrations against a PostgreSQL-compatible
   engine.
 - **Structured output is the response format, and the local parse is still the guarantee.** Every
@@ -212,16 +216,16 @@ Load-bearing, recorded nowhere else, and easy to "clean up" into a regression.
   itself on an `await` returning would throw the user's typing away on every failure, and a
   stopped backend is the everyday case. Both are covered in
   `lib/useApplicationStore.test.ts`.
-- **`apps/dashboard`'s theme reads `localStorage` and `matchMedia` through guards.** Neither exists
-  in the jsdom environment its component tests run in, and a browser with site data blocked
-  _throws_ on `localStorage` property access rather than returning null. The theme is read before
+- **`apps/dashboard`'s theme reads `localStorage` through a guard.** It doesn't exist in the jsdom
+  environment its component tests run in, and a browser with site data blocked _throws_ on
+  `localStorage` property access rather than returning null. The theme is read before
   anything else is drawn, so an unguarded read takes down the whole app at first render rather than
   degrading. Same shape as the extension's `localThemeStorage()` guard, different missing API.
-- **The dashboard's list card is a `<li>` with a stretched link, not an `<a>`.** The stage
-  `<select>` on the card is interactive and cannot legally nest inside a link — its clicks navigate
-  instead of opening the dropdown. `.card__link::after` covers the card and the badge is layered
-  above it, which keeps exactly one real link per row for keyboard and screen-reader users. Turning
-  the card back into an anchor silently breaks the stage control.
+- **A dashboard list row is a `<tr>` with one real link (the role title) and a row click handler,
+  never a row-wide `<a>`.** The stage `<select>` and the posting link are interactive and cannot
+  legally nest inside a link; the row handler ignores clicks on links and on
+  `[data-row-navigation-ignore]` cells. Wrapping the row in an anchor silently breaks the stage
+  control.
 - **Cover-letter fields (`cover_letter_text` / `cover_letter_upload`) are detected but deliberately
   not filled.** `answerQuestions` is wired only to `question`-category fields. A scope decision,
   not an oversight.
@@ -495,20 +499,22 @@ stuck had no handling, and all three ended the same way for the candidate: a pan
   Without one shared barrier a sweep can read `analyzing` that _this same worker_ has just written,
   and demote live work as interrupted.
 - **A failure that can't be checkpointed still surfaces.** `checkpointFailure` in
-  `applicationPipeline.ts` wraps the `patchPipelineRun` that records a step's failure; if that
+  `background/runClaim.ts` wraps the `patchPipelineRun` that records a step's failure; if that
   storage write itself rejects, it throws an `AggregateError` carrying both causes rather than
   losing the original. `runAnalysis`'s pre-backend work — reading the detected page, the Duplicate
   Guard lookup — sits inside that `try` for the same reason.
-- **`handleTypedMessage` returns its task — but not to Chrome.** The service worker deliberately
-  does not hand the promise back, so the protocol stays notification-only and never holds a closing
-  panel's channel open. It is returned so there is one place, the listener's `.catch`, where a
-  runner rejection is logged with the message type, tab and run id instead of being swallowed by a
-  `void`.
+- **`handleTypedMessage` returns its task — but not to Chrome.** `background/messageListener.ts`
+  acknowledges most messages at once and routes them fire-and-forget, so a closing panel's channel
+  is never held open; only `UPDATE_RUN`, `START_FILL` and `START_SAVE_APPLICATION` reply (a refusal
+  writes nothing the panel could observe), and the Fill/Save reply covers the claim only. The task is
+  returned so there is one place, the listener's `.catch`, where a runner rejection is logged with the
+  message type, tab and run id instead of being swallowed by a `void`.
 - **An undelivered command stands the panel back down.** `notify` takes an optional
   `onDispatchError`, called when `chrome.runtime.lastError` says Chrome never delivered the START.
   The Autofill Tab renders that as the step's own error state and clears it as soon as any persisted
   progress for the run arrives — usually there is none, but a worker coming back mid-report is the
-  race the guard exists for. This adds no response payload: the protocol still has no replies.
+  race the guard exists for. `startFill`/`startSaveApplication` treat an undelivered command the same
+  way as a refused claim.
 - **The Save Step's first write is now idempotent, closing the one gap `runClaim.ts`'s cancellation
   policy explicitly called out as unsolved.** A retried or superseded `POST /applications` used to
   risk a second Application for the same run if the first attempt's response was lost. The pipeline
@@ -1789,46 +1795,18 @@ Decisions:
 
 ## Known loose ends
 
-- ~~**The job description is never stored, so no extraction change can be backfilled.**~~ Decided and
-  shipped by Phase 19: `raw_description` is a `text` column (migration `0008_numerous_doorman.sql`,
-  `db/schema.ts`), and both save paths fill it — `applicationPayload.ts`'s manual entry from the
-  pasted posting, its autofill entry from the text the run actually analyzed. `extractionVersion`
-  ships alongside it, stamped from `EXTRACTION_VERSION`, so the rows a given prompt change predates
-  are identifiable rather than merely re-runnable.
-  **The reader now exists for a human, not yet for a sweep.** `ApplicationDetail`'s **Posting** tab
-  renders a stored `rawDescription` as the text the Analysis Step was actually given — which is the
-  copy that outlives the posting URL, and the only way to ask why extraction produced what it did.
-  Its requirement list reads `requirementEvidence` back the same way, per requirement, through
-  `components/RequirementList.tsx` (the verdict vocabulary now lives once, in `lib/stages.ts`'s
-  `EVIDENCE_LABELS`, shared with the Analytics roll-up).
-  What is still missing is the _machine_ reader: `scripts/evalExtraction.ts` judges a prompt change
-  against its own hand-written `POSTINGS`, not against the candidate's history, and no sweep re-runs
-  extraction over rows stamped with an older `extractionVersion`. `bulletProvenance` still has no
-  reader at all.
-
-- **There is no Ashby API oracle.** The one that existed only ever got 401s and was removed, along
-  with its `api.ashbyhq.com` host permission. The unauthenticated GraphQL endpoint that _does_ work,
-  its query and its response shape are written up in `background/apiDetectors.ts`'s own comment;
-  rebuilding it needs `jobs.ashbyhq.com` in `host_permissions` and a POST body, which
-  `AtsOracle.request` would have to start returning an `init` for again.
-- ~~**`packages/shared/src/screeningAnswers.ts` has no test file.**~~ Stale: `matchScreeningTopic`
-  is directly tested in `preparedAnswers.test.ts`'s own `describe('matchScreeningTopic', …)` block,
-  order-dependent overlap case included (a question naming both work authorization and sponsorship
-  resolves to the former). Extended to one case per `SCREENING_TOPICS` entry — the topics it had not
-  named were exercised only by whichever topic they happened to fall through to, which would not
-  have caught a typo in one of their own patterns.
-- ~~**A second non-autofilling form was mentioned but never supplied.**~~ Supplied and fixed: a
-  Lever posting (`jobs.lever.co/sonarsource/…/apply`) that filled nothing at all. Detection was
-  never the problem — `content/leverForm.test.ts` runs against the captured live form and finds and
-  fills every field. The fault was in the frame plumbing, and it is not Lever-specific: both
-  `SCAN_PAGE` and `FILL_FORM` are now addressed to the frame that reported the form rather than
-  broadcast to the tab. See the `chrome.tabs.sendMessage` entry under _Constraints that look like mistakes_.
-- **Nothing proves a Gem posting (`jobs.gem.com`) fills.** A detection fix was tried and reverted at
-  the user's request because it did not fix the reported symptom. Gem is a fully client-rendered SPA
-  whose inputs carry no `id`, `name`, `placeholder` or `<label>`; the untested suspicion is that its
-  React-controlled inputs revert a written value, which would be a Fill Step problem rather than a
-  detection one. Diagnosing it needs a live browser, not a captured snapshot.
-- Two Ashby questions still need a live browser check: whether `data-djobi-id` attributes survive an
-  Ashby form re-mount (if not, `resolveField` returns null for every field), and how Ashby renders
-  its four Boolean screening questions — native fieldset/radios and `role="combobox"` are handled,
-  custom buttons are not.
+- **No machine reader for stored postings yet.** `rawDescription` and `extractionVersion` are stored
+  on every save (Phase 19), and `ApplicationDetail`'s Posting tab and `RequirementList` read them for
+  a human. But `scripts/evalExtraction.ts` judges prompt changes only against its own `POSTINGS`,
+  nothing re-runs extraction over rows with an older `extractionVersion`, and `bulletProvenance` has
+  no reader at all.
+- **There is no Ashby API oracle.** Its public posting API returns 401. The unauthenticated GraphQL
+  endpoint that does work is written up in `background/apiDetectors.ts`; rebuilding it needs
+  `jobs.ashbyhq.com` in `host_permissions` and a POST `init` on `AtsOracle.request`.
+- **Nothing proves a Gem posting (`jobs.gem.com`) fills.** Gem is a fully client-rendered SPA whose
+  inputs carry no `id`, `name`, `placeholder` or `<label>`; the untested suspicion is that its
+  React-controlled inputs revert a written value (a Fill Step problem, not detection). Needs a live
+  browser to diagnose.
+- **Ashby re-mounts need a live check:** whether `data-djobi-id` survives an Ashby form re-mount. If
+  not, `resolveField` misses every re-tagged field and only `matchAnswerToField`'s label fallback
+  recovers answers.

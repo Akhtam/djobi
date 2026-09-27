@@ -32,7 +32,7 @@ flowchart TB
   dash("apps/dashboard")
   backend("apps/backend")
 
-  http("@djobi/http-client<br/>createHttpTransport: json · binary · upload<br/>HttpError kinds: http · timeout · network · invalid-response<br/>90s default deadline · isUnauthorized · userMessage")
+  http("@djobi/http-client<br/>createHttpTransport: json · binary · upload<br/>backendRoutes (routes both apps share)<br/>HttpError kinds: http · timeout · network · invalid-response<br/>90s default deadline · isUnauthorized · userMessage")
   editor("@djobi/profile-editor (React)<br/>useProfileDraft · useProfileWorkflow<br/>section inventory + section/field components<br/>list + bullet editing (★ starred bullets)")
   manualLog("@djobi/manual-log (React)<br/>useManualLogFlow<br/>extract + duplicate check → review → save")
   shared("@djobi/shared (zod)<br/>schemas · wire · detectedField<br/>jobKey · duplicateGuard · applicationPayload<br/>keywordCoverage · requirementEvidence · requirementImportance<br/>labelMatching · screeningAnswers · preparedAnswers<br/>bulletProvenance · httpUrl · resumeFileName · failureMessage")
@@ -61,12 +61,12 @@ flowchart TB
   linkStyle default stroke:#94a3b8,stroke-width:1.5px
 ```
 
-| Package                 | Imported by                                                                                                                                                                                                                                                                       |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@djobi/http-client`    | extension `lib/callBackend.ts`, `lib/authClient.ts`, `options/Login.tsx`, `panel/useAskThread.ts`; dashboard `lib/dashboardClient.ts`, `lib/useApplicationStore.ts`, `lib/dashboardSession.ts`, `views/{Login,SignUp,Profile,NewApplication}.tsx`; `profile-editor`, `manual-log` |
-| `@djobi/profile-editor` | extension `options/App.tsx`; dashboard `views/Profile.tsx`                                                                                                                                                                                                                        |
-| `@djobi/manual-log`     | extension `panel/LogApplication.tsx`; dashboard `views/NewApplication.tsx`                                                                                                                                                                                                        |
-| `@djobi/shared`         | all three apps, and the other three packages                                                                                                                                                                                                                                      |
+| Package                 | Imported by                                                                                                                                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@djobi/http-client`    | extension `lib/callBackend.ts`, `lib/backendClient.ts`, `lib/authClient.ts`, `options/Login.tsx`, `panel/useAskThread.ts`; dashboard `lib/dashboardClient.ts`, `lib/useApplicationStore.ts`, `lib/dashboardSession.ts`, `views/{Login,SignUp,Profile,NewApplication}.tsx`; `profile-editor`, `manual-log` |
+| `@djobi/profile-editor` | extension `options/App.tsx`; dashboard `views/Profile.tsx`                                                                                                                                                                                                                                                |
+| `@djobi/manual-log`     | extension `panel/LogApplication.tsx`; dashboard `views/NewApplication.tsx`                                                                                                                                                                                                                                |
+| `@djobi/shared`         | all three apps, and the other three packages                                                                                                                                                                                                                                                              |
 
 `@djobi/shared` is the contract all three apps must agree on. `http-client` is client
 infrastructure and is kept out of `shared` on purpose. `profile-editor` and `manual-log` hold

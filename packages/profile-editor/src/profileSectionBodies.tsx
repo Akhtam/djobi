@@ -134,25 +134,15 @@ export function ProfileSectionEntry({
 }
 
 /**
- * The child render-prop every `<ListSection>` for a list-kind section needs — the closure both
- * apps wrote out six times each, identically but for the wrapper's class name and, on `work` and
- * `projects`, `bulletListClassNames`.
- *
- * `maxBulletsPerRole` lives on `ctx` rather than threaded through every call site the way it used
- * to be: only `work` and `projects` cap bullets, so `ProfileSectionEntry`'s other four branches
- * never read the parameter, and a host no longer has to hand a bullet cap to an Education or Story
- * row to satisfy a signature it has no use for.
+ * The child render prop for a list section's `<ListSection>`. `maxBulletsPerRole` comes from `ctx`
+ * since only `work` and `projects` use it.
  */
 export function profileListSectionEntry<K extends ProfileListSectionKey>(
   section: K,
   ctx: {
     chrome: FieldChrome;
     editors: ProfileListEditors;
-    /**
-     * Applied to the wrapping `<div>` around the entry's fields — the one thing left to the host.
-     * Omit it (as the options page's Answers section does today) to render with no wrapper at all,
-     * rather than an empty `<div>` a bare omission would otherwise leave behind.
-     */
+    /** Class for a `<div>` wrapping the entry's fields; omit for no wrapper. */
     wrapperClassName?: string;
     bulletListClassNames?: BulletListClassNames | undefined;
     maxBulletsPerRole: number;

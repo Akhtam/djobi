@@ -1,11 +1,6 @@
 /**
- * The two Profile routes, driven against in-memory persistence.
- *
- * The assertions are about what is *stored* rather than about which function was called with what:
- * a saved Profile is asserted by reading it back, and a rejected body by the store still holding
- * what it held before. That is the whole reason the seam exists — `expect(mockSaveProfile).not
- * .toHaveBeenCalled()` proves a call didn't happen, which is a weaker claim than the profile being
- * unchanged, and it goes on passing if the route starts writing through some other path.
+ * The Profile routes against in-memory persistence, asserting on what is stored (a rejected body
+ * leaves the store unchanged) rather than on which function was called.
  */
 import type { Profile } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1,9 +1,6 @@
 /**
- * The sign-in view — `#/login`, `docs/multi-tenant-auth.md` Phase C.
- *
- * Email/password only: Better Auth is configured for it (`apps/backend/src/auth.ts`), and neither
- * Google nor GitHub has real credentials registered yet. `SignUp.tsx` (`#/signup`) is the
- * counterpart — signup is public now, not an operator-only action.
+ * The sign-in view (`#/login`): email/password. `SignUp.tsx` (`#/signup`) is the public
+ * counterpart.
  */
 import { useState, type FormEvent } from 'react';
 import { userMessage } from '@djobi/http-client';
@@ -26,9 +23,7 @@ export function Login({
     setError(null);
     try {
       await onSignIn(email, password);
-      // No `finally`-set `submitting(false)` on the success path: `onSignIn` navigates away on
-      // success, and this component unmounts. Setting state after that would be a no-op React
-      // would warn about; the `catch` below is the only path that leaves this view mounted.
+      // No `setSubmitting(false)` on success: `onSignIn` navigates away and this unmounts.
     } catch (err) {
       setError(userMessage(err));
       setSubmitting(false);

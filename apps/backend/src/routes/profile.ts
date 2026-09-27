@@ -7,24 +7,15 @@ import { extractResume, NoResumeTextError } from '../llm/extractResume.js';
 import { jsonBody, RequestValidationError } from '../requestBody.js';
 
 /**
- * Hono's multipart parser has no built-in size limit — it buffers the whole body regardless. The
- * `bodyLimit` middleware below trusts an honestly reported `content-length` header, but for a
- * request that omits or understates it, reads the raw body stream in chunks and rejects as soon as
- * the running total crosses the limit — bounding memory before `parseBody()` ever runs, rather than
- * after the whole body has already been buffered.
+ * Upload cap. Hono's multipart parser has no limit, so `bodyLimit` enforces it — including by
+ * counting the stream when `content-length` is missing or understated.
  */
 const MAX_RESUME_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /**
- * `GET /profile` / `POST /profile` — reads and saves the stored profile for the current user.
- * `POST /profile/extract-resume` — parses an uploaded resume PDF into a draft `Profile` extraction
- * for the candidate to review; see Phase 20 in `PROGRESS.md`.
- *
- * `store` is a parameter for the reason given in `db/profileStore.ts`: the seam is what lets these
- * two routes run with no database. `userId` comes from context, set by `app.ts`'s `requireAuth`
- * middleware (real in production, a test double in `testApp.ts`) before either handler runs — Phase
- * B's `docs/multi-tenant-auth.md` replaced the `BOOTSTRAP_USER_ID` constant this file used to read
- * directly with that.
+ * `GET`/`POST /profile` read and save the current user's Profile; `POST /profile/extract-resume`
+ * parses an uploaded resume PDF into a draft for review. `store` is injected; `userId` comes from
+ * `requireAuth`.
  */
 export function profileRoute(store: ProfileStore): Hono<AuthEnv> {
   const route = new Hono<AuthEnv>();
@@ -39,11 +30,7 @@ export function profileRoute(store: ProfileStore): Hono<AuthEnv> {
     return c.json(saved);
   });
 
-  /**
-   * Deliberately never calls `store.save` — extraction and saving stay two separate concerns, the
-   * same separation the extension pipeline already keeps between its Fill and Save steps. The
-   * candidate reviews and edits the draft this returns; `POST /profile` above is the only save path.
-   */
+  /** Never saves: the candidate reviews the draft, and `POST /profile` is the only save path. */
   route.post(
     '/profile/extract-resume',
     bodyLimit({
@@ -81,10 +68,8 @@ export function profileRoute(store: ProfileStore): Hono<AuthEnv> {
         const extracted = await extractResume(pdfBytes, c.req.raw.signal);
         return c.json(extracted);
       } catch (error) {
-        // A PDF with no extractable text (scanned/image-based, corrupt, or not really a PDF) is the
-        // candidate's file being what it is, not the request being malformed — but it's the same
-        // "explain and let them fall back to manual entry" shape every other rejected upload here
-        // gets, so it goes through the same convention.
+        // No extractable text: rejected like any other unusable upload, so the candidate can fall
+        // back to manual entry.
         if (error instanceof NoResumeTextError) {
           throw new RequestValidationError(error.message);
         }

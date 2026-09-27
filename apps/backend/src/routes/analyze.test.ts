@@ -76,7 +76,7 @@ describe('POST /analyze', () => {
   it('returns 400 when the profile carries a field neither model call grounds itself in', async () => {
     // `AnalyzeApplicationProfileSchema` is `.pick` over `ProfileSchema`, not `.strict()`, so an
     // extra field is silently stripped rather than rejected — the same behaviour
-    // `TailorResumeRequestSchema`/`AnswerQuestionsRequestSchema` already rely on. This pins that a
+    // `TailorResumeProfileSchema`/`AnswerQuestionsProfileSchema` already rely on. This pins that a
     // required field's absence is still a 400, which is the half a silent-strip test can't show.
     const res = await app.request('/analyze', {
       method: 'POST',

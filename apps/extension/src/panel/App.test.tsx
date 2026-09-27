@@ -1,10 +1,6 @@
 /**
- * The panel shell: Profile bootstrap, the tab switch, and the hand-off from a question card to the
- * Ask Tab.
- *
- * The flows themselves are tested where they live — `AutofillTab.test.tsx`, `LogApplication.test
- * .tsx`, `AskTab.test.tsx`. What is left here is what the shell actually owns, which is why this
- * module no longer runs the whole Application Pipeline to assert on a tab button.
+ * The panel shell: Profile bootstrap, the tab switch, and the question-card hand-off to the Ask
+ * Tab. Each flow is tested in its own module.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

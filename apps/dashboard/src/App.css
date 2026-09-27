@@ -1,10 +1,6 @@
 /*
- * The dashboard's stylesheet.
- *
- * The token block below is copied verbatim from `apps/extension/src/options/App.css` so the two
- * surfaces are visibly one product. The extension already duplicates this block across its own two
- * pages; a third copy matches that rather than introducing a shared-CSS package for one consumer.
- * Everything after the token block is specific to this app.
+ * The dashboard's stylesheet. The token block is copied verbatim from the extension's
+ * `options/App.css` so both surfaces look like one product; everything after it is dashboard-only.
  */
 :root {
   color-scheme: light;
@@ -700,14 +696,8 @@ h3 {
 }
 
 /*
- * Importance bands, the grouping both requirement views use — see `lib/requirementGroups.ts`.
- *
- * Deliberately a chip and never a bar, meter or filled track. A length is read as a quantity, and a
- * quantity on this screen is one the candidate would set about raising; a band is a label for what
- * the posting asked for, which is not a thing they can change. Only the two decisive bands are
- * colored — `meaningful` and below stay muted so the eye lands on what actually decides the
- * application, and `unbanded` is greyest of all because it is the absence of an assessment rather
- * than a low one.
+ * Importance band chips (see `lib/requirementGroups.ts`). A chip, never a bar — a length reads as a
+ * quantity to raise. Only the decisive bands are colored; `unbanded` is greyest (no assessment).
  */
 .requirement-band {
   display: inline-block;
@@ -1868,10 +1858,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * Single-select tab bar — same pill-group shell as `.filter-pills`, but its own class: filter
- * pills carry a per-option count and a null "All" state that tabs have no use for, and the
- * selected tab is solid-filled rather than tinted since it is the page's primary navigation, not
- * a narrowing filter.
+ * Single-select tab bar: the `.filter-pills` shell without counts or "All", solid-filled when
+ * selected since it's primary navigation.
  */
 .detail__tabs {
   display: inline-flex;
@@ -2256,19 +2244,10 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * No `min-width: 0` here, and that is the fix rather than an oversight. A flex item's default
- * minimum size is its content's own min-content width, and this group's content is now
- * `.list-stage-filters`'s grid of six pills — so left at the default, the browser refuses to
- * shrink Stage below whatever six real pills actually need, and wraps the *other* row content
- * instead once that no longer fits. `min-width: 0` used to override that and let Stage get
- * squeezed arbitrarily thin, relying on horizontal scroll to hide the difference — which is what
- * made the row look clipped at ordinary desktop widths instead of simply reflowing.
- *
- * A genuinely narrow phone needs no override here either: below `list-stage-filters`'s own
- * `width <= 720px`, the pills switch to a horizontally scrollable strip, and a scroll container's
- * content stops counting toward its ancestor's intrinsic width per the flexbox spec — so this
- * group's min-content collapses to near-zero right where it needs to, without a media query of
- * its own restating a breakpoint that already lives with the rule it belongs to.
+ * No `min-width: 0`, on purpose: the default min-content width keeps the six stage pills intact and
+ * wraps the other controls instead of squeezing Stage. Narrow screens need no override, since the
+ * pills become a scroll strip below 720px (`.list-stage-filters`), whose content no longer counts
+ * toward intrinsic width.
  */
 .analytics-control-group {
   display: flex;
@@ -2290,12 +2269,7 @@ button.requirement-groups__trimmed {
   background: color-mix(in srgb, var(--stage-filter-bg) 55%, var(--surface));
 }
 
-/*
- * A narrower pill than `.list-stage-filters` renders elsewhere: this row already shares the card
- * with the date range and Gaps only, where the applications list's own stage filter has a whole
- * row of its own. Every dimension here is the base `.segmented-filter .filter-pill` value trimmed
- * down a size, not a different look — same icons, same colors, same shape, just less of each.
- */
+/* The stage pills trimmed one size down for the shared Analytics control row. */
 .analytics-segmented-filter .filter-pill {
   gap: 4px;
   padding: 5px 7px;
@@ -2342,11 +2316,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * The visible half of the control — a `StageSelect`-style fake select: a bordered pill showing the
- * current value and a caret, with the real `<select>` (`.analytics-range-select__input`) laid over
- * it invisibly so the browser's own picker, keyboard support and focus handling all still work.
- * Reskinning it here rather than living with the native chrome is what keeps it looking like the
- * rest of this app's controls instead of whatever the platform's default select renders as.
+ * The visible half of the range fake-select (like `StageSelect`): a bordered pill with value and
+ * caret, with the real `<select>` laid over it invisibly.
  */
 .analytics-range-select__control {
   position: relative;
@@ -2389,10 +2360,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * The Keywords panel's own "Min. appearances" filter — a hand-rolled counter rather than a native
- * `<input type=number>`, matching the toggle switch below: this app reskins controls that need a
- * specific look instead of leaning on inconsistent browser chrome (a number input's spin buttons
- * vary widely in size and style across browsers, and are barely visible in some).
+ * "Min. appearances" counter — hand-rolled, since number-input spin buttons vary too much across
+ * browsers.
  */
 .analytics-stepper {
   display: flex;
@@ -2933,14 +2902,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * Bordered/shadowed like the applications rows, but a panel is a static content region rather than
- * one item in a result set, so it keeps a distinct class.
- *
- * A flex column capped at the same `max-height` both scroll regions used to carry individually: with
- * `.analytics-grid` stretching both panels to the row's height, the cap has to live here so a panel
- * whose content is short still grows to match its sibling instead of leaving the stretch to fight a
- * shorter intrinsic height. The scroll region below (`.analytics-reqs-scroll` /
- * `.analytics-keywords-scroll`) then takes `flex: 1` to fill whatever the head/summary bits don't use.
+ * A static content panel. Carries the shared `max-height` so a shorter panel still stretches to its
+ * sibling in `.analytics-grid`; its scroll region takes `flex: 1`.
  */
 .analytics-panel {
   display: flex;
@@ -2975,10 +2938,8 @@ button.requirement-groups__trimmed {
 /* ── Keyword bar list ────────────────────────────────────────────────────── */
 
 /*
- * Its own scroll region, not the page's — same reasoning as `.analytics-reqs-scroll`. `tabindex="0"`
- * (set in the component) is what makes it reachable by keyboard. `flex: 1` fills whatever height
- * `.analytics-panel`'s `max-height` cap leaves after the head above it; `min-height: 0` is required
- * for a flex child to actually shrink and scroll instead of overflowing its flex parent.
+ * The keyword table's own scroll region (`tabindex="0"` in the component for keyboard access).
+ * `flex: 1` fills the panel; `min-height: 0` lets the flex child shrink and scroll.
  */
 .analytics-keywords-scroll {
   flex: 1;
@@ -3012,12 +2973,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * A button, not a row with a click handler on it: selecting a keyword is a real control, and the
- * panel it narrows needs the same keyboard/focus support any other control on the page gets.
- *
- * The frequency bar is the row's own background (`::before`, width driven by `--w`), not a separate
- * track beside the label — the row *is* the bar, the same way a native progress control reads as one
- * shape rather than a label next to a meter.
+ * A keyword row is a button (a real control with keyboard/focus support). The frequency bar is the
+ * row's own `::before` background, width from `--w`.
  */
 .analytics-row {
   position: relative;
@@ -3088,10 +3045,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * `skills`/`experience` are two flavours of covered, kept visually distinct (green/blue) so a
- * reader can still tell *where* a term is evidenced at a glance; `missing` is the gap the Gaps only
- * toggle narrows to. `profile-experience` is unreachable on this path (see `keywordCoverage`) and
- * has no modifier here.
+ * `skills`/`experience` are two shades of covered (green/blue); `missing` is what Gaps only shows.
+ * `profile-experience` can't occur here, so it has no modifier.
  */
 .analytics-badge {
   padding: 2px 8px;
@@ -3473,10 +3428,7 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * The stored posting, shown as it was analyzed. `pre` keeps the blank lines and bullet indentation
- * that carry a posting's structure — the extractor was given exactly this text, so reflowing it
- * here would show something the analysis never saw — with wrapping on, since a posting is prose and
- * a horizontal scrollbar over several screens of it is unreadable.
+ * The posting exactly as analyzed: `pre` preserves its structure, with wrapping on for readability.
  */
 .posting-text {
   margin: 10px 0 0;
@@ -3577,12 +3529,8 @@ button.requirement-groups__trimmed {
 }
 
 /*
- * Its own scroll region, not the page's — a busy range can hold 100-200 postings, and a full-height
- * panel would swallow the page's own scroll. `tabindex="0"` (set in the component) is what makes it
- * reachable by keyboard; without it a `overflow-y: auto` div has no way to receive scroll focus.
- * `flex: 1` fills whatever height `.analytics-panel`'s `max-height` cap leaves after the head and
- * summary strip above it; `min-height: 0` is required for a flex child to actually shrink and scroll
- * instead of overflowing its flex parent.
+ * The requirements feed's own scroll region (a busy range holds 100–200 postings); `tabindex="0"`
+ * in the component for keyboard access. `flex: 1` fills the panel; `min-height: 0` lets it scroll.
  */
 .analytics-reqs-scroll {
   flex: 1;

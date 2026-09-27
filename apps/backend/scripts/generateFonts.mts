@@ -1,16 +1,8 @@
 /**
- * Regenerates `src/pdf/notoSansFonts.ts` from the `@expo-google-fonts/noto-sans` package.
+ * Regenerates `src/pdf/notoSansFonts.ts` from `@expo-google-fonts/noto-sans`.
  *
- * The renderer needs the font *bytes*, and it has to get them the same way in every environment it
- * runs in: Node (`pnpm dev`, `pnpm build`), vitest, and — the reason this file exists — a
- * Cloudflare Worker. Reading them off disk (`createRequire(...).resolve` + `fs`) is what the
- * previous `@react-pdf/renderer` implementation did, and it is precisely what a Worker cannot do:
- * there is no filesystem, and the module-scope `createRequire(import.meta.url)` call it needed
- * fails to evaluate at all, taking the whole Worker down on cold start rather than just this route.
- *
- * Base64 in a committed module is therefore deliberate. It is bytes the bundler carries, so it
- * works unchanged everywhere and needs no per-platform branch, no build-order hook, and no
- * generated file that CI has to remember to create before `tsc` runs.
+ * The bytes are inlined as base64 so the renderer loads them identically in Node, vitest and a
+ * Worker (which has no filesystem) — no per-platform branch or build-time generation step.
  *
  * Run with: pnpm --filter backend fonts:generate
  */
@@ -21,26 +13,13 @@ import subsetFont from 'subset-font';
 const require = createRequire(import.meta.url);
 
 /**
- * The scripts a rendered resume is allowed to contain, as Unicode ranges.
+ * The Unicode ranges a rendered resume may contain. Subsetting cuts ~1.26 MB of font to ~0.4 MB.
  *
- * Shipping the full faces costs ~1.26 MB of font for a document that uses a few hundred glyphs, and
- * a Worker pays for that in its bundle on every deploy. Subsetting to these ranges cuts it to
- * ~0.4 MB while covering every script the product can actually render today.
+ * This is a product limit: a glyph outside these ranges is silently replaced by the shaper and then
+ * caught by `preflightResumePdf`. Adding a script means adding its range and checking the size.
  *
- * **This set defines a real product limit, not just a size trade.** A glyph outside it does not
- * reach the page as written: the subsetter drops it, and what lands in the content stream is
- * whatever the shaper falls back to — often a *different* glyph rather than a visible `.notdef`
- * box, so the failure is silent at the pixel level and only `preflightResumePdf` catches it, when
- * the extracted text stops matching the candidate's own words. That behaviour predates subsetting
- * — the full Noto Sans has no CJK either, so a CJK name already failed — but this list is now the
- * place that decides it. Adding a script means adding its range here *and* checking the size cost,
- * not just shipping more font.
- *
- * Combining marks (U+0300–U+036F) are here for a reason that is easy to miss: text does not arrive
- * normalised. `extractPdfText` (pdf.js) routinely yields *decomposed* (NFD) sequences from uploaded
- * resumes and the LLM copies a name straight through, so `José` can reach the renderer as `e` +
- * U+0301. Without the marks that is a hard 500 on `POST /render-resume-pdf` for anyone with an
- * accented name.
+ * Combining marks (U+0300–U+036F) are required because text often arrives decomposed (NFD) from
+ * uploaded PDFs — `José` as `e` + U+0301.
  */
 const UNICODE_RANGES = [
   [0x0000, 0x00ff], // Basic Latin + Latin-1 Supplement (includes `·`, the contact-line separator)
@@ -78,22 +57,11 @@ for (const [name, specifier] of Object.entries(FONTS)) {
 
 const header = `/**
  * Noto Sans 400/700 as base64, generated from \`@expo-google-fonts/noto-sans\` — do not edit by hand.
+ * Regenerate with \`pnpm --filter backend fonts:generate\` (see \`scripts/generateFonts.mts\`).
  *
- * Regenerate with \`pnpm --filter backend fonts:generate\` (\`scripts/generateFonts.mts\`, which
- * explains why the bytes are inlined rather than read from disk: a Cloudflare Worker has no
- * filesystem, and the \`createRequire\` call that read them before failed at module scope there,
- * taking down the entire Worker rather than only the PDF route).
- *
- * These are **subsetted** to the scripts that script lists — Latin, Greek and Cyrillic, plus the
- * combining marks, punctuation and currency the layout uses. That is a product limit as much as a
- * size one: a glyph outside the set is dropped, the shaper substitutes something else for it, and
- * \`preflightResumePdf\` fails the render. See the generator for the ranges and for what adding a
- * script costs.
- *
- * \`pdf/renderResume.ts\` decodes these once at module scope and hands the bytes to
- * \`pdf.embedFont(...)\`. Only the glyphs a given resume actually uses are written into the output
- * PDF — \`save({ subsetFonts: true })\` subsets them again per render — so neither these files nor
- * their full originals ever reach a candidate.
+ * Inlined so no filesystem is needed (Workers have none). Subsetted to Latin, Greek and Cyrillic
+ * plus combining marks, punctuation and currency; a glyph outside that set fails
+ * \`preflightResumePdf\`. Each render subsets again to the glyphs it uses.
  */
 `;
 

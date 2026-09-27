@@ -10,14 +10,7 @@ import { HttpError } from '../lib/callBackend';
 import { fakeSessionStorage } from '../lib/fakeSessionStorage';
 import { App } from './App';
 
-/**
- * The options page's one external seam, replaced whole.
- *
- * `createFakeBackendClient` satisfies the same `BackendClient` that `options/main.tsx` hands the
- * HTTP adapter to, so these tests cross the seam the page actually has. They used to replace the
- * transport *under* the client and assert on `'/profile'` paths and HTTP methods — which passes
- * whenever the page sends the right URL, whatever it asked for.
- */
+/** The options page's one seam, a fake `BackendClient` — the same interface `main.tsx` supplies. */
 let getProfile: ReturnType<typeof vi.fn>;
 let saveProfile: ReturnType<typeof vi.fn>;
 let client: BackendClient;

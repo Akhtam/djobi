@@ -344,7 +344,9 @@ function AnalyticsPreview() {
   );
 }
 
-/** Public product page. It intentionally owns no dashboard client and starts no authenticated IO. */
+/**
+ * Public product page. It intentionally owns no dashboard client and starts no authenticated IO.
+ */
 export function LandingPage() {
   const { theme, toggleTheme } = useThemePreference();
   const [previewSlide, setPreviewSlide] = useState<PreviewSlide>('Applications');

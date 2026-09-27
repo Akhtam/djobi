@@ -1,16 +1,6 @@
 /**
- * `backendClient.ts` is a route map: which path, which method, which body. Those three facts are
- * its whole interface, and until now nothing asserted any of them — the module's correctness rode
- * entirely on the two "real adapter" cases in `applicationPipeline.test.ts`.
- *
- * The `satisfies` annotations still do the heavy lifting at compile time; what these cover is the
- * half a type can't see, a path or a method typed wrong. `renderResumePdf` and `getProfile` matter
- * most: both are now called from the panel, which used to build them by hand.
- *
- * Each route also names the schema its response is decoded through, which the projection cases below
- * pass over with `expect.anything()` — what matters there is the request. The cases that do care
- * feed a response through {@link respondWith}, which applies the route's own schema exactly as the
- * real transport does, so attaching the wrong one to a route fails here rather than in production.
+ * `backendClient.ts` as a route map: path, method and body per route, and each response decoded
+ * through its route's schema (via {@link respondWith}, as the real transport does).
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,46 +134,6 @@ describe('httpBackendClient', () => {
     });
   });
 
-  it('sends only resume fields to tailoring', async () => {
-    await httpBackendClient.tailorResume(profile, jobInfo);
-
-    expect(transport.json).toHaveBeenCalledWith('/tailor-resume', expect.anything(), {
-      method: 'POST',
-      body: {
-        profile: {
-          workExperience: profile.workExperience,
-          maxBulletsPerRole: profile.maxBulletsPerRole,
-          skills: profile.skills,
-        },
-        jobInfo,
-      },
-      signal: undefined,
-    });
-  });
-
-  it('sends only grounding fields to question drafting', async () => {
-    await httpBackendClient.answerQuestions(profile, jobInfo, []);
-
-    expect(transport.json).toHaveBeenCalledWith('/answer-questions', expect.anything(), {
-      method: 'POST',
-      body: {
-        profile: {
-          workExperience: profile.workExperience,
-          education: profile.education,
-          skills: profile.skills,
-          stories: profile.stories,
-          // Prepared answers, so a question whose wording matched none of them is still drafted from
-          // what the candidate has already written rather than invented beside it. `screeningAnswers`
-          // stays behind: a legal declaration is matched, never drafted.
-          customAnswers: profile.customAnswers,
-        },
-        jobInfo,
-        questions: [],
-      },
-      signal: undefined,
-    });
-  });
-
   it('sends the union of tailoring and drafting fields to the consolidated Analysis Step call', async () => {
     await httpBackendClient.analyzeApplication('A posting.', profile, []);
 
@@ -292,14 +242,15 @@ describe('httpBackendClient', () => {
     ).rejects.toThrow(/latest must be/);
   });
 
-  it('rejects a tailored resume that came back without its work experience', async () => {
-    // The failure this whole response-decoding change exists for. A model-written payload used to be
-    // cast to its return type unchecked, so a missing half arrived looking valid, was checkpointed
-    // onto the run, and surfaced two steps later as an empty PDF and a Keyword Coverage report that
-    // evidenced nothing — with nothing pointing back at the response that caused it.
-    respondWith({ skills: ['TypeScript'] });
+  it('rejects an analysis whose tailored resume came back without its work experience', async () => {
+    // The failure this whole response-decoding change exists for. A model-written payload used to
+    // be cast to its return type unchecked, so a missing half arrived looking valid, was
+    // checkpointed onto the run, and surfaced two steps later as an empty PDF and a Keyword
+    // Coverage report that evidenced nothing — with nothing pointing back at the response that
+    // caused it.
+    respondWith({ jobInfo, tailoredResume: { skills: ['TypeScript'] }, answers: [] });
 
-    await expect(httpBackendClient.tailorResume(profile, jobInfo)).rejects.toThrow();
+    await expect(httpBackendClient.analyzeApplication('a posting', profile, [])).rejects.toThrow();
   });
 
   it('rejects job info whose requirements came back as prose rather than a list', async () => {
@@ -309,9 +260,13 @@ describe('httpBackendClient', () => {
   });
 
   it('rejects a drafted answer missing the field it belongs to, which nothing downstream could fill', async () => {
-    respondWith([{ question: 'Why us?', answer: 'Because.', sourceStoryIds: [] }]);
+    respondWith({
+      jobInfo,
+      tailoredResume,
+      answers: [{ question: 'Why us?', answer: 'Because.', sourceStoryIds: [] }],
+    });
 
-    await expect(httpBackendClient.answerQuestions(profile, jobInfo, [])).rejects.toThrow();
+    await expect(httpBackendClient.analyzeApplication('a posting', profile, [])).rejects.toThrow();
   });
 
   it('reads an absent profile as null rather than failing on it', async () => {
@@ -413,17 +368,8 @@ describe('httpBackendClient.answerChat', () => {
 });
 
 /**
- * What must not leave the browser.
- *
- * Each of these four routes takes a *projection* of the Profile — the fields that ground one model
- * call — and the projection is stated once, as a `.pick` in `@djobi/shared`'s `wire.ts`. These
- * cases name the fields that stay behind, so widening one of those picks fails here rather than
- * quietly starting to send a phone number to a model.
- *
- * They are worth having beside the exact-body cases above, which would also catch a leak: those
- * read as "this is the body", and this reads as "this is the rule". A `satisfies` annotation, which
- * is what these bodies used to be built with, passes both readings and enforces neither — a full
- * Profile is structurally assignable to every one of these narrow types.
+ * What must not leave the browser: each Profile projection's excluded fields, by name, so widening
+ * a `wire.ts` `.pick` fails here instead of silently sending more to the model.
  */
 describe('Profile projections', () => {
   /** A Profile with something in every field a projection is supposed to leave behind. */
@@ -457,18 +403,7 @@ describe('Profile projections', () => {
     return (body as { profile: unknown }).profile;
   }
 
-  it('grounds tailoring in work history alone — no contact details, no screening declarations', async () => {
-    const sent = await profileSentBy(() => httpBackendClient.tailorResume(disclosing, jobInfo));
-
-    expect(keysIn(sent)).not.toContain('phone');
-    expect(keysIn(sent)).not.toContain('location');
-    expect(keysIn(sent)).not.toContain('email');
-    expect(keysIn(sent)).not.toContain('screeningAnswers');
-    expect(keysIn(sent)).not.toContain('customAnswers');
-  });
-
   it.each([
-    ['answerQuestions', () => httpBackendClient.answerQuestions(disclosing, jobInfo, [])],
     [
       'answerChat',
       () => httpBackendClient.answerChat({ profile: disclosing, question: 'Why?', messages: [] }),
@@ -533,11 +468,11 @@ describe('withSessionRecovery', () => {
   });
 
   /**
-   * The hazard the wrapped-method list exists to close: `withSessionRecovery` spreads the client, so
-   * a method left off that list is still present and callable — just unwrapped. That is neither a
-   * type error nor a failure in any other test, only a route that 401s where it should have adopted
-   * the dashboard session. The list is checked for exhaustiveness at compile time; this walks every
-   * method at runtime so the guarantee is visible here too.
+   * The hazard the wrapped-method list exists to close: `withSessionRecovery` spreads the client,
+   * so a method left off that list is still present and callable — just unwrapped. That is neither
+   * a type error nor a failure in any other test, only a route that 401s where it should have
+   * adopted the dashboard session. The list is checked for exhaustiveness at compile time; this
+   * walks every method at runtime so the guarantee is visible here too.
    */
   it('routes every method but signIn and signOut through retry, with none left unwrapped', async () => {
     const client = createFakeBackendClient();

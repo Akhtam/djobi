@@ -3,33 +3,20 @@ import { parseProfile, type ExtractedProfile, type Profile } from '@djobi/shared
 import { applyExtractedProfile, normalizeProfileDraft } from './profileDraft.js';
 
 /**
- * What a completed {@link ProfileDraft.save} did, for the caller to render.
- *
- * `error` carries the rejection unclassified on purpose: this module knows nothing about a 401,
- * and the two editors answer one differently — the options page swaps itself for the sign-in view,
- * the dashboard routes to `#/login`.
+ * What a completed {@link ProfileDraft.save} did. `error` is unclassified: each app handles a 401
+ * its own way.
  */
 export type ProfileSaveOutcome =
   { kind: 'saved' } | { kind: 'stale' } | { kind: 'error'; error: unknown };
 
-/**
- * What a completed {@link ProfileDraft.applyResume} did.
- *
- * `error` is unclassified for the same reason {@link ProfileSaveOutcome}'s is — a 401 here means
- * the same thing it means on a save, and the two editors answer one differently.
- */
+/** What a completed {@link ProfileDraft.applyResume} did; `error` unclassified as above. */
 export type ProfileExtractOutcome =
   { kind: 'parsed' } | { kind: 'stale' } | { kind: 'error'; error: unknown };
 
 /**
- * The editable Profile draft: what a candidate is looking at before it's saved, and the save
- * itself.
- *
- * Loading the *first* Profile stays with the caller — this hook knows nothing about a
- * `DashboardClient`/`BackendClient`. What it owns is the whole save protocol, which both apps had
- * hand-rolled identically and each had to get right in the same order: capture the edit revision,
- * normalize, persist, discard a response an edit has already superseded, load what came back. That
- * ordering used to be documented here and enforced nowhere; it is now {@link save}'s to keep.
+ * The editable Profile draft and its save protocol: capture the edit revision, normalize, persist,
+ * drop a response an edit has superseded, load what came back. Loading the first Profile is the
+ * caller's job.
  */
 export interface ProfileDraft {
   /** The current draft, or `null` before the first {@link load}. */
@@ -42,31 +29,17 @@ export interface ProfileDraft {
   extracting: boolean;
   /** Applies a candidate's edit: updates the draft and marks it dirty. */
   setProfile(next: Profile): void;
-  /**
-   * Replaces the draft without marking it dirty — for a fresh load from the backend. A save's own
-   * response is applied by {@link save}, not through here.
-   */
+  /** Replaces the draft without marking it dirty — for a fresh load. */
   load(next: Profile): void;
   /**
-   * Normalizes the draft, hands it to `persist`, and applies the record that comes back — unless
-   * an edit landed while the request was out, in which case the response is dropped
-   * (`{ kind: 'stale' }`) rather than silently discarding the newer edit. A rejection is reported
-   * as `{ kind: 'error' }` with the draft untouched, so the candidate's work survives a retry.
-   *
-   * Calling this before the first {@link load} does nothing and reports `{ kind: 'stale' }` —
-   * there is no draft to save.
+   * Normalizes and persists the draft, applying the response unless an edit landed meanwhile
+   * (`stale`). On error the draft is untouched. Before the first {@link load}: no-op, `stale`.
    */
   save(persist: (profile: Profile) => Promise<Profile>): Promise<ProfileSaveOutcome>;
   /**
-   * Hands `file` to `extract` and applies whatever the extraction found onto the draft, field by
-   * field, marking it dirty. Nothing is persisted — {@link save} is still the only write path, and
-   * "You have unsaved changes" is what tells the candidate so.
-   *
-   * The draft it applies onto is the one current *when the parse returns*, not when it started: a
-   * resume takes seconds to parse and the form stays editable throughout, so applying onto the
-   * pre-parse snapshot would silently discard anything typed while waiting.
-   *
-   * Calling this before the first {@link load} does nothing and reports `{ kind: 'stale' }`.
+   * Runs `extract` on `file` and applies the result onto the draft as it is *when parsing returns*
+   * (so edits made while waiting survive), marking it dirty. Persists nothing. Before the first
+   * {@link load}: no-op, `stale`.
    */
   applyResume(
     file: File,
@@ -79,9 +52,7 @@ export function useProfileDraft(): ProfileDraft {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  // Refs, not state: both are read inside `save` after an `await`, where a stale closure over a
-  // state value would still show things as of when the handler was created, not the latest edit.
-  // `.current` always answers with the truth as of the read.
+  // Refs, not state: read after an `await` in `save`, where a state closure would be stale.
   const revisionRef = useRef(0);
   const profileRef = useRef<Profile | null>(null);
 

@@ -1,14 +1,6 @@
 /**
- * The three ways a request body can fail, which used to be two behaviours wearing one status.
- *
- * A body that isn't JSON at all threw a `SyntaxError` out of `c.req.json()` and fell into
- * `app.onError`, which turns anything thrown into a 500 — so a client sending garbage got the same
- * status, and produced the same `console.error` line, as the model failing or Postgres being down.
- * The status was wrong and the log signal was worse: a genuine backend fault and a truncated
- * request body were indistinguishable in the terminal.
- *
- * Asserted against a real route rather than a stub app, since the whole point is how `parseBody`
- * and `app.onError` compose in the app the server actually runs.
+ * Body failures, against a real route: non-JSON and schema-invalid bodies are 400s with no error
+ * log, distinct from real backend faults (500, logged).
  */
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
@@ -89,9 +81,9 @@ describe('request body validation', () => {
 /**
  * `queryParams`/`pathParams` on a throwaway app rather than a real route: every schema this backend
  * actually registers them with (`routes/applications.ts`) is deliberately permissive enough that no
- * real request can fail it — the point there is stating a route's shape, not rejecting anything new.
- * These prove the mechanism itself — reject-before-handler, expose after — with a schema strict
- * enough to exercise both paths.
+ * real request can fail it — the point there is stating a route's shape, not rejecting anything
+ * new. These prove the mechanism itself — reject-before-handler, expose after — with a schema
+ * strict enough to exercise both paths.
  */
 describe('queryParams', () => {
   const app = new Hono();

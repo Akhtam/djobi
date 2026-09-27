@@ -1,21 +1,10 @@
 /**
  * Noto Sans 400/700 as base64, generated from `@expo-google-fonts/noto-sans` — do not edit by hand.
+ * Regenerate with `pnpm --filter backend fonts:generate` (see `scripts/generateFonts.mts`).
  *
- * Regenerate with `pnpm --filter backend fonts:generate` (`scripts/generateFonts.mts`, which
- * explains why the bytes are inlined rather than read from disk: a Cloudflare Worker has no
- * filesystem, and the `createRequire` call that read them before failed at module scope there,
- * taking down the entire Worker rather than only the PDF route).
- *
- * These are **subsetted** to the scripts that script lists — Latin, Greek and Cyrillic, plus the
- * combining marks, punctuation and currency the layout uses. That is a product limit as much as a
- * size one: a glyph outside the set is dropped, the shaper substitutes something else for it, and
- * `preflightResumePdf` fails the render. See the generator for the ranges and for what adding a
- * script costs.
- *
- * `pdf/renderResume.ts` decodes these once at module scope and hands the bytes to
- * `pdf.embedFont(...)`. Only the glyphs a given resume actually uses are written into the output
- * PDF — `save({ subsetFonts: true })` subsets them again per render — so neither these files nor
- * their full originals ever reach a candidate.
+ * Inlined so no filesystem is needed (Workers have none). Subsetted to Latin, Greek and Cyrillic
+ * plus combining marks, punctuation and currency; a glyph outside that set fails
+ * `preflightResumePdf`. Each render subsets again to the glyphs it uses.
  */
 
 export const notoSansRegularBase64 =

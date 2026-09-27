@@ -112,13 +112,11 @@ rather than two implementations to keep in sync.
 
 ## Naming corrections (2026-09-01 pass)
 
-The rest of this document still says `db/profileRepository.ts` and `db/applicationsRepository.ts` in
-a few places below — read those as `db/profileStore.ts` + `db/postgresProfileStore.ts` and
-`db/applicationStore.ts` + `db/postgresApplicationStore.ts` respectively; the "repository" naming was
-never adopted. `applicationStore.contract.test.ts` already runs the same suite against both the
-in-memory and a real Postgres (PGlite) adapter — that existing file is where Phase A's
-cross-user-isolation tests belong, not a new one. Migration numbering has also moved: Phase A's
-migration landed as `0009`, not `0007` (the newest in the repo is now `0012`).
+Persistence lives in `db/profileStore.ts` + `db/postgresProfileStore.ts` and
+`db/applicationStore.ts` + `db/postgresApplicationStore.ts` (the "repository" naming was never
+adopted). `applicationStore.contract.test.ts` runs one suite against the in-memory and a real
+Postgres (PGlite) adapter, and holds Phase A's cross-user-isolation tests. Phase A's migration is
+`0009`; the newest is `0012`.
 
 ## The thing that will bite you
 
@@ -252,7 +250,7 @@ OAuth items below are kept as the documented follow-up once a provider is regist
 - [x] `callBackend.ts`'s transport attaches the token (`@djobi/http-client`'s new
       `getAuthorization` option, resolved fresh per call); a 401 surfaces as "sign in again" in the
       panel — a new `RunFailureKind: 'unauthorized'`, mapped in `background/pipelineFailure.ts` and
-      worded in `panel/AutofillTab.tsx`'s `failureReason` (there is no `BackendError` status branch
+      worded in `panel/RunNoticeView.tsx`'s `failureReason` (there is no `BackendError` status branch
       in this codebase to reuse — the doc's original wording assumed one)
 - [x] The panel handles signed-out mid-run: a 401 during any step already checkpointed through
       `checkpointFailure` like any other `HttpError` before this phase (`background/runClaim.ts`'s

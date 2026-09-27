@@ -1,18 +1,7 @@
 /**
- * Batched, scroll-triggered reveal for a long feed inside its own scroll region — the Analytics
- * requirements panel's alternative to the applications list's `?show=` / Load-more pattern.
- *
- * That pattern suits a short, flat list a click is proportionate to. A requirements read is
- * scanning a scrollable feed, and stopping to click every batch breaks that — so this grows the
- * visible count as the reader approaches the end, via an `IntersectionObserver` watching a sentinel
- * against the panel's *own* scrolling element, never the page's. The default `root: null` observes
- * the page's viewport, which would fire while the panel is scrolled internally but the page hasn't
- * moved, or never fire if the page never scrolls that far — getting `root` wrong is the whole bug
- * this hook exists to avoid.
- *
- * There is no fetch behind this: every row is already in the array the caller holds, so revealing
- * more is a synchronous slice. Nothing here reports a loading state, because there is no work in
- * flight to report.
+ * Batched, scroll-triggered reveal inside a panel's own scroll region (the Analytics requirements
+ * feed). The `IntersectionObserver`'s `root` is the panel's scrolling element, not the page — the
+ * default `root: null` would fire at the wrong times. No fetch: rows are already loaded.
  */
 import { useEffect, useRef, useState, type RefCallback } from 'react';
 
@@ -26,11 +15,9 @@ export interface RevealOnScroll {
 }
 
 /**
- * @param total - How many rows exist to reveal.
- * @param batchSize - How many rows one reveal grows the count by, and the initial count.
- * @param resetKey - Changes whenever the underlying result set does (a stage, range or keyword
- *   selection change) — a revealed count belongs to that set and cannot be allowed to outlive it,
- *   the same rule `listPath` enforces for `?show=` on the applications list.
+ * @param total - How many rows exist.
+ * @param batchSize - Rows per reveal, and the initial count.
+ * @param resetKey - Changes with the result set, resetting the revealed count.
  */
 export function useRevealOnScroll(
   total: number,
@@ -38,22 +25,15 @@ export function useRevealOnScroll(
   resetKey: string | number,
 ): RevealOnScroll {
   const [visibleCount, setVisibleCount] = useState(batchSize);
-  // State, not `useRef`, for the two DOM nodes: a plain ref's assignment doesn't trigger a
-  // re-render, so an observer effect keyed on it would only ever see whatever was attached at the
-  // moment the effect first ran. Either node can legitimately attach late — a caller that mounts
-  // this panel conditionally, or reorders when the scroll region itself renders — and a ref that
-  // missed that moment had no way to notice it ever attached at all.
+  // State, not refs, for the DOM nodes: either may attach late, and the observer effect must
+  // re-run.
   const [scrollNode, setScrollNode] = useState<HTMLDivElement | null>(null);
   const [sentinelNode, setSentinelNode] = useState<HTMLDivElement | null>(null);
-  // The observer callback closes over one render's `batchSize`/`total`; the ref keeps it reading
-  // the latest values without forcing the observer itself to be torn down and rebuilt every time
-  // either changes.
+  // Latest bounds for the observer callback without rebuilding the observer.
   const boundsRef = useRef({ batchSize, total });
   boundsRef.current = { batchSize, total };
 
-  // Deliberately keyed on `resetKey` alone: `batchSize` is a caller-side constant, and reacting to
-  // it here as well would collapse the reveal back to one batch on a render where nothing the
-  // reader did actually changed.
+  // Keyed on `resetKey` only: `batchSize` is a caller constant.
   useEffect(() => {
     setVisibleCount(batchSize);
   }, [resetKey]);

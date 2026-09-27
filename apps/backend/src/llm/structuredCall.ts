@@ -13,65 +13,33 @@ export interface StructuredToolCallOptions<Schema extends z.ZodType> {
   /** The full first user-turn prompt content — the grounding scaffold and the instructions. */
   userContent: string;
   /**
-   * Text placed *before* `userContent` in the same user turn, so the provider can cache it.
-   *
-   * For the operation that makes several calls that differ only in their tail: `answerQuestions`
-   * sends one request per question, and every one of them carries the same instructions and the
-   * same Profile. Without this the Profile is billed at full rate once per question.
-   *
-   * There is no marker to send. The models this routes to cache implicitly, on a byte-identical
-   * leading prefix, so the option means exactly what it always meant — stable text first, varying
-   * text last — and that ordering *is* the whole mechanism. Two things follow from implicit
-   * caching that did not hold under an explicit one: there is no cache *write* premium, so a
-   * concurrent first wave of requests no longer all pay to author the prefix; and a prefix shorter
-   * than the provider's minimum is simply not cached, costing nothing.
-   *
-   * The split is by *stability*, not by size — whatever is identical across the calls goes here and
-   * everything that varies stays in `userContent`, because a cached prefix only hits while it is
-   * byte-identical.
+   * Text placed before `userContent` in the same turn — identical across calls (e.g. the Profile
+   * for every `answerQuestions` call) so the provider's implicit prefix cache can hit. Order is the
+   * whole mechanism: stable first, varying last.
    */
   cachedPrefix?: string;
   /**
-   * Conversation turns that follow the `userContent` turn, for the one operation that is a
-   * conversation rather than a single request (`answerChat.ts`).
-   *
-   * They start with the assistant, because the candidate's opening message is folded into
-   * `userContent` rather than sent after it: two consecutive turns of the same role are rejected by
-   * some providers and silently merged by others. Folding keeps the scaffold and the question the
-   * candidate asked in one turn, and leaves the alternation intact for every upstream.
+   * Turns after `userContent`, for `answerChat`. They start with the assistant because the
+   * candidate's opening message is folded into `userContent`, keeping roles alternating.
    */
   followUpTurns?: ChatMessage[];
-  /** Name of the schema the model is answering with. Also the unit failures are reported against. */
+  /**
+   * Name of the schema the model is answering with. Also the unit failures are reported against.
+   */
   toolName: string;
   /** Description of the schema, shown to the model as guidance. */
   toolDescription: string;
   /** Zod schema used both to constrain generation and to validate what comes back. */
   schema: Schema;
   /**
-   * A requirement on the parsed object that the schema deliberately does not state, checked inside
-   * the retried unit. Return the reason it failed, or `undefined` when it holds.
-   *
-   * It exists because putting such a rule in the schema costs the retry. The schema is sent to the
-   * model to constrain generation *and* used to validate what comes back, and a violation of it is
-   * classified `invalid-input` — non-retryable, on the reasoning that a re-generation from the same
-   * prompt reproduces the same misreading. That reasoning holds for a model that misunderstood the
-   * *shape*; it does not hold for one that got the shape right and merely spelled "nothing here"
-   * as an empty string, which is a coin-flip a second attempt usually wins. `answerChat` needs
-   * exactly that: a cold ask must come back with an answer, and `''` is not one.
-   *
-   * Failing here is reported as `no-tool-call` and retried once, so the rule is stated where it is
-   * true rather than being enforced by a `.min(1)` that turns a recoverable turn into a 500.
+   * An extra rule on the parsed value, checked inside the retried unit; returns the failure reason
+   * or `undefined`. Failing it counts as `no-tool-call` and is retried once — unlike a schema
+   * violation (`invalid-input`), which isn't.
    */
   requires?: (value: z.infer<Schema>) => string | undefined;
   /**
-   * Aborts the request in flight — the HTTP request's own signal, which fires when the candidate's
-   * browser gives up on it.
-   *
-   * Inference is billed and generated whether or not anyone is still waiting for it, and this
-   * operation's whole cost *is* generation. A candidate who closes the panel mid-analysis, or hits
-   * Re-analyze, otherwise leaves several requests running to completion for a result nothing will
-   * read. Passing the signal down is what turns "the client stopped listening" into "the model
-   * stopped writing".
+   * The HTTP request's signal. Passing it down stops billed generation when the candidate leaves or
+   * re-analyzes.
    */
   signal?: AbortSignal | undefined;
 }
@@ -80,12 +48,9 @@ export interface StructuredToolCallOptions<Schema extends z.ZodType> {
 export type StructuredCallFailure = 'no-tool-call' | 'invalid-input';
 
 /**
- * A structured call that didn't produce a usable result.
- *
- * The distinction stays local to the operation that can act on it: a model that answered with
- * something that isn't the object gets one retry, while output that parsed but didn't fit the
- * schema, and provider failures, escape immediately. `message` remains suitable for the generic
- * `{ error }` HTTP response after the local decision has been made.
+ * A structured call that produced no usable result. `no-tool-call` (no object) is retried once;
+ * `invalid-input` (schema mismatch) and provider failures are not. `message` is safe for the
+ * `{ error }` response.
  */
 export class StructuredCallError extends Error {
   readonly kind: StructuredCallFailure;
@@ -112,13 +77,7 @@ export class StructuredCallError extends Error {
   }
 }
 
-/**
- * A value's structure with its content left out.
- *
- * The content is the candidate's Profile and the posting, so it does not belong in a log line; the
- * container is what a validation failure is actually about — `fit` arriving as an `object{…}` rather
- * than an `array(n)` is the whole diagnosis.
- */
+/** A value's structure without its content, for logging validation failures without PII. */
 function shapeOf(value: unknown, depth = 1): unknown {
   if (Array.isArray(value)) return `array(${value.length})`;
   if (value === null) return 'null';
@@ -141,18 +100,12 @@ function openRouterMetadata(metadata: unknown): OpenRouterCallMetadata {
 }
 
 /**
- * Generates one object against the given zod schema, validated before it is returned.
+ * Generates one object against `schema` via the provider's structured output, then validates it
+ * locally. `require_parameters` keeps OpenRouter off hosts that ignore `response_format`, but the
+ * local parse is the real guarantee.
  *
- * Structured output is the provider's own mechanism rather than a forced tool call, so which
- * upstream serves the request now matters: OpenRouter's schema support varies by model *and* by
- * host, and a request that lands on a host ignoring `response_format` comes back as prose.
- * `require_parameters` makes those hosts ineligible — but the guarantee is still the local parse,
- * not the provider's promise, which is why the schema is re-validated and the retry stays here.
- *
- * @param options - See {@link StructuredToolCallOptions}.
- * @returns The generated object, validated and typed against `options.schema`.
- * @throws {StructuredCallError} If the model doesn't produce the object at all
- *   (`kind: 'no-tool-call'`), or produces one that fails validation (`kind: 'invalid-input'`).
+ * @throws {StructuredCallError} `no-tool-call` if no object was produced; `invalid-input` if it
+ *   fails validation.
  */
 export async function callStructured<Schema extends z.ZodType>(
   options: StructuredToolCallOptions<Schema>,
@@ -160,10 +113,8 @@ export async function callStructured<Schema extends z.ZodType>(
   const route = routeFor(options.operation);
   const maxTokens = options.maxTokens ?? route.defaultMaxTokens;
   const model = openrouter.chat(route.model, {
-    // Strict mode is OpenAI's JSON Schema subset — every property required, no defaults — and these
-    // schemas are not written in it: an omitted `revisedAnswer` and a defaulted `note` are both
-    // meaningful. It was Anthropic's forced-tool guarantee that needed it; here the schema is the
-    // response format and the local parse is what enforces the shape.
+    // Not strict mode: OpenAI's strict subset requires every property and forbids defaults, which
+    // these schemas rely on. The local parse enforces shape.
     structuredOutputs: { strict: false },
   });
 
@@ -193,13 +144,7 @@ export async function callStructured<Schema extends z.ZodType>(
     requestId?: string | undefined;
   }): void => {
     const { provider, usage: openRouterUsage } = openRouterMetadata(fields.providerMetadata);
-    // Output tokens are what a structured call spends its wall clock on, so a slow call is a long
-    // answer rather than a slow network. `provider` and `cost` are what make the routing arguable
-    // with numbers instead of opinions: one slug can be served by any of seventeen upstreams, and
-    // "which model should do this" is not answerable without knowing what each one actually cost.
-    //
-    // Sizes and counts only — never a character of the prompt. What it carries is the candidate's
-    // Profile and the posting, and `promptChars` is here to say how big that was, not what it said.
+    // Sizes, counts, provider and cost only — never prompt content (it's the candidate's Profile).
     console.log('[djobi] structured_call', {
       toolName: options.toolName,
       operation: options.operation,
@@ -236,9 +181,7 @@ export async function callStructured<Schema extends z.ZodType>(
         providerOptions: {
           openrouter: {
             provider: {
-              // Structured-output support varies by upstream as well as by model, and a host that
-              // ignores `response_format` turns every call into a no-object failure. This is what
-              // keeps the request off those hosts in the first place.
+              // Skip upstream hosts that ignore `response_format`.
               require_parameters: true,
               // Prompts contain candidate profiles and application answers. Keep requests away
               // from upstreams that may retain that data, independent of account-level settings.
@@ -271,7 +214,8 @@ export async function callStructured<Schema extends z.ZodType>(
       });
 
       // The AI SDK infers `result.object` through its own conditional schema type, which zod 4's
-      // generic output doesn't reduce to; the SDK has already validated it against `options.schema`.
+      // generic output doesn't reduce to; the SDK has already validated it against
+      // `options.schema`.
       const object = result.object as z.infer<Schema>;
       const unmet = options.requires?.(object);
       if (unmet) {
@@ -287,9 +231,8 @@ export async function callStructured<Schema extends z.ZodType>(
 
       return object;
     } catch (error) {
-      // Anything that isn't "the model didn't give us the object" is a provider or transport
-      // failure — or an unmet `requires`, already classified above — and belongs to the caller
-      // unchanged. The call is logged either way: the `requires` path logs before it throws.
+      // Anything other than "no object" (provider/transport failure, or an unmet `requires` already
+      // classified above) goes to the caller unchanged.
       if (!NoObjectGeneratedError.isInstance(error)) throw error;
 
       const requestId = error.response?.id;
@@ -321,9 +264,8 @@ export async function callStructured<Schema extends z.ZodType>(
         );
       }
 
-      // A model that answered in prose usually gets it right on a second try. A generation that ran
-      // out of tokens, was filtered, or errored will not: the retry would spend a whole second
-      // generation reaching the same ceiling, and `finishReason` in the log is what says so.
+      // Prose instead of an object usually succeeds on retry; running out of tokens or being
+      // filtered won't.
       const retryable = error.finishReason === 'stop' || error.finishReason == null;
       throw new StructuredCallError(
         'no-tool-call',

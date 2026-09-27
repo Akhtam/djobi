@@ -1,13 +1,6 @@
 /**
- * Direct coverage of `pageSignals.ts`'s primitives, one function at a time.
- *
- * Every function here is already exercised incidentally by `detectFields.test.ts` and
- * `fillForm.test.ts`'s full-page fixtures, but incidentally is not the same as pinned: several of
- * these fix a real historical bug (the Ashby label-path regression `wrappingFieldLabel` documents,
- * the cross-realm `instanceof` failure `isInstanceOf` documents), and a fixture that happens to
- * still pass after a regression is not the same as a test that names the regression and fails on
- * it. This file is that name, one function at a time — the fixtures stay as the end-to-end proof
- * that the module composes correctly on a real page.
+ * Direct tests of `pageSignals.ts`'s primitives, naming the regressions they guard (Ashby label
+ * paths, cross-realm `instanceof`). The page fixtures stay as end-to-end proof.
  */
 import { describe, expect, it } from 'vitest';
 import {

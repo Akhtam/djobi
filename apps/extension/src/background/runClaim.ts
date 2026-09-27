@@ -1,33 +1,15 @@
 /**
- * Acquiring a tab's Application Pipeline run for one step, and releasing it afterwards.
+ * Acquiring a tab's pipeline run for one step and releasing it afterwards — one protocol for every
+ * step: claim the slot, commit the "started" status, checkpoint a failure, release.
  *
- * Every step used to hand-roll this: claim the tab's cancellable slot, write the status that says
- * the step has started, re-check the run's identity, checkpoint a failure, release the slot. Three
- * copies of one protocol, and they had drifted in three ways that were defects rather than
- * differences.
+ * - A claim supersedes (aborts) older steps only once it has *won* the run, so a losing Fill never
+ *   kills a running Analysis.
+ * - The precondition is checked before the busy status is committed, so a malformed run can't get
+ *   stuck in `filling`/`saving`.
  *
- * - **The Analysis Step claimed before its first `await` and the Fill Step claimed after one.** A
- *   Fill that resumed late aborted an Analysis that had started after it, and the Analysis then
- *   returned silently on `signal.aborted` — leaving the run wedged at `analyzing` with `failure:
- *   null`, which the panel renders as a spinner with no error and no retry. The suite could not see
- *   it: every fake in the pipeline's tests resolved regardless of its `AbortSignal`, so the abort
- *   path never ran.
- * - **The Save Step claimed nothing at all**, so it had no signal and no release.
- * - **The Fill and Save Steps committed `filling`/`saving` before narrowing the run** with
- *   `asAnalyzedRun`, so a run that failed to narrow was left in a busy status nothing would ever
- *   move off.
- *
- * What is *not* centralised here matters as much as what is.
- *
- * **Cancellation is a per-step policy, not a property of the claim** — see {@link ClaimSpec}. The
- * Save Step is `'none'`: aborting an in-flight `POST /applications` cannot establish whether the row
- * committed, and a run whose `applicationId` is still null writes a *second* Application on the next
- * save. That only becomes revisitable behind an idempotency key.
- *
- * **Where an identity gate sits is the step's own business.** {@link RunClaim.stillOurs} is offered,
- * not applied: the Fill Step's gates are correct because no `await` separates them from the
- * irreversible page command, and a module that called them on the step's behalf would have to
- * guess that placement.
+ * Not centralised: **cancellation is per step** ({@link ClaimSpec}) — Save is `'none'`, since
+ * aborting a write can't tell whether the row landed; and **identity gates** ({@link
+ * RunClaim.stillOurs}) are placed by the step itself, adjacent to its irreversible effect.
  */
 import { failureMessage } from '@djobi/shared';
 import type { ClaimResult } from '../lib/messages';
@@ -50,11 +32,8 @@ import { pipelineFailure } from './pipelineFailure';
 type RunPatch = Partial<Omit<PipelineRunState, 'runId'>>;
 
 /**
- * How a step takes the tab's run.
- *
- * `'replace'` mints a new run identity over whatever the tab held — the Analysis Step, which is the
- * only entry point that starts a run. `'transition'` claims an existing one, and only from a status
- * it is allowed to start in.
+ * How a step takes the tab's run: `'replace'` mints a new run over whatever was there (Analysis
+ * only); `'transition'` claims the existing run from a status it may start in.
  */
 export type ClaimSpec<Run extends PipelineRunState> =
   | {
@@ -69,29 +48,13 @@ export type ClaimSpec<Run extends PipelineRunState> =
       step: 'fill' | 'save';
       mode: 'transition';
       cancellation: 'supersede' | 'none';
-      /**
-       * The run the panel meant, when it named one.
-       *
-       * A command that was delayed in delivery would otherwise claim whichever run happens to be
-       * current when it lands, which after a re-analysis is a different job's. `UPDATE_RUN` has
-       * always carried its `runId`; these two were the exception.
-       */
+      /** The run the panel meant; a late-delivered command must not claim a newer job's run. */
       expectedRunId?: string | undefined;
-      /**
-       * The precondition the run must already satisfy, checked **before** `to` is committed.
-       *
-       * `asAnalyzedRun` is what both callers pass. Checking it after the commit is what left a
-       * malformed run stuck in a busy status.
-       */
+      /** The precondition (e.g. `asAnalyzedRun`), checked **before** `to` is committed. */
       requires: (run: PipelineRunState | null) => Run | null;
       /**
-       * Called once, synchronously with the claim's outcome, before `body` ever runs — not after the
-       * step finishes. Absent from the `'replace'` variant on purpose: an Analysis claim cannot lose
-       * (see the module doc), so there is nothing for it to report.
-       *
-       * `'busy'` means another step already holds this run; `'stale-run'` means `expectedRunId`
-       * named a run that is no longer the tab's current one. Both leave `run: null` below —
-       * distinguishing them costs one extra read, only ever taken on this rare failure path.
+       * Called once with the claim's outcome, before `body` runs. `'busy'`: another step holds the
+       * run; `'stale-run'`: `expectedRunId` isn't current. Not on `'replace'`, which can't lose.
        */
       onClaimed?: ((outcome: ClaimResult) => void) | undefined;
     };
@@ -101,35 +64,29 @@ export interface RunClaim<Run extends PipelineRunState> {
   /** The run as it read the moment it was claimed, narrowed by `requires`. */
   readonly run: Run;
   /**
-   * Aborted when a later claim supersedes this one. Never aborted for `cancellation: 'none'`.
-   *
-   * Pass it to every call that bills for work nobody will read — a model call, a PDF render.
+   * Aborted when a later claim supersedes this one (never for `cancellation: 'none'`). Pass it to
+   * every billed call — model calls, PDF renders.
    */
   readonly signal: AbortSignal;
   /**
-   * Whether this claim still owns the tab's run.
-   *
-   * Call it immediately before an irreversible effect, with no `await` in between: that adjacency
-   * is the whole guarantee, and it cannot be established from outside the step.
+   * Whether this claim still owns the tab's run. Call it immediately before an irreversible effect,
+   * with no `await` in between.
    */
   stillOurs(): Promise<boolean>;
   /** Writes an intermediate patch onto this run. `false` when the run is no longer current. */
   checkpoint(patch: RunPatch): Promise<boolean>;
 }
 
-/**
- * One step in flight for a tab, and its place in the tab's ordering.
- *
- * `cancellable` is what keeps a Save out of everyone else's reach: a superseding claim aborts only
- * the entries that opted in.
- */
+/** One step in flight for a tab. Only `cancellable` entries are aborted when superseded. */
 interface LiveOperation {
   controller: AbortController;
   cancellable: boolean;
 }
 
 interface TabOperations {
-  /** Monotonic per tab. Assigned synchronously at the start of a claim, which is what orders them. */
+  /**
+   * Monotonic per tab. Assigned synchronously at the start of a claim, which is what orders them.
+   */
   nextSeq: number;
   live: Map<number, LiveOperation>;
 }
@@ -137,11 +94,8 @@ interface TabOperations {
 const operations = new Map<number, TabOperations>();
 
 /**
- * Takes this step's place in the tab's order, before anything is awaited.
- *
- * The sequence is assigned here rather than when the run is won, because "who started later" is the
- * only question the abort rule can answer synchronously — and a claim that has not yet won must
- * still be superseded by one that does.
+ * Takes this step's place in the tab's order before anything is awaited, so a claim that hasn't won
+ * yet can still be superseded by a later one that does.
  */
 function enter(tabId: number, cancellable: boolean): { seq: number; controller: AbortController } {
   const tab = operations.get(tabId) ?? { nextSeq: 1, live: new Map<number, LiveOperation>() };
@@ -153,14 +107,7 @@ function enter(tabId: number, cancellable: boolean): { seq: number; controller: 
   return { seq, controller };
 }
 
-/**
- * Aborts every older cancellable step on this tab.
- *
- * Called **only once this claim has actually won the run**, which is the ordering fix: a step that
- * loses its transition — a Fill commanded while an Analysis is running, a Fill whose run was
- * replaced — now aborts nobody, where claiming up front made it kill the incumbent and then do
- * nothing itself.
- */
+/** Aborts every older cancellable step on this tab. Called only once this claim has won the run. */
 function supersedeOlder(tabId: number, seq: number): void {
   const tab = operations.get(tabId);
   if (!tab) return;
@@ -179,14 +126,12 @@ function leave(tabId: number, seq: number): void {
 }
 
 /**
- * Runs one step against the tab's run, holding the run for as long as it takes.
+ * Runs one step against the tab's run. `body` returns the patch to checkpoint (or `null` for
+ * nothing), written against the claimed identity so a completion that outlived its run changes
+ * nothing.
  *
- * `body` receives the claim and returns the patch that records what it did, or `null` when it
- * decided there was nothing to record — a superseded Fill, for instance. The patch is checkpointed
- * against the claimed identity, so a completion that outlived its run changes nothing.
- *
- * Resolves when the step is done, whether it succeeded, failed, or never got the run at all.
- * Rejects only when a failure could not even be recorded — see {@link checkpointFailure}.
+ * Resolves when done — success, failure or claim lost. Rejects only if a failure couldn't be
+ * recorded (see {@link checkpointFailure}).
  */
 export async function withRunClaim<Run extends PipelineRunState>(
   tabId: number,
@@ -195,15 +140,12 @@ export async function withRunClaim<Run extends PipelineRunState>(
 ): Promise<void> {
   const cancellable = spec.cancellation === 'supersede';
   const { seq, controller } = enter(tabId, cancellable);
-  // Known before the acquisition only in `'replace'` mode, where this claim mints it. A storage
-  // fault while writing the initial run is still this run's failure to report; a fault while
-  // *transitioning* belongs to no run yet and is returned to the worker's logging boundary.
+  // Known up front only for `'replace'` (this claim mints it). A storage fault during a transition
+  // belongs to no run yet and goes to the worker's logging boundary.
   let runId: string | undefined;
 
-  // A `'replace'` claim cannot fail to win the run — Analyze takes the tab from whatever was there
-  // — so it supersedes at once rather than a storage round-trip later, and whatever was generating
-  // stops the moment the candidate clicks. A `'transition'` claim has to win first; that is the
-  // whole ordering fix, so the two are deliberately not the same line.
+  // `'replace'` can't lose, so it supersedes immediately and generation stops on the click;
+  // `'transition'` must win first.
   if (spec.mode === 'replace') supersedeOlder(tabId, seq);
 
   try {
@@ -227,9 +169,7 @@ export async function withRunClaim<Run extends PipelineRunState>(
         runId = run.runId;
         spec.onClaimed?.({ claimed: true });
       } else {
-        // One extra read, only on this rare failure path: `transitionPipelineRun` reports that its
-        // predicate refused, not which half of it did. `expectedRunId` mismatching the tab's actual
-        // run is a stale command; everything else is some other step already holding it.
+        // Distinguish a stale command from a busy run (one extra read, failure path only).
         const current = await getPipelineRun(tabId);
         const staleRun = spec.expectedRunId !== undefined && current?.runId !== spec.expectedRunId;
         spec.onClaimed?.({ claimed: false, reason: staleRun ? 'stale-run' : 'busy' });
@@ -238,9 +178,7 @@ export async function withRunClaim<Run extends PipelineRunState>(
 
     if (!run) return;
 
-    // Won. Everything that started earlier is superseded — a no-op for a replace claim, which did
-    // this above. And if something that started *later* has already won, this claim is the
-    // superseded one and stops before it can act.
+    // Won: supersede older steps. If a *later* step already won, this one stops here.
     supersedeOlder(tabId, seq);
     if (controller.signal.aborted) return;
 
@@ -274,13 +212,8 @@ export async function withRunClaim<Run extends PipelineRunState>(
 }
 
 /**
- * Records a step's failure on the run, so the panel shows an error the candidate can retry from
- * rather than a status that never resolves.
- *
- * If the checkpoint write *itself* rejects, both causes are thrown together: the operational
- * failure would otherwise be lost to a storage fault that has nothing to do with it. Nothing here
- * catches that — `background/router.ts` returns this task to `background/service-worker.ts`, whose
- * listener is the one place a terminal rejection is logged.
+ * Records a step's failure on the run so the panel shows a retryable error. If that write itself
+ * fails, both causes are thrown together for the service worker to log.
  */
 async function checkpointFailure(
   tabId: number,

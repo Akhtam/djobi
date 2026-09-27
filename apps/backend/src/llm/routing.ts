@@ -9,10 +9,8 @@ export interface LlmRoute {
 
 /** The complete model policy, keyed by the application operation it serves. */
 export const ROUTES = {
-  // 4096 rather than the 2048 a bare requirement list needs: every `stated` requirement now carries
-  // a verbatim quote from the posting, so the response grows by roughly the length of the
-  // requirements section itself. A truncated tool call fails validation outright, which is a worse
-  // outcome than the extra tokens on a model this cheap.
+  // 4096: every `stated` requirement carries a verbatim posting quote, and a truncated response
+  // fails validation.
   extractJob: {
     model: 'google/gemini-3.1-flash-lite',
     defaultMaxTokens: 4096,
@@ -30,10 +28,7 @@ export const ROUTES = {
     model: 'anthropic/claude-sonnet-5',
     defaultMaxTokens: 4096,
   },
-  // Parsing a resume into a Profile shape, like `extractJob`, is not the "written judgement" work
-  // reserved for the Claude routes above — routed to the same cheap model. The token budget is
-  // higher than `extractJob`'s because a resume commonly reports several roles' worth of bullets
-  // plus projects/certifications/awards in one response, where a job posting reports one role.
+  // Parsing, not writing, so the cheap model; a bigger budget since a resume has many roles.
   extractResume: {
     model: 'google/gemini-3.1-flash-lite',
     defaultMaxTokens: 4096,

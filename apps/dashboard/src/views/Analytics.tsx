@@ -1,17 +1,7 @@
 /**
- * The Analytics view: a retrospective on the postings the candidate has already applied to — which
- * keywords they ask for, and which of them the Profile fails to evidence. Gap analysis, not market
- * intel: the only postings djobi holds are ones already saved as an Application, so this reads as
- * "what have I been applying to lately," never as a survey of the market. See `PROGRESS.md`'s
- * Phase 12 section for the full set of decisions this follows.
- *
- * Client-side aggregation over the array `useApplicationStore` already loaded, the same reasoning
- * `ApplicationsList` filters under: this is a personal-scale dataset, and a filtered endpoint would
- * be inventing backend work for it.
- *
- * Visual design follows the "Keyword Gaps" mockup artifact rather than being invented ad hoc: the
- * card-styled panels, category-grouped keyword sections, full-row frequency bars, the summary strip
- * and the switch-styled Gaps only toggle are all specified there, down to the token values.
+ * The Analytics view: a retrospective on postings already saved as Applications — which keywords
+ * they ask for and which the Profile doesn't evidence. Gap analysis over the candidate's own
+ * history, not market intel. Aggregated client-side over `useApplicationStore`'s array.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
@@ -41,14 +31,8 @@ import { STAGE_FILTERS, STAGE_LABELS, stageFilterOf, type StageFilter } from '..
 import { useRevealOnScroll } from '../lib/useRevealOnScroll';
 
 /**
- * Each range as a pill/option reads.
- *
- * Bare durations, with the group's own label carrying the sense. "Saved" rather than a plain "Last"
- * — this filters `Application.createdAt`, not the posting's own date or anything about the
- * interview, and the two can genuinely diverge: a role logged manually months after applying gets
- * today's date here, not the date it was actually applied to. "Last 14 days" reads fine on its own
- * but answers the wrong question if the reader assumes it means the last 14 days of activity on the
- * application; "Saved" is what says this is about when the row entered djobi.
+ * Range labels. "Saved" because ranges filter by when the row entered djobi (`createdAt`), which
+ * can differ from when the candidate applied.
  */
 const RANGE_LABELS: Record<Range, string> = {
   '7d': '7 days',
@@ -67,11 +51,7 @@ const COVERAGE_LABELS: Record<Exclude<CoverageVerdict, 'profile-experience'>, st
   missing: 'Gap',
 };
 
-/**
- * Section headings for the keyword table, grouped rather than the singular per-row labels
- * `KEYWORD_CATEGORY_LABELS` gives the detail page — "Frameworks" reads as a section of many terms,
- * where "Framework" reads as a property of one.
- */
+/** Plural section headings for the keyword table ("Frameworks"), vs. per-row singular labels. */
 const CATEGORY_GROUP_LABELS: Record<KeywordCategory, string> = {
   language: 'Languages',
   framework: 'Frameworks',
@@ -87,10 +67,7 @@ function formatRate(rate: number | null): string {
   return rate === null ? '—' : `${Math.round(rate * 100)}%`;
 }
 
-/**
- * What the summary strip's response rate says on hover — the counts behind the percentage, and,
- * when there are too few of them, why no percentage is shown at all.
- */
+/** Response-rate tooltip: the counts behind it, or why no percentage is shown. */
 function rateTitle(rate: ResponseRate): string {
   const resolved = `${rate.responded} of ${rate.decided} resolved ${rate.decided === 1 ? 'posting' : 'postings'} responded`;
   const pending = rate.pending > 0 ? `, ${rate.pending} still awaiting a reply` : '';
@@ -132,10 +109,8 @@ export function Analytics({
   getProfile: () => Promise<Profile | null>;
   onUnauthorized: () => void;
 }) {
-  // Captured once per mount, never a `useMemo`: a range is "the last N days as of when I opened
-  // this page," and re-deriving it as the clock ticks would shift the boundary under the reader
-  // mid-session. The cost is a dashboard left open past midnight keeps yesterday's boundary until
-  // reload — the stability this is for.
+  // Captured once per mount so the range boundary doesn't move mid-session (a tab open past
+  // midnight keeps yesterday's boundary until reload).
   const [today] = useState(() => new Date());
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
@@ -155,14 +130,9 @@ export function Analytics({
   );
   const { rangeStartDate, inRange, filtered, frequency, coverageByTerm, gapCount, baseline } =
     report;
-  // 5 is a reasonable floor for a range with dozens of postings, but a personal-scale dataset's
-  // typical default range (14 days) usually holds a handful — a default that ignores that lands a
-  // first visit on "No keywords match these filters," with only a stepper the reader hasn't been
-  // introduced to yet as the way out. Scaling the *initial* value down to what this range's own
-  // most-repeated keyword actually reaches means a first visit shows something. It's still only a
-  // starting point: raising it from here to the signal-only view of a bigger range works exactly
-  // as before, and switching ranges later doesn't re-run this — a value the reader set themselves
-  // should never reset silently under them.
+  // Initial minimum capped at this range's most-repeated keyword count, so a first visit to a small
+  // range doesn't show "No keywords match". Not re-run on range changes: never reset a value the
+  // reader chose.
   const [minAppearances, setMinAppearances] = useState<number>(() => {
     // Read off the report above rather than building a second one: frequency doesn't depend on the
     // profile, so this is the same number the old profile-less report produced.
@@ -205,8 +175,8 @@ export function Analytics({
     () => requirementsReport(filtered, selectedKeyword),
     [filtered, selectedKeyword],
   );
-  // A plain field read, not a derivation — the summed `supportedCount`/`attentionCount` fields
-  // live on `requirements` itself now; this is only a shorthand for the per-verdict fields below it.
+  // A plain field read, not a derivation — the summed `supportedCount`/`attentionCount` fields live
+  // on `requirements` itself now; this is only a shorthand for the per-verdict fields below it.
   const requirementEvidence = requirements.evidence;
   const groups = useMemo(() => groupByKeywordCategory(visibleRows), [visibleRows]);
 

@@ -1,11 +1,6 @@
 /**
- * The production `ApplicationStore`: Postgres through Drizzle (local, Docker, or a serverless
- * cloud database — see `docs/adr/0002-postgres-driver-for-local-dev.md`).
- *
- * The interface it satisfies, and the in-memory adapter it is held against, are in
- * `db/applicationStore.ts`. Everything below is the half that is genuinely about Postgres —
- * jsonb parsing, the `count(*) over ()` duplicate summary, and the atomic note append — which is
- * exactly what the seam exists to keep out of the routes.
+ * The production `ApplicationStore` (interface and in-memory twin in `applicationStore.ts`): jsonb
+ * parsing, the duplicate summary and atomic note edits.
  */
 import {
   ApplicationSchema,
@@ -31,35 +26,25 @@ import { applications } from './schema.js';
 
 type ApplicationRow = typeof applications.$inferSelect;
 
-/** A row in the shape {@link ApplicationSchema} expects — `createdAt` as an ISO string, not a `Date`. */
+/**
+ * A row in the shape {@link ApplicationSchema} expects — `createdAt` as an ISO string, not a
+ * `Date`.
+ */
 function rowShape(row: ApplicationRow) {
   return { ...row, createdAt: row.createdAt.toISOString() };
 }
 
 /**
- * Parses one row, throwing if it doesn't fit.
- *
- * Parsed rather than cast, for the same reason `postgresProfileStore`'s read parses: `jobInfo`,
- * `tailoredResume` and `answers` are jsonb, so a row written before a field was added comes back
- * without it, and `row.jobInfo as JobInfo` asserted a shape the row didn't have — the compiler then
- * vouched for fields that were `undefined` at runtime. This module used to be the one place that
- * cast, which meant two policies for one hazard.
- *
- * `row.userId` never reaches this parse: `ApplicationSchema` (`@djobi/shared`) has no such field —
- * ownership stays a persistence detail, not part of the wire type — and zod's default non-strict
- * `.parse()` silently drops any key the schema doesn't declare.
+ * Parses one row, throwing if it doesn't fit — jsonb columns may predate schema fields, so rows are
+ * parsed, never cast. `userId` is dropped by the parse (it isn't part of `ApplicationSchema`).
  */
 function toApplication(row: ApplicationRow): Application {
   return ApplicationSchema.parse(rowShape(row));
 }
 
 /**
- * Parses every row that fits, dropping the ones that don't.
- *
- * Deliberately more forgiving than {@link toApplication}, and only for lists. A caller asking for a
- * *specific* application is owed an error if it can't be read — returning `null` would say "no such
- * application", which is a different and untrue thing. A caller listing the history is owed the
- * history, and one unreadable row from an older build should not hide every other row with it.
+ * Parses every row that fits and drops the rest: one unreadable legacy row shouldn't hide the
+ * history. (A single-row read throws instead — `null` would wrongly mean "not found".)
  */
 function toApplications(rows: ApplicationRow[]): Application[] {
   return rows.flatMap((row) => {
@@ -72,12 +57,8 @@ function toApplications(rows: ApplicationRow[]): Application[] {
 }
 
 /**
- * The row a write returned, parsed if it can be — see {@link Written} for why an unreadable one is
- * `null` here rather than a throw.
- *
- * Distinct from {@link toApplication}, which throws, and from {@link toApplications}, which drops:
- * a write's caller may not have asked for the row at all, so failing to read it back must not fail
- * the write that already landed.
+ * A write's returned row, or `null` if unreadable — the write already landed, so reading it back
+ * mustn't fail it (see {@link Written}).
  */
 function toWrittenApplication(row: ApplicationRow): Application | null {
   const parsed = ApplicationSchema.safeParse(rowShape(row));
@@ -100,12 +81,8 @@ async function listApplications(userId: string): Promise<Application[]> {
 }
 
 /**
- * Reads a single application by id, scoped to `userId`.
- *
- * `null` both when no row has that id at all, and when one does but belongs to a different user —
- * the two cases must answer identically, or a 403-shaped response would confirm a real id exists
- * under someone else's account. `and()` in the `WHERE`, not a second check after the query, is what
- * makes that true at the SQL level rather than by remembering to compare afterward.
+ * One Application by id, scoped to `userId` in the `WHERE` — another user's row is
+ * indistinguishable from a missing one.
  */
 async function getApplicationById(userId: string, id: string): Promise<Application | null> {
   const [row] = await db
@@ -128,14 +105,9 @@ async function listApplicationsByJobUrl(userId: string, jobUrl: string): Promise
 }
 
 /**
- * Inserts a new application row owned by `userId` — after the candidate explicitly saves an autofill
- * run, or when they log an application they made by hand (`source: 'manual'`).
- *
- * `idempotencyKey` is what makes a resend safe. A caller that retries a timed-out or lost-response
- * write sends the same key it sent the first time; if that first write actually landed, the
- * `ON CONFLICT` below hands back the row it already wrote instead of inserting a second one. The
- * `set` is a deliberate no-op — only its `RETURNING` is wanted — and a caller with no key to give
- * always inserts, because a Postgres unique index never treats two `NULL`s as conflicting.
+ * Inserts an Application owned by `userId`. With `idempotencyKey`, `ON CONFLICT` returns the row a
+ * previous attempt already wrote (the `set` is a no-op for `RETURNING`'s sake). Keyless inserts
+ * never conflict: unique indexes treat `NULL`s as distinct.
  */
 async function saveApplication(
   userId: string,
@@ -163,8 +135,7 @@ async function saveApplication(
 }
 
 /**
- * Replaces an application's editable snapshot without disturbing interview tracking or `source` —
- * only if `userId` owns the row; otherwise `null`, same as if it didn't exist.
+ * Replaces the editable snapshot, leaving tracking and `source` alone. `null` if not this user's.
  */
 async function updateApplication(
   userId: string,
@@ -183,33 +154,12 @@ async function updateApplication(
 }
 
 /**
- * Summarizes `userId`'s applications to the same job posting without loading their large snapshots.
+ * Count and newest metadata of `userId`'s Applications for one posting, in one round trip and
+ * without loading snapshots — the Duplicate Guard's lookup.
  *
- * Backs the compact duplicate guard response: the extension asks this before spending any LLM call,
- * so a posting the candidate already applied to stops the run instead of re-tailoring a resume for
- * it. The count and newest metadata come back in one database round trip.
- *
- * Matching is on `jobKey` — `jobUrl` reduced to a posting identity — rather than on the raw URL.
- * Exact-URL matching only fired when two visits produced a byte-identical URL, so a posting
- * revisited through an ad link (`?gh_src=…`, `?utm_source=…`) or from the `/apply` screen read as
- * new and cost a full re-analysis. `jobKeyForUrl` strips exactly those, and deliberately keeps
- * query parameters that do distinguish postings, so a board like Workday's `?jobId=` still
- * separates two jobs.
- *
- * The raw `jobUrl` stays in the `or` for rows written before `job_key` existed, and for a `jobUrl`
- * too malformed to derive a key from. Those match exactly as well as they did before and no better
- * — which is the point of keeping the clause rather than backfilling behind the caller's back.
- *
- * That fallback is narrowed to `job_key IS NULL` rather than left as a bare `job_url = …`. A row
- * that *has* a key is already matched by the first clause whenever its URL matches, since the key is
- * derived from the URL — so the unqualified version only made Postgres scan the `job_url` index for
- * rows the `job_key` index had found already. Keying the fallback to the rows that are actually
- * missing a key says the same thing about which rows match, and asks for less to say it.
- *
- * The `userId` filter is `and`-ed around the whole `job_key`-or-`job_url` clause, not appended after
- * it — this is the one query in the file where getting that wrong would be a real leak, not just an
- * inefficiency: it is exactly what stops one user's saved application from telling a different user
- * they already applied to a posting they've never seen.
+ * Matches `job_key` (so ad-link params and `/apply` routes don't read as new), or exact `job_url`
+ * for rows with `job_key IS NULL` (legacy rows, unparseable URLs). The `userId` filter wraps the
+ * whole `or` — getting that wrong would leak one user's history to another.
  */
 async function getApplicationDuplicateSummary(
   userId: string,
@@ -254,10 +204,7 @@ async function getApplicationDuplicateSummary(
   };
 }
 
-/**
- * Moves an application to a new interview stage, or `null` if `userId` has no application with that
- * id.
- */
+/** Moves an Application to a new stage, or `null` if `userId` has no such row. */
 async function updateApplicationStage(
   userId: string,
   id: string,
@@ -280,17 +227,9 @@ async function updateApplicationStage(
 }
 
 /**
- * Appends one note to an application's log, or `null` if `userId` has no application with that id.
- *
- * `id` and `createdAt` are generated here, never taken from the caller — a note whose timestamp the
- * sender chose isn't trustworthy history, which is the rule `NoteSchema` states and this is where
- * it has to be enforced.
- *
- * The append is a single `notes || …` statement rather than a read, a push and a write. Two notes
- * added close together — the dashboard open in two tabs, or a double-submitted form — both read the
- * same array under read-modify-write and the second write silently discards the first. That is
- * exactly the loss an append-only log exists to prevent, so the concatenation happens in Postgres
- * where it is atomic.
+ * Appends one note, or `null` if `userId` has no such row. `id`/`createdAt` are generated here.
+ * A single `notes || …` statement, so concurrent appends (two tabs, a double submit) can't lose
+ * each other.
  */
 async function addApplicationNote(
   userId: string,
@@ -314,23 +253,9 @@ async function addApplicationNote(
 }
 
 /**
- * Removes one note from an application's log, or `null` when this user has no application with that
- * id **or** that application has no note with that id.
- *
- * One statement, for the same reason {@link addApplicationNote} is one: a read, a filter and a
- * write let a note appended between the read and the write come back from the dead, which is the
- * mirror image of the loss the append exists to prevent. Postgres rebuilds the array with
- * `jsonb_agg` over the elements that survive the filter, so nothing outside this note is rewritten
- * from a stale copy.
- *
- * `coalesce(…, '[]')` is load-bearing: `jsonb_agg` over zero surviving rows is `NULL`, not an empty
- * array, so deleting the only note would otherwise write `NULL` into a `NOT NULL` column — and on a
- * nullable one it would produce a row that no longer parses as an Application.
- *
- * The `exists` in the `WHERE` is what makes "deleted" and "there was nothing to delete"
- * distinguishable. Without it the update matches the row, changes nothing, and `RETURNING` hands
- * back a perfectly good row — so a client asking to delete a note that another tab already deleted
- * would be told it succeeded.
+ * Removes one note in a single statement (so a concurrent append isn't overwritten), or `null` if
+ * the row or the note doesn't exist — the `exists` check is what distinguishes those from success.
+ * `coalesce(…, '[]')` because `jsonb_agg` over no rows is `NULL`.
  */
 async function deleteApplicationNote(
   userId: string,
@@ -362,14 +287,7 @@ async function deleteApplicationNote(
   return { id: row.id, noteId, application: toWrittenApplication(row) };
 }
 
-/**
- * Deletes one Application outright. `null` when this user has no row with that id — the delete
- * clause is the same `(id, userId)` pair every other write here scopes to, so a stranger's id
- * never matches and never deletes anything.
- *
- * No `RETURNING` payload to parse: unlike every write above, there is no surviving row to carry
- * back through `toWrittenApplication`, so this answers the bare `{ id }` the interface promises.
- */
+/** Deletes one Application scoped to `(id, userId)`; `null` if there was none. */
 async function deleteApplication(
   userId: string,
   id: string,
@@ -382,13 +300,7 @@ async function deleteApplication(
   return row ?? null;
 }
 
-/**
- * The routes' view of the ten operations above, under the names `ApplicationStore` states.
- *
- * Written as one object rather than ten exports because the seam is the point: a route holding
- * ten loose imports can only be run without Postgres by replacing this module, which is what four
- * test files used to do by hand.
- */
+/** The operations above as the `ApplicationStore` port. */
 export const postgresApplicationStore: ApplicationStore = {
   list: listApplications,
   byId: getApplicationById,

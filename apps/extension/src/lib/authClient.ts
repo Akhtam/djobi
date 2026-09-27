@@ -1,18 +1,7 @@
 /**
- * Sign-in/out against Better Auth's own routes, and the one place in the extension that reads a
- * raw `Response` rather than going through `callBackend.ts`'s `transport.json`.
- *
- * That transport can't serve this: `auth.ts`'s `bearer()` plugin hands the extension its session
- * token via a `set-auth-token` **response header**, not the JSON body (`docs/multi-tenant-auth.md`,
- * Phase D — "Bearer token for the extension, httpOnly cookie for the dashboard"), and
- * `@djobi/http-client`'s `HttpTransport.json` decodes and returns the body only. A raw `fetch` is
- * the only way to reach the header the token actually arrives in.
- *
- * No CORS wiring is needed for this to work from an extension page: `manifest.ts`'s
- * `host_permissions` already grants `EXTENSION_BACKEND_ORIGIN`, and Chrome exempts a request made
- * from an extension context to a granted host from the cross-origin restrictions an ordinary web
- * page would hit — the same reason every other route in `backendClient.ts` needs no CORS allowlist
- * entry on the backend either.
+ * Sign-in/out against Better Auth's routes. Uses raw `fetch` rather than the transport because the
+ * bearer token arrives in the `set-auth-token` response *header*, which `transport.json` doesn't
+ * expose. No CORS setup needed: the backend origin is in `manifest.ts`'s `host_permissions`.
  */
 import { errorBodyFrom, HttpError, isUnauthorized } from '@djobi/http-client';
 import { SignInRequestSchema, SignInResultSchema, SignOutResultSchema } from '@djobi/shared';
@@ -25,12 +14,8 @@ import {
 } from './sharedSessionCookie';
 
 /**
- * Signs in and stores the bearer token `set-auth-token` carries, or throws with the backend's own
- * message on a rejected credential.
- *
- * `credentials: 'omit'` — deliberately not the dashboard's `'include'`. This request carries no
- * cookie and wants none set; the extension's session lives entirely in the `Authorization` header
- * from here on, per the Bearer/cookie split above.
+ * Signs in and stores the `set-auth-token` bearer token, or throws with the backend's message.
+ * `credentials: 'omit'`: the extension's session lives only in the `Authorization` header.
  */
 export async function signIn(email: string, password: string): Promise<void> {
   const response = await fetch(`${EXTENSION_BACKEND_ORIGIN}/api/auth/sign-in/email`, {
@@ -41,17 +26,10 @@ export async function signIn(email: string, password: string): Promise<void> {
   });
 
   if (!response.ok) {
-    // Better Auth's own error body is `{ message, code }` — e.g. `{"message":"Invalid email or
-    // password","code":"INVALID_EMAIL_OR_PASSWORD"}` — not this app's own `{ error }` convention,
-    // since this route is Better Auth's own (`app.ts`'s pass-through), never this backend's
-    // `app.onError`. Reading only `.error` here left every real reason unread and every candidate
-    // looking at the generic fallback below instead of what Better Auth actually said.
+    // Better Auth answers `{ message, code }`, not this app's `{ error }`.
     const rawBody = await response.text().catch(() => '');
     const reason = rawBody ? errorBodyFrom(rawBody).reason : undefined;
-    // An `HttpError`, not a plain `Error`, for the same reason every call through
-    // `callBackend.ts` raises one: `kind`/`status` are what a caller classifies a 401 by, and
-    // `createFakeBackendClient`'s own `signIn` already rejects in this shape. A bare `Error` here
-    // made the fake adapter a shape production never delivered.
+    // An `HttpError` so callers can classify a 401 as they do for every other call.
     throw new HttpError(
       'http',
       '/api/auth/sign-in/email',
@@ -60,9 +38,7 @@ export async function signIn(email: string, password: string): Promise<void> {
     );
   }
 
-  // Validated for the same reason every other backend response is: a shape Better Auth stops
-  // sending is a compile-time-invisible break this parse turns into a clear failure here instead of
-  // a silent `undefined` reaching `setAuthToken`.
+  // Validated so a changed Better Auth response fails here, not as `undefined` in `setAuthToken`.
   SignInResultSchema.parse(await response.json());
 
   const token = response.headers.get('set-auth-token');
@@ -76,21 +52,13 @@ export async function signIn(email: string, password: string): Promise<void> {
     );
   }
   await setAuthToken(token);
-  // Best-effort: a dashboard tab reaching `EXTENSION_BACKEND_ORIGIN` picks up this same session
-  // through its own cookie-carrying requests once this lands — see `sharedSessionCookie.ts`. This
-  // extension's own session is `setAuthToken` above regardless of whether this succeeds.
+  // Best-effort: also share the session with the dashboard (see `sharedSessionCookie.ts`).
   await setSharedSessionToken(token).catch(() => undefined);
 }
 
 /**
- * Ends the session, backend-side and locally alike.
- *
- * Sends whatever token is currently stored so the backend can invalidate that session record too —
- * without it, `POST /api/auth/sign-out` would have no session to identify and would only ever be
- * clearing this browser's copy, leaving a token a candidate no longer wants live on the server able
- * to keep authenticating. Local storage is cleared regardless of whether the request lands: a
- * candidate who asked to sign out on a machine that turns out to be offline still expects the
- * extension to stop acting as them.
+ * Ends the session on the backend (sending the current token so it can be invalidated) and locally.
+ * Local state is cleared even if the request fails — signing out offline must still work.
  */
 export async function signOut(): Promise<void> {
   const token = await getAuthToken();
@@ -115,14 +83,9 @@ export async function signOut(): Promise<void> {
 }
 
 /**
- * Adopts a session already established elsewhere — the dashboard, most often — by copying its
- * session cookie into this extension's own bearer token. Resolves `true` if there was one to
- * adopt, `false` otherwise — including when `chrome.cookies` itself rejects (e.g. a host
- * permission that doesn't yet cover this origin) — since callers treat "nothing to adopt" and "the
- * cookie lookup failed" identically: fall through to whatever a real 401 already means. Adopting is
- * optimistic, the same way a token already in `chrome.storage.session` is trusted until a real call
- * 401s, so a caller still has to retry whatever it was doing and treat a further 401 as "not
- * actually signed in anywhere," not assume this call proves it.
+ * Adopts a session established elsewhere (usually the dashboard) by copying its session cookie into
+ * the bearer token. `true` if there was one; `false` if not or the cookie lookup failed.
+ * Optimistic: callers still retry and treat a further 401 as signed out.
  */
 export async function adoptSharedSession(): Promise<boolean> {
   try {
@@ -136,11 +99,8 @@ export async function adoptSharedSession(): Promise<boolean> {
 }
 
 /**
- * Runs `attempt` once, and again after {@link adoptSharedSession} if the first call fails with the
- * backend's 401 — the one retry policy `panel/App.tsx` and `options/App.tsx` each used to carry
- * their own copy of around their bootstrap `getProfile`. A second 401 after adopting means there
- * was truly nothing to adopt, or it was no good either, so it is rethrown for the caller to treat
- * as an expired/absent session.
+ * Runs `attempt`, and once more after {@link adoptSharedSession} if it fails with a 401. A second
+ * 401 is rethrown as a genuinely absent session.
  */
 export async function withSharedSessionRetry<T>(attempt: () => Promise<T>): Promise<T> {
   try {

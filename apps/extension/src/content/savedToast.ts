@@ -1,18 +1,12 @@
 /**
- * The on-page confirmation that an auto-saved application was recorded.
- *
- * Shown because the surface that already reports a save — the side panel's `saved` status — is
- * closed in the case this exists for. The candidate pressed the ATS's own Submit button; the panel
- * was never open, and the tab is on its way to a confirmation page. So the confirmation has to be
- * where they are looking.
- *
- * Rendered into a **closed shadow root**: an ATS page's CSS is arbitrary, and a bare `<div>` on
- * Workday inherits enough of it to come out invisible or full-width. The shadow boundary also keeps
- * this out of the page's own selectors, which matters because the page is mid-submission and its
- * scripts are still running.
+ * The on-page "saved" confirmation for an auto-save — shown because the panel is usually closed
+ * when the candidate submits on the ATS. Rendered in a **closed shadow root** so the page's CSS and
+ * selectors can't affect it.
  */
 
-/** How long the toast stays up. Long enough to read a company and a role, short enough to ignore. */
+/**
+ * How long the toast stays up. Long enough to read a company and a role, short enough to ignore.
+ */
 const VISIBLE_MS = 5_000;
 
 const HOST_ID = 'djobi-saved-toast';
@@ -37,12 +31,7 @@ const STYLES = `
   .job { margin-top: 4px; color: #b9d8c9; font-weight: 400; }
 `;
 
-/**
- * Shows "Saved to djobi" for `company` / `roleTitle`, replacing any toast already up.
- *
- * Replacing rather than stacking: a re-save of the same run is one fact being restated, and two
- * toasts overlapping in the corner of an ATS form is worse than none.
- */
+/** Shows "Saved to djobi" for `company` / `roleTitle`, replacing any toast already up. */
 export function showSavedToast(
   doc: Document,
   { company, roleTitle }: { company: string; roleTitle: string },

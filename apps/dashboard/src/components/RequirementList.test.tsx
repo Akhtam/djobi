@@ -1,10 +1,7 @@
 /**
- * `RequirementList` rendering the importance grouping and its row budget.
- *
- * The budget's arithmetic is pinned in `lib/requirementGroups.test.ts`, against the pure function.
- * What is tested here is what the reader actually sees: which headings appear, that a trimmed list
- * says so on screen rather than silently ending, that the trimmed rows can be revealed, and that a
- * posting extracted before importance existed still renders every row it always did.
+ * `RequirementList`'s grouping and row budget as the reader sees them: headings, the "N hidden"
+ * line, the reveal, and unbanded postings rendering in full. Budget arithmetic is in
+ * `lib/requirementGroups.test.ts`.
  */
 import type { JobRequirement, RequirementImportance } from '@djobi/shared';
 import { render, screen } from '@testing-library/react';

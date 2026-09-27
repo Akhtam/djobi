@@ -1,15 +1,6 @@
 /**
- * The app, built over in-memory persistence and a fake auth check, for tests. Not imported by
- * anything that ships.
- *
- * Every route test needs the same thing: an app whose stores it can seed and read back. Before the
- * persistence seam existed, each one built that with `vi.mock` over a store module and a factory
- * restating its full export surface — five copies of one setup, and the copies had already drifted
- * (two of the five mocked stores nothing under test ever called, purely to stop an import failing).
- *
- * The stores are returned alongside the app because a test's assertions are usually about what was
- * *stored*, not only about what was answered. Seed through the argument, assert through the returned
- * store, and no case has to know that persistence is a `Map`.
+ * The app over in-memory stores and fake auth, for tests only. Returns the stores so tests can
+ * seed through the argument and assert on what was stored.
  */
 import type { Application, Profile } from '@djobi/shared';
 import { createApp } from './app.js';
@@ -24,25 +15,20 @@ export interface TestApp {
   profileStore: ProfileStore;
 }
 
-/**
- * Seeded rows are always owned by `BOOTSTRAP_USER_ID` — Phase A's migration already assigned every
- * pre-existing row to it, and reusing it as "some real user" here needs no arbitrary id of its own.
- */
+/** Seeded rows are owned by `BOOTSTRAP_USER_ID`. */
 export interface TestAppSeed {
   applications?: Application[];
   profile?: Profile | null;
   /**
-   * Who the *request* authenticates as — independent of who owns the seeded rows above. Defaults to
-   * `BOOTSTRAP_USER_ID`, so the vast majority of route tests, which have nothing to do with auth
-   * itself, don't have to think about it. Pass a different id to authenticate as someone who does
-   * **not** own the seeded rows — the route-layer half of cross-user coverage, on top of what
-   * `applicationStore.contract.test.ts` already asserts at the store layer. Pass `null` for the
-   * no-credential case: every request gets a 401 with no real session ever involved.
+   * Who requests authenticate as (default `BOOTSTRAP_USER_ID`). Use another id to test cross-user
+   * access, or `null` for 401 on every request.
    */
   authenticatedAs?: string | null;
 }
 
-/** An app over empty in-memory stores, or over the rows, Profile and identity a case seeds it with. */
+/**
+ * An app over empty in-memory stores, or over the rows, Profile and identity a case seeds it with.
+ */
 export function createTestApp(seed: TestAppSeed = {}): TestApp {
   const applicationStore = inMemoryApplicationStore(
     (seed.applications ?? []).map((application) => ({ userId: BOOTSTRAP_USER_ID, application })),

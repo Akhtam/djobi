@@ -94,8 +94,8 @@ describe('valueForCategory', () => {
   });
 
   it('reads a cleared optional field as nothing to fill, not as an empty string', () => {
-    // The Profile stores a cleared optional as `null` (see `options/App.tsx`'s `orNull`), and the
-    // Fill Step must skip the field rather than write "" over whatever the page already had.
+    // The Profile stores a cleared optional as `null`; the Fill Step must skip the field rather than
+    // write "" over whatever the page already had.
     const sparse = {
       ...profile,
       phone: null,

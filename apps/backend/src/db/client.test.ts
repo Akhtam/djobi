@@ -1,17 +1,12 @@
 /**
- * The lazy `db` proxy, which exists so that *importing* this module never requires a database.
- *
- * That is what lets a route test import `app.ts` — and with it every route file, and with those the
- * repositories — without a `.env`. It is also the pattern ADR-0001 names as the one to reuse for the
- * model client when this backend is ported to a Worker, where module scope is evaluated on cold
- * start and bindings are not reliably available there. Both make it worth pinning rather than
- * leaving as a property of how the module happens to be written.
+ * The lazy `db` proxy: importing the module must never require a database, so route tests can
+ * import `app.ts` without a `.env` (and a Worker port can reuse the pattern).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { Pool, drizzle } = vi.hoisted(() => ({
-  // A `function`, not an arrow: `client.ts` calls `new Pool(...)`, and Vitest 4+ mocks throw when an
-  // arrow implementation is constructed.
+  // A `function`, not an arrow: `client.ts` calls `new Pool(...)`, and Vitest 4+ mocks throw when
+  // an arrow implementation is constructed.
   Pool: vi.fn(function () {
     return { on: vi.fn() };
   }),

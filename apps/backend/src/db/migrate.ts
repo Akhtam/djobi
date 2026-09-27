@@ -1,10 +1,7 @@
 /**
- * Applies `src/db/migrations` using drizzle-orm's runtime migrator — the same migration files and
- * `__drizzle_migrations` journal `drizzle-kit migrate` uses, but needing only production
- * dependencies. That's what lets the Docker image (whose devDependencies, `drizzle-kit` included,
- * are pruned) migrate its own database: docker-compose.yml runs this as a one-shot `migrate`
- * service before `backend` starts. Resolves the migrations folder relative to this file, so it
- * works from `dist/db/migrate.js` without copying the SQL files into `dist/`.
+ * Applies `src/db/migrations` with drizzle-orm's runtime migrator (same files and journal as
+ * `drizzle-kit migrate`, but production dependencies only) — used by Docker Compose's one-shot
+ * `migrate` service. Resolves the folder relative to this file, so it works from `dist/`.
  */
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';

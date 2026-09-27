@@ -1,34 +1,14 @@
 /**
- * One application's posting requirements, grouped, with what the resume had to show for each.
+ * One application's requirements, grouped by band (`lib/requirementGroups.ts`), with each stored
+ * evidence verdict — "is *this* resume backing what *this* posting asked?". Rendering rules match
+ * `RequirementsPanel`:
  *
- * The evidence half is why this is a component rather than markup inside `ApplicationDetail`. The
- * verdicts are computed deterministically at save time (`requirementEvidence.ts`) and stored on the
- * row, and until now the only thing that read them back was the Analytics roll-up — which reports
- * across every posting and therefore answers "how am I doing", never "is *this* application's
- * resume actually backing what *this* posting asked for". That second question is what a detail
- * page is for.
+ * - **`direct-evidence` gets no badge** (the common good case).
+ * - **`omitted-profile-evidence` quotes the bullet** — it names a fix.
+ * - **No stored verdicts renders plainly** — "nothing checked", never "nothing found".
  *
- * The rendering rules follow `RequirementsPanel`'s, deliberately, because they are the same
- * verdicts on the same data and a reader should not have to learn two vocabularies:
- *
- * - **`direct-evidence` gets no badge.** The good case is the common case; badging it would bury
- *   the four verdicts that mean something is wrong.
- * - **`omitted-profile-evidence` shows the bullet.** It is the one verdict that names a fix rather
- *   than a gap — the evidence exists in the Profile and this resume left it out — so the bullet is
- *   quoted rather than merely counted.
- * - **A row with no stored verdicts renders exactly as it did before they existed.** Most of the
- *   history predates the column, and an un-scored requirement must read as "nothing was checked",
- *   never as "nothing was found".
- *
- * Grouping and the row budget live in `lib/requirementGroups.ts`, shared with `RequirementsPanel`
- * for the same reason the verdict vocabulary is shared: two screens showing one set of facts must
- * not be able to disagree about how they are ordered.
- *
- * The budget is a default here rather than a ceiling. This is the only screen that shows a stored
- * posting's requirements at all, so a row the budget dropped would otherwise be unreachable — and
- * the trim takes the unassessed tail first, meaning the hidden rows are frequently the ones nothing
- * looked at rather than the ones judged unimportant. The reveal says how many are hidden and not
- * why, for the same reason: "lower-importance" would assert a ranking nobody made.
+ * The row budget is a default with a reveal, since this is the only place a posting's requirements
+ * are shown; the reveal says how many are hidden, not why.
  */
 import { useState } from 'react';
 import type { JobRequirement, RequirementEvidenceEntry } from '@djobi/shared';

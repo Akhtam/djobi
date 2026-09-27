@@ -16,20 +16,9 @@ import { profileRoute } from './routes/profile.js';
 import { renderResumePdfRoute } from './routes/render-resume-pdf.js';
 
 /**
- * What the app needs from the outside world, and the only thing `index.ts` supplies.
- *
- * `requireAuth` is a dependency for the same reason the two stores are: `authMiddleware.ts`'s real
- * `requireAuth()` reaches through `auth.ts` into the real (lazy) `db` the first time a request
- * actually calls it, and hardcoding that into every request this app serves would force every route
- * test — most of which have nothing to do with auth — into either a real Better Auth sign-up or
- * losing the documented "importable with no `.env`" property. `testApp.ts` supplies
- * `authMiddleware.ts`'s `fakeAuth`/`fakeUnauthenticated` instead, the same role
- * `inMemoryApplicationStore`/`inMemoryProfileStore` already play for persistence.
- *
- * The four LLM operations and the PDF renderer reach their own upstreams and are substituted at
- * their own seams (`llm/fakeModel.ts`, and a `vi.mock` of `pdf/renderResume.js`), which is why they
- * are not here. Adding a dependency to this interface is a deliberate widening of what the app
- * cannot construct for itself.
+ * What `createApp` can't construct itself; `index.ts` supplies the real ones. `requireAuth` is
+ * injected (like the stores) so route tests can use `fakeAuth` without a database or `.env`. LLM
+ * calls and PDF rendering are faked at their own seams (`llm/fakeModel.ts`, `vi.mock`).
  */
 export interface AppDependencies {
   applicationStore: ApplicationStore;
@@ -38,41 +27,25 @@ export interface AppDependencies {
 }
 
 /**
- * The one place a thrown error becomes a response. No route has its own `try/catch`, so without
- * this every throw from `llm/` — the model not returning a tool call, or its input failing schema
- * validation (`structuredCall.ts`), or an SDK/network failure — fell through to Hono's default
- * handler and became a *plain-text* `Internal Server Error`. That body isn't JSON, so the
- * extension's `callBackend` blew up parsing it and the real cause was destroyed before anyone
- * could read it. Failures now use the same `{ error }` shape the routes' validation errors
- * already return, so one client-side branch handles both.
- *
- * Exported (rather than an inline `app.onError` closure) so it can be driven directly against a
- * throwing route in a test, without needing `createApp`'s full dependencies.
+ * The one place a thrown error becomes a response: a JSON `{ error, code? }` body, so clients
+ * handle route validation errors and failures with one branch. Exported for direct testing.
  */
 export const handleError: ErrorHandler<AuthEnv> = (err, c) => {
   const context = `${c.req.method} ${c.req.path}`;
 
-  // The candidate closed the panel, navigated away, or hit Re-analyze — the request was abandoned
-  // and every model call under it was aborted on purpose. Nothing failed, so nothing is logged and
-  // no 500 is recorded: the same judgement the rejected-body branch below makes, for the same
-  // reason. Putting an ordinary user action through the channel that means "the backend is broken"
-  // is what makes that channel worth ignoring. The response goes nowhere; the status is for the log.
-  // 499 is the "client closed request" convention; Hono's `StatusCode` union is IANA-only, so the
-  // number is set on a plain `Response` rather than through `c.body`.
+  // The client abandoned the request (panel closed, Re-analyze) and its model calls were aborted on
+  // purpose — not a failure, so nothing is logged. 499 is the "client closed request" convention;
+  // Hono's `StatusCode` type is IANA-only, hence a plain `Response`.
   if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
 
-  // A rejected body is the client's fault, so it is a 400 and it is not logged. Logging it would
-  // put "the request was bad" through the same channel as "the backend is broken", which is the
-  // channel someone reads when deciding whether to go looking at the backend.
+  // A bad body is the client's fault: 400, not logged.
   if (err instanceof RequestValidationError) {
     const body: BackendErrorBody = { error: err.message };
     return c.json(body, 400);
   }
 
-  // Hono's own middleware (`hono/body-limit`, `hono/validator`, …) signals an expected, client-side
-  // rejection this way — its own status and body are already the right response, not a fault of
-  // this backend's to log. `getResponse()` is unaware of anything this app's own middleware already
-  // set on `c` (headers, etc.), which is fine here: nothing upstream of `onError` sets any.
+  // Hono middleware (body-limit, validator, …) signals expected client rejections this way; its
+  // response is already correct and not logged.
   if (err instanceof HTTPException) {
     return err.getResponse();
   }
@@ -99,82 +72,39 @@ export const handleError: ErrorHandler<AuthEnv> = (err, c) => {
 };
 
 /**
- * Builds the Hono app over its dependencies — separated from `index.ts` (which calls `serve()`) so
- * it can be driven with `app.request(...)` without binding a real port, and separated from its
- * stores so it can be driven without a database.
- *
- * It is a function rather than a module-level instance because the app now *has* dependencies. As a
- * singleton, the only way to give a test different persistence was to replace the store's module
- * with `vi.mock`, which four test files did — each restating the store's full export surface by
- * hand. A parameter cannot be forgotten the way that convention could, and two tests can now hold
- * two independent apps instead of sharing one and resetting mocks between cases.
+ * Builds the Hono app over its dependencies — no port bound (`index.ts` serves it) and no database
+ * required, so tests drive it with `app.request(...)`.
  */
 export function createApp(deps: AppDependencies): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
 
   /**
-   * Cross-origin access for `apps/dashboard`, which runs on its own dev server and is therefore a
-   * different origin from this one.
+   * CORS for the dashboard. Registered before every route (Hono runs middleware in registration
+   * order). An explicit origin list, never `*`: this server holds an OpenRouter key and any page in
+   * the browser can reach `127.0.0.1`. `credentials: true` lets the dashboard's session cookie
+   * through; the extension uses a bearer header and doesn't need it.
    *
-   * Two things about this registration are load-bearing.
-   *
-   * It sits **before** every `app.route` below. Hono composes handlers in registration order, so
-   * middleware added after the routes never runs for a request a route answers — it still runs for a
-   * 404, which is a convincing way to look correct while doing nothing. The same trap is written up
-   * in `index.ts` for the logger.
-   *
-   * And the origin is an explicit list rather than `*`. This server holds an Anthropic API key and a
-   * live database connection, and *any* page in the browser can reach `127.0.0.1` — a wildcard would
-   * let an unrelated site the candidate happens to have open read their applications. `credentials:
-   * true` and an explicit list are a package deal: the fetch spec forbids a wildcard origin on a
-   * credentialed response outright, so this could not be `*` even before that reasoning.
-   *
-   * `credentials: true` is what lets the browser both send the dashboard's httpOnly session cookie
-   * on a cross-origin request and expose the response to it — without it, `auth.ts`'s cookie-based
-   * session (Phase B) can never reach `deps.requireAuth` from `apps/dashboard`, which runs on its own
-   * dev server (`docs/multi-tenant-auth.md`, Phase C). The extension's `Authorization: Bearer` path
-   * needs none of this — a header a script sets itself was never subject to the cookie jar — so this
-   * is purely for the dashboard's benefit.
-   *
-   * Note what this allowlist does **not** do on its own: it stops cross-origin *reads*, because the
-   * browser withholds a response the server didn't label for that origin. It does not stop every
-   * cross-origin *write*. CORS middleware is header-based — for a non-`OPTIONS` request it omits the
-   * allow-origin header and calls `next()` anyway — so a request the browser never preflights
-   * reaches the handler and its side effect lands, even though the attacker can't read the reply.
-   * The content-type guard below is what closes that hole.
+   * CORS only blocks cross-origin *reads*; an un-preflighted write still reaches its handler. The
+   * content-type guard below closes that.
    */
   app.use(
     '*',
     cors({
-      // `PUBLIC_ORIGINS` (comma-separated) appends real deployed origins to the local-dev pair
-      // rather than replacing them — the same env var `auth.ts`'s `trustedOrigins` reads, through
-      // the same `publicOrigins()`, so the two allowlists (this one for the browser's CORS check,
-      // that one for Better Auth's own origin check) can't drift out of sync on a real deploy.
+      // `PUBLIC_ORIGINS` adds deployed origins; shared with `auth.ts`'s `trustedOrigins`.
       origin: ['http://localhost:5174', 'http://127.0.0.1:5174', ...publicOrigins()],
       allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-      // `x-djobi-upload` exists purely to force a preflight — see the content-type middleware below
-      // for why `POST /profile/extract-resume` needs one despite not sending JSON.
-      // `idempotency-key` is `routes/applications.ts`'s dedupe token for `POST /applications` — see
-      // `applicationStore.ts`'s `create`.
+      // `x-djobi-upload` forces a preflight for multipart uploads (see below); `idempotency-key`
+      // dedupes `POST /applications`.
       allowHeaders: ['content-type', 'x-djobi-upload', 'idempotency-key'],
       credentials: true,
     }),
   );
 
   /**
-   * Every state-changing request must declare `content-type: application/json`.
-   *
-   * This is a CSRF guard, not a parsing convenience. A `POST` counts as a CORS "simple request" —
-   * and so is sent with no preflight for the allowlist above to reject — only when its content-type
-   * is `text/plain`, `application/x-www-form-urlencoded`, or `multipart/form-data`. `c.req.json()`
-   * parses the body regardless of the header, so without this an unrelated page could `fetch` a
-   * `text/plain` POST at `127.0.0.1` and overwrite the whole profile, including the work-authorization
-   * and sponsorship answers the extension then submits verbatim on the next application.
-   *
-   * `application/json` is never simple, so requiring it forces a preflight the allowlist gets to
-   * refuse. Both real clients (`extension/src/lib/callBackend.ts`, `dashboard/src/lib/dashboardClient.ts`)
-   * already send it. `PATCH` never preflight-exempts either way, but it is covered here too rather
-   * than leaving the rule to be re-derived per method.
+   * CSRF guard: every state-changing request must be `content-type: application/json`. A
+   * `text/plain`, form-encoded or multipart POST is a CORS "simple request" sent with no preflight,
+   * and `c.req.json()` parses regardless of the header — so any page could otherwise overwrite the
+   * Profile. JSON forces a preflight the origin allowlist can refuse.
    */
   app.use('*', async (c, next) => {
     const method = c.req.method;
@@ -187,13 +117,8 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
     const [mediaType = ''] = (c.req.header('content-type') ?? '').split(';');
     const contentType = mediaType.trim().toLowerCase();
 
-    // `POST /profile/extract-resume` (20.3) sends a file, which cannot be `application/json`. But
-    // `multipart/form-data` is itself one of the three CORS "simple" content types the comment above
-    // names — accepting it here with no further check would quietly reopen the exact hole this
-    // middleware exists to close, just for this one route. `x-djobi-upload` is not a simple header,
-    // so requiring it demands the same preflight `application/json` gets for free: an attacker's
-    // page can set the header, but the browser then withholds the real request until the origin
-    // allowlist above answers the preflight, which an unrelated origin never gets.
+    // `POST /profile/extract-resume` sends multipart, itself a "simple" type. Requiring the
+    // non-simple `x-djobi-upload` header forces the same preflight JSON gets.
     if (contentType === 'multipart/form-data' && c.req.header('x-djobi-upload')) {
       return next();
     }
@@ -212,44 +137,27 @@ export function createApp(deps: AppDependencies): Hono<AuthEnv> {
   // `onError`/`notFound` on a throw or an unmatched route regardless of where they're registered.
   app.onError(handleError);
   app.notFound((c) => {
-    // The same `{ error }` shape every other rejected request already answers with, so an unknown
-    // path (a stale extension build hitting a route this backend has since removed, say) is still
-    // JSON `userMessage(error)` can read, not Hono's plain-text default.
+    // JSON `{ error }` like every other rejection, not Hono's plain-text 404.
     const body: BackendErrorBody = { error: 'Not found' };
     return c.json(body, 404);
   });
 
   /**
-   * A liveness check for orchestration — Docker Compose's `healthcheck`, mainly — to wait on
-   * before starting anything that depends on this server actually being up, rather than just
-   * having been told to start. Unauthenticated (registered before `deps.requireAuth` below) and
-   * deliberately shallow: it confirms the HTTP server is accepting requests, not that Postgres or
-   * OpenRouter are reachable. `db` already gates on its own healthcheck before this container
-   * starts at all, so re-querying it here would only add a failure mode (a slow query) to a check
-   * that exists to be fast and boring.
+   * Unauthenticated liveness check (used by Docker Compose). Deliberately shallow: confirms the
+   * HTTP server is up, not Postgres or OpenRouter.
    */
   app.get('/healthz', (c) => c.json({ ok: true }));
 
   /**
-   * Better Auth's own routes — `/api/auth/sign-up/email`, `/sign-in/email`, `/sign-in/social`,
-   * the session endpoints, and (once `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set, see
-   * `.env.example`) the Google OAuth callback. `auth.handler` is Better Auth's own Fetch-standard
-   * handler, so this is a pass-through rather than a route this file has any business parsing —
-   * see `auth.ts` for what's actually configured.
-   *
-   * Registered after the CORS and content-type middleware above, so a sign-up POST gets the same
-   * CSRF-relevant content-type check every other state-changing route already gets — and **before**
-   * `deps.requireAuth` below, which is what has to stay true: signing up or signing in is exactly
-   * the thing an unauthenticated request needs to be able to do. Hono composes in registration
-   * order, so a request matching this route never reaches the middleware registered after it.
+   * Better Auth's routes (email/password, session, and Google OAuth when configured), passed
+   * straight to `auth.handler`. After the CORS/content-type guards, and before `requireAuth` so
+   * signing in doesn't need a session.
    */
   app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 
   /**
-   * Everything below this line requires a session. `docs/multi-tenant-auth.md`'s Phase B: routes
-   * that don't themselves scope on `userId` (the four LLM operations, PDF rendering) still sit
-   * behind this — an unauthenticated caller has no business spending this backend's OpenRouter
-   * budget just because a given route doesn't happen to read the id it authenticated.
+   * Everything below requires a session — including routes that don't scope by `userId` (LLM
+   * operations, PDF rendering), so unauthenticated callers can't spend the OpenRouter budget.
    */
   app.use('*', deps.requireAuth);
 

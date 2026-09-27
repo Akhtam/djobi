@@ -1,8 +1,4 @@
-/**
- * File name for a generated (tailored) resume PDF, derived from the profile's `fullName` so the
- * file an employer receives is identifiable rather than a generic `resume.pdf`: "Joe Doe" becomes
- * `joe_doe_resume.pdf`.
- */
+/** Generated resume PDF file name from `fullName`: "Joe Doe" → `joe_doe_resume.pdf`. */
 export function resumeFileName(fullName: string): string {
   const slug = fullName
     .toLowerCase()

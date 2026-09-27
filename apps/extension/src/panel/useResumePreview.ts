@@ -1,17 +1,7 @@
 /**
- * The on-demand Tailored Resume preview: render the PDF, hand back a URL to show it at, and revoke
- * that URL exactly once.
- *
- * "Exactly once" is the whole reason this is a module. A `blob:` URL outlives the state that names
- * it, so every path that drops one has to revoke it — a second preview, a change of page, an
- * unmount — and a request already in flight when any of those happens must not install its result
- * afterwards. Those rules were spread across two refs, two effects and two functions in the tab
- * that renders the preview, where each new caller had to remember all of them; a missed revoke
- * leaks the blob until the browser reclaims it, and a missed staleness check shows the previous
- * job's resume.
- *
- * Kept out of the persisted `PipelineRunState` deliberately: it is a display-only, expensive-to-
- * recompute blob URL that should not survive a panel reopen.
+ * The on-demand Tailored Resume preview: renders the PDF, exposes a `blob:` URL, and revokes each
+ * URL exactly once (on a new preview, a page change or unmount), never installing a stale request's
+ * result. Kept out of the persisted run: display-only and expensive.
  */
 import { useEffect, useRef, useState } from 'react';
 import type { Profile, TailoredResume } from '@djobi/shared';
@@ -30,10 +20,9 @@ export interface ResumePreview {
 }
 
 /**
- * @param client - The backend seam; only `renderResumePdf` is used.
- * @param profile - Rendered into the PDF's header and education section.
- * @param tailoredResume - What to render. `null` before analysis, and {@link ResumePreview.show}
- *   does nothing then — there is no resume to preview yet.
+ * @param client - Only `renderResumePdf` is used.
+ * @param profile - Rendered into the PDF's header and education.
+ * @param tailoredResume - What to render; `null` before analysis, when `show` does nothing.
  */
 export function useResumePreview(
   client: BackendClient,
@@ -65,9 +54,7 @@ export function useResumePreview(
       .then((bytes) => {
         if (requestToken !== requestRef.current) return;
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-        // Re-checked after the URL exists: `createObjectURL` is synchronous, but the state that
-        // decides whether we still want it can have changed while the bytes were in flight.
-        // Without this the blob would be created and then dropped without ever being revoked.
+        // Re-check after creating the URL: if the request went stale meanwhile, revoke it.
         if (requestToken !== requestRef.current) {
           URL.revokeObjectURL(url);
           return;

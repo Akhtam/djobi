@@ -1,22 +1,7 @@
 /**
- * Where an Application Pipeline run has got to, and what may be done to it there.
- *
- * One table, and every question about a status answered from it. The three sets that used to state
- * this independently were kept in agreement by prose:
- *
- * - `background/applicationPipeline.ts` held `FILLABLE_FROM`, five statuses a Fill Step may start
- *   from, documented as "`reviewOf`'s `canReview` set minus the two it disables the button for".
- * - `lib/runReview.ts` held `canReview`, seven statuses, as a `switch` returning a boolean.
- * - `panel/AutofillTab.tsx` disabled the Fill button on `status === 'filling' || status === 'saving'`
- *   — the "two" that sentence refers to — and named statuses by hand in six more places.
- *
- * The relationship was real and it held, but nothing failed if it stopped holding: adding a status
- * meant finding all three, and the compiler could ask for exactly one of them. Here the sets are
- * *derived* from what each status means, so they cannot drift, and `status.test.ts` asserts the
- * relationship the comment used to assert.
- *
- * This module is the bottom of the run domain: it knows what a status is and nothing about storage,
- * messaging or rendering. See `lib/run/index.ts` for the layering.
+ * Where a pipeline run has got to, and what may be done from there — one table, with every
+ * status set (fillable, reviewable, editable, …) *derived* from it so they can't drift.
+ * `status.test.ts` pins the derived sets. The bottom of the run domain (see `lib/run/index.ts`).
  */
 
 export type PipelineStatus =
@@ -30,22 +15,16 @@ export type PipelineStatus =
   | 'saving'
   | 'save-error'
   | 'saved';
-// Deliberately excludes 'loading'/'no-profile'/'ready' — those are panel-local bootstrap state
-// (has a profile loaded yet, has an active tab been found yet), not Application Pipeline progress.
-// A null `run` means "ready".
+// Excludes panel-local bootstrap states ('loading', 'no-profile', 'ready'); a null run means ready.
 
 /** The step a command starts — the unit a failure is reported against. */
 export type RunStep = 'analysis' | 'fill' | 'save';
 
-/**
- * What one status says about the run, in the terms everything else is derived from.
- *
- * Each is independent of the others — none can be computed from the rest — which is why all four
- * are stated per row rather than half of them being written as a rule. `status.test.ts` checks
- * that the derived sets still come out as the sets the pipeline and the panel used to hold.
- */
+/** What one status says about the run; each fact is independent, so all are stated per row. */
 interface StatusFacts {
-  /** A step is in flight. The run is the extension's until it lands, not the candidate's to act on. */
+  /**
+   * A step is in flight. The run is the extension's until it lands, not the candidate's to act on.
+   */
   busy: boolean;
   /** The Analysis Step produced something: there is a resume, answers and a form to review. */
   reviewable: boolean;
@@ -96,11 +75,8 @@ export function hasFilled(status: PipelineStatus | null): boolean {
 }
 
 /**
- * There is a fill that has not been recorded as an Application.
- *
- * What puts the Save button on screen. It goes away on `saved` and comes back when the candidate
- * edits an answer, because that takes the run from `saved` to `filled` — a record whose answers
- * have changed is no longer the record that was saved.
+ * A fill not yet recorded as an Application — shows the Save button. Editing an answer after saving
+ * takes `saved` back to `filled`.
  */
 export function hasUnsavedFill(status: PipelineStatus | null): boolean {
   return status !== null && FACTS[status].filled && !FACTS[status].recorded;
@@ -133,42 +109,26 @@ const START_RULES: Record<RunStep, (status: PipelineStatus | null) => boolean> =
 };
 
 /**
- * Whether `step` may start from `status` — the pipeline's whole transition policy.
+ * Whether `step` may start from `status` — the whole transition policy.
  *
- * **Analysis** starts from anywhere. It is the only step that mints a run, and it replaces whatever
- * the tab held; a re-analysis of a failed, filled or saved run is an ordinary thing to want.
- *
- * **Fill** needs an analysis to fill from and needs the run idle. Requiring an analysis is not
- * enough on its own: a `START_FILL` arriving while a fill or a save was in flight — a duplicated
- * command, or one dispatched out of sequence — would otherwise start a second Fill Step against the
- * same tab. Re-filling from `filled` and `saved` is deliberate: a candidate may re-fill after
- * editing an answer, and the Save Step updates the same record rather than creating a second.
- *
- * **Save** needs a fill that is not already recorded, and the run idle. `saved` is excluded because
- * saving again would write the same snapshot back.
+ * - **Analysis**: from anywhere; it mints a new run.
+ * - **Fill**: needs an analysis and an idle run (no fill/save in flight). Re-filling from `filled`
+ *   or `saved` is allowed; saves update the same record.
+ * - **Save**: needs an unrecorded fill and an idle run.
  */
 export function canStart(step: RunStep, status: PipelineStatus | null): boolean {
   return START_RULES[step](status);
 }
 
 /**
- * The statuses `step` may start from, for `transitionPipelineRun`'s compare-and-set.
- *
- * Derived from {@link canStart} rather than listed, so the array a claim is made with and the
- * predicate a button is disabled by cannot disagree.
+ * The statuses `step` may start from, derived from {@link canStart} for the claim's
+ * compare-and-set.
  */
 export function startableFrom(step: RunStep): readonly PipelineStatus[] {
   return PIPELINE_STATUSES.filter((status) => canStart(step, status));
 }
 
-/**
- * What each step's status is called while it runs, and when it fails.
- *
- * One statement of a pairing that used to be spelled out wherever a step was started or reported:
- * the panel wrote `begin('filling')` beside `fail('fill-error', { step: 'fill' })` three times, and
- * the background wrote the error half again. Nine independent facts, correct only by inspection —
- * nothing stopped `filling` being raised beside a `save-error`. Here a step names one row.
- */
+/** Each step's running and failure statuses, named once. */
 export const STEP_STATUS = {
   analysis: { running: 'analyzing', succeeded: 'review', failed: 'analyze-error' },
   fill: { running: 'filling', succeeded: 'filled', failed: 'fill-error' },

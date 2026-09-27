@@ -11,12 +11,8 @@ import {
 } from './schemas.js';
 
 /**
- * Assembles a saved Application's payload — the fields common to every write path, `source`
- * excepted. Both {@link manualApplicationPayload} and {@link autofillApplicationPayload} used to be
- * built by hand at each of three call sites (the extension's Log tab, the dashboard's manual-entry
- * flow, and the Application Pipeline's Save Step); the two manual ones were byte-identical, and all
- * three had to independently remember that `requirementEvidence`/`bulletProvenance` are computed
- * against the *stored* resume, not the candidate's whole Profile.
+ * The fields common to every Application write path, `source` excepted. `requirementEvidence` and
+ * `bulletProvenance` are computed against the *stored* resume, not the whole Profile.
  */
 
 /** What a manual Application (Log tab / dashboard "Log an application") is built from. */
@@ -30,14 +26,9 @@ export interface ManualApplicationSource {
 }
 
 /**
- * Builds a manual Application's payload: the candidate's whole Profile as the stored resume — no
- * tailoring happened, so there is nothing to select down to — and no drafted answers, since the
- * candidate wrote whatever they wrote themselves. `company`/`roleTitle` win over the extraction's
- * own values both as the top-level columns and inside the stored `jobInfo`, so a correction applies
- * everywhere a row reads them, not just where it's displayed.
- *
- * Every string field is trimmed here rather than trusted from the caller, so a future call site
- * can't reintroduce the untrimmed values both existing ones took care to avoid.
+ * A manual Application's payload: the whole Profile as the stored resume and no drafted answers.
+ * `company`/`roleTitle` overrides apply both to the top-level columns and inside `jobInfo`, so a
+ * correction shows everywhere. Strings are trimmed here, not trusted from the caller.
  */
 export function manualApplicationPayload(
   profile: Profile,
@@ -75,14 +66,10 @@ export interface AutofillApplicationSource {
 }
 
 /**
- * Builds an autofill Application's payload from an analyzed run: the tailored resume and drafted
- * answers the pipeline produced, stamped with the extraction version in force.
+ * An autofill Application's payload from an analyzed run, stamped with the extraction version.
  *
- * `profile` is separate from `run` and nullable, because the Save Step reads the Profile fresh at
- * save time rather than threading it from Analysis — the record a save should be judged against is
- * the one that exists *now*. A Profile that can't be read (deleted, or the backend briefly
- * unreachable between Fill and Save) is not load-bearing: `requirementEvidence`/`bulletProvenance`
- * go in `null` rather than failing a write the candidate is actively waiting on.
+ * `profile` is read fresh at save time and may be `null` (deleted, or backend briefly unreachable);
+ * then `requirementEvidence`/`bulletProvenance` are stored as `null` rather than failing the save.
  */
 export function autofillApplicationPayload(
   run: AutofillApplicationSource,
@@ -127,12 +114,8 @@ export function autofillApplicationPayload(
   requirementEvidence: import('./requirementEvidence.js').RequirementEvidence[] | null;
   bulletProvenance: import('./bulletProvenance.js').BulletProvenanceEntry[] | null;
 } {
-  // The return type is spelled out structurally rather than named `NewApplicationRequest`:
-  // `run.jobInfo` is already the parsed `JobInfo` (not `NewApplicationRequest`'s wire-input shape,
-  // which additionally allows a requirement as a bare string). Naming `NewApplicationRequest` would
-  // widen `jobInfo.requirements` to that union and break this payload's use for
-  // `updateApplication`, whose `ApplicationSnapshot` accepts only the parsed shape. The parsed shape
-  // written out here stays assignable to both.
+  // Typed structurally, not as `NewApplicationRequest`: that wire-input shape also allows a bare
+  // string requirement, which `updateApplication`'s `ApplicationSnapshot` would reject.
   return {
     company: run.jobInfo.company,
     roleTitle: run.jobInfo.roleTitle,

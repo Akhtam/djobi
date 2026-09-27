@@ -1,21 +1,10 @@
 /**
- * One application: what it is, where it has got to, and what you have learned since.
+ * One application: a header card (identity, posting link, stage) and tabs for job info, the posting
+ * text (`rawDescription`), the resume sent, drafted answers with per-requirement verdicts
+ * (`RequirementList`), and notes. Tabs rather than stacked sections, since they're read one at a
+ * time.
  *
- * The header card carries identity and the two actions that change often (posting link, stage).
- * Everything else — job info, the posting it was extracted from, the resume that went out, drafted
- * answers, and notes — sits behind a tab bar rather than stacked `<details>`: those sections are
- * read one at a time, and a tab keeps the reader's place instead of asking them to scroll past
- * whichever ones they didn't open.
- *
- * Two of those sections read columns nothing outside the Analytics roll-up had read back before:
- * the posting text the Analysis Step was actually given (`rawDescription`) and the per-requirement
- * verdicts computed at save time (`requirementEvidence`, rendered by `RequirementList`). Both were
- * already being stored at every save; this is where they answer a question about *this* application
- * rather than about the history in aggregate.
- *
- * Nothing here edits the resume or the answers. That belongs to the review surface during a run —
- * a second editor over the same record would need `PATCH /applications/:id` semantics this phase
- * has deliberately not taken on.
+ * Nothing here edits the resume or answers; that's the run's review surface in the extension.
  */
 import { useState } from 'react';
 import type { Application, ApplicationStage, NewNote } from '@djobi/shared';
@@ -47,20 +36,16 @@ export function ApplicationDetail({
 }: {
   application: Application;
   /**
-   * Where the back link returns to, and what it calls that place — the index route *as the user
-   * left it*, filters included, not a bare `#/`. Passed in because this page cannot know it: both
-   * index routes (Applications, Analytics) can be one history entry back, each with its own
-   * filters, and only `App` knows which one rendered last. See `App`.
+   * Where the back link returns (the index route as the user left it, filters included). Supplied
+   * by `App`, which knows which index route rendered last.
    */
   back: { href: string; label: string };
   onStageChange: (id: string, stage: ApplicationStage) => void;
   onAddNote: (id: string, note: NewNote) => Promise<boolean>;
   onDeleteNote: (id: string, noteId: string) => void;
   /**
-   * Removes the Application itself. `App` navigates back to `back.href` once this resolves — this
-   * page only asks for the delete and offers the confirmation, the same "delete yes, edit no"
-   * asymmetry the Notes log uses and for the same reason: this record is history, there's nothing
-   * to recover an accidental delete from, and it's a write that can fail.
+   * Deletes the Application (after confirmation); `App` navigates to `back.href` once it resolves.
+   * Delete yes, edit no — like notes.
    */
   onDeleteApplication: (id: string) => void;
 }) {
@@ -79,9 +64,8 @@ export function ApplicationDetail({
   // Two clicks, never one — see the delete button below.
   const [deleteArmed, setDeleteArmed] = useState(false);
 
-  // Empty for every row saved before the verdicts were computed, which is most of the history and
-  // has to render as "nothing to say" rather than as a page of missing badges — see
-  // `RequirementList`.
+  // Empty for rows saved before verdicts existed; renders as "nothing to say" (see
+  // `RequirementList`).
   const evidence = evidenceByRequirement(application);
 
   return (

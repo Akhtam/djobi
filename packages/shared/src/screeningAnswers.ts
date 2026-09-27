@@ -1,27 +1,16 @@
 /**
- * Prepared answers: the facts about a candidate that an application asks for over and over, stored
- * once on the profile so nothing has to infer them per application.
+ * Screening answers: facts (work authorization, sponsorship, veteran status, …) stored once on the
+ * Profile and filled verbatim — never drafted by a model, since a guessed answer here is a
+ * misrepresentation on a legal document.
  *
- * Work authorization, sponsorship, veteran status and the rest are matters of fact with exactly one
- * correct answer, and that answer is the same on every form. Drafting them from a language model is
- * both wasted work and the one place a wrong answer really costs something — a guessed "yes" to a
- * sponsorship question is a misrepresentation on a legal document. So a question that matches a
- * known topic is answered from the profile and never reaches the model at all.
- *
- * Matching is by regular expression against the question's own label, in the order listed below.
- * Order is load-bearing where topics overlap: "Are you authorized to work in the US without
- * sponsorship?" mentions both, and reads as a work-authorization question, so that topic is tried
- * first.
+ * Topics match the question label by regex in the order listed; order matters where topics overlap
+ * ("authorized to work … without sponsorship?" is work authorization).
  */
 import { z } from 'zod';
 
 /**
- * The known topics, each with the pattern that recognizes it and the label the options UI shows.
- * This object is the single source of truth: the topic enum, the matcher order and the editor's
- * rows are all derived from it, so a new topic is added here and nowhere else.
- *
- * `suggestions` are offered in the editor as one-click values. They're a convenience, not a
- * constraint — any of these fields can hold whatever text the candidate wants.
+ * The known topics: pattern, editor label and one-click `suggestions` (not a constraint). The
+ * single source of truth for the topic enum, matcher order and editor rows.
  */
 export const SCREENING_TOPICS: readonly [
   {
@@ -263,9 +252,8 @@ export const ScreeningTopicSchema: z.ZodEnum<{
   work_authorization: 'work_authorization';
 }> = z.enum(TOPIC_NAMES);
 
-/** Stored answers, keyed by topic. A topic with no entry simply hasn't been answered. */
-// `partialRecord`, not `record`: zod 4's `z.record` over an enum key requires every key to be
-// present, and a candidate answers only the topics they choose to.
+/** Stored answers, keyed by topic. A topic with no entry hasn't been answered. */
+// `partialRecord`: zod 4's `z.record` over an enum requires every key.
 export const ScreeningAnswersSchema: z.ZodRecord<
   typeof ScreeningTopicSchema & z.core.$partial,
   z.ZodString

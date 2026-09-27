@@ -1,19 +1,7 @@
 /**
- * In-memory stand-in for `client.js` — the one module that names a provider — for tests. Not
- * imported by anything that ships.
- *
- * Every LLM test needs the same three things: a language model that answers with whatever the test
- * says, a way to read the request that was built for it, and a way to spell "the model replied with
- * this object". Five test modules each rebuilding that is five chances to model the provider contract
- * slightly wrong, and the contract is not obvious — token counts are grouped rather than flat, and
- * a finish reason is an object, so a plausible-looking hand-rolled response is read as a generation
- * that used no tokens and stopped for no reason.
- *
- * It fakes the *provider*, not `callStructured`. Schema conversion, JSON parsing, validation, the
- * retry and the failure classification are the behaviour under test in `structuredCall.test.ts` and
- * the reason the other four can assert on real prompts, so the seam stays underneath all of it.
- *
- * Use it as the mock factory itself, which keeps the fake and the test looking at one module:
+ * Test stand-in for `client.js`: a provider whose models answer as the test says, with helpers to
+ * read the built request. It fakes the *provider*, not `callStructured`, so schema conversion,
+ * parsing, validation and retries stay under test. Use as the mock factory:
  *
  * ```ts
  * vi.mock('./client.js', () => import('./fakeModel.js'));
@@ -26,12 +14,8 @@ import { vi } from 'vitest';
 export const mockDoGenerate = vi.fn();
 
 /**
- * Stands in for the OpenRouter provider, handing out models that answer from
- * {@link mockDoGenerate}.
- *
- * `chat` is a spy because the model id is not one of the call options — it belongs to the model
- * instance, not the request — so which slug an operation routed to is only observable here.
- * `expect(openrouter.chat).toHaveBeenLastCalledWith(...)` is how a test pins a route.
+ * Fake OpenRouter provider. `chat` is a spy because the routed model id is only visible here:
+ * `expect(openrouter.chat).toHaveBeenLastCalledWith(...)` pins a route.
  */
 export const openrouter = {
   chat: vi.fn(
@@ -41,12 +25,8 @@ export const openrouter = {
 };
 
 /**
- * One generation that produced `text` and nothing else.
- *
- * The defaults are the shape the provider spec actually requires: token counts grouped under
- * `inputTokens`/`outputTokens` rather than flat, and a finish reason carrying both the unified
- * value and the upstream's own. A flat `{ inputTokens: 100 }` is not rejected — it is silently read
- * as zero, which is the kind of fixture that makes a logging assertion pass for the wrong reason.
+ * One generation returning `text`. Defaults follow the provider spec: grouped token counts and a
+ * `{ unified, raw }` finish reason (a flat shape is silently read as zero).
  */
 export function generation(text: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -68,10 +48,8 @@ export function objectGeneration(object: unknown, overrides: Record<string, unkn
 }
 
 /**
- * The provider-spec call options built for generation `index` — the request, as the model saw it.
- *
- * This is where a prompt assertion reads from: `.prompt` for the turns, `.responseFormat` for the
- * schema, `.providerOptions` for routing, `.maxOutputTokens` for the cap.
+ * The call options for generation `index`: `.prompt`, `.responseFormat`, `.providerOptions`,
+ * `.maxOutputTokens`.
  */
 export function modelCall(index = 0) {
   const call = mockDoGenerate.mock.calls[index];
@@ -82,12 +60,7 @@ export function modelCall(index = 0) {
   return call[0];
 }
 
-/**
- * The text of one turn of generation `index`'s prompt, however the SDK chose to assemble it.
- *
- * A turn's content is an array of parts, and whether a given prompt becomes one part or several is
- * the SDK's business rather than a fact worth asserting; what the model reads is the concatenation.
- */
+/** The concatenated text of one prompt turn, however the SDK split it into parts. */
 export function promptText(turn = 0, index = 0): string {
   const message = modelCall(index).prompt[turn];
   return (message.content as Array<{ text?: string }>).map((part) => part.text ?? '').join('');

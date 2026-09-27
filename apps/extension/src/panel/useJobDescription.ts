@@ -1,20 +1,11 @@
 /**
- * The Job Description the candidate would analyze for the page the panel is showing — wherever it
- * currently lives, however it got there.
- *
- * The term has three homes and no single owner, which is what this module fixes. Before a run there
- * is an editable draft, held here and mirrored into `lib/tabStore/jobContext.ts` as a
- * {@link JobContext} so it survives the panel closing; once the Analysis Step has started, the
- * run's own `jobDescription` is authoritative and the draft stops mattering. Which of the two is
- * showing, which URL the analysis will be filed under, and what happens when the candidate types
- * while a scrape is in flight were all inline in `panel/AutofillTab.tsx`, spread across two
- * `useState`s, two `useRef`s and three functions — reachable only by rendering the whole tab.
- *
- * Scoping is by **Job Key**, not by URL: a candidate commonly collects the posting on an ATS
- * overview route and navigates to the application route before analyzing, and the draft has to
- * survive that. A different job, or a different tab, is a different draft.
+ * The Job Description the candidate would analyze for the current page. Before a run it's an
+ * editable draft, mirrored to `lib/tabStore/jobContext.ts` so it survives the panel closing; once
+ * analysis starts, the run's `jobDescription` is authoritative. Scoped by **Job Key**, so the draft
+ * survives overview → application navigation.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isHttpUrl } from '@djobi/shared';
 import { jobKeyForUrl, type JobDescriptionSource } from '../lib/jobContext';
 import { notify } from '../lib/messages';
 import { chromePageClient, type PostingReadOutcome } from '../lib/pageClient';
@@ -39,17 +30,15 @@ export type ScrapeStatus =
   | { kind: 'error'; reason: 'not-found' | 'unavailable' };
 
 export interface JobDescription {
-  /** What to show and what Analyze sends: the run's text once there is a run, the draft before it. */
-  text: string;
   /**
-   * Where the draft came from, or `null` when there is none. Only ever about the draft — a run
-   * carries its analyzed text, not the story of how it was collected.
+   * What to show and what Analyze sends: the run's text once there is a run, the draft before it.
    */
+  text: string;
+  /** Where the draft came from, or `null`. Only about the draft. */
   source: JobDescriptionSource | null;
   /**
-   * The URL an analysis of this text belongs to: the run's own, else the page the draft was
-   * collected from, else the tracked tab. Not simply the current URL — a description scraped on an
-   * overview route is filed under that route, which is the posting's canonical address.
+   * The URL an analysis belongs to: the run's, else where the draft was collected, else the tracked
+   * tab. `null` unless http(s) — a saved Application needs one, so Analyze stays disabled.
    */
   analysisUrl: string | null;
   scrapeStatus: ScrapeStatus;
@@ -196,10 +185,14 @@ export function useJobDescription(
   return {
     text,
     source: currentDraft?.source ?? null,
-    analysisUrl: run?.tabUrl ?? currentDraft?.sourceUrl ?? tabUrl,
+    analysisUrl: httpUrlOrNull(run?.tabUrl ?? currentDraft?.sourceUrl ?? tabUrl),
     scrapeStatus,
     canScrape,
     edit,
     scrape,
   };
+}
+
+function httpUrlOrNull(url: string | null | undefined): string | null {
+  return url && isHttpUrl(url) ? url : null;
 }

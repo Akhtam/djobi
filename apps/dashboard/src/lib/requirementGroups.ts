@@ -1,16 +1,7 @@
 /**
- * Grouping posting requirements by importance band, for the two views that show them.
- *
- * `RequirementList` (one application) and `RequirementsPanel` (every posting in a range) render the
- * same requirements against the same verdicts, so they must group them the same way. They used to
- * each carry their own required/preferred split, which is precisely the arrangement that drifts:
- * one screen gains a rule and the other silently disagrees with it. There is one helper now.
- *
- * **Why bands replace the required/preferred split rather than sitting inside it.** Two competing
- * priority orderings on one screen is not more information, it is a question the reader has to
- * resolve before they can read anything. `kind` is still stored and still means what it meant — how
- * the posting phrased the requirement — but the band is the stronger signal and it is the one that
- * orders the page.
+ * Groups posting requirements by importance band for `RequirementList` (one application) and
+ * `RequirementsPanel` (Analytics), so both order them identically. Bands replace the old
+ * required/preferred split as the ordering; `kind` is still stored.
  */
 import {
   DECISIVE_BANDS,
@@ -26,15 +17,8 @@ export const UNBANDED = 'unbanded' as const;
 export type RequirementGroupKey = RequirementImportance | typeof UNBANDED;
 
 /**
- * Group order: the bands as `schemas.ts` declares them, with the unassessed last.
- *
- * Read off `IMPORTANCE_BANDS` rather than retyped, so this cannot drift from the sort in
- * `requirementEvidence.ts` — the two are the same ordering of the same facts, and a screen that
- * ranked them differently from the data would be the disagreement this module exists to prevent.
- *
- * `UNBANDED` sits at the end rather than being ranked among the bands because it is not a low band
- * — it is the absence of one. Most of the stored history predates importance, and placing those
- * requirements anywhere in the ranking would state a priority nobody assessed.
+ * Group order: bands as declared in `schemas.ts` (so it matches `requirementEvidence.ts`'s sort),
+ * then `UNBANDED` — not a low band but the absence of one.
  */
 export const BAND_ORDER: readonly RequirementGroupKey[] = [...IMPORTANCE_BANDS, UNBANDED];
 
@@ -48,18 +32,10 @@ export const BAND_LABELS: Record<RequirementGroupKey, string> = {
   [UNBANDED]: 'not assessed',
 };
 
-/**
- * The row budget. A long posting yields thirty requirements, and a thirty-row list is one nobody
- * reads to the end — the rows that matter are lost among the rows that do not, which defeats the
- * point of having ranked them.
- */
+/** The row budget: a thirty-row list buries the rows that matter. */
 export const ROW_BUDGET = 12;
 
-/**
- * Bands never trimmed, whatever the budget says — the same set the gate in
- * `requirementImportance.ts` refuses to let a guess reach. One concept, one definition: what
- * decides an application is what must not be hidden.
- */
+/** Bands never trimmed — `DECISIVE_BANDS`, the ones the Importance Gate protects. */
 function isDecisive(key: RequirementGroupKey): boolean {
   return key !== UNBANDED && DECISIVE_BANDS.has(key);
 }
@@ -81,30 +57,13 @@ function keyOf(requirement: JobRequirement): RequirementGroupKey {
 }
 
 /**
- * `requirements` grouped by band, in band order, trimmed to {@link ROW_BUDGET}.
+ * `requirements` grouped by band, in band order, trimmed to `budget`:
  *
- * Two rules govern the trim, and they can disagree:
+ * - **Every `critical`/`high` row survives**, even past the budget; only `meaningful` and below are
+ *   trimmed (the unassessed tail first, since it sorts last).
+ * - **No budget if nothing is banded** — fully unassessed postings render in full.
  *
- * - **Every `critical` and `high` row survives**, even when keeping them pushes the list past the
- *   budget. A posting is allowed to state more than twelve must-haves, and a list that silently
- *   dropped one of them would hide exactly the row the reader opened the page for. The budget only
- *   ever trims `meaningful` and below.
- * - **The budget applies only when something was actually banded.** An application whose
- *   requirements all predate importance renders in full, exactly as it did before bands existed.
- *   An unassessed row must read as "nothing was checked", never as "nothing was found" — the same
- *   rule `RequirementList` already follows for a missing evidence verdict.
- *
- * Order within a group is the order the posting listed them; nothing is re-sorted here.
- *
- * `budget` exists for the one caller that offers a reveal: `RequirementList` passes `Infinity` once
- * the reader asks to see everything, so the same grouping renders untrimmed rather than a second
- * code path re-deriving it.
- *
- * One consequence worth naming: in a posting where *some* rows are banded, the unassessed tail is
- * the first thing trimmed, because it sorts last. That is the right call — a row nothing assessed
- * cannot outrank one assessed as `meaningful` — and it does not weaken the "nothing was checked"
- * reading, since the rows that survive still say `not assessed` and the count line says how many
- * did not.
+ * Posting order is kept within a group. `RequirementList` passes `Infinity` to reveal everything.
  */
 export function groupByImportance(
   requirements: readonly JobRequirement[],

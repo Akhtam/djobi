@@ -1,45 +1,21 @@
 /**
- * What the Application Pipeline does with each Detected Field category — its **disposition**.
+ * Each Detected Field category's **disposition**: filled from the Profile, answered by the model,
+ * attached as a file, or deliberately left alone (`'unsupported'`, e.g. cover letters).
  *
- * Every category has one: filled from the Profile, answered by the model, attached as a file, or
- * deliberately left alone. That decision existed before this module; it just wasn't written down
- * anywhere a compiler could read. It was inferable only by reading four call sites and noticing
- * which members they never mentioned — `background/applicationPipeline.ts`'s `switch` with a
- * `default`, its two `=== 'question'` / `=== 'resume_upload'` tests, and the upload pick in
- * `content/fillForm.ts`.
- *
- * The cost of that was not hypothetical. Cover-letter fields are detected and deliberately not
- * filled — `PROGRESS.md` says so under "Constraints that look like mistakes", because
- * `answerQuestions` is wired only to `question` fields — but the code implementing that decision was
- * a `default` branch, which looks exactly like having forgotten. A deliberate omission and an
- * oversight were the same line.
- *
- * This lives in the **extension**, not in `@djobi/shared`. Only the category *vocabulary* is shared,
- * because both halves of the wire have to agree on it. What to *do* with a category is this app's
- * policy: it is the Application Pipeline that fills, and the rules here are extension-specific down
- * to splitting a `fullName` into a first and last name. How the DOM earns a category stays in
- * `content/detectFields.ts`, and how a field is interacted with stays in `content/fillForm.ts` —
- * different policies, different modules, changing for different reasons.
+ * Extension policy, not shared: only the category vocabulary is in `@djobi/shared`. Detection
+ * lives in `content/detectFields.ts` and interaction in `content/fillForm.ts`.
  */
 import type { FieldCategory, Profile } from '@djobi/shared';
 
 /**
- * Where a Detected Field's value comes from.
- *
- * `'unsupported'` is a decision on the record, not a gap: the field is detected, it crosses every
- * boundary, and nothing fills it — on purpose. Saying so here is what separates it from a category
- * somebody forgot.
+ * Where a Detected Field's value comes from. `'unsupported'` is a recorded decision, not a gap.
  */
 export type AutofillSource = 'profile' | 'question' | 'resume' | 'unsupported';
 
 /**
- * Every category's disposition, exhaustively.
- *
- * `satisfies Record<FieldCategory, AutofillSource>` is the whole mechanism. A 15th category cannot
- * be added to `FieldCategorySchema` without this object failing to compile, which is the pressure
- * the `default` branch used to absorb silently. `satisfies` rather than an annotation so the literal
- * keeps its narrow value types, which is what {@link ProfileBackedCategory} derives the profile
- * subset from below.
+ * Every category's disposition. `satisfies Record<FieldCategory, AutofillSource>` makes a new
+ * category a compile error until it's given one, and keeps literal types for
+ * {@link ProfileBackedCategory}.
  */
 export const AUTOFILL_SOURCE = {
   first_name: 'profile',
@@ -65,43 +41,33 @@ export function autofillSource(category: FieldCategory): AutofillSource {
 }
 
 /**
- * The categories {@link AUTOFILL_SOURCE} marks as coming from the Profile, derived from the table
- * rather than restated beside it.
- *
- * Restating the list is what let the two drift in the first place. Marking a new category
- * `'profile'` above now forces an entry in {@link PROFILE_VALUE} below, and demoting one to
- * `'unsupported'` forces its removal — neither is something to remember.
+ * The `'profile'` categories, derived from {@link AUTOFILL_SOURCE} — so {@link PROFILE_VALUE} must
+ * cover exactly them.
  */
 type ProfileBackedCategory = {
   [K in FieldCategory]: (typeof AUTOFILL_SOURCE)[K] extends 'profile' ? K : never;
 }[FieldCategory];
 
 /**
- * How each profile-backed category is projected out of a Profile.
- *
- * `undefined` means "nothing to fill", and it is deliberately not `''`: the Profile stores a cleared
- * optional as `null` (see `orNull` in `options/App.tsx`), and writing an empty string would overwrite
- * whatever the ATS had already put in the box.
- */
-/**
- * A stored value as something worth writing, or `undefined` when there is nothing there.
- *
- * Every projection below goes through this, because the rule above — blank means "leave the box
- * alone", never "write an empty string over it" — was implemented on `last_name` alone. `fullName`
- * and `email` are plain `z.string()` with no minimum (`EMPTY_PROFILE` starts both at `''`, and the
- * profile form marks neither required), so a profile saved without a name filled `first_name` and
- * `full_name` with `''` and wiped whatever the ATS had already prefilled into them.
+ * A stored value worth writing, or `undefined` for blank. Blank means "leave the box alone", never
+ * "write `''` over what the ATS prefilled".
  */
 function filled(value: string | null | undefined): string | undefined {
   return value?.trim() || undefined;
 }
 
-/** The name's parts, split on any run of whitespace so a double space doesn't yield a blank part. */
+/**
+ * The name's parts, split on any run of whitespace so a double space doesn't yield a blank part.
+ */
 function nameParts(profile: Profile): string[] {
   const name = profile.fullName.trim();
   return name ? name.split(/\s+/) : [];
 }
 
+/**
+ * How each Profile-backed category is read from a Profile. `undefined` means "nothing to fill" —
+ * never `''`, which would overwrite what the ATS prefilled.
+ */
 const PROFILE_VALUE: Record<ProfileBackedCategory, (profile: Profile) => string | undefined> = {
   // A mononym has no surname to give, so `last_name` is empty rather than a repeat of the first.
   first_name: (profile) => filled(nameParts(profile)[0]),
@@ -116,8 +82,7 @@ const PROFILE_VALUE: Record<ProfileBackedCategory, (profile: Profile) => string 
 };
 
 /**
- * The Profile value that fills `category`, or `undefined` for a category the Profile doesn't back —
- * a question, the resume upload, or one this app deliberately leaves alone.
+ * The Profile value for `category`, or `undefined` for a category the Profile doesn't back.
  */
 export function valueForCategory(category: FieldCategory, profile: Profile): string | undefined {
   const source = AUTOFILL_SOURCE[category];

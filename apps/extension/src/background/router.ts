@@ -13,33 +13,14 @@ import {
 } from './applicationPipeline';
 
 /**
- * Routes a coordination message, using `lib/tabStore/` as the hand-off point.
+ * Routes one coordination message, using `lib/tabStore/` as the hand-off point, and returns the
+ * task so the listener can log a terminal rejection.
  *
- * Returns the routed task so the service worker can observe terminal rejection. Most cases are
- * notification-only: the service-worker listener does not return that promise to Chrome and takes
- * no `sendResponse`, so {@link TypedMessage} never holds a panel's channel open for these. `UPDATE_RUN`,
- * `START_FILL` and `START_SAVE_APPLICATION` are the documented exceptions — each answers something
- * the caller genuinely waits on — and `service-worker.ts` is what actually relays them; this function
- * only has to resolve to the right shape.
+ * `UPDATE_RUN`, `START_FILL` and `START_SAVE_APPLICATION` resolve with a reply (see
+ * `messageListener.ts`). Fill/Save resolve as soon as `runClaim.ts` decides the claim, while the
+ * step keeps running; they never reject — a fault before the claim resolves as a refusal.
  *
- * `START_FILL`/`START_SAVE_APPLICATION` resolve as soon as `background/runClaim.ts` knows whether
- * the claim was won — not when the step finishes. The step itself keeps running underneath, exactly
- * as it did when this was fire-and-forget; the `.catch` below is what replaces the service worker's
- * own top-level one for that detached tail, which this function's returned promise no longer covers
- * once it resolves early. These two therefore never reject: a fault reaching that `.catch` before
- * the claim was decided still resolves with a refusal, since a caller waiting on this promise has no
- * better answer to fall back on than the one a losing claim already reports.
- *
- * What this module genuinely owns, and the reason it isn't just inlined into the service worker, is
- * the frame/revision rule below.
- *
- * `deps` is the Application Pipeline's seam, taken here rather than only by the three functions
- * below it. The pipeline's own adapter substitution stopped one level too low: a caller that wanted
- * a fake backend had to bypass this dispatch and call `runAnalysis`/`runFill`/`runSaveApplication`
- * itself, which is what `panel/panelTestHarness.ts` used to do — re-stating all five cases, with a
- * cast per field, in a switch that could drift from this one without either side failing. Two
- * adapters now meet at one interface: production from `service-worker.ts`, a fake backend and page
- * from the panel tests.
+ * `deps` is the pipeline seam, so tests drive the same dispatch with fakes.
  */
 export async function handleTypedMessage(
   message: TypedMessage,
@@ -54,21 +35,13 @@ export async function handleTypedMessage(
       const frameId = sender.frameId ?? 0;
       if (tabId === undefined) return Promise.resolve();
 
-      // Already parsed at the service-worker boundary. A content script keeps running against the
-      // build that injected it, so the protocol version rejects an old shape after an extension
-      // reload before this router sees it.
-      // The *sending document's* URL, not the tab's. These differ in the case that matters: an ATS
-      // form is usually an iframe on a company's own careers domain, so `sender.tab.url` is
-      // `careers.acme.com` while the form — and the posting id every oracle parses out of it — is at
-      // `job-boards.greenhouse.io`. Handing the oracle the tab's URL meant it recognized no platform
-      // and never fetched, in exactly the case enrichment exists to serve. That failure is
-      // indistinguishable from "no oracle matched" by design (see `apiDetectors.ts`), which is why
-      // it went unnoticed. Falls back to the tab for a main-frame form, where the two are the same.
+      // Already parsed and version-checked at the listener, so an orphaned content script's old
+      // shape never reaches here. The *sending document's* URL, not the tab's: an ATS form is often
+      // an iframe on the company's domain, and oracles parse the posting from the iframe's URL.
+      // Falls back to the tab's.
       const url = sender.url ?? sender.tab?.url;
 
-      // Storing the report and upgrading it from the platform's API are one sequence, and
-      // `background/detectedFields.ts` owns it — including the part this dispatch is in no position
-      // to know, that a run started before the oracle answers must wait for it.
+      // `detectedFields.ts` owns store-then-enrich, including making a run wait for the oracle.
       return recordReport(tabId, frameId, message.fields, url);
     }
 
@@ -95,9 +68,7 @@ export async function handleTypedMessage(
           runFill(message.tabId, message.profile, deps, message.expectedRunId, resolve),
         ).catch((error: unknown) => {
           console.error('[djobi] fill step failed', error);
-          // A no-op if `onClaimed` above already settled this promise — a fault reaching here
-          // instead means the claim itself was never decided, so there is nothing better to answer
-          // with than the same refusal a losing claim reports.
+          // No-op if `onClaimed` already settled; otherwise the claim was never decided, so refuse.
           resolve({ claimed: false, reason: 'busy' });
         });
       });
@@ -123,10 +94,9 @@ export async function handleTypedMessage(
       return setJobContext(message.tabId, message.tabUrl, message.jobDescription, message.source);
 
     case 'REPORT_SUBMISSION': {
-      // The candidate pressed the ATS's own Submit on a form this extension filled. Saving is the
-      // Save Step exactly as the panel's Save button runs it — including its claim, which will
-      // refuse a run that isn't a completed, unsaved fill (`startableFrom('save')`), and its
-      // `expectedRunId` check, which refuses a submission belonging to a superseded run.
+      // The candidate pressed the ATS's own Submit on a form we filled: run the Save Step exactly
+      // as the panel does. Its claim refuses runs that aren't completed, unsaved fills, and
+      // `expectedRunId` refuses a superseded run.
       const tabId = sender.tab?.id;
       if (tabId === undefined) return Promise.resolve();
 
@@ -134,9 +104,7 @@ export async function handleTypedMessage(
     }
 
     case 'CHECK_RUN':
-      // Nothing to do, deliberately. The work this message asks for has already happened by the
-      // time it is routed: `service-worker.ts` runs the recovery sweep before dispatching anything,
-      // so simply *arriving* — and starting a worker if none was running — is the whole effect.
+      // Nothing to do: arriving wakes the worker, and the recovery sweep runs before any route.
       return Promise.resolve();
   }
 }

@@ -1,22 +1,8 @@
 /**
- * Detection and filling against a **real, unmodified Lever application form**, captured live.
- *
- * `__fixtures__/sonarsource-lever.html` is the `<form id="application-form">` element served by
- * `jobs.lever.co/sonarsource/e503ad3d-13bc-4e9c-a141-228df320e010/apply`, verbatim — only the page
- * chrome around it (600KB of inline stylesheet and analytics script that jsdom would parse on every
- * run) was dropped. Nothing inside the form was touched.
- *
- * This file exists because that posting was reported as filling nothing at all, and there was no
- * repro for it: `PROGRESS.md` recorded a second non-autofilling form that had never been supplied,
- * so the suspicion could not be tested. The fixture settles the detection half of the question —
- * every field on this form is found and classified correctly, and the values written into them
- * stick. The failure was in the extension's frame plumbing instead (see `lib/pageClient.ts`), which
- * is covered by `lib/pageClient.test.ts` and `content/index.test.ts`.
- *
- * Lever's markup is a different shape from Greenhouse's in three ways worth pinning down: labels
- * associate by *wrapping* rather than `for=`, required-ness is marked with U+2731 (`✱`) inside the
- * label rather than an asterisk or a `required` attribute alone, and custom questions are named
- * `cards[<uuid>][fieldN]` with no id of any kind.
+ * Detection and filling against a **real, captured Lever form**
+ * (`__fixtures__/sonarsource-lever.html`, the `<form id="application-form">` verbatim). Lever
+ * labels by wrapping rather than `for=`, marks required with U+2731 in the label, and names custom
+ * questions `cards[<uuid>][fieldN]` with no id.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,7 +26,9 @@ function detect(): DetectedField[] {
   return detectFields(document);
 }
 
-/** The one field whose label contains `needle`; throws rather than silently asserting on nothing. */
+/**
+ * The one field whose label contains `needle`; throws rather than silently asserting on nothing.
+ */
 function find(fields: DetectedField[], needle: string): DetectedField {
   const matches = fields.filter((field) =>
     field.label.toLowerCase().includes(needle.toLowerCase()),
@@ -106,8 +94,8 @@ describe('a live Lever application form', () => {
 
   it('groups the demographic-survey radios into one field per question, not one per choice', () => {
     const fields = detect();
-    // Six age-band radios sharing `surveysResponses[…][responses][field0]`. Ungrouped they arrive as
-    // six `unknown` fields labelled "18-20", "21-29"… — each unanswerable on its own.
+    // Six age-band radios sharing `surveysResponses[…][responses][field0]`. Ungrouped they arrive
+    // as six `unknown` fields labelled "18-20", "21-29"… — each unanswerable on its own.
     const ageBand = fields.filter((field) =>
       field.options?.some((option) => option.label === '60 or older'),
     );

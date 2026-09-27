@@ -1,35 +1,27 @@
 /**
- * How a **Detected Field** maps back onto the live DOM.
+ * How a **Detected Field** maps back onto the live DOM — the single copy of the rules detection and
+ * filling must share:
  *
- * The two halves of the Detected Field round-trip — `detectFields.ts` producing them and
- * `fillForm.ts` acting on them — have to agree on four things, and each one used to be written
- * twice, in two files, with nothing checking the copies still matched:
+ * - {@link choicesIn}: what counts as a choice (native inputs, else ARIA choices).
+ * - {@link choiceLabel}: a choice's visible text.
+ * - {@link listboxFor}: the `aria-controls`/`aria-owns` link to a combobox's listbox.
+ * - {@link resolveChoice}: finding the element for an answer, scoped to the field.
  *
- * - **One selector grammar.** {@link choicesIn} decides what counts as a choice. `fillForm.ts` used
- *   to hand-concatenate the same two constants into one literal, which is not the same rule: this
- *   prefers native inputs and falls back to ARIA *only when there are none*, where the literal
- *   queried both at once. On a form rendering an `<input type="radio">` beside an ARIA proxy, the
- *   fill saw two same-labelled choices, matched neither, and left the field blank.
- * - **One label ladder.** {@link choiceLabel}, over `pageSignals.getSignal`. Deriving a choice's
- *   text a second way at fill time is how the two halves come to disagree.
- * - **One listbox link.** {@link listboxFor} — `aria-controls`/`aria-owns`. Detection followed it to
- *   record a combobox's options; filling followed it again to find them live; they were separate
- *   implementations of one rule.
- * - **One resolution, and it is scoped.** {@link resolveChoice} — see the ownership note there.
- *
- * `fillForm.ts` asks this module for an element and gets one, or gets a stated reason
- * ({@link ChoiceResolution}). It no longer re-derives anything.
+ * `fillForm.ts` gets an element or a stated reason ({@link ChoiceResolution}); it re-derives
+ * nothing.
  */
 import { labelsMatch, optionFor, uniqueMatch, type DetectedField } from '@djobi/shared';
 import { collapseWhitespace, getSignal, isInstanceOf } from './pageSignals';
 
-/** Native choice inputs — one question's mutually-exclusive (radio) or multi-select (checkbox) answers. */
+/**
+ * Native choice inputs — one question's mutually-exclusive (radio) or multi-select (checkbox)
+ * answers.
+ */
 export const NATIVE_CHOICE_SELECTOR = 'input[type="radio"], input[type="checkbox"]';
 
 /**
- * Choices built out of ARIA rather than inputs — a `<button role="radio">`, a `<div role="checkbox">`,
- * or a pressed-state toggle button. Only ever looked for *inside* a container already identified as
- * a choice group, so ordinary page buttons (submit, nav, "add another") can't be mistaken for answers.
+ * ARIA-built choices (`role="radio"`, `role="checkbox"`, `button[aria-pressed]`). Only searched
+ * inside a known choice group, so ordinary page buttons are never taken for answers.
  */
 const ARIA_CHOICE_SELECTOR = '[role="radio"], [role="checkbox"], button[aria-pressed]';
 
@@ -41,19 +33,9 @@ export function choicesIn(container: Element): Element[] {
 }
 
 /**
- * One choice's visible answer text.
- *
- * The one derivation. Detection records it as a {@link FieldOption}'s `label`, and
- * {@link resolveChoiceAmong} re-reads it from the live DOM for a choice that carried no recorded
- * selector. Both go through here, because deriving it a second way is how the two halves come to
- * disagree — which is what `fillForm.ts` importing this from `detectFields.ts` used to invite.
- *
- * Every branch ends in {@link collapseWhitespace}, as does every other place a choice label is produced
- * ({@link resolveComboboxOptions}, {@link resolveSelectOptions}). Option labels used to skip it
- * while field labels didn't, and the asymmetry was silently expensive: a multi-line
- * `<li role="option">` kept its newline, so the key `apiDetectors.mergeOptions` builds from it never
- * matched the API's wording of the same choice, and that option was permanently demoted from "click
- * this element" to "hope the text matches at fill time".
+ * One choice's visible answer text — used both for a detected option's `label` and to re-read
+ * choices at fill time. Always whitespace-collapsed, like every other choice label, so it matches
+ * the API's wording in `apiDetectors.mergeOptions`.
  */
 export function choiceLabel(doc: Document, el: Element): string {
   if (isInstanceOf(el, 'HTMLInputElement'))
@@ -62,21 +44,17 @@ export function choiceLabel(doc: Document, el: Element): string {
 }
 
 /**
- * The listbox `trigger` names via `aria-controls`/`aria-owns`, or `null` when it names none.
- *
- * The single implementation of that link. Detection follows it to record a combobox's options;
- * filling follows it to find them live, and to know where a recorded option is *allowed* to be. The
- * two used to be separate copies, and the fill-side one carried a comment admitting as much.
- *
- * `null` rather than an empty array, because "this widget names no listbox" and "the listbox is
- * empty" are different facts with different fallbacks — see {@link optionScopeFor}.
+ * The listbox `trigger` names via `aria-controls`/`aria-owns`, or `null`. `null` (names none)
+ * differs from an empty listbox — see {@link optionScopeFor}.
  */
 export function listboxFor(doc: Document, trigger: Element): Element | null {
   const controlsId = trigger.getAttribute('aria-controls') ?? trigger.getAttribute('aria-owns');
   return controlsId ? doc.getElementById(controlsId) : null;
 }
 
-/** Resolves a Detected Field's `selector` to its matching DOM element, or `null` if unresolvable. */
+/**
+ * Resolves a Detected Field's `selector` to its matching DOM element, or `null` if unresolvable.
+ */
 export function resolveField<T extends Element = HTMLElement>(
   doc: Document,
   field: DetectedField,
@@ -85,23 +63,14 @@ export function resolveField<T extends Element = HTMLElement>(
 }
 
 /**
- * Where this field's recorded option elements are allowed to live — `null` when nothing narrower
- * than the document can be established.
+ * Where this field's recorded option elements may live; `null` when nothing narrower than the
+ * document is known.
  *
- * **This is the ownership check.** A recorded option selector is `#<page-id>` whenever the element
- * carried an id of its own, because `detectFields`' tagger prefers a page-supplied `id` over writing
- * a `data-djobi-id` — so every unsafe selector is one Djobi did not mint. Resolving those
- * document-wide returns the *first* match in document order, which on a form with duplicate ids (or
- * two questions whose choices are both `#yes`) is an element belonging to a different field
- * entirely. The click then lands there, and — because the verifier re-reads the element it just
- * clicked — the wrong write reports itself as a success.
- *
- * Scoping is per `elementRole` and cannot be a blanket "inside the field's container": a combobox's
- * listbox is routinely portal-mounted *outside* the trigger, which is the whole reason
- * {@link listboxFor} exists. So a combobox is scoped to the listbox it names, and only a combobox
- * that names none falls back to the document. That last case is an acknowledged hole rather than a
- * fixed one — it is unchanged in breadth from the fill-side lookup this replaced, and the point of
- * this function is that it is now the *only* place left with it.
+ * **The ownership check.** A recorded selector is `#<page-id>` when the page supplied an id, and
+ * resolving that document-wide can hit another field's element (duplicate ids, two `#yes`) — which
+ * the verifier would then report as success. Scoped per `elementRole`: a combobox to the listbox it
+ * names (often portal-mounted outside the trigger). A combobox naming none falls back to the
+ * document — a known hole, confined to this function.
  */
 function optionScopeFor(doc: Document, field: DetectedField): Element | Document | null {
   const el = resolveField(doc, field);
@@ -111,20 +80,13 @@ function optionScopeFor(doc: Document, field: DetectedField): Element | Document
   // Both are `field.selector`, so one lookup covers them.
   if (field.elementRole !== 'combobox') return el;
 
-  // Unsafe on a form with two comboboxes open or portal-mounted at once — the first text match
-  // wins, and it may belong to a different field. Narrowing it is not possible without a link the
-  // page declined to make.
+  // Unsafe with two comboboxes open at once: the first text match wins. Nothing narrower exists.
   return listboxFor(doc, el) ?? doc;
 }
 
 /**
- * What the Fill Step gets back when it asks for the element behind a drafted answer: an element, or
- * a reason there isn't one.
- *
- * The reasons are distinguished because they mean different things to a candidate — a field the
- * page no longer has is not the same problem as an answer that names two choices at once — and the
- * Fill Step currently collapses all of them into "not filled". Carrying the reason here is what
- * lets that stop being true without touching this module again.
+ * An element for a drafted answer, or why there isn't one. Reasons are kept distinct so the Fill
+ * Step can eventually report them differently.
  */
 export type ChoiceResolution =
   | { readonly ok: true; readonly element: HTMLElement }
@@ -139,10 +101,8 @@ function isAmbiguous(field: DetectedField, answer: string): boolean {
 }
 
 /**
- * The element for `answer` among `candidates`, matched on {@link choiceLabel}.
- *
- * The fallback path, for a choice that had no element to record at detection time — one known only
- * from an ATS API schema, or from a listbox that only mounts once opened.
+ * The element for `answer` among `candidates`, by {@link choiceLabel} — for choices recorded
+ * without a selector (from an API schema, or a listbox that mounts on open).
  */
 function resolveChoiceAmong(
   doc: Document,
@@ -156,13 +116,8 @@ function resolveChoiceAmong(
 }
 
 /**
- * The choice elements to scan when no recorded selector resolved.
- *
- * Role-dependent, because the three widget shapes express a choice differently: a combobox's are
- * `[role="option"]` inside its listbox, a `<select>`'s are its own `<option>`s, and a group's are
- * whatever {@link choicesIn}'s grammar admits. Reading a select's `.options` rather than querying
- * `'option'` keeps the realm guarantee — it is a live collection off the element itself, with no
- * constructor identity involved.
+ * Choice elements to scan when no recorded selector resolved: a combobox's `[role="option"]`s, a
+ * `<select>`'s own `.options` (realm-safe), or a group's {@link choicesIn}.
  */
 function choiceCandidatesIn(field: DetectedField, scope: Element | Document): readonly Element[] {
   if (field.elementRole === 'combobox')
@@ -176,15 +131,9 @@ function choiceCandidatesIn(field: DetectedField, scope: Element | Document): re
 }
 
 /**
- * The element to act on for `answer` on `field`, resolved **within the field's own scope**.
- *
- * The recorded selector first, scoped per {@link optionScopeFor}, then a label scan over the
- * candidates that scope admits. All three widget shapes go through here.
- *
- * Synchronous, and that is deliberate: a combobox's options may not have mounted yet, so
- * `fillForm.fillCombobox` calls this repeatedly inside a poll it budgets itself. The rule for
- * *what matches* lives here; the rule for *how long to wait* lives with the caller that configures
- * it.
+ * The element to act on for `answer`, resolved within the field's scope: the recorded selector
+ * first, then a label scan. Synchronous — `fillForm.fillCombobox` polls it for late-mounting
+ * options.
  */
 export function resolveChoice(
   doc: Document,

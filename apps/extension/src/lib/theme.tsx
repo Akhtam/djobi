@@ -13,17 +13,9 @@ function localThemeStorage() {
 }
 
 /**
- * Keeps the extension's independently-rendered pages on one persisted color preference.
- *
- * New installs start in dark mode; an explicitly saved preference takes precedence.
- * `chrome.storage.local` has no synchronous read, so the initial render (and the no-storage
- * fallback) use the same dark default the async lookup below falls back to — there is a brief
- * window before that lookup resolves, but never one where the default itself disagrees.
- *
- * `panel/index.html` and `options/index.html` ship `data-theme="dark"` on `<html>` for the same
- * reason, and it is load-bearing rather than redundant: the stylesheets' own `:root` is the *light*
- * theme, so without it every side-panel open would paint a full white page before this hook's first
- * effect ran. A stored `'light'` still overrides it on mount.
+ * The extension pages' shared, persisted light/dark preference (`chrome.storage.local`). Defaults
+ * to dark until the async read resolves. The pages' HTML ships `data-theme="dark"` because the CSS
+ * `:root` is the light theme — without it every open would flash white.
  */
 export function useThemePreference() {
   const [theme, setTheme] = useState<Theme>('dark');

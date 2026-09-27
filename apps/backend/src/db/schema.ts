@@ -10,26 +10,15 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * One row per account. Phase A (`docs/multi-tenant-auth.md`) created this with only `id`/`createdAt`
- * — enough to give every other table an owner to scope on, with no auth provider yet issuing real
- * ids. Phase B widens it in place rather than letting Better Auth generate a second `user` table of
- * its own: `auth.ts`'s `user.modelName: 'users'` points Better Auth at this exact table, so
- * `profiles`/`applications`' existing foreign keys need no migration of their own.
+ * One row per account. Better Auth uses this table (`user.modelName: 'users'` in `auth.ts`), so
+ * `profiles`/`applications` foreign keys point at the real user.
  *
- * `name`/`email`/`image` are nullable and `emailVerified` defaults `false` — Better Auth's own
- * generator (`pnpm exec better-auth generate`, run once to discover this shape, output not kept)
- * marks `name`/`email` `NOT NULL`, which the row Phase A's migration already inserted
- * (`db/bootstrapUser.ts`'s `BOOTSTRAP_USER_ID`) cannot satisfy retroactively. Every row Better Auth
- * itself creates supplies all four; the bootstrap row is the one exception, and stays queryable
- * rather than becoming un-migratable. How that one row acquires a real login is Phase B's own open
- * question — see the chunk notes rather than assuming it here.
+ * `name`/`email`/`image` are nullable (Better Auth's generator makes them `NOT NULL`) because the
+ * migration-`0009` bootstrap row predates them.
  */
 export const users = pgTable('users', {
-  // `.defaultRandom()` added in Phase B: Better Auth's Postgres adapter defers id generation to the
-  // database's own column default regardless of `auth.ts`'s `generateId: 'uuid'` — confirmed by
-  // `auth.test.ts` failing a NOT NULL violation without it. Every insert before Phase B (Phase A's
-  // migration 0009) already supplied an explicit id, so this is additive, not a behavior change for
-  // existing callers.
+  // `defaultRandom()` is required: Better Auth's Postgres adapter leaves id generation to the
+  // column default despite `generateId: 'uuid'`.
   id: uuid('id').primaryKey().defaultRandom(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   name: text('name'),
@@ -43,12 +32,8 @@ export const users = pgTable('users', {
 });
 
 /**
- * Better Auth's own tables — session, OAuth/credential account, and email-verification tokens.
- * Nothing existing referenced these before Phase B, so unlike `users` there is no reconciliation:
- * table and column shapes follow Better Auth's own generated schema exactly, except `id`/`userId`
- * are `uuid` rather than its default `text`, and every `id` is `.defaultRandom()` — see the note on
- * `users.id` above for why that default, not `auth.ts`'s config, is what actually generates it on
- * Postgres.
+ * Better Auth's own tables (session, account, verification), following its generated schema except
+ * for `uuid` ids with `defaultRandom()` (see `users.id`).
  */
 export const session = pgTable(
   'session',
@@ -77,10 +62,7 @@ export const account = pgTable(
     accountId: text('account_id').notNull(),
     providerId: text('provider_id').notNull(),
     /**
-     * Missing entirely from `@better-auth/cli generate`'s output (v1.4.21) but required by
-     * `better-auth` itself (v1.7.2) at runtime — the two are versioned separately, and `auth.test.ts`
-     * caught the drift as a real `BetterAuthError` (`The field "issuer" does not exist`) rather than
-     * a silent gap. Nullable: only relevant to OIDC-style providers.
+     * Required by `better-auth` at runtime though its CLI generator omits it. OIDC only; nullable.
      */
     issuer: text('issuer'),
     userId: uuid('user_id')
@@ -120,13 +102,8 @@ export const verification = pgTable(
 );
 
 /**
- * The base profile, stored whole. `data` holds a `Profile` object (from `@djobi/shared`) as
- * jsonb — no migration is needed when the `Profile` shape changes, since Drizzle just reads/writes
- * whatever is in the column.
- *
- * Keyed by `userId` rather than a separate `id`: one profile per user is a schema guarantee this way
- * rather than a rule to remember, and `postgresProfileStore.saveProfile` stays one atomic upsert on
- * the primary key, exactly as it was on the old singleton `id`.
+ * The Profile, stored whole as jsonb (shape changes need no migration). Keyed by `userId`, so one
+ * Profile per user is a schema guarantee and saves are a single upsert.
  */
 export const profiles = pgTable('profiles', {
   userId: uuid('user_id')
@@ -137,20 +114,15 @@ export const profiles = pgTable('profiles', {
 });
 
 /**
- * One row per job applied to — autofilled by the extension, or logged by hand afterwards (see
- * `source`). `company`/`roleTitle`/`jobUrl`/`jobKey` are plain columns
- * so they stay queryable without reaching into JSON; `jobInfo`/`tailoredResume`/`answers` are
- * jsonb snapshots (of `JobInfo`/`TailoredResume`/`QuestionAnswer[]` from `@djobi/shared`) so a past
- * application remains readable even if the schema or tailoring prompt changes later.
+ * One row per Application (autofilled or logged by hand). `company`/`roleTitle`/`jobUrl`/`jobKey`
+ * are queryable columns; `jobInfo`/`tailoredResume`/`answers` are jsonb snapshots, so a past
+ * Application stays readable as schemas and prompts change.
  */
 export const applications = pgTable(
   'applications',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /**
-     * Whose application this is. `NOT NULL` with no default: every insert must go through code that
-     * knows who's asking — since Phase B, the authenticated request's own id.
-     */
+    /** Owner. `NOT NULL` with no default: every insert must know who's asking. */
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -158,13 +130,8 @@ export const applications = pgTable(
     roleTitle: text('role_title').notNull(),
     jobUrl: text('job_url').notNull(),
     /**
-     * `jobUrl` reduced to a posting identity by `jobKeyForUrl` — the Duplicate Guard's real match
-     * column. Derived in `postgresApplicationStore`, never accepted from a client: a key the caller
-     * chose would let two different postings collide.
-     *
-     * Nullable because rows written before this column existed have no key, and because a `jobUrl`
-     * that isn't a parseable http(s) URL has none to derive. The guard falls back to matching
-     * `jobUrl` exactly for those, so an unkeyed row is found exactly as well as it was before.
+     * `jobKeyForUrl(jobUrl)` — the Duplicate Guard's match column. Derived server-side, never from
+     * the client. Null for older rows and unparseable URLs (the guard falls back to `jobUrl`).
      */
     jobKey: text('job_key'),
     jobInfo: jsonb('job_info').notNull(),
@@ -174,35 +141,22 @@ export const applications = pgTable(
     stage: text('stage').notNull().default('applied'),
     notes: jsonb('notes').notNull().default([]),
     /**
-     * The posting text `extractJob` analyzed, and the matching provenance derived from it —
-     * `rawDescription`/`extractionVersion`/`requirementEvidence`/`bulletProvenance` on
-     * `ApplicationSchema` (`@djobi/shared`). All four nullable: every row written before this
-     * migration has none of them, and nothing here backfills a past row.
+     * Posting text and save-time provenance (`rawDescription`, `extractionVersion`,
+     * `requirementEvidence`, `bulletProvenance`). Nullable; older rows aren't backfilled.
      */
     rawDescription: text('raw_description'),
     extractionVersion: text('extraction_version'),
     requirementEvidence: jsonb('requirement_evidence'),
     bulletProvenance: jsonb('bullet_provenance'),
     /**
-     * A client-chosen token for one create attempt, carried as the `idempotency-key` request
-     * header (`routes/applications.ts`) — not accepted anywhere in the JSON body, so it stays out
-     * of `NewApplicationSchema`/`Application` and can never round-trip back onto a re-save. Null
-     * for every caller that sends none, which is every route but `POST /applications` and every
-     * pre-idempotency-key row.
-     *
-     * Nulls are never equal to one another under a Postgres unique index, so two keyless creates
-     * never collide — this column is additive, not a behavior change for a caller that omits it.
+     * The `idempotency-key` header of the create that wrote this row (never part of the JSON body).
+     * Null when none was sent; `NULL`s never collide under the unique index.
      */
     idempotencyKey: text('idempotency_key'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    /**
-     * All three indexes below lead with `userId`, not just the two the Duplicate Guard uses —
-     * doc'd in `docs/multi-tenant-auth.md` as "both existing indexes", written before this one
-     * `ORDER BY created_at DESC` scoped by user needed the same prefix it always needed to avoid a
-     * per-user sequential scan. Same reasoning as the original unscoped index, just per-user now.
-     */
+    /** Every index leads with `userId`, so per-user reads never sequential-scan. */
     index('applications_user_job_url_created_at_idx').on(
       table.userId,
       table.jobUrl,
@@ -213,17 +167,9 @@ export const applications = pgTable(
       table.jobKey,
       table.createdAt.desc(),
     ),
-    /**
-     * For the unfiltered history — `ApplicationStore.list`, which the dashboard loads on every
-     * visit, scoped to one user's rows. Without this one that read is a per-user sequential scan
-     * and a sort of the whole table.
-     */
+    /** The dashboard's per-user history, newest first. */
     index('applications_user_created_at_idx').on(table.userId, table.createdAt.desc()),
-    /**
-     * What makes a same-keyed retry an update instead of a second row — `saveApplication`'s
-     * `ON CONFLICT (user_id, idempotency_key)` targets exactly this index. Scoped to `userId` so
-     * two different candidates can never collide on the same client-generated key.
-     */
+    /** Target of `saveApplication`'s `ON CONFLICT (user_id, idempotency_key)`. */
     uniqueIndex('applications_user_idempotency_key_idx').on(table.userId, table.idempotencyKey),
   ],
 );

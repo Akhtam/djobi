@@ -1,19 +1,10 @@
 /**
  * An application's notes, newest first, filterable by category.
  *
- * Newest first because the reason to open this log is usually "what happened in the last
- * conversation".
- *
- * **Delete yes, edit no**, and the asymmetry is deliberate. The log is append-only against
- * *concurrent* writes — two notes added close together must not overwrite one another, which is why
- * the backend appends in SQL — but that rule is about not losing entries by accident, not about
- * refusing a candidate who says a note never belonged there. A note rewritten in place is history
- * that can no longer be trusted; a note removed is one the candidate has said was a mistake. So
- * removal is offered and editing is not.
- *
- * Removal is two clicks, never one. This log is read months after it is written, an accidental
- * delete has nothing to recover from, and the delete is a network write that can fail — see
- * `useApplicationStore.deleteNote` for how a failed one puts the note back where it was.
+ * **Delete yes, edit no.** Append-only is about concurrent writes never losing entries; a candidate
+ * may still remove a note that never belonged, but an edited note is history that can't be trusted.
+ * Deleting takes two clicks (it can't be undone) and a failed delete restores the note (see
+ * `useApplicationStore.deleteNote`).
  */
 import { useState } from 'react';
 import type { Note, NoteCategory } from '@djobi/shared';
@@ -26,10 +17,7 @@ export function NotesLog({
   onDelete,
 }: {
   notes: Note[];
-  /**
-   * Removes one note. Optional, so a caller with nothing to write to — a read-only rendering of a
-   * log — gets no delete affordance rather than a button that cannot work.
-   */
+  /** Removes one note. Omit for a read-only log (no delete button). */
   onDelete?: (noteId: string) => void;
 }) {
   const [category, setCategory] = useState<NoteCategory | null>(null);
@@ -75,9 +63,7 @@ export function NotesLog({
                     <button
                       type="button"
                       className="note__delete note__delete--trigger"
-                      // Named by which note it deletes: every row's button would otherwise be called
-                      // "Delete note", which is unusable by anyone reading the page through its
-                      // accessibility tree rather than its layout.
+                      // Name each button by its note, so screen-reader users can tell them apart.
                       aria-label={`Delete note from ${formatDateTime(note.createdAt)}`}
                       onClick={() => setArmed(note.id)}
                     >

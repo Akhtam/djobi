@@ -1,64 +1,42 @@
 /**
- * Watching a form this extension just filled for the candidate's own submission.
- *
- * The Save Step used to run only when the candidate clicked Save in the side panel. Fill a form,
- * press the site's own Submit button and close the tab, and nothing was ever recorded — the panel
- * is normally closed by then, and the submit navigates the tab away from the run. This is the
- * missing moment: the page telling the background that the application actually went out.
- *
- * **Armed only by a completed fill** (`content/index.ts`), never by detection. The detection
- * heuristic in `detect.ts` is allowed to be wrong because volunteering a detection costs nothing;
- * writing an Application row is not that kind of guess, so submission reporting is scoped to forms
- * this extension is already known to have filled.
+ * Watches a form this extension just filled for the candidate's own submit, so the application is
+ * saved even if the panel is closed. **Armed only by a completed fill**, never by detection —
+ * writing an Application shouldn't rest on the detection heuristic.
  */
 import { collapseWhitespace, getSignal } from './pageSignals';
 
 /**
- * Button text that means "this sends the application", as opposed to the many other buttons an ATS
- * form carries — Next/Back on a multi-step form, "Upload", "Add another", cookie banners.
- *
- * Deliberately not `/next|continue/`: a wizard's Next is not a submission, and treating it as one
- * would save a half-finished application on the first page of a Workday flow.
+ * Button text meaning "send the application". Deliberately not `next|continue`: a wizard's Next
+ * isn't a submission.
  */
 const SUBMIT_SIGNAL = /submit application|submit|send application|apply now|finish( and)? apply/i;
 
-/** The elements a click on a submit control can actually land on, including a nested icon or span. */
+/**
+ * The elements a click on a submit control can actually land on, including a nested icon or span.
+ */
 function submitControlFor(target: EventTarget | null): Element | null {
   if (!(target instanceof Element)) return null;
   return target.closest('button, input[type="submit"], [role="button"]');
 }
 
 /**
- * What names a button, for the purpose of asking whether it submits.
- *
- * `getSignal` first, so an icon-only button reads by its `aria-label` exactly as the accessible-name
- * computation would — but its own text is the fallback rather than the other way round, because
- * `getSignal` is built for *form controls*, whose visible text is a value and never a name. A
- * button's text is its name, and for most ATS submit buttons it is the only one there is.
+ * A button's name for the submit test: `getSignal` first (so icon buttons read by `aria-label`),
+ * then its own text.
  */
 function buttonLabel(doc: Document, control: Element): string {
   return getSignal(doc, control) || collapseWhitespace(control.textContent ?? '');
 }
 
 /**
- * Whether a click was a click on something that submits the form.
- *
- * Two tests, because many ATS submit buttons are not `type="submit"` inside a `<form>` at all —
- * the same reason `detect.ts` doesn't require a `<form>` ancestor. A native submit button counts by
- * its type; anything else has to say so in its accessible name, resolved through {@link getSignal}
- * so an `aria-label`-only icon button reads the same as a text one.
+ * Whether a click was on something that submits: a native submit button, or any control whose
+ * accessible name says so (many ATS submit buttons aren't `type="submit"`).
  */
 function isSubmitClick(doc: Document, target: EventTarget | null): boolean {
   const control = submitControlFor(target);
   if (!control) return false;
 
-  // A control the page has disabled cannot have submitted anything, whatever its `type` says — and
-  // this has to be asked *before* the native-submit branch below, not after it. `aria-disabled` is
-  // the accessible way to block a submit button while keeping it focusable, so it is exactly what
-  // an ATS puts on `<button type="submit">Submit application</button>` while the form is still
-  // incomplete — and unlike the `disabled` attribute, it does not stop the browser dispatching the
-  // click. Asking afterwards meant that click reported a submission, and the Save Step recorded an
-  // Application for a form the employer never received.
+  // Disabled controls can't submit — checked *before* the native-submit test, because
+  // `aria-disabled` (common on an incomplete form's submit button) doesn't stop the click event.
   if (control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true')
     return false;
 
@@ -71,18 +49,8 @@ function isSubmitClick(doc: Document, target: EventTarget | null): boolean {
 }
 
 /**
- * Calls `onSubmit` **once** when the candidate submits this page's form, and returns a stop function.
- *
- * Both listeners are registered in the **capture** phase. An ATS form's own handler routinely calls
- * `preventDefault`/`stopPropagation` on the click that starts its XHR submission, so a bubble-phase
- * listener on `document` never sees the event that matters. Capture runs on the way down, before
- * any of that.
- *
- * Nothing here touches the event: no `preventDefault`, no `stopPropagation`, no synthetic dispatch.
- * A watcher that changed the outcome of a real submission would be far worse than one that missed it.
- *
- * At most one call per arming, since a click on a submit button and the `submit` event it causes are
- * one submission, and a duplicate report would ask the background to save the same run twice.
+ * Calls `onSubmit` **once** when the candidate submits, and returns a stop function. Listens in the
+ * **capture** phase, since ATS handlers often stop propagation. Never touches the event.
  */
 export function armSubmitWatch(doc: Document, onSubmit: () => void): () => void {
   let fired = false;

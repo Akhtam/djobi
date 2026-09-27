@@ -41,7 +41,7 @@ flowchart LR
       cs("content script<br/>detect · scrape · fill · submit")
       form("employer's form (DOM)<br/>inputs · radios · file upload")
     end
-    sw("background service worker<br/>router.ts → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake")
+    sw("background service worker<br/>messageListener → router → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake")
     store[("chrome.storage.session<br/>tabStore/record per tab:<br/>pipeline run state · detected frames<br/>job context · authToken")]
     panel("side panel (React)<br/>Autofill · Log · Ask tabs<br/>usePipelineRun ← onChanged<br/>backendClient (bearer)")
     options("options page<br/>Profile editor + login<br/>@djobi/profile-editor<br/>resume PDF upload")
@@ -289,9 +289,8 @@ Then in Chrome:
 The dashboard is already running from step 1, either way you set it up. Open
 `http://localhost:5174`, go to **Create an account**, and sign up with an email and password
 (8+ characters). This is the only sign-up surface — the extension has none; it's a companion to an
-account created here. Google sign-in is also wired but needs `GOOGLE_CLIENT_ID`/
-`GOOGLE_CLIENT_SECRET` configured (see Option A's `.env` step), so email/password is the default
-path.
+account created here. The backend also supports Google sign-in once `GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET` are set, but neither UI offers it yet, so email/password is the path.
 
 ## 4. Sign in to the extension
 

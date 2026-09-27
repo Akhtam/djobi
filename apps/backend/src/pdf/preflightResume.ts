@@ -46,8 +46,8 @@ function expectedReadingOrder(
 }
 
 /**
- * Parses a completed PDF and rejects it if expected resume content was lost or reordered.
- * This is deliberately a report/check seam: it never mutates candidate content to make a render pass.
+ * Parses a completed PDF and rejects it if expected resume content was lost or reordered. A check
+ * only — it never alters candidate content to make a render pass.
  */
 export async function preflightResumePdf(
   pdfBytes: Uint8Array,

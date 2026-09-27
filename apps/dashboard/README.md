@@ -2,7 +2,7 @@
 
 A public web app for signing up, editing your Profile, and browsing and tracking past Applications.
 Separate from the extension: it needs no `chrome.*` API, so it stays out of the MV3 bundle and gets
-plain Vite HMR. Authenticated by Better Auth (email/password, Google) against the same backend the
+plain Vite HMR. Authenticated by Better Auth (email/password) against the same backend the
 extension uses — see `docs/multi-tenant-auth.md`.
 
 ```sh
@@ -133,20 +133,20 @@ backend.
 | `lib/useHashRoute.ts`                                  | `list` (`#/`), `detail` (`#/applications/:id`), `analytics` (`#/analytics`), `login` (`#/login`), `signup` (`#/signup`), `profile` (`#/profile`) |
 | `lib/stages.ts`                                        | Stage/category labels and order, taken from the schemas' `.options`                                                                              |
 | `lib/analytics.ts`                                     | The Analytics view's aggregation over the loaded applications                                                                                    |
-| `lib/dashboardSession.ts`                              | What a 401 means to a view, and the shared Profile fetch protocol                                                                                |
+| `lib/dashboardSession.ts`                              | `useRemoteProfile`: the shared fetch-the-Profile-on-mount protocol, 401s routed to sign-in                                                       |
 | `lib/format.ts`                                        | Display formatting for stored values (dates and the like)                                                                                        |
 | `lib/requirementGroups.ts`                             | Groups posting requirements by importance band for `RequirementList` and `RequirementsPanel`                                                     |
 | `lib/useRevealOnScroll.ts`                             | Batched, scroll-triggered reveal inside the Analytics requirements panel                                                                         |
-| `lib/theme.tsx`                                        | Light/dark theme, guarded `localStorage`/`matchMedia` reads                                                                                      |
+| `lib/theme.tsx`                                        | Light/dark theme (default dark), guarded `localStorage` reads                                                                                    |
 | `views/LandingPage.tsx`                                | The signed-out marketing page                                                                                                                    |
-| `views/Login.tsx` / `SignUp.tsx`                       | Email/password (+ Google) sign-in and account creation                                                                                           |
+| `views/Login.tsx` / `SignUp.tsx`                       | Email/password sign-in and account creation                                                                                                      |
 | `views/ApplicationsList.tsx` / `ApplicationDetail.tsx` | Browse and edit one saved Application                                                                                                            |
 | `views/NewApplication.tsx`                             | Dashboard counterpart to the extension's Log tab — extract a pasted posting and save a manual Application                                        |
 | `views/Analytics.tsx`                                  | Stage/keyword-coverage/requirements reporting over saved Applications                                                                            |
 | `views/Profile.tsx`                                    | The Profile editor, built from `@djobi/profile-editor` like the extension's options page, plus resume upload                                     |
 | `components/`                                          | Stage controls, filter pills, notes log/composer, account menu, auth layout, requirement list/panel, posting link, `FakeSelect`                  |
 
-Both views read from one array held above the router. A single-record fetch would give the list and
+Every view reads from one array held above the router. A single-record fetch would give the list and
 the detail page separate copies that can disagree after a write — see the comment in
 `useApplicationStore.ts`.
 

@@ -1,32 +1,18 @@
 /**
- * A Detected Field: one thing on a job application page the candidate fills in, and the rules for
- * getting an answer back onto it.
+ * A Detected Field — one thing on an application page the candidate fills in — and the rules for
+ * getting an answer back onto it after it round-trips content script → worker → backend → a fresh
+ * scan of a possibly re-rendered page.
  *
- * The round-trip is the reason this is a module rather than a record. A field is detected in the
- * content script, crosses to the background, is checkpointed into `chrome.storage.session`, sent to
- * the backend, comes back paired with a drafted answer, and is then matched against a *fresh* scan
- * of a page that may have re-rendered in between. Every step has a rule, and each rule used to be
- * explained in a good doc comment in a different file — so answering "why did this answer land in
- * the wrong box" meant reading six of them. The rules live here now:
- *
- * - **Ids are stable across scans.** `detectFields.ts` reuses a `data-djobi-id` it already wrote
- *   rather than reissuing from a counter, because answers are keyed by field id and a counter that
- *   restarts each scan would silently re-point every answer at whichever field now sits in that
- *   position. {@link matchAnswerToField} depends on this holding.
- * - **A choice group is one field, not N.** A fieldset, a `role="radiogroup"`, or radios sharing a
- *   `name` produce a single Detected Field whose `options` are the choices — see
- *   {@link FieldOptionSchema}.
- * - **An option's `selector` may be null**, and then only label matching is possible — see
- *   {@link optionFor}.
- * - **An ambiguous match is no match.** See {@link matchAnswerToField}.
+ * - **Ids are stable across scans.** `detectFields.ts` reuses an existing `data-djobi-id`, since
+ *   answers are keyed by field id.
+ * - **A choice group is one field**, with the choices as `options` ({@link FieldOptionSchema}).
+ * - **An option's `selector` may be null**; then only label matching works ({@link optionFor}).
+ * - **An ambiguous match is no match** ({@link matchAnswerToField}).
  */
 import { z } from 'zod';
 import { labelsMatch, uniqueMatch } from './labelMatching.js';
 
-/**
- * The categories the content script classifies each form field on an ATS page into, before
- * reporting {@link DetectedFieldSchema} entries back to the background.
- */
+/** The categories the content script classifies each form field into. */
 export const FieldCategorySchema: z.ZodEnum<{
   cover_letter_text: 'cover_letter_text';
   cover_letter_upload: 'cover_letter_upload';
@@ -62,13 +48,8 @@ export const FieldCategorySchema: z.ZodEnum<{
 export type FieldCategory = z.infer<typeof FieldCategorySchema>;
 
 /**
- * How `fillForm.ts` should interact with a field, independent of its semantic `category` —
- * `'native'` covers plain input/textarea/select; the others are ARIA-widget patterns that need
- * click-based interaction instead of setting `.value`.
- *
- * Separate from `category` because the two vary independently: a work-authorization question is the
- * same `question` category whether the ATS renders it as a `<select>` or a react-select combobox,
- * but filling it differs completely.
+ * How `fillForm.ts` interacts with a field: `'native'` sets `.value`; the others are ARIA widgets
+ * that need clicks. Independent of `category`: one question may be a `<select>` or a combobox.
  */
 export const ElementRoleSchema: z.ZodEnum<{
   checkboxgroup: 'checkboxgroup';
@@ -80,14 +61,9 @@ export const ElementRoleSchema: z.ZodEnum<{
 export type ElementRole = z.infer<typeof ElementRoleSchema>;
 
 /**
- * One choice on a select/combobox/radiogroup/checkboxgroup {@link DetectedFieldSchema}.
- *
- * `label` is what a candidate reads — it's what the answer-drafting model is shown and constrained
- * to. `selector` is how the Fill Step finds that choice's element again. Keeping the two apart is
- * the whole point: re-deriving a choice's label from the DOM at fill time and hoping it matches the
- * text drafted against is fragile, because every ATS associates option labels differently (a
- * wrapping `<label>`, a `for=`-linked sibling, an `aria-labelledby` reference) and the same element
- * yields different text depending on how you ask.
+ * One choice of a select/combobox/radio/checkbox group. `label` is what the model sees and answers
+ * with; `selector` is how the Fill Step finds the element again — so fill never re-derives labels
+ * from the DOM, which every ATS labels differently.
  */
 export const FieldOptionSchema: z.ZodObject<
   { label: z.ZodString; selector: z.ZodDefault<z.ZodNullable<z.ZodString>> },
@@ -140,19 +116,9 @@ export const DetectedFieldSchema: z.ZodObject<
 export type DetectedField = z.infer<typeof DetectedFieldSchema>;
 
 /**
- * Parses a list of Detected Fields that crossed a boundary where the two sides may not be the same
- * build of the extension, dropping any entry that no longer fits the schema.
- *
- * Two boundaries need this and neither had it. `chrome.storage.session` holds entries written by
- * whichever build was running when the tab was opened — an extension reload mid-session leaves the
- * old shape in place. And a content script orphaned by that reload keeps posting the shape *it*
- * knows. In both cases the receiving code read the JSON as if it were current, and a missing
- * `elementRole` or `options[].selector` surfaced later as an unfillable field rather than as a
- * parse failure anyone could trace.
- *
- * Dropping bad entries rather than rejecting the batch is deliberate: one stale field should cost
- * that field, not the whole form. Schema defaults mean a field written before `required` or
- * `elementRole` existed parses cleanly rather than being dropped.
+ * Parses Detected Fields that may come from a different extension build (stale session storage,
+ * or an orphaned content script after a reload), dropping entries that no longer fit rather than
+ * rejecting the batch. Schema defaults let older-but-compatible entries parse.
  */
 export function parseDetectedFields(value: unknown): DetectedField[] {
   if (!Array.isArray(value)) return [];
@@ -164,31 +130,19 @@ export function parseDetectedFields(value: unknown): DetectedField[] {
 }
 
 /**
- * The option on `field` that `answer` names, or `undefined` if it names none.
- *
- * The answer was constrained to one of `field.options` when it was drafted, so matching it back
- * against that same array — rather than re-deriving labels from the DOM — is what closes the
- * round-trip exactly, with no second derivation to disagree with the first.
+ * The option on `field` that `answer` names. The answer was constrained to `field.options`, so
+ * matching against that same array closes the round-trip exactly.
  */
 export function optionFor(field: DetectedField, answer: string): FieldOption | undefined {
   return uniqueMatch(field.options ?? [], (option) => labelsMatch(option.label, answer));
 }
 
 /**
- * The answer drafted for `field`, given the labels the Analysis Step saw keyed by the field id it
- * saw them under.
+ * The answer drafted for `field`: by field id first, then by question text for a field the ATS
+ * re-mounted (and so re-tagged) between Analysis and Fill.
  *
- * By field id first — ids are stable across scans, so this is the normal path. By question text
- * second, for the field that was re-tagged anyway: an element the Analysis Step saw can be unmounted
- * and remounted by the ATS between analyzing and filling (a section expanding, a conditional
- * question re-rendering), which loses its `data-djobi-id` and hands it a new one. The answer was
- * drafted for that *question*, so the question is what identifies it once the id can't.
- *
- * The second path insists the match be unambiguous. Labels are not reliably unique — a form whose
- * labels degrade to a shared placeholder (Ashby renders "Start typing…" on every combobox) gives
- * several fields the same one, and matching the first would put one field's answer into whichever of
- * them happened to be re-tagged. An ambiguous label is no match, leaving the field reported as
- * unresolved rather than confidently filled with the wrong text.
+ * The label fallback requires a unique match — labels can repeat (Ashby puts "Start typing…" on
+ * every combobox), and an ambiguous field is better left unresolved than filled wrongly.
  */
 export function matchAnswerToField<TAnswer extends { fieldId: string; answer: string }>(
   field: DetectedField,

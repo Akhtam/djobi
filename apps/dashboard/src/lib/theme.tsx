@@ -1,13 +1,7 @@
 /**
- * The dashboard's light/dark preference.
- *
- * A port of `apps/extension/src/lib/theme.tsx` rather than an import of it: that module persists
- * through `chrome.storage.local`, which does not exist on a plain web page. The markup and the two
- * icons are kept identical so the control looks the same in both surfaces.
- *
- * Unlike the extension's version, this persists through `localStorage`. New visitors start in dark
- * mode; an explicitly saved preference takes precedence. `index.html` carries a matching inline
- * script that applies the same default before first paint, so there is no flash of the other theme.
+ * The dashboard's light/dark preference — a port of the extension's `lib/theme.tsx` persisting to
+ * `localStorage` instead of `chrome.storage.local`, with identical markup. Defaults to dark;
+ * `index.html` applies it before first paint.
  */
 import { useEffect, useState } from 'react';
 import { DEFAULT_THEME, THEME_KEY } from './themeConstants';
@@ -19,14 +13,8 @@ function applyTheme(theme: Theme): void {
 }
 
 /**
- * `localStorage`, or `undefined` where it isn't usable.
- *
- * The extension's version of this module guards `chrome.storage` for the same reason: the storage
- * a page persists to is not guaranteed to be there. Here it genuinely isn't in two cases that
- * matter — the jsdom environment the component tests run in exposes no `localStorage` at all, and a
- * browser with site data blocked *throws* on property access rather than returning null. Both would
- * otherwise take down the whole app at its first render, since the theme is read before anything
- * else is drawn.
+ * `localStorage`, or `undefined` where unusable (jsdom has none; blocked site data *throws* on
+ * access) — the theme is read before anything renders, so this must never throw.
  */
 function themeStorage(): Storage | undefined {
   try {

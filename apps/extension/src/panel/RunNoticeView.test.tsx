@@ -1,10 +1,6 @@
 /**
- * The copy for each Run Notice, rendered directly.
- *
- * These used to be reachable only by driving a whole Application Pipeline run to the outcome that
- * produces each notice — `stubChrome`, render, Analyze, await, Fill, await, to assert one sentence.
- * The situation is `reviewOf`'s to decide and is tested there; what is asserted here is only the
- * wording and the action offered, which is what this module owns.
+ * Each Run Notice's wording and action, rendered directly. Which notice applies is `reviewOf`'s,
+ * tested there.
  */
 import type { DetectedField } from '@djobi/shared';
 import { fireEvent, render, screen } from '@testing-library/react';

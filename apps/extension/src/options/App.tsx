@@ -1,9 +1,7 @@
 /**
- * Options page root — the profile onboarding form, and the only surface that edits a Profile.
- *
- * `client` is a prop for the same reason it is one in `panel/App.tsx`: the page is tested through
- * a fake adapter at the backend seam, and `options/main.tsx` is the only place the real one is
- * named.
+ * Options page root: sign-in and the Profile editor (shared with the dashboard via
+ * `@djobi/profile-editor`). `client` is a prop so tests use a fake; `options/main.tsx` names the
+ * real one.
  */
 import {
   ListSection,
@@ -33,9 +31,8 @@ import { ThemeToggle, useThemePreference } from '../lib/theme';
 import { Login } from './Login';
 
 /**
- * This page's `FieldChrome`: a `.field` div with its own `<label htmlFor>`, no input class (styled
- * by its `.field` ancestor instead — see `App.css`). The dashboard's own renderer wraps the same
- * field bodies in a plain `<label>` instead; see `apps/dashboard/src/views/Profile.tsx`.
+ * This page's `FieldChrome`: a `.field` div with its own `<label htmlFor>`, styled via the `.field`
+ * ancestor (the dashboard wraps fields in a `<label>` instead).
  */
 const Field: FieldRenderer = ({ id, label, span2, children }) => (
   <div className={`field${span2 ? ' span-2' : ''}`}>
@@ -58,7 +55,9 @@ const Checkbox: CheckboxFieldRenderer = ({ id, label, checked, onChange }) => (
 
 const fieldChrome: FieldChrome = { Field, Checkbox };
 
-/** Class names `bullet-list`/`bullet-row` are scoped in `App.css`; `btn-star` only applies to work. */
+/**
+ * Class names `bullet-list`/`bullet-row` are scoped in `App.css`; `btn-star` only applies to work.
+ */
 const workBulletListClassNames: BulletListClassNames = {
   list: 'bullet-list',
   row: 'bullet-row',
@@ -74,9 +73,8 @@ const projectBulletListClassNames: BulletListClassNames = {
 };
 
 /**
- * This page's `ListSectionChrome`: a `<fieldset className="card">` showing an item count beside
- * the hint, and an entry that collapses behind its `summary` in a native `<details>` — the
- * dashboard's own renderer shows neither; see `apps/dashboard/src/views/Profile.tsx`.
+ * This page's `ListSectionChrome`: a `<fieldset className="card">` with an item count, and entries
+ * collapsing behind their `summary` in a `<details>` (the dashboard shows neither).
  */
 const listSectionChrome: ListSectionChrome = {
   emptyClassName: 'empty-list',

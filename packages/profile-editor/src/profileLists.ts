@@ -1,15 +1,7 @@
 /**
- * Every list section's editor, bound to one draft in one call.
- *
- * `listEditor` already owned the three operations; what both editors still repeated was the
- * *inventory* — seven `listEditor(profile, setProfile, key, blank)` calls with their blank-entry
- * literals, the combined Certifications & Awards dispatcher, and the credential-kind change — 48
- * lines that were byte-identical between `apps/extension/src/options/App.tsx` and
- * `apps/dashboard/src/views/Profile.tsx`. A field added to a blank entry had to be added twice, and
- * a row added to one editor's Profile shape but not the other's would not have failed anything.
- *
- * Nothing here renders. The chrome around a list section — the card, the entry shell, the add
- * affordance — stays with each app, which is why this is a plain function rather than a component.
+ * Every list section's editor bound to one draft in one call, including the combined
+ * Certifications & Awards dispatcher and blank-entry literals. Renders nothing; chrome stays with
+ * each app.
  */
 import type { Award, Certification, Profile } from '@djobi/shared';
 import {
@@ -24,8 +16,7 @@ import { changeCredentialKind } from './profileDraft.js';
 export type CustomAnswer = Profile['customAnswers'][number];
 
 /**
- * The combined Certifications & Awards section: the rows, the editor that dispatches each row's
- * writes to whichever real list owns it, and the kind picker on the row itself.
+ * The combined Certifications & Awards section: rows, a dispatching editor, and the kind picker.
  */
 export interface CredentialsEditor {
   /** Certifications then awards, each tagged with where it lives. */
@@ -48,12 +39,8 @@ export interface ProfileListEditors {
 }
 
 /**
- * Binds every list section's editor to one draft.
- *
- * `createStoryId` is a parameter for the same reason `normalizeProfileDraft` takes one: answer
- * provenance stores Story ids, so a new entry needs a stable unique value even when the candidate
- * never touches the editable id field — and a test that wants to assert on the result needs that
- * value to be predictable. Production callers take the default.
+ * Binds every list section's editor to one draft. `createStoryId` is injectable so tests get
+ * predictable ids.
  */
 export function profileListEditors(
   profile: Profile,
@@ -108,11 +95,7 @@ export function profileListEditors(
   }));
 
   const items = credentialItems(profile);
-  /**
-   * `.remove`/`.add` are what a list section itself calls; `.update` is called directly from the
-   * row's own fields, the same way `certifications.update` would be if this were still its own
-   * section. Each dispatches to whichever of the two real editors owns the row at `combinedIndex`.
-   */
+  /** Each operation dispatches to whichever real list owns the row at `combinedIndex`. */
   const credentialsEditor: ListEditor<CredentialItem> = {
     update: (combinedIndex, patch) => {
       const item = items[combinedIndex];

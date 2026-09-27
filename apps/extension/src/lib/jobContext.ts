@@ -1,10 +1,6 @@
 import { jobKeyForUrl, z, type ZodTypeOf } from '@djobi/shared';
 
-/**
- * The job-posting URL identity now lives in `@djobi/shared`, because the backend's Duplicate Guard
- * matches on the same key and the two sides have to compute it identically. Re-exported here so the
- * panel and background keep importing their job-scoping helpers from one place.
- */
+/** Re-exported from `@djobi/shared` (the backend's Duplicate Guard uses the same key). */
 export { jobKeyForUrl, isSameJobUrl } from '@djobi/shared';
 
 /** Where the editable Job Description draft originally came from. */
@@ -12,11 +8,8 @@ export const JobDescriptionSourceSchema = z.enum(['manual', 'scraped']);
 export type JobDescriptionSource = ZodTypeOf<typeof JobDescriptionSourceSchema>;
 
 /**
- * The Job Description that belongs to the job currently open in a tab.
- *
- * It is separate from an Analysis run because candidates commonly collect the posting on an ATS
- * overview route, then navigate to an application route before they analyze it. The draft therefore
- * has to exist before a run does and survive that same-job navigation.
+ * The Job Description for the job open in a tab. Separate from a run because candidates often
+ * collect the posting on an overview route and analyze after navigating to the application route.
  */
 export interface JobContext {
   /** Stable across overview/application routes for the same posting — see {@link jobKeyForUrl}. */

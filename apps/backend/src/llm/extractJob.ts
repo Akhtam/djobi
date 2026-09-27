@@ -3,22 +3,11 @@ import { sanitizeXmlContent } from './promptContext.js';
 import { callStructured } from './structuredCall.js';
 
 /**
- * Extracts structured job posting information (company, role, requirements, keywords, ...) from a
- * job description.
+ * Extracts structured Job Info from the candidate-reviewed Job Description (never a raw page dump).
+ * Importance bands are gated by `normalizeRequirementImportance` here, where both the raw text and
+ * the extraction are in scope, so nothing downstream sees an un-gated band.
  *
- * The text is the candidate-reviewed Job Description field, not an unfiltered page dump. Autofill
- * can populate that field with a focused extractor, but the candidate can edit it before this call
- * and the prompt should not teach the model to tolerate navigation, form labels or cookie banners.
- *
- * Requirement importance is gated on the way out. The model is asked for a band, the tier that band
- * rests on and the posting wording behind it; `normalizeRequirementImportance` then lowers any band
- * the posting cannot actually back. It runs here, not at the call sites, because this is the last
- * point where the raw posting text and the extraction are both in scope — nothing downstream should
- * ever see an un-gated band, and there is no second place to forget.
- *
- * @param jobDescription - The job posting text.
- * @returns The extracted, validated {@link JobInfo}.
- * @throws If the model doesn't return a tool call, or returns one that fails validation.
+ * @throws If the model returns no valid object.
  */
 export async function extractJob(jobDescription: string, signal?: AbortSignal): Promise<JobInfo> {
   const jobInfo = await callStructured({

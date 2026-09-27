@@ -1,21 +1,9 @@
 /**
- * The three commands the Autofill Tab sends the Application Pipeline, each bound to the optimistic
- * status it raises and the failure it stands that status down with.
+ * The Autofill Tab's three pipeline commands, each bound to the optimistic status it raises and the
+ * failure that stands it down. A plain factory: attempt state lives in `panel/usePipelineRun.ts`.
  *
- * The tab used to send them itself, and every one of them restated the same four facts: which
- * status means "this step is running", which message type starts it, which status and step name its
- * failure, and — since `background/runClaim.ts` — which run it is about. Nine loose facts paired
- * only by inspection, in a module whose actual subject is what the candidate sees. Nothing stopped
- * `begin('filling')` standing beside `fail('save-error', …)`.
- *
- * A plain factory rather than a hook: it holds no state of its own, and the one piece of state
- * involved — which attempt is current — belongs to `panel/usePipelineRun.ts`, which already owns
- * the reconciliation the optimistic status is part of.
- *
- * What stays in the tab is what is genuinely the tab's: whether a button is *eligible* to be
- * pressed (the run has an analysis, the status allows it), the resume preview's lifecycle, and
- * every word of Run Notice copy. What is checked here is only whether the command can be addressed
- * at all — Chrome has named a tab, there is a run to name, an analysis URL exists.
+ * Checks here are only whether a command can be addressed (a tab, a run, an analysis URL); whether
+ * a button is *eligible*, the preview lifecycle, and Run Notice copy stay in the tab.
  */
 import type { Profile } from '@djobi/shared';
 import { notify, startFill, startSaveApplication } from '../lib/messages';
@@ -66,13 +54,11 @@ export function pipelineCommands(
       if (tabId === null || !run) return;
 
       const undelivered = beginCommand('fill');
-      // `startFill` waits for whether the claim was actually won — an undelivered command and a
-      // refused one (another panel already running this step, or a stale `expectedRunId`) both
-      // stand the optimistic status down the same way, since neither leaves anything checkpointed
-      // for `usePipelineRun.ts` to observe.
+      // Waits for the claim: undelivered or refused (another panel, stale run) both stand the
+      // optimistic status down, since neither checkpoints anything to observe.
       void startFill({ type: 'START_FILL', tabId, profile, expectedRunId: run.runId }).then(
         (outcome) => {
-          if (!outcome.claimed) undelivered('');
+          if (!outcome.claimed) undelivered();
         },
       );
     },
@@ -86,7 +72,7 @@ export function pipelineCommands(
         tabId,
         expectedRunId: run.runId,
       }).then((outcome) => {
-        if (!outcome.claimed) undelivered('');
+        if (!outcome.claimed) undelivered();
       });
     },
   };

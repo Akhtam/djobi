@@ -1,13 +1,9 @@
 /**
- * Bullet Provenance: pairs a Tailored Resume's bullets back to the Profile sentence each one most
- * likely came from, for display (`apps/extension/src/panel/ResumeReview.tsx`) and for the persisted
- * audit trail (`Application.bulletProvenance`, computed once at save time).
+ * Bullet Provenance: pairs each Tailored Resume bullet with the Profile bullet it most likely came
+ * from, for the review panel and the persisted `Application.bulletProvenance`.
  *
- * `TailoredResume` carries plain strings — the backend's `sourceIndex` pointers exist only inside
- * `tailorResume.ts` and never reach the wire — so this is necessarily a best-effort *reading*, not an
- * authoritative trace. A verbatim match (the common case: a starred bullet, or one
- * `bulletTruthfulness.ts` reverted) is exact and unambiguous; anything else is the closest word
- * overlap among that role's Profile bullets.
+ * Best-effort: `sourceIndex` never leaves the backend, so this re-reads plain strings. A verbatim
+ * match is exact; otherwise the closest word overlap among that role's Profile bullets wins.
  */
 import { containsAsWords, normalizeLabel, uniqueMatch } from './labelMatching.js';
 import type { Profile, TailoredResume } from './schemas.js';
@@ -28,10 +24,8 @@ export interface BulletProvenanceEntry {
   source: string | null;
 }
 
-// Deliberately not `labelMatching.ts`'s stemmed `contentWords`/`overlapScore`: those are tuned for
-// two independent phrasings of one *form question*, short strings where stemming and a stopword
-// list earn their keep. A resume bullet is a full sentence — plain length-3-plus word overlap
-// already separates a reworded bullet from an unrelated one without that machinery.
+// Plain 3+-letter word overlap, not `labelMatching.ts`'s stemmed matcher: bullets are full
+// sentences, so stemming and stopwords (tuned for short form questions) add nothing.
 function contentWords(text: string): string[] {
   return normalizeLabel(text)
     .split(/[^a-z0-9]+/)
@@ -67,9 +61,7 @@ export function matchBulletSource(
   let best: { source: string; score: number } | null = null;
   for (const source of profileBullets) {
     const { score, sharedWords } = overlapScore(tailoredBullet, source);
-    // A single shared word ("the", filtered length-3 minimums aside, still things like "team" or
-    // "code") is coincidence, not evidence this bullet reworded that one — see
-    // `labelMatching.ts`'s `MIN_SHARED_CONTENT_WORDS` for the same reasoning applied to questions.
+    // One shared word is coincidence, not evidence of a rewording.
     if (sharedWords < MIN_SHARED_WORDS || score < OVERLAP_THRESHOLD) continue;
     if (!best || score > best.score) best = { source, score };
   }
@@ -79,14 +71,9 @@ export function matchBulletSource(
 }
 
 /**
- * The Profile role that authored `role`'s bullets — matched by company + title + startDate, not
- * array index, since `WorkExperience.suppressIfEmpty` can drop a role from the tailored resume
- * entirely, which would shift every later index out of alignment with `profile.workExperience`.
- *
- * Two Profile roles that share all three fields (a rehire, or two stints known only to year
- * precision) are ambiguous, and {@link uniqueMatch} declines rather than guessing — binding to
- * whichever role happens to come first would misattribute that role's bullets in both the persisted
- * audit trail and the "Originally: …" panel.
+ * The Profile role that authored `role`'s bullets, matched by company + title + startDate (not
+ * index — `suppressIfEmpty` can drop roles). Ambiguous matches (e.g. a rehire) return `undefined`
+ * rather than misattributing bullets.
  */
 export function sourceRoleFor(
   role: Pick<TailoredResume['workExperience'][number], 'company' | 'title' | 'startDate'>,
@@ -102,12 +89,8 @@ export function sourceRoleFor(
 }
 
 /**
- * Every bullet on `resume`, paired with its likely Profile source — the whole-resume form of
- * {@link matchBulletSource}, for the persisted audit trail.
- *
- * Roles are paired by company + title + startDate, not array index: `WorkExperience.suppressIfEmpty`
- * can drop a role from the tailored resume entirely, which would shift every later index out of
- * alignment with `profile.workExperience` if index were used.
+ * Every bullet on `resume` paired with its likely Profile source, roles matched as in
+ * {@link sourceRoleFor}.
  */
 export function bulletProvenance(
   resume: TailoredResume,

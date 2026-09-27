@@ -52,12 +52,8 @@ describe('getSharedSessionToken', () => {
   });
 
   /**
-   * The gap this whole fallback exists to close: `vite.config.ts`'s dev-server proxy makes a
-   * dashboard sign-in's cookie land on the dashboard's own dev origin, never on
-   * `EXTENSION_BACKEND_ORIGIN` — so a lookup that only ever checked the backend origin would find
-   * nothing no matter how recently the candidate signed in on the dashboard. A per-origin-aware
-   * stub is needed here because `fakeCookies` (used everywhere else in this file) can't represent
-   * "present on one origin, absent on another" at all.
+   * In dev the dashboard's cookie lands on its own dev origin, not the backend's. Needs a
+   * per-origin stub (`fakeCookies` is origin-blind).
    */
   it('finds a token that lives on a dashboard dev origin instead of the backend origin', async () => {
     const [dashboardOrigin] = DASHBOARD_DEV_ORIGINS;

@@ -1,15 +1,10 @@
 /**
- * The manual-log flow both surfaces render — the extension's Log tab
- * (`apps/extension/src/panel/LogApplication.tsx`) and the dashboard's "Log an application" modal
- * (`apps/dashboard/src/views/NewApplication.tsx`). Extract a pasted posting, let the candidate
- * review and correct its identity, then save a manual Application with their base profile resume.
+ * The manual-log flow behind the extension's Log tab and the dashboard's "Log an application":
+ * extract a pasted posting, let the candidate review company/role, then save a manual Application
+ * with their Base Resume.
  *
- * What stays with each app: every form field's state, the markup and chrome around a state, the
- * extension's "follow the active tab" prefill, and — the one genuinely different policy between the
- * two — what an error means. The dashboard treats a 401 as "redirect to sign-in"; the extension's
- * Log tab has no such policy today and shows every failure as a message in place. `ManualLogPorts`
- * takes that as an explicit `handleError` port rather than the hook guessing, so this stays a
- * controller over injected extraction/persistence/error behaviour — not a policy of its own.
+ * Each app keeps its form state, markup, the extension's follow-the-active-tab prefill, and its
+ * error policy, injected as `handleError` (the dashboard redirects on 401; the extension shows it).
  */
 import { useState } from 'react';
 import { userMessage } from '@djobi/http-client';
@@ -24,27 +19,23 @@ import {
 } from '@djobi/shared';
 
 /**
- * What one extraction found, carried through every later state for it — `saving`/`save-error`
- * included, so a retry (calling `save` again from `save-error`) resends the same review rather than
- * losing it.
+ * What one extraction found, carried through `saving`/`save-error` so a retry resends the same
+ * review.
  */
 export interface ManualLogReview {
   jobInfo: JobInfo;
-  /** What the candidate already has on file for this posting, or `null` — the Duplicate Guard's hit. */
+  /**
+   * What the candidate already has on file for this posting, or `null` — the Duplicate Guard's hit.
+   */
   duplicate: DuplicateApplication | null;
   /**
-   * Generated once per successful extraction and reused for every save attempt of that same
-   * review — never regenerated on a retry, only on a fresh `extract`. What makes a resend after a
-   * timeout land the same row back instead of a second one; see each app's own save port.
+   * Generated per successful extraction and reused on every save retry, so a resend after a
+   * timeout updates the same row.
    */
   idempotencyKey: string;
   /**
-   * The URL and description `extract` actually sent to `extractJob`/the Duplicate Guard — trimmed
-   * once, at the moment they were sent, and never re-read from a caller's live field state
-   * afterwards. `save` builds its payload from this, not from whatever the caller's own inputs hold
-   * by the time the candidate submits — closing the race where a value edited after extraction
-   * started would otherwise reach the saved row without ever having been analyzed or
-   * duplicate-checked.
+   * The trimmed URL and description `extract` actually sent. `save` uses these, not live field
+   * state, so nothing unanalyzed or un-duplicate-checked reaches the saved row.
    */
   source: { jobUrl: string; jobDescription: string };
 }
@@ -58,29 +49,23 @@ export type ManualLogState =
   | ({ kind: 'save-error'; message: string } & ManualLogReview)
   | { kind: 'saved'; company: string; roleTitle: string };
 
-/**
- * Just enough of a backend client to run this flow — so each app passes its own client (or a thin
- * adapter over it) rather than the hook naming a shape neither `BackendClient` nor `DashboardClient`
- * actually has.
- */
+/** The backend methods this flow needs; each app passes its client or a thin adapter. */
 export interface ManualLogPorts extends DuplicateLookup {
   extractJob(jobDescription: string): Promise<JobInfo>;
   /**
-   * Saves the manual Application, resolving to whether it landed. Never expected to throw for a
-   * failure the candidate should see as `save-error` — a caller whose own client throws (the
-   * extension's `saveApplication`) still may; `save` here catches that too, same as a `false`.
+   * Saves the manual Application, resolving to whether it landed. A throw is treated like `false`.
    */
   save(payload: NewApplicationRequest, idempotencyKey: string): Promise<boolean>;
   /**
-   * What to do with a failure from `extractJob`, the Duplicate Guard, or `save` before it becomes an
-   * `extract-error`/`save-error` message. Return `true` to suppress that transition — the caller is
-   * already handling it itself (the dashboard redirects to sign-in on a 401 this way); return
-   * `false` to let the flow show `userMessage(error)` as usual.
+   * Called on an `extract`/`save` failure. Return `true` if the caller handled it (e.g. dashboard
+   * sign-in redirect on 401) to skip the error state; `false` to show `userMessage(error)`.
    */
   handleError(error: unknown, step: 'extract' | 'save'): boolean;
 }
 
-/** One message a generic failed save reports, for the one path that never throws — see `save` port. */
+/**
+ * One message a generic failed save reports, for the one path that never throws — see `save` port.
+ */
 const SAVE_FAILED_MESSAGE = 'Something went wrong logging the application.';
 
 /** What {@link useManualLogFlow} hands its caller. */
@@ -95,16 +80,9 @@ export function useManualLogFlow(ports: ManualLogPorts): ManualLogFlow {
   const [state, setState] = useState<ManualLogState>({ kind: 'form' });
 
   /**
-   * Extracts `jobDescription`/`jobUrl` and runs the Duplicate Guard alongside it, landing on
-   * `extracted` (or `extract-error`, unless `ports.handleError` claimed it). Resolves with the
-   * extracted `JobInfo` on success so a caller can prefill its own company/role fields, or `null`.
-   *
-   * Both requests go out together: the duplicate check doesn't depend on the extraction, and
-   * serializing them would put a database round trip behind a model call for no reason. Sharing a
-   * `Promise.all` with the extraction is only safe because `findDuplicate` resolves rather than
-   * rejects (see `@djobi/shared`'s `duplicateGuard.ts`) — an inline `.catch` here would mean a
-   * backend hiccup on a *warning* rejects the pair and discards a successful, already-paid
-   * extraction over a failure in an advisory check that was never supposed to block anything.
+   * Extracts Job Info and runs the Duplicate Guard in parallel, landing on `extracted` or
+   * `extract-error`. Resolves with the `JobInfo` (for prefilling) or `null`. Safe in one
+   * `Promise.all` because `findDuplicate` never rejects on lookup failure.
    */
   async function extract(jobUrl: string, jobDescription: string): Promise<JobInfo | null> {
     // Trimmed once, here — see `ManualLogReview.source`'s own doc for why this is never re-read
@@ -133,9 +111,8 @@ export function useManualLogFlow(ports: ManualLogPorts): ManualLogFlow {
   }
 
   /**
-   * Saves the current review as a manual Application under `profile`'s base resume, with the
-   * candidate's possibly-corrected `company`/`roleTitle`. A no-op outside `extracted`/`save-error` —
-   * there is nothing reviewed yet, or a save is already in flight.
+   * Saves the review as a manual Application with the candidate's `company`/`roleTitle`. No-op
+   * outside `extracted`/`save-error`.
    */
   async function save(profile: Profile, company: string, roleTitle: string): Promise<void> {
     if (state.kind !== 'extracted' && state.kind !== 'save-error') return;
@@ -167,10 +144,8 @@ export function useManualLogFlow(ports: ManualLogPorts): ManualLogFlow {
   }
 
   /**
-   * Back to the empty form — "Edit posting"/"Back" from a review, and "Log another" after a save.
-   * Clears nothing but the flow's own state: which form fields that leaves populated (and which a
-   * caller resets around this call) is each app's own call — the extension keeps `jobUrl` following
-   * the tracked tab, the dashboard doesn't.
+   * Back to the empty form ("Edit posting", "Back", "Log another"). Resets only flow state; each
+   * app decides which form fields to clear.
    */
   function backToForm(): void {
     setState({ kind: 'form' });

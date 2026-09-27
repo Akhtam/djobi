@@ -1,13 +1,6 @@
 /**
- * The panel's test harness: one fake Chrome, one set of fixtures, shared by the shell's tests and
- * the Autofill Tab's.
- *
- * It lived inside `App.test.tsx` while that module tested every flow. Splitting the Autofill Tab
- * out of the shell split its tests too, and both halves need the same fake — so the fake moved here
- * rather than being written twice.
- *
- * Not a test module itself (no `.test.` in the name, so vitest doesn't collect it) and imported by
- * nothing the extension ships, so it is dropped from the build.
+ * The panel's test harness — one fake Chrome and one set of fixtures, shared by the shell's and the
+ * Autofill Tab's tests. Not collected by vitest (no `.test.`) and not shipped.
  */
 import type {
   DetectedField,
@@ -19,6 +12,7 @@ import type {
 import { fireEvent, screen } from '@testing-library/react';
 import { vi } from 'vitest';
 import { productionDetection, type PipelineDeps } from '../background/applicationPipeline';
+import { typedMessageListener } from '../background/messageListener';
 import { handleTypedMessage } from '../background/router';
 import {
   createFakeBackendClient,
@@ -93,9 +87,9 @@ export interface StubOptions {
   /** Fail successive profile loads; `null` resolves with `profile`. The last entry repeats. */
   profileFailures?: (string | Error | null)[];
   jobPageData?: { fields: DetectedField[] } | null;
-  /** Share one `chrome.storage.session` across multiple `stubChrome`/`render` calls — simulates
-   *  the panel closing and reopening (unmount + fresh `render`), both of which see the same
-   *  underlying session storage in real Chrome. */
+  /**
+   * Share one `chrome.storage.session` across renders, simulating the panel closing and reopening.
+   */
   sessionStorage?: FakeSessionStorage;
   /** Message to fail successive Analysis Steps with, `null` for success. The last entry repeats. */
   analysisFailures?: (string | Error | null)[];
@@ -126,19 +120,14 @@ export function nth<T>(entries: (T | null)[] | undefined, index: number): T | nu
 }
 
 /**
- * The client the last {@link stubChrome} built. The panel's modules take a `BackendClient` as a
- * prop, so a test hands them this one — the same adapter the Application Pipeline is given below,
- * so one fake answers both halves of a round trip. Already wrapped in `withSessionRecovery`, the
- * same as `main.tsx` wraps the real `httpBackendClient` — see {@link stubChrome}.
+ * The client the last {@link stubChrome} built — shared by the panel and the pipeline, and wrapped
+ * in `withSessionRecovery` like the real one.
  */
 let currentClient: BackendClient | null = null;
 
 /**
- * The plain fake underneath {@link panelClient}, before `withSessionRecovery`. A test asserting on
- * call *counts* — how many times the underlying operation was actually attempted — wants this one:
- * `panelClient().getProfile` is a closure the retry wrapper builds fresh, not the `vi.fn` a test can
- * assert against, and `panelClient()` itself is the object `<App>`/the pipeline are handed, which
- * has to stay the decorated one to exercise the same retry production does.
+ * The raw fake under {@link panelClient}, before `withSessionRecovery` — for asserting call counts
+ * (the wrapper's methods aren't the `vi.fn`s).
  */
 let currentRawClient: BackendClient | null = null;
 
@@ -155,18 +144,12 @@ export function panelRawClient(): BackendClient {
 }
 
 /**
- * Stubs `chrome.tabs.query` (active tab), `chrome.runtime.sendMessage` and
- * `chrome.storage.session`, and builds the fake `BackendClient` the panel and the pipeline share.
+ * Stubs `chrome.tabs`, `chrome.runtime.sendMessage` and `chrome.storage.session`, and builds the
+ * fake `BackendClient` the panel and pipeline share.
  *
- * Every `TypedMessage` goes to the **real** `background/router.ts`, which runs the real
- * `background/applicationPipeline.ts` against the real `lib/tabStore/`, with only its
- * `PipelineDeps` stubbed — so these tests cover the whole round trip the panel actually depends on:
- * message -> router -> pipeline -> store -> `chrome.storage.onChanged` -> `usePipelineRun` ->
- * render. This stub used to re-implement the pipeline instead, listing by hand every field the
- * runner checkpoints; a change to what the real one wrote left these tests passing regardless. It
- * then re-implemented the *router* for the same reason — the deps seam sat below the dispatch — so
- * a message the real router handled differently, or stopped handling, still passed here. Both
- * re-implementations are gone: the harness sends what the panel sends.
+ * Messages go to the **real** listener, router and pipeline against the real `lib/tabStore/`, with
+ * only `PipelineDeps` faked — so tests cover message → router → pipeline → store → `onChanged` →
+ * `usePipelineRun` → render.
  */
 export async function stubChrome(options: StubOptions) {
   let profileCallIndex = 0;
@@ -180,15 +163,9 @@ export async function stubChrome(options: StubOptions) {
     releaseFill = resolve;
   });
 
-  // One adapter, both halves: the panel's modules are handed this client, and it is also the
-  // pipeline's `backend`. They used to be two fakes — the UI's transport mock and the pipeline's
-  // dependency — which could disagree about the same route without either test noticing.
-  //
-  // Wrapped in `withSessionRecovery` the same way `main.tsx` wraps the real `httpBackendClient`:
-  // production never hands the panel or the pipeline an undecorated client, so a test built on one
-  // would be exercising a client shape nothing ships. This is what lets `profileFailures`' first
-  // entry be a 401 and its second a success stand in for "the dashboard already has a session" —
-  // see `App.test.tsx`'s `adopts a session found in the dashboard's shared cookie` case.
+  // One fake for both halves (panel client and pipeline backend), wrapped in `withSessionRecovery`
+  // as in production — which lets a 401-then-success `profileFailures` stand in for adopting the
+  // dashboard session.
   const rawClient: BackendClient = createFakeBackendClient({
     getProfile: vi.fn(() => {
       const failure = nth(options.profileFailures, profileCallIndex++);
@@ -198,14 +175,13 @@ export async function stubChrome(options: StubOptions) {
     }),
     answerChat: () => Promise.resolve(options.chatReply ?? { reply: 'Here you go.' }),
     ...(options.renderResumePdf ? { renderResumePdf: options.renderResumePdf } : {}),
-    extractJob: () => {
+    extractJob: () => Promise.resolve(jobInfo),
+    analyzeApplication: () => {
       const failure = nth(options.analysisFailures, analysisCallIndex++);
       return failure
         ? Promise.reject(typeof failure === 'string' ? new Error(failure) : failure)
-        : Promise.resolve(jobInfo);
+        : Promise.resolve({ jobInfo, tailoredResume, answers });
     },
-    tailorResume: () => Promise.resolve(tailoredResume),
-    answerQuestions: () => Promise.resolve(answers),
     saveApplication: () => {
       const failure = nth(options.saveFailures, fillCallIndex++);
       return failure
@@ -241,23 +217,21 @@ export async function stubChrome(options: StubOptions) {
         return options.holdFill ? fillGate.then(() => result) : Promise.resolve(result);
       },
       // The panel's concern is what the Fill Step reports back, not where its fields came from, so
-      // these tests leave the live page unreachable and let it fall back to the run's own detection.
+      // these tests leave the live page unreachable and let it fall back to the run's own
+      // detection.
       scan: () => Promise.resolve(null),
-      // Posting extraction is injected directly by the Autofill tests that exercise it.
-      readPosting: () => Promise.resolve({ status: 'unavailable' }),
     },
-    // The real adapter, reading through `fakeChrome`'s own `chrome.storage.session` — not a second
-    // re-implementation of it. Detection is exactly what this harness already relies on: a fill
-    // reads the run's own stored snapshot when the live page can't be reached (see `page.scan`
-    // above), and that snapshot has to come from the same store `START_ANALYSIS`/`START_FILL`
-    // checkpoint into.
+    // The real detection adapter over the fake session storage — fills fall back to the run's
+    // stored snapshot, which must come from the same store analysis checkpointed into.
     detection: productionDetection,
   };
 
-  // One fake Chrome, driven through `lib/fakeChrome.ts`. What is specific to the panel is only the
-  // message handler below: `START_ANALYSIS`/`START_FILL` run the real pipeline against the real
-  // store, which is what makes these cases cover the round trip rather than a re-implementation of
-  // it.
+  // The service worker's real listener and router, so START_* messages run the real pipeline and
+  // reply as in production.
+  const listener = typedMessageListener(
+    (message, sender) => handleTypedMessage(message, sender, deps),
+    Promise.resolve(),
+  );
   const chrome = fakeChrome({
     tab: { id: options.tabId ?? 1, url: options.tabUrl },
     storage: options.sessionStorage,
@@ -279,32 +253,12 @@ export async function stubChrome(options: StubOptions) {
         });
         return;
       }
-      // The service worker's listener, minus Chrome. The panel is the sender, so it carries no
-      // `tab` — only `REPORT_JOB_PAGE` reads one, and the panel never sends that.
-      //
-      // `UPDATE_RUN` is the one message with a real reply — see `background/service-worker.ts` —
-      // so this is the one case that awaits the routed task before calling back. Every other
-      // message stays fire-and-forget, no reply, matching production.
-      if (typedMessage.type === 'UPDATE_RUN') {
-        void handleTypedMessage(typedMessage, {}, deps)
-          .then((result) => callback(result))
-          // Production replies `{ applied: false }` when the routed task rejects, and a test that
-          // makes it reject is testing exactly that. Without this the panel's `updateRun()` promise
-          // never settles and its queue entry is stuck — the one failure the reply channel exists
-          // to carry would be the one failure the harness cannot reproduce.
-          .catch(() => callback({ applied: false }));
-        return;
-      }
-      // Fire-and-forget, as in production — but a rejection here is swallowed deliberately rather
-      // than left unhandled, matching the service worker's `.catch` on the same path.
-      void handleTypedMessage(typedMessage, {}, deps).catch(() => undefined);
-      callback(undefined);
+      // The panel sends no `tab`; only `REPORT_JOB_PAGE` reads one.
+      listener(message, {}, callback);
     },
   });
 
-  // Both the panel and the Analysis Step read the content script's detection out of the store, so
-  // seed it through the store's own entry point rather than writing its layout by hand here.
-  // Awaited: the panel reads detection on mount, and an unawaited seed loses that race.
+  // Seed detection through the store's own entry point, awaited (the panel reads it on mount).
   if (options.jobPageData) {
     await reportDetectedPage(options.tabId ?? 1, 0, options.jobPageData);
   }
@@ -323,10 +277,8 @@ export async function stubChrome(options: StubOptions) {
 }
 
 /**
- * Pastes a job description and clicks "Analyze".
- *
- * Pasting is part of the action now: nothing is scraped from the page, so the button stays disabled
- * until the candidate supplies the posting themselves.
+ * Pastes a job description and clicks "Analyze" (the button is disabled until there's a
+ * description).
  */
 export async function clickAnalyze(jobDescription = JOB_DESCRIPTION) {
   const textarea = await screen.findByPlaceholderText(/paste the job description/i);
@@ -334,7 +286,9 @@ export async function clickAnalyze(jobDescription = JOB_DESCRIPTION) {
   fireEvent.click(await screen.findByRole('button', { name: 'Analyze' }));
 }
 
-/** Filters `sendMessage` mock calls down to a given `TypedMessage` type, e.g. `'START_ANALYSIS'`. */
+/**
+ * Filters `sendMessage` mock calls down to a given `TypedMessage` type, e.g. `'START_ANALYSIS'`.
+ */
 export function callsOfType(sendMessage: ReturnType<typeof vi.fn>, type: string) {
   return sendMessage.mock.calls.flatMap(([message, ...rest]) => {
     const parsed = TypedMessageEnvelopeSchema.safeParse(message);
@@ -349,9 +303,8 @@ export function deferred<T>() {
 }
 
 /**
- * The per-test reset both modules run. jsdom implements neither `URL.createObjectURL` nor
- * `revokeObjectURL`, so the resume-preview paths get deterministic stubs here — an unmount (which
- * revokes any created URL) and a preview click then behave as they do in Chrome.
+ * Per-test reset. Stubs `URL.createObjectURL`/`revokeObjectURL` (missing in jsdom) for the resume
+ * preview paths.
  */
 export function resetPanelTestEnv(): void {
   vi.unstubAllGlobals();

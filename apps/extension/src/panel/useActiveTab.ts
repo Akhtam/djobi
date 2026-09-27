@@ -1,16 +1,11 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The tab the panel is currently about.
+ * The tab the panel is about. The side panel survives tab switches, so it re-tracks via
+ * `chrome.tabs` (`query`, `get`, `onActivated`, `onUpdated`).
  *
- * The side panel survives a tab switch — unlike a popup, which is destroyed by any outside click —
- * so it has to re-track rather than remount. That means four `chrome.tabs` touchpoints (`query` at
- * startup, `get` on activation, and the `onActivated`/`onUpdated` listeners), which lived inline in
- * `App.tsx` and were most of what its test had to stub. Here they are one seam.
- *
- * `changeToken` increments on every switch *and* on a same-tab navigation. Page-scoped consumers
- * use it to reset form detection and pending requests; job-scoped consumers separately compare a
- * canonical Job Context so an ATS overview -> application route can retain its description/run.
+ * `changeToken` increments on every switch and same-tab navigation, for page-scoped resets;
+ * job-scoped state compares Job Context instead, so overview → application routes keep it.
  */
 export interface ActiveTab {
   tabId: number | null;
@@ -19,12 +14,7 @@ export interface ActiveTab {
   changeToken: number;
 }
 
-/**
- * Tracks the active tab, and follows it as the user switches tabs or navigates.
- *
- * Tracking doesn't start until `enabled`, so the panel doesn't chase tabs while it is still showing
- * its "set up your profile" state and has nothing to show for one.
- */
+/** Tracks the active tab through switches and navigations, once `enabled`. */
 export function useActiveTab(enabled: boolean): ActiveTab {
   const [tab, setTab] = useState<ActiveTab>({ tabId: null, tabUrl: null, changeToken: 0 });
 
@@ -34,7 +24,10 @@ export function useActiveTab(enabled: boolean): ActiveTab {
     let current = true;
     let requestToken = 0;
     let trackedTabId: number | null = null;
-    /** Points the panel at a page, bumping the token so callers reset what was scoped to the last one. */
+    /**
+     * Points the panel at a page, bumping the token so callers reset what was scoped to the last
+     * one.
+     */
     function track(tabId: number, tabUrl: string | null) {
       if (!current) return;
       trackedTabId = tabId;

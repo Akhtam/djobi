@@ -1,28 +1,14 @@
 /**
- * Keyword Coverage: what a Tailored Resume actually evidences of a posting's keywords.
+ * Keyword Coverage: what a Tailored Resume evidences of a posting's `JobInfo.keywords`.
  *
- * `extractJob` pulls `JobInfo.keywords` out of a posting and `tailorResume` is told to emphasize
- * them; nothing between those two steps ever checks the result. This module is that check, and it
- * is deliberately the *only* kind of check it can honestly be — a report, not a correction.
+ * A report for the candidate, never fed back to the model: `reconcileResume` already forces skills
+ * through the Profile, so the only honest remedies for a gap are starring a bullet that evidences
+ * it or adding a fact the candidate really has. Feeding a score back would reward fabrication.
  *
- * **Why it never feeds back into the model.** `reconcileResume` forces every tailored skill through
- * the authoritative Profile, so a skill the Profile does not list cannot reach the resume at all.
- * An uncovered keyword therefore has one of two Profile-side remedies: star a source bullet that
- * already evidences it, or add the fact only if the candidate really has it. Coverage never edits
- * the resume or feeds back into tailoring, where raising a number would reward fabrication.
- *
- * **Why the resume and not the answers.** An ATS parses the attached resume into the candidate
- * record a recruiter later searches; a drafted answer to a screening question is not part of that
- * record. Widening the haystack to `QuestionAnswer[]` would make the report say "covered" about a
- * keyword no recruiter search will ever find. Not an oversight.
- *
- * **What this cannot see.** Synonyms in general — there is no alias table, and this module argues
- * against building one. The one exception is a term's own `postingSpelling`: `extractJob` already
- * knows a posting wrote "K8s" for what it canonicalized as "Kubernetes", so matching against both
- * spellings of that *specific* term is using data already captured, not guessing at a synonym. A
- * false "missing" still costs the candidate one glance at a keyword they can dismiss; a false
- * "covered" costs them the gap they came here to find — erring toward missing remains the reason
- * this stays a report and not a correction.
+ * - Searches the resume only, not answers: the resume is what an ATS indexes for recruiter search.
+ * - No synonym table. The one exception is a term's own `postingSpelling` (e.g. "K8s" for
+ *   "Kubernetes"), which extraction already captured. Erring toward "missing" is deliberate — a
+ *   false "covered" hides the gap the candidate came to find.
  */
 import { containsAsWords, normalizeKeyword } from './labelMatching.js';
 import type { JobInfo, Profile, TailoredResume } from './schemas.js';
@@ -40,17 +26,11 @@ export interface KeywordCoverage {
 }
 
 /**
- * Every keyword in `jobInfo`, in the order the posting listed them, with what `resume` evidences.
+ * Every keyword in `jobInfo`, in posting order, with what `resume` evidences.
  *
- * Skills are searched before bullets and the first hit wins: a keyword present in both is reported
- * against the skills list, because that is the field an ATS indexes as a discrete term and the line
- * a recruiter's filter reads first. A blank keyword is skipped rather than matched — it is
- * contained in every bullet, so scoring it would report a resume as covering something the posting
- * never asked for.
- *
- * `jobInfo` only needs `keywords` — the Analytics view asks this once per distinct keyword across a
- * whole date range, against a synthesized `{ keywords: distinct }` that is not a real posting's
- * `JobInfo` and has none of its other fields to give.
+ * Skills are checked before bullets and the first hit wins (skills are what an ATS indexes as
+ * discrete terms). Blank keywords are skipped. Only `keywords` is needed, so Analytics can pass a
+ * synthesized `{ keywords }`.
  */
 export function keywordCoverage(
   resume: TailoredResume,
@@ -61,9 +41,7 @@ export function keywordCoverage(
   const sourceBullets = profile.workExperience.flatMap((entry) => entry.bullets);
 
   return jobInfo.keywords.flatMap(({ term: keyword, postingSpelling }): KeywordCoverage[] => {
-    // Both are candidate needles for the same term — extractJob already knows they name one thing,
-    // so a Profile carrying either spelling counts as evidence. The report itself still names the
-    // keyword by its canonical `term`, since that is the spelling the rest of the app reads.
+    // Either spelling counts as evidence; the report still names the canonical `term`.
     const needles = [
       normalizeKeyword(keyword),
       postingSpelling ? normalizeKeyword(postingSpelling) : '',

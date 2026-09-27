@@ -1,20 +1,7 @@
 /**
- * The neutral domain fixtures the extension's tests share: a Profile with nothing in it, one job,
- * and the resume shape tailoring produces.
- *
- * Six test modules had written the same eleven-field `Profile` literal, and five the same
- * `JobInfo` — so a field added to either meant editing every one of them, and a copy that drifted
- * would be a test asserting against a shape the app no longer has. That is the argument
- * `lib/fakeChrome.ts` and `lib/fakeSessionStorage.ts` already make for their surfaces; this is the
- * same one for the values.
- *
- * Deliberately **empty rather than representative**. These are the baseline a case starts from and
- * spreads over — `{ ...profile, skills: ['TypeScript'] }` — so what a test is actually about is
- * visible in the test rather than buried in a fixture it shares with thirty others. A case whose
- * subject *is* the content of a Profile keeps its own literal, and several do.
- *
- * Not imported by anything that ships. `panel/panelTestHarness.ts` re-exports these, so a panel
- * test keeps reaching for the one module it already knows.
+ * Neutral domain fixtures shared by the extension's tests: an empty Profile, one job, and a
+ * tailored resume. Deliberately **empty**, so each test spreads in what it's about (`{ ...profile,
+ * skills: ['TypeScript'] }`). Not shipped; re-exported by `panel/panelTestHarness.ts`.
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import type { PipelineRunState } from './run';

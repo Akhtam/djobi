@@ -21,10 +21,7 @@ export function pipelineFailure(
     if (error.backendCode === 'invalid-model-output') {
       return { step, kind: 'invalid-model-output' };
     }
-    // The session in `chrome.storage.session` expired, or `signOut` cleared it, since this step
-    // started — `docs/multi-tenant-auth.md`, Phase D. Distinguished from the generic `'unknown'`
-    // below because the fix is specific (sign in again) rather than "try again," and the panel's
-    // own `failureReason` says so.
+    // The session expired or was signed out mid-step; the fix is to sign in again, not retry.
     if (isUnauthorized(error)) return { step, kind: 'unauthorized' };
     if (error.kind === 'network') return { step, kind: 'backend-unreachable' };
     if (error.kind === 'timeout') return { step, kind: 'temporary' };

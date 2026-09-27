@@ -1,14 +1,8 @@
 /**
- * The Keyword Coverage block: what the Tailored Resume evidences of the posting's keywords.
- *
- * Deliberately shaped as a **gap list**, not a score. The number this could be reduced to — "you
- * cover 7 of 10" — is the folklore form of "passing the ATS", and a number on screen is a number
- * the candidate will try to raise. There is only one honest way to raise this one, and it is to
- * have the skill; so the surface separates source bullets worth starring from facts truly missing
- * from the Profile, and keeps everything already evidenced collapsed behind a count.
- *
- * The remedy copy is load-bearing: star evidence the Profile already has, or add a missing fact only
- * if the candidate has it. Neither branch tells them to write an unsupported keyword onto a resume.
+ * The Keyword Coverage block, shaped as a **gap list**, never a score (a number invites keyword
+ * stuffing). It separates Profile bullets worth starring from facts missing from the Profile, with
+ * covered keywords collapsed behind a count. The copy never suggests adding a keyword the candidate
+ * doesn't have.
  */
 import type { KeywordCoverage } from '@djobi/shared';
 
@@ -35,8 +29,8 @@ function Evidenced({ label, entries }: { label: string; entries: KeywordCoverage
 }
 
 /**
- * @param coverage - The run's Keyword Coverage. Empty renders nothing at all: an empty report and a
- *   posting whose extraction found no keywords are the same state, and neither is a clean bill.
+ * @param coverage - The run's Keyword Coverage. Empty renders nothing — "no keywords found" isn't a
+ *   clean bill.
  */
 export function CoverageReport({ coverage }: { coverage: KeywordCoverage[] }) {
   if (coverage.length === 0) return null;

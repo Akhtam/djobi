@@ -1,11 +1,8 @@
 import { vi } from 'vitest';
 
 /**
- * In-memory stand-in for `chrome.cookies`, for tests. Not imported by anything that ships.
- *
- * One store, keyed by name — enough for `sharedSessionCookie.ts`'s single-cookie usage, which is
- * the only thing any test touching this fake needs to exercise. `get`/`set`/`remove` resolve the
- * same shapes the real `chrome.cookies` promises do.
+ * In-memory stand-in for `chrome.cookies`, for tests: one store keyed by name, resolving the real
+ * API's shapes.
  */
 export function fakeCookies() {
   const store = new Map<string, chrome.cookies.Cookie>();

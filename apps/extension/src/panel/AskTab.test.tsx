@@ -1,12 +1,6 @@
 /**
- * The Ask tab, driven through the same `BackendClient` seam the rest of the panel's tests use.
- *
- * The cases worth pinning are the ones where the two flows this one component serves could drift
- * apart: what a cold ask sends versus what a seeded refinement sends, and which of the two offers
- * to write an answer back.
- *
- * Everything is typed into the one composer, as in the UI — including the question, which is what
- * a cold ask's first message is. `type()` is that composer, so a test reads the way the tab is used.
+ * The Ask tab through the `BackendClient` seam: what a cold ask vs. a seeded refinement sends, and
+ * which offers write-back. `type()` is the composer, including for the question itself.
  */
 import type { JobInfo, Profile } from '@djobi/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';

@@ -1,7 +1,6 @@
 /**
- * Backend entrypoint — loads `.env`, then binds the Hono `app` to a real port via
- * `@hono/node-server`. Kept separate from `app.ts` so tests can import the app without starting a
- * server.
+ * Backend entrypoint: loads `.env` and serves the app with `@hono/node-server`. Separate from
+ * `app.ts` so tests import the app without starting a server.
  */
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
@@ -13,39 +12,19 @@ import { postgresApplicationStore } from './db/postgresApplicationStore.js';
 import { postgresProfileStore } from './db/postgresProfileStore.js';
 import { configureOpenRouterKey } from './llm/client.js';
 
-// `llm/client.ts` already defaults to this same lookup, so this line changes nothing about what
-// runs — it exists to say, in the one file that only Node ever runs, which runtime's environment
-// backs `OPENROUTER_API_KEY`. A future Cloudflare Worker entrypoint (docs/adr/0001) reads its key
-// from the request-scoped `env` object `fetch(request, env, ctx)` receives instead, and would call
-// this the same way with a different lookup — see `configureOpenRouterKey`'s own doc comment.
+// Node reads the key from `process.env`; a Worker entrypoint (ADR-0001) would pass its
+// request-scoped `env` instead.
 configureOpenRouterKey(() => process.env.OPENROUTER_API_KEY);
 
-/**
- * The served app: one request-log line (method, path, status, duration) wrapped around the real one.
- *
- * Two things make this a wrapper rather than an `app.use(logger())` on the imported instance.
- *
- * Hono composes handlers in **registration order**, and `app.ts` has already registered every
- * route by the time this module runs — so middleware added to `app` here sits *after* them in the
- * chain and never runs for a request a route answers. (It still runs for a 404, which is a
- * convincing way to look correct while logging almost nothing.) Mounting `app` underneath a fresh
- * instance puts the logger genuinely first.
- *
- * And the test suite imports `app.ts` directly to drive it with `app.request()`, so keeping the
- * logger out of that module is what stops a few hundred lines of traffic from burying the results.
- */
-/**
- * The one place the Postgres adapters are named. Everything else — every route, every test — works
- * against `ApplicationStore` and `ProfileStore`, so this line is the whole of the app's coupling to
- * Postgres. See `db/applicationStore.ts` for why the in-memory adapters are deliberately not
- * reachable from here by a flag.
- */
+/** The only place the Postgres adapters are named; everything else uses the store interfaces. */
 const app = createApp({
   applicationStore: postgresApplicationStore,
   profileStore: postgresProfileStore,
   requireAuth: requireAuth(),
 });
 
+// Logger on a wrapper app: middleware added to `app` after its routes would never run for them
+// (Hono runs in registration order), and tests importing `app.ts` stay free of request logs.
 const server = new Hono();
 server.use(logger());
 server.route('/', app);
@@ -53,14 +32,9 @@ server.route('/', app);
 const port = Number(process.env.PORT ?? 5391);
 
 /**
- * `127.0.0.1` by default — never `0.0.0.0` on a bare host, where that would mean any other device
- * on the LAN, not just this machine, reaching a server holding an OpenRouter key and a live
- * database connection. `HOST` exists only to let the Docker Compose backend service (see the root
- * `docker-compose.yml`) override it to `0.0.0.0`: inside a container, "any interface" means any
- * *other container on the same Docker network* — the dashboard's nginx, specifically, proxying to
- * this one — not the LAN, since nothing this container doesn't itself publish is reachable from
- * outside Docker's own network namespace. A `127.0.0.1` bind inside that container would be
- * unreachable from any other one, including that proxy.
+ * `127.0.0.1` by default, never `0.0.0.0` — this server holds an OpenRouter key and a database
+ * connection. `HOST` exists for the Docker Compose backend, where `0.0.0.0` means the Docker
+ * network (the dashboard's nginx proxy), not the LAN.
  */
 const hostname = process.env.HOST || '127.0.0.1';
 

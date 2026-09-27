@@ -1,11 +1,6 @@
 /**
- * The theme preference, which is the one piece of state the extension's two independently-rendered
- * pages share. The panel and the options page are separate documents with separate React roots, so
- * "shared" here means persisted and observed — a toggle in one has to reach the other while both
- * are open, which is what the `chrome.storage.onChanged` subscription is for.
- *
- * Both surfaces render this on every route, so its failure modes are total: the panel and the
- * options page draw the theme before anything else.
+ * The theme preference shared by the panel and options page — separate documents kept in sync
+ * through `chrome.storage.onChanged`.
  */
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

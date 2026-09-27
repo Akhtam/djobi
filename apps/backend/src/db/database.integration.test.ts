@@ -161,15 +161,9 @@ describe('getApplicationDuplicateSummary integration', () => {
 });
 
 /**
- * The rest of the repository, against the same in-process Postgres.
- *
- * These read and write through real SQL rather than a mocked `db`, because the SQL *is* the
- * behaviour worth checking here: a window function that counts while projecting one row, a jsonb
- * concatenation that has to be atomic, a derived key that must be re-derived on update, and a list
- * parse that is deliberately more forgiving than the single-row one. The route tests above this
- * layer substitute the repository, so nothing else exercises any of it.
- *
- * Rows are written under their own job URLs so the duplicate-summary fixtures keep their counts.
+ * The Postgres store against real SQL (PGlite): the windowed duplicate count, atomic jsonb note
+ * edits, `job_key` re-derivation on update, and forgiving list parsing. Rows use their own job URLs
+ * so duplicate-summary fixtures keep their counts.
  */
 const jobInfo = {
   company: 'Initech',
@@ -291,8 +285,9 @@ describe('postgresApplicationStore integration', () => {
   });
 
   /**
-   * `PATCH /applications/:id` takes an `ApplicationSnapshot`, which excludes Stage and Notes exactly
-   * so re-saving an autofill run cannot overwrite the interview history recorded against it.
+   * `PATCH /applications/:id` takes an `ApplicationSnapshot`, which excludes Stage and Notes
+   * exactly so re-saving an autofill run cannot overwrite the interview history recorded against
+   * it.
    */
   it('leaves Stage and Notes alone when a snapshot is re-saved over the row', async () => {
     const { id } = await saveApplication(
@@ -338,10 +333,11 @@ describe('postgresApplicationStore integration', () => {
   });
 
   /**
-   * The append is one `notes || …` statement rather than a read, a push and a write. Two notes added
-   * close together — the dashboard open in two tabs, or a double-submitted form — both read the same
-   * array under read-modify-write and the second write silently discards the first. That is exactly
-   * the loss an append-only log exists to prevent, so the concatenation happens in Postgres.
+   * The append is one `notes || …` statement rather than a read, a push and a write. Two notes
+   * added close together — the dashboard open in two tabs, or a double-submitted form — both read
+   * the same array under read-modify-write and the second write silently discards the first. That
+   * is exactly the loss an append-only log exists to prevent, so the concatenation happens in
+   * Postgres.
    */
   it('keeps both notes when two are appended concurrently', async () => {
     const { id } = await saveApplication(

@@ -1,10 +1,6 @@
 /**
- * The Job Description at its own interface.
- *
- * These cases used to be reachable only by rendering the whole Autofill Tab and driving a textarea:
- * the scrape races in particular — a candidate typing while the content script reads the page, a
- * navigation landing mid-read — are about ordering, not about markup, and they are the two rules
- * most easily lost in a refactor.
+ * The Job Description at its own interface — especially the scrape races (typing mid-read,
+ * navigating mid-read).
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

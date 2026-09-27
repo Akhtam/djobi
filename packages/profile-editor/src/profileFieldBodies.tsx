@@ -1,14 +1,7 @@
 /**
- * The controlled field bodies both Profile surfaces render — `apps/extension/src/options/App.tsx`
- * and `apps/dashboard/src/views/Profile.tsx`. Each function here is one section's (or one entry's)
- * inputs: their values, their `onChange`, their `type`, their autocomplete hints — everything a
- * caller does not have to reimplement to add a Profile field correctly a second time.
- *
- * What stays with each app is the {@link FieldChrome} it supplies (its own field/checkbox wrapper
- * and input class name), the section shell around a call here (`fieldset`+`legend` versus a panel
- * with a heading), and the `controls`/`summary` render props a `ListSection` takes — those render
- * as JSX one way in the extension and a plain string the other in the dashboard, which is a real
- * difference in presentation, not a duplicated fact.
+ * The controlled field bodies both Profile editors render: one component per section or entry,
+ * owning values, `onChange`, input types and autocomplete hints. Each app supplies its
+ * {@link FieldChrome}, section shell and `ListSection` render props.
  */
 import type { ReactElement } from 'react';
 import type { CredentialItem, ListEditor } from './listEditing.js';
@@ -334,7 +327,9 @@ export function WorkExperienceEntryFields({
   );
 }
 
-/** One project's fields, including its own bullet list (no starring — that's work experience only). */
+/**
+ * One project's fields, including its own bullet list (no starring — that's work experience only).
+ */
 export function ProjectEntryFields({
   chrome,
   bulletListClassNames,
@@ -548,9 +543,8 @@ export function CredentialEntryFields({
 }
 
 /**
- * The screening-answer grid — one input per {@link SCREENING_TOPICS} entry, each with its own
- * suggestion list. Not a `ListSection`: the set of topics is fixed, so there is nothing to add or
- * remove, only to fill in or leave blank.
+ * One input per {@link SCREENING_TOPICS} entry, with suggestions. Not a `ListSection`: the topics
+ * are fixed.
  */
 export function ScreeningAnswerFields({
   chrome,

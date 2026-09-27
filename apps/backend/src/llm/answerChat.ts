@@ -1,14 +1,9 @@
 /**
- * One turn of the Ask tab's conversation about a single application question.
+ * One turn of the Ask tab's conversation about one application question. Cold asks and refinements
+ * are the same function; they differ only in `currentAnswer` and the thread.
  *
- * Asking cold and refining an existing draft are the same conversation with a different starting
- * state, so they are the same function: what separates them is whether `currentAnswer` is set and
- * whether the thread already has turns. Nothing here branches on "which flow is this".
- *
- * The grounding is `answerQuestions`' grounding, deliberately — this must not become the one
- * surface where the model is allowed to invent experience the Profile doesn't have, and a chat is
- * exactly where that pressure shows up ("just say I led the migration"). The Profile, the job and
- * the question live in the scaffold turn, never in a message the candidate can rewrite.
+ * Grounding matches `answerQuestions` so chat can't become a way to invent experience. The Profile,
+ * job and question live in the scaffold turn, never in a message the candidate can rewrite.
  */
 import {
   AnswerChatProfileSchema,
@@ -25,17 +20,8 @@ const AnswerChatOutputSchema = z.object({
 });
 
 /**
- * A cold ask has to come back with an answer: a reply alone renders an Ask tab whose one purpose —
- * producing an answer — visibly didn't happen, and the model omitting it is worth naming as a
- * failure rather than showing as an empty result.
- *
- * Stated as a `requires` rather than as a `.min(1)` on the schema, which is where it used to live.
- * Every other turn already treats an absent answer and an empty one as the same thing (see the
- * trim below), so the model has two ways to say "no answer here" and only one of them was survivable
- * on this path: the instructions tell it to leave `revisedAnswer` out when a turn is conversational,
- * a model that complies by sending `''` fails the schema, and a schema violation is classified
- * non-retryable — so a recoverable coin-flip reached the candidate as a 500. As a `requires` the
- * same turn gets the second attempt every other model misstep gets.
+ * A cold ask must return an answer. A `requires` rather than `.min(1)`: a schema violation is not
+ * retried, but an empty `revisedAnswer` is a coin flip worth a second attempt.
  */
 function coldTurnRequires(value: z.infer<typeof AnswerChatOutputSchema>): string | undefined {
   return value.revisedAnswer?.trim() ? undefined : 'revisedAnswer required';
@@ -57,12 +43,10 @@ Return your side of the conversation as "reply", and — whenever you have produ
 /**
  * Answers one turn of a chat about an application question.
  *
- * @param request - The whole validated `POST /answer-chat` body: the Profile projection, the
- *   question under discussion, the optional job and current draft, and the thread so far.
- * @returns The reply to show in the thread, and the answer to apply when the turn produced one.
- * @throws {StructuredCallError} If the model doesn't return a tool call, or returns one that fails
- *   validation — including a cold turn that came back without an answer, which is retried once
- *   before it is reported.
+ * @param request - The validated `POST /answer-chat` body.
+ * @returns The reply to show, and the revised answer when the turn produced one.
+ * @throws {StructuredCallError} If the model returns no valid object — including a cold turn with
+ *   no answer, after one retry.
  */
 export async function answerChat(
   request: AnswerChatRequest,
@@ -81,10 +65,9 @@ export async function answerChat(
     ? '\n\nThere is no draft yet and the candidate has not said anything beyond asking. Write the answer, and set "revisedAnswer" — this turn has nothing else to show them.'
     : '';
 
-  // The scaffold is the conversation's first user turn, so a thread that itself opens with the
-  // candidate would put two user turns in a row — which the Messages API refuses. That opening
-  // turn is folded into the scaffold instead. A thread opening with the assistant needs no folding:
-  // it is a cold ask's continuation, whose opening user turn was this scaffold in an earlier call.
+  // The scaffold is the first user turn, so a thread opening with the candidate is folded into it
+  // (two consecutive user turns are rejected). A thread opening with the assistant needs no
+  // folding.
   const foldedOpener = messages[0]?.role === 'user' ? messages[0] : undefined;
   const rest = foldedOpener ? messages.slice(1) : messages;
   const conversationOpener = foldedOpener ? `\n\n${sanitizeXmlContent(foldedOpener.content)}` : '';

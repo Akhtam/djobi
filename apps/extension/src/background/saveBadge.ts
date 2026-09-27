@@ -1,25 +1,15 @@
 /**
- * The toolbar badge that says an application was recorded for this tab.
- *
- * The confirmation of last resort. An auto-save is triggered by the candidate submitting the ATS's
- * own form, which navigates the tab and tears down the content script — so the in-page toast
- * (`content/savedToast.ts`) may never render, and the side panel is usually closed. The badge is
- * owned by Chrome, is scoped to the tab, and survives the navigation, so it is the one surface that
- * can be relied on to still be there afterwards.
- *
- * Per-tab (`tabId` on every call) rather than global: a badge set on the tab a submission happened
- * in must not appear over every other tab's icon.
+ * The per-tab toolbar badge saying an application was recorded — the confirmation of last resort.
+ * An auto-save follows the ATS's own submit, which navigates away (so the toast may never show) and
+ * the panel is usually closed; Chrome's badge survives the navigation.
  */
 
 const SAVED_TEXT = '✓';
 const SAVED_BACKGROUND = '#1f9d55';
 
 /**
- * Marks `tabId` as having a saved application.
- *
- * Swallows failures deliberately: the tab may already be gone by the time the write lands (closing
- * the tab right after submitting is an ordinary thing to do), and a badge that could not be drawn
- * must never fail the save it is reporting on.
+ * Marks `tabId` as having a saved application. Swallows failures (the tab may already be closed): a
+ * badge must never fail the save it reports.
  */
 export async function showSavedBadge(tabId: number): Promise<void> {
   try {

@@ -1,16 +1,8 @@
 /**
- * The "Log" tab: records a job the candidate applied to *themselves* — uploading their own resume,
- * or going through something like LinkedIn Easy Apply — so it still lands in the same history the
- * autofill flow writes to.
- *
- * Deliberately not part of the Application Pipeline. This flow needs no detected form and never
- * reads page content; it only follows the active tab's URL as a prefill until the candidate edits it.
- * It therefore doesn't go through `lib/tabStore/` or `PipelineStatus`. Its form fields are local; the
- * extract → review → save state machine itself is `@djobi/manual-log`'s `useManualLogFlow`, shared
- * with the dashboard's own "Log an application" modal — see that package's own doc for what stays
- * here versus what moved: this file supplies the client adapter, the URL-follows-the-tab prefill,
- * and every pixel; the state machine, the Duplicate Guard call and the idempotency key are the
- * package's.
+ * The "Log" tab: records an application the candidate made themselves (own resume, LinkedIn Easy
+ * Apply) in the same history. Not part of the Application Pipeline — no detected form, no page
+ * reads. The extract → review → save state machine is `@djobi/manual-log`'s `useManualLogFlow`;
+ * this file supplies the client adapter, the follow-the-tab URL prefill and the UI.
  */
 import { isHttpUrl, type Profile } from '@djobi/shared';
 import { useManualLogFlow, type ManualLogPorts } from '@djobi/manual-log';
@@ -38,11 +30,8 @@ export function LogApplication({
   const [company, setCompany] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
 
-  // `client`'s own methods, adapted to `ManualLogPorts`'s shape. No `handleError` policy of its
-  // own today — a 401 here surfaces as `extract-error`/`save-error` like any other failure, the
-  // same as before this flow moved into the shared package. See `useManualLogFlow`'s own doc for
-  // why that's an explicit port rather than the flow guessing: the dashboard's counterpart *does*
-  // have one, redirecting to sign-in instead.
+  // `client` adapted to `ManualLogPorts`. No special 401 handling: it shows as an error like any
+  // other (the dashboard redirects to sign-in instead).
   const ports: ManualLogPorts = {
     extractJob: (jobDescription) => client.extractJob(jobDescription),
     findApplicationDuplicates: (jobUrl, signal) => client.findApplicationDuplicates(jobUrl, signal),
@@ -55,20 +44,14 @@ export function LogApplication({
   const flow = useManualLogFlow(ports);
   const { state } = flow;
 
-  // `jobUrl` is required and refused as anything but http(s) by `NewApplicationSchema`, and it's
-  // also the key the duplicate guard matches on, so it's a required field here rather than
-  // something we invent a placeholder for. `isHttpUrl` is that same rule from `@djobi/shared`,
-  // checked before the request so a bad paste fails in the panel and not as a 400.
+  // Required and http(s)-only (`NewApplicationSchema`), and the Duplicate Guard's key — checked
+  // here so a bad paste fails in the panel, not as a 400.
   const urlValid = isHttpUrl(jobUrl);
 
   /**
-   * Follows the tracked tab while the field is still the prefill and no extraction exists yet.
-   *
-   * The panel outlives a navigation, so seeding this once on mount left the field showing whichever
-   * posting happened to be open when the panel was opened — log a *different* posting after
-   * navigating and the row was filed under the old URL, with the duplicate guard checking the wrong
-   * one. Stops following as soon as the candidate types, or once there's an extraction on screen:
-   * from then on the URL belongs to what's being reviewed, not to the tab.
+   * Follows the tracked tab's URL while the field is still the prefill and nothing is extracted, so
+   * logging after a navigation files under the right posting. Stops once the candidate types or an
+   * extraction is on screen.
    */
   useEffect(() => {
     if (urlEdited || state.kind !== 'form') return;

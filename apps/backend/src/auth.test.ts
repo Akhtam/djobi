@@ -1,11 +1,6 @@
 /**
- * Better Auth mounted against real Postgres (PGlite), driven through every migration file rather
- * than a hand-built schema — the same reasoning `db/database.integration.test.ts` and
- * `db/applicationStore.contract.test.ts` already follow: the SQL Better Auth actually runs is the
- * behaviour worth checking, not a second hand-written imitation of the schema.
- *
- * Running the full migration chain (0000–0011) rather than just the newest also means this is the
- * first test that would notice a migration disagreeing with `db/schema.ts`'s current shape.
+ * Better Auth against real Postgres (PGlite) built from every migration file, so it checks the SQL
+ * Better Auth actually runs — and catches a migration disagreeing with `db/schema.ts`.
  */
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -32,7 +27,9 @@ beforeAll(async () => {
   });
 });
 
-/** Better Auth answers plain JSON; `Response.json()` is enough to read either a body or an error. */
+/**
+ * Better Auth answers plain JSON; `Response.json()` is enough to read either a body or an error.
+ */
 async function callAuth(path: string, body: unknown): Promise<{ status: number; json: unknown }> {
   const res = await auth.handler(
     new Request(`http://localhost/api/auth${path}`, {

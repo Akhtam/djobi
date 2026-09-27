@@ -1,20 +1,11 @@
 /**
- * The "Autofill" tab: the Application Pipeline as the candidate sees it — scrape or paste a Job Description,
- * Analyze, review what came back, Fill, Save.
+ * The "Autofill" tab: the Application Pipeline as the candidate sees it — scrape or paste a Job
+ * Description, Analyze, review, Fill, Save.
  *
- * A module alongside `LogApplication` and `AskTab` rather than the body of `panel/App.tsx`. Folded
- * into the shell, the shell's interface becomes "everything the pipeline renders" plus profile
- * bootstrap plus tab state, and every further tab adds to it again.
- *
- * The steps themselves run in `background/applicationPipeline.ts`, not here: the panel closing
- * mid-request must not kill a run. Progress arrives through the run this module is handed, never as
- * a response to the command that started it.
- *
- * The commands are `panel/pipelineCommands.ts`, not messages built here. Each of them pairs a
- * message with the optimistic status it raises and the failure that stands that status down, and
- * the pairing is exactly what this module kept getting to restate. What is left here is the tab's
- * own: whether a command is *eligible* — which the buttons' `disabled` and the review guards say —
- * and the resume preview's lifecycle. The words for a Run Notice are `RunNoticeView.tsx`'s.
+ * Steps run in `background/applicationPipeline.ts` (so closing the panel doesn't kill a run) and
+ * progress arrives through the run. Commands come from `panel/pipelineCommands.ts`; Run Notice
+ * wording from `RunNoticeView.tsx`. This module owns command eligibility and the resume preview
+ * lifecycle.
  */
 import type { JobInfo, Profile, TailoredResume } from '@djobi/shared';
 import { useEffect, useState } from 'react';
@@ -35,9 +26,8 @@ import { useJobDescription } from './useJobDescription';
 import { useResumePreview } from './useResumePreview';
 
 /**
- * `'ready'` is this module's own — there is no run on this page yet — and the rest is the stored
- * run's `PipelineStatus`. The panel's bootstrap states (loading, no profile) are deliberately not
- * here: they are the shell's, and this module is only mounted once a Profile exists.
+ * `'ready'` (no run yet) or the stored run's status. Bootstrap states belong to the shell; this tab
+ * mounts only once a Profile exists.
  */
 type AutofillStatus = 'ready' | PipelineStatus;
 
@@ -57,17 +47,12 @@ export function AutofillTab({
   /** Hands one drafted answer to the Ask Tab. Offered only for freeform questions — see below. */
   onRefineAnswer: (fieldId: string, question: string, currentAnswer: string) => void;
   /**
-   * Injectable so panel tests do not need to reproduce Chrome's frame-enumeration API. Passed
-   * straight through to `panel/useJobDescription.ts`, which owns the scrape and names the default.
+   * Injectable for tests; passed through to `panel/useJobDescription.ts`, which owns the scrape.
    */
   readPosting?: ((tabId: number) => Promise<PostingReadOutcome>) | undefined;
   /**
-   * Whether another tab is showing.
-   *
-   * Part of this module's interface rather than the shell's business, because it owns its own
-   * footer: the Fill/Save actions sit outside the scrolling pane, as a sibling of it, so there is
-   * no single element for a caller to hide. The pane stays *mounted* while hidden — a run in
-   * flight must survive the candidate looking at another tab.
+   * Whether another tab is showing. This module owns its footer (outside the scrolling pane), so it
+   * hides itself; it stays mounted so an in-flight run survives.
    */
   hidden: boolean;
 }) {
@@ -120,9 +105,8 @@ export function AutofillTab({
   // The Tailored Resume preview, and the blob-URL lifecycle that comes with it.
   const resumePreview = useResumePreview(client, profile, tailoredResume);
 
-  // Form detection and previews are page-scoped. The Job Description is *not* only page-scoped —
-  // a draft survives a navigation within the same job — so its own reset and restore live with it,
-  // in `panel/useJobDescription.ts`.
+  // Detection and previews are page-scoped; the Job Description survives same-job navigation and
+  // handles its own reset (`panel/useJobDescription.ts`).
   useEffect(() => {
     if (tabId === null) return;
     const activeTabId = tabId;
@@ -132,9 +116,7 @@ export function AutofillTab({
     // A blob URL means nothing on a different page.
     resumePreview.clear();
 
-    // Opportunistic only — the paste + Analyze screen is shown regardless of whether this finds
-    // anything, so a page where detection fails (or hasn't finished) never blocks the user from
-    // pasting the Job Description themselves.
+    // Opportunistic: the paste-and-Analyze screen never waits on detection.
     let current = true;
     function refreshDetectedPage() {
       void getDetectedPage(activeTabId).then((data) => {
@@ -154,12 +136,8 @@ export function AutofillTab({
   }, [tabId, tabUrl, changeToken]);
 
   function handleAnalyze(force = false) {
-    // The existing blob renders the previous analysis, even when this URL has not changed. The
-    // preview is this module's, so clearing it is too — the command knows nothing about it. Only
-    // once the command has actually started, though: the Re-analyze beside the unfilled-questions
-    // notice is enabled whatever the Job Description says, so a candidate who has emptied the
-    // textarea can press it, and dropping the rendered preview for an analysis that never ran
-    // would cost them the render for nothing.
+    // Drop the old preview only if analysis actually started — Re-analyze can be pressed with an
+    // empty description, and the old render shouldn't be lost for nothing.
     if (commands.analyze(force)) resumePreview.clear();
   }
 
@@ -171,9 +149,7 @@ export function AutofillTab({
   function handleResumeReviewChange(next: TailoredResume) {
     if (!run) return;
     updateTailoredResume(run.runId, next);
-    // The open preview iframe still points at the pre-edit render; clearing it drops back to the
-    // "Preview tailored resume" button rather than showing bytes that no longer match what Fill will
-    // actually write, the same reasoning `handleAnalyze` already applies to a stale preview.
+    // The preview no longer matches what Fill will attach; drop back to the preview button.
     resumePreview.clear();
   }
 
@@ -250,6 +226,12 @@ export function AutofillTab({
                     : "Couldn't find a job description on this page worth trusting. Paste it in instead."}
                 </p>
               </div>
+            )}
+            {jobDescription.text.trim() && !jobDescription.analysisUrl && (
+              <p className="hint">
+                Analyze works on job postings opened from a web page (http or https). Open the
+                posting's link in this tab to continue.
+              </p>
             )}
             <button
               type="button"

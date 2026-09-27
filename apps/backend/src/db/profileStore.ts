@@ -1,16 +1,9 @@
-/**
- * The backend's view of where the Profile is persisted, and the in-memory adapter its tests run
- * against. The reasoning is `db/applicationStore.ts`'s — this is the same seam for the per-user
- * record.
- */
+/** The Profile persistence port and its in-memory adapter for tests (see `applicationStore.ts`). */
 import type { Profile } from '@djobi/shared';
 
 /**
- * Everything the backend needs from Profile persistence.
- *
- * There is exactly one Profile per user, so both methods take a `userId` rather than a Profile id —
- * see `docs/multi-tenant-auth.md`. `get` answers `null` for a candidate who has not set one up yet, or
- * whose id has none, either being a real answer rather than a missing row.
+ * Profile persistence: one Profile per user, keyed by `userId`. `get` answers `null` when none has
+ * been saved.
  */
 export interface ProfileStore {
   get(userId: string): Promise<Profile | null>;
@@ -18,11 +11,7 @@ export interface ProfileStore {
   save(userId: string, profile: Profile): Promise<Profile>;
 }
 
-/**
- * A `ProfileStore` held in a `Map` keyed by `userId`, for tests. One user's `save` must never be
- * visible to another's `get` — the property `postgresProfileStore.test.ts` asserts against the real
- * adapter's query shape, and the property this fake exists to agree with it about.
- */
+/** A `ProfileStore` in a `Map` keyed by `userId`, for tests. Users never see each other's rows. */
 export function inMemoryProfileStore(seed: Map<string, Profile> = new Map()): ProfileStore {
   const stored = new Map(seed);
 

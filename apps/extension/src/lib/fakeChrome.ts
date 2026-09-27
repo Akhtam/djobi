@@ -1,20 +1,7 @@
 /**
- * In-memory stand-in for the `chrome.*` surfaces this extension uses, for tests. Not imported by
- * anything that ships.
- *
- * `fakeSessionStorage` already made this argument for one surface: four hand-rolled copies had
- * drifted, and a fake that doesn't fire `onChanged` can only test half the store. The same thing
- * had happened again a level up — every test module that renders a panel surface rebuilt
- * `chrome.tabs` and `chrome.runtime` from scratch, each re-deriving Chrome's callback-style
- * signatures, and each free to get them subtly wrong in its own way.
- *
- * What it deliberately does **not** absorb: a fake whose callbacks are *deferred* so a test can
- * interleave them (`panel/useActiveTab.test.ts` has one, to pin the races between an activation and
- * a navigation). That is a different fake, not a flag on this one — supporting both would widen the
- * interface past what either caller wants.
- *
- * `storage` is `fakeSessionStorage`, so a test that needs to reach into the store keeps doing so
- * through the fake it already knows.
+ * In-memory stand-in for the `chrome.*` surfaces this extension uses, for tests. `storage` is
+ * `fakeSessionStorage`. Tests needing *deferred* callbacks to interleave races (e.g.
+ * `panel/useActiveTab.test.ts`) keep their own fake.
  */
 import { fakeSessionStorage, type FakeSessionStorage } from './fakeSessionStorage';
 import { vi } from 'vitest';
@@ -46,19 +33,11 @@ export interface FakeChrome {
   navigate: (tabId: number, url: string) => void;
   /** Fires `chrome.tabs.onRemoved` — the tab being closed, which invalidates its stored state. */
   closeTab: (tabId: number) => void;
-  /**
-   * Seeds a cookie `chrome.cookies.get` answers for `name` — `sharedSessionCookie.ts`'s only
-   * dependency, so a test driving the dashboard-adopts-into-extension path sets one of these
-   * rather than reaching around this fake to stub `chrome.cookies` itself.
-   */
+  /** Seeds the cookie `chrome.cookies.get` returns for `name` (for `sharedSessionCookie.ts`). */
   setCookie: (name: string, value: string | null) => void;
 }
 
-/**
- * Installs a fake `chrome` on the global and returns the handles for driving it.
- *
- * Undone by `vi.unstubAllGlobals()`, which every caller already runs between cases.
- */
+/** Installs a fake `chrome` global and returns its handles. Undone by `vi.unstubAllGlobals()`. */
 export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
   const activated: ActivatedListener[] = [];
   const updated: UpdatedListener[] = [];
@@ -116,13 +95,12 @@ export function fakeChrome(options: FakeChromeOptions = {}): FakeChrome {
       openOptionsPage,
       lastError: undefined,
       // Answers the service-worker heartbeat (`lib/keepAlive.ts`). Every routed pipeline step calls
-      // it, so a fake without it fails the panel tests for a reason that has nothing to do with them.
+      // it, so a fake without it fails the panel tests for a reason that has nothing to do with
+      // them.
       getPlatformInfo: () => Promise.resolve({ os: 'mac', arch: 'arm64', nacl_arch: 'arm64' }),
     },
     storage,
-    // One name, no domain/path matching — every caller (`sharedSessionCookie.ts`) reads and writes
-    // exactly one cookie, by name, against a single origin. Set/remove resolve the same shapes the
-    // real `chrome.cookies` promises do, since `sharedSessionCookie.ts` only reads `.value`.
+    // One cookie by name, no domain/path matching — all `sharedSessionCookie.ts` needs.
     cookies: {
       get: vi.fn(async (details: { name: string }) => {
         const value = cookies.get(details.name);

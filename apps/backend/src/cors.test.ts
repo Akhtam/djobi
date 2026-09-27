@@ -1,11 +1,6 @@
 /**
- * The CORS middleware exists for one consumer: `apps/dashboard`, which runs on its own dev server.
- *
- * These tests exist mainly to catch two silent regressions. Middleware registered *after* the
- * routes in `app.ts` still answers a 404 while doing nothing for any real request, so a test that
- * only probed an unknown path would pass against a broken registration — hence the assertions run
- * against a real route. And a wildcard origin would also pass any test that only checked the
- * dashboard's own origin is allowed, hence the disallowed-origin case.
+ * CORS for the dashboard. Asserted against a real route (middleware registered after routes still
+ * "works" for a 404) and with a disallowed origin (a wildcard would pass an allowed-origin check).
  */
 import { describe, expect, it } from 'vitest';
 

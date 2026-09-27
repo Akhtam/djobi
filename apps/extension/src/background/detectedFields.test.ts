@@ -1,12 +1,7 @@
 /**
- * The Detected Field lifecycle at its own interface: report, enrich, snapshot.
- *
- * These cases are all about *ordering*, which is what the lifecycle was missing when it was spread
- * across the router, the store, the oracle and the pipeline. Each module was individually correct;
- * what nobody owned was the fact that a run started before an oracle answers must wait for it.
- *
- * `fetch` is stubbed globally rather than injected, because the point of every case is what happens
- * when `recordReport` is called the way the router calls it — with no way to pass an adapter in.
+ * The Detected Field lifecycle — report, enrich, snapshot — and its ordering: a run started before
+ * the oracle answers waits for it. `fetch` is stubbed globally because the router calls
+ * `recordReport` with no adapter.
  */
 import type { DetectedField } from '@djobi/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

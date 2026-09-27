@@ -1,11 +1,6 @@
 /**
- * The applications list — the dashboard's home.
- *
- * A scan-first table on desktop, restyled as stacked rows on narrow screens from the same semantic
- * markup. Company and role lead; source, stage, date, and posting remain aligned and directly usable.
- *
- * Filtering is client-side over the already-loaded array. There is no filtered endpoint, this is a
- * personal-scale dataset, and adding query parameters would be inventing backend work.
+ * The applications list — the dashboard's home. A table on desktop, stacked rows on narrow screens,
+ * from the same markup. Filtered client-side over the loaded array (personal-scale data).
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Application, ApplicationStage, NewApplicationRequest } from '@djobi/shared';
@@ -57,22 +52,16 @@ export function ApplicationsList({
   applications: Application[];
   client: DashboardClient;
   /**
-   * The filters to render under, owned by the URL rather than by this component — see
-   * `useHashRoute`. Held above because this component unmounts whenever an application is opened,
-   * which is exactly when the user least wants their search thrown away.
+   * Filters, owned by the URL (`useHashRoute`) so they survive this component unmounting when an
+   * application is opened.
    */
   filters: ListFilters;
   /** How many matching rows to reveal. Held above for the same reason `filters` is. */
   shown: number;
   onFiltersChange: (filters: ListFilters) => void;
   /**
-   * Flips the applied-date order, separately from {@link onFiltersChange}.
-   *
-   * A sort is not a filter: `query`/`stage`/`rejection` each narrow *which* rows qualify, which is
-   * why changing one collapses `shown` back to the first batch (see `App`'s own comment on that
-   * call) — the revealed rows belonged to a population that no longer exists. Reordering the same
-   * population doesn't do that, and routing it through `onFiltersChange` used to collapse a
-   * `Load more`d list back to twenty rows on nothing but a re-sort.
+   * Flips the date order. Separate from {@link onFiltersChange} because re-sorting the same rows
+   * shouldn't collapse a `Load more`d list back to the first batch.
    */
   onSortChange: (sort: 'oldest' | undefined) => void;
   onShowMore: (shown: number) => void;

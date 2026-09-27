@@ -39,12 +39,8 @@ function request(overrides: Partial<AnswerChatRequest> = {}): AnswerChatRequest 
 }
 
 /**
- * The conversation turns sent on the most recent call, each flattened back to a plain string.
- *
- * A turn's content reaches the provider as an array of parts; whether a given turn becomes one part
- * or several is the SDK's business, and what the model reads is the concatenation. These tests are
- * about the shape of the *conversation* — who speaks when, and what is in the scaffold — so they
- * assert against that.
+ * The turns sent on the latest call, each flattened to a string (the SDK may split turns into
+ * parts).
  */
 function sentMessages(): { role: string; content: string }[] {
   const index = mockDoGenerate.mock.calls.length - 1;
@@ -229,9 +225,9 @@ describe('answerChat', () => {
   });
 
   it('retries a cold turn whose answer came back empty rather than absent', async () => {
-    // The two are the same thing everywhere else in this module, and the instructions tell the model
-    // to *leave out* an answer it hasn't written — so a model complying with `''` used to fail the
-    // schema, which is classified non-retryable, and reached the candidate as a 500.
+    // The two are the same thing everywhere else in this module, and the instructions tell the
+    // model to *leave out* an answer it hasn't written — so a model complying with `''` used to
+    // fail the schema, which is classified non-retryable, and reached the candidate as a 500.
     mockDoGenerate
       .mockResolvedValueOnce(objectGeneration({ reply: 'Here you go.', revisedAnswer: '   ' }))
       .mockResolvedValueOnce(
@@ -263,14 +259,8 @@ describe('answerChat', () => {
   });
 
   /**
-   * The grounding projection is enforced here, not assumed from the caller.
-   *
-   * The route parses the same schema on the way in, so an HTTP request cannot carry these fields at
-   * all. But the operation is a module anything can call, and a full `Profile` is structurally
-   * assignable to this narrow one — so a direct caller handing over the whole thing used to put the
-   * candidate's contact details and their work-authorization declarations into the prompt, with
-   * nothing on either side able to notice. A screening answer is a legal declaration, matched onto
-   * a form's own options; it is never grounding for a draft.
+   * The grounding projection is enforced inside the operation, not assumed from the caller: a full
+   * `Profile` passed directly must not put contact details or screening answers in the prompt.
    */
   it('grounds only in the projection, whatever the caller passes', async () => {
     mockDoGenerate.mockResolvedValue(

@@ -1,19 +1,9 @@
 /**
- * In-memory stand-in for `chrome.storage.session`, for tests. Not imported by anything that ships.
+ * In-memory stand-in for `chrome.storage.session`, for tests.
  *
- * There were four hand-rolled copies of this — one per test file that touches `tabStore/` — and
- * they had drifted: two fired `onChanged`, one didn't fire it at all while claiming in a comment to
- * match one that did, and one stubbed `remove` as a no-op. Since `onChanged` is how the panel learns
- * that the background made progress, a fake that doesn't fire it can only ever test half the store.
- *
- * Mirrors the real API closely enough for `tabStore/` and `panel/usePipelineRun.ts`: `get`/`set`/
- * `remove` are promise-based, and every `set`/`remove` notifies listeners — including the context
- * that made the write, exactly as Chrome does, which is what exercises the hook's own-write echo
- * guard rather than just its hydrate-on-mount path.
- *
- * Changes carry `oldValue` as well as `newValue`, again as Chrome does. `tabStore/record.ts` reads
- * both to classify which owner moved — the run, or the detected frames and Job Context sharing its
- * key — so a fake that omitted one would report every write as a change to everything.
+ * Like Chrome, every `set`/`remove` fires `onChanged` — including in the writing context, which
+ * exercises `usePipelineRun`'s own-write echo guard — and changes carry both `oldValue` and
+ * `newValue`, which `tabStore/record.ts` compares to tell which owner moved.
  */
 export interface FakeStorageChange {
   oldValue?: unknown;
@@ -40,7 +30,8 @@ export function fakeSessionStorage(): FakeSessionStorage {
   const listeners: StorageListener[] = [];
 
   function notify(changes: Record<string, FakeStorageChange>) {
-    // Iterate a copy: a listener that removes itself mid-notification would otherwise skip the next.
+    // Iterate a copy: a listener that removes itself mid-notification would otherwise skip the
+    // next.
     for (const listener of [...listeners]) listener(changes, 'session');
   }
 

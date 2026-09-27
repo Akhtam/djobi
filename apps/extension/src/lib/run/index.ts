@@ -1,15 +1,6 @@
 /**
- * The Application Pipeline run, as one module.
- *
- * A run was a concept spread across ten files and no interface. `PipelineRunState` and the status
- * vocabulary lived in a storage module; the transition policy lived in the background as
- * `FILLABLE_FROM`; whether a review still stood lived in `lib/runReview.ts` as a second list; the
- * panel disabled its buttons from a third set of status literals; and answer resolution lived in
- * `lib/runAnswers.ts`. Each module argued well for itself, and none of them could answer "what may
- * happen to this run now" — so a fourth step meant nine edits, three of which the compiler could not
- * ask for.
- *
- * **The layering, and the rule that keeps this from becoming a run-shaped everything-module:**
+ * The Application Pipeline run's domain, as one module: statuses, transitions, capabilities, the
+ * run's shape, and how it reads to the candidate.
  *
  * ```
  *   panel/            projection — labels, notices, which control is disabled
@@ -18,16 +9,10 @@
  *   lib/run/          domain — statuses, transitions, capabilities, the run's shape   ← here
  * ```
  *
- * Imports go **down** only. Nothing under `lib/run/` may import from `tabStore/`, `background/` or
- * `panel/`, which is what makes it testable without a `chrome` stub and what stops persistence or
- * wording from accumulating in it. The one import that leaves this directory is the `JobPageData`
- * *type* from `lib/messages.ts` — a plain data shape, no runtime dependency, and nothing imports
- * back the other way.
- *
- * What deliberately stayed out: `reviewOf` is one reconciled reading rather than a set of
- * independent capability queries for the panel. Splitting it is how the header pill and the tab body
- * came to disagree in the first place — see `lib/run/review.ts`. Capability queries answer *what may
- * be done*; the reading answers *what to show*, once.
+ * Imports go **down** only: nothing here imports `tabStore/`, `background/` or `panel/` (only the
+ * `JobPageData` type from `lib/messages.ts`), so it tests without a `chrome` stub. `reviewOf` is
+ * one reconciled reading rather than separate queries, so the header pill and tab body can't
+ * disagree.
  */
 export {
   PIPELINE_STATUSES,

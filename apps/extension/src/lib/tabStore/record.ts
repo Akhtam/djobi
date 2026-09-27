@@ -1,26 +1,10 @@
 /**
- * The one stored record behind every `tabStore/` interface: how a tab's entry is read, normalized,
- * written, and serialized against itself.
+ * The one `chrome.storage.session` record per tab behind every `tabStore/` interface — the run, the
+ * detected frames and the Job Context share it, with one write queue (separate locks would
+ * reintroduce lost updates).
  *
- * Everything known about one browser tab's job application lives under one `chrome.storage.session`
- * key. That is what the run, the detected frames and the retained Job Context share — and the only
- * thing they share, which is why each presents its own interface over it. Splitting those
- * interfaces is not splitting the storage: separate locks would bring back exactly the whole-record
- * lost updates the single queue below exists to prevent.
- *
- * This replaces two stores that answered the same question — "what do we know about this tab?" —
- * under different rules: an in-memory `Map` in the service worker holding the content script's
- * detection, and `chrome.storage.session` holding the Application Pipeline run. That split cost us
- * three ways. The `Map` died whenever the service worker was evicted (~30s idle), silently losing a
- * detected job page the panel would then refuse to analyze. It was never cleaned up, so every tab
- * ever visited leaked an entry. And keying it by tab alone let any frame's detection overwrite any
- * other's — which matters, because the content script runs in every frame and an ATS form is
- * usually inside an iframe on a company's own careers page.
- *
- * Backed entirely by `chrome.storage.session`: survives service-worker eviction, clears when the
- * browser closes (in-progress review state isn't the permanent record — that is the `applications`
- * row written after an explicit save), and is directly readable from both the background worker and
- * the panel, so neither needs a message round-trip to reach it.
+ * Session storage survives worker eviction, clears when the browser closes (the permanent record is
+ * the saved Application), and is readable from both the worker and the panel.
  */
 import { parseDetectedFields } from '@djobi/shared';
 import type { KeywordCoverage } from '@djobi/shared';
@@ -35,17 +19,12 @@ import {
   type RunStep,
 } from '../run';
 
-/**
- * One frame's most recent detection. The content script runs in every frame, so a tab can hold
- * several — typically an ATS iframe with the real form alongside a host page with none.
- */
+/** One frame's latest detection; a tab holds one per reporting frame. */
 export interface DetectedFrame {
   data: JobPageData;
   /**
-   * Per-frame revision, incremented on every report. A slow API-oracle enrichment compares the
-   * revision it was fetched for against the current one to tell whether it has been superseded.
-   * Deliberately a counter and not a timestamp: two reports can land in the same millisecond, and
-   * a clock-based marker would then let a stale enrichment through.
+   * Incremented per report, so a slow enrichment can tell it was superseded. A counter, not a
+   * timestamp: two reports can share a millisecond.
    */
   revision: number;
 }
@@ -87,20 +66,9 @@ function storageKey(tabId: number): string {
 }
 
 /**
- * Reads a tab's entry, re-parsing every Detected Field it carries.
- *
- * This is a version-skew boundary, not merely a deserialization one. `chrome.storage.session`
- * outlives an extension reload: the entry a tab holds was written by whichever build was running
- * when that tab was opened, which need not be the build reading it back. Casting the JSON to
- * `TabState` — as this did — meant a field written before `elementRole` or `options[].selector`
- * existed arrived looking valid and failed much later, as a field the Fill Step couldn't fill, with
- * nothing pointing back here.
- *
- * Only the fields are re-parsed. The rest of the run is extension-internal state whose shape moves
- * with the code that reads it, and a stricter parse there would throw away a live run over a field
- * nobody was about to use. New state members still need conservative defaults here: an older build
- * did not persist whether the page answered its fill request, so a completed legacy run is
- * `unverified` rather than reconstructing certainty from its counts.
+ * Reads a tab's entry, re-parsing its Detected Fields — the entry may have been written by an older
+ * extension build before a reload. The rest of the run isn't re-parsed, but new members need
+ * conservative defaults here (e.g. legacy completed runs read as `unverified`).
  */
 export async function read(tabId: number): Promise<TabState> {
   const key = storageKey(tabId);
@@ -125,9 +93,7 @@ export async function read(tabId: number): Promise<TabState> {
           runId: state.run.runId ?? `legacy:${tabId}`,
           jobPageData: { fields: parseDetectedFields(state.run.jobPageData?.fields) },
           unresolvedRequiredFields: parseDetectedFields(state.run.unresolvedRequiredFields),
-          // An older build analyzed without measuring coverage, and there is nothing to
-          // reconstruct it from: the report is about the resume that build produced, not the one
-          // this build would. Empty reads as "not measured", which is what happened.
+          // Older builds didn't measure coverage; empty reads as "not measured".
           coverage: state.run.coverage ?? [],
           failure: state.run.failure
             ? {
@@ -151,13 +117,8 @@ export async function write(tabId: number, state: TabState): Promise<void> {
 }
 
 /**
- * Serializes read-modify-write cycles for a tab. Every mutation here reads the whole entry, changes
- * part of it and writes it back, and those steps interleave freely: the content script runs in each
- * frame and they report at nearly the same instant, so two concurrent reports would both read the
- * pre-write state and the second write would silently drop the first frame's detection.
- *
- * The queue is in-memory and therefore orders one JavaScript context. All mutations are routed
- * through the service worker so detection, run progress, edits, and invalidation share this queue.
+ * Per-tab queue serializing read-modify-write cycles, so concurrent frame reports don't drop each
+ * other. In-memory, so all mutations go through the service worker.
  */
 const writeQueues = new Map<number, Promise<unknown>>();
 
@@ -205,7 +166,10 @@ function pageStateOf(state: TabState | undefined): object {
   return { frames: state?.frames ?? {}, jobContext: state?.jobContext ?? null };
 }
 
-/** The run fields written by the background — `lib/run/state.ts`'s split, applied to a possibly-absent run. */
+/**
+ * The run fields written by the background — `lib/run/state.ts`'s split, applied to a
+ * possibly-absent run.
+ */
 function progressOf(run: PipelineRunState | null | undefined): object | null {
   return run ? backgroundProgressOf(run) : null;
 }
@@ -218,13 +182,8 @@ export interface RunRecordChange {
 }
 
 /**
- * Projects a record write into the run seam and classifies which owner moved it.
- *
- * Here because the storage area, key format, record layout and ownership split are this module's to
- * know. Subscribers receive run projections and ownership flags, never the stored record itself.
- *
- * Run values remain un-normalized so comparisons see what was actually stored; an absent run is
- * projected as `null` rather than exposing the record's missing-value representation.
+ * Projects a record write into run values plus flags for which owner moved it; subscribers never
+ * see the stored layout. Runs aren't normalized, so comparisons see what was stored.
  */
 export function subscribeRunRecord(
   tabId: number,

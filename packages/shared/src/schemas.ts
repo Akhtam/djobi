@@ -1,16 +1,13 @@
 import { z } from 'zod';
 import { HttpUrlSchema } from './httpUrl.js';
 import { CustomAnswerSchema, ScreeningAnswersSchema } from './screeningAnswers.js';
-// Type-only, so these add no runtime import (see the note on `RequirementEvidenceVerdictSchema`
-// below) — they exist solely so the compile-time equality checks near each schema's hand-written
-// enum can catch the two lists drifting apart.
+// Type-only (no runtime import cycle): used by the compile-time enum equality checks below.
 import type { RequirementEvidenceVerdict } from './requirementEvidence.js';
 import type { BulletProvenanceVerdict } from './bulletProvenance.js';
 
 /**
- * Fails to typecheck unless `A` and `B` are the exact same set of literals — used below to keep a
- * schema's hand-written `z.enum([...])` in sync with the TypeScript union it is written to match,
- * without requiring a runtime import between the two modules that each declare one.
+ * Fails to typecheck unless `A` and `B` are the same literal set — keeps a hand-written
+ * `z.enum([...])` in sync with the TypeScript union it mirrors in another module.
  */
 type AssertSameLiterals<A extends string, B extends string> = [A] extends [B]
   ? [B] extends [A]
@@ -105,9 +102,8 @@ export const EducationSchema: z.ZodObject<
 export type Education = z.infer<typeof EducationSchema>;
 
 /**
- * A reusable STAR-format (situation/task/action/result) behavioral or technical anecdote.
- * Drawn on by `answerQuestions` when drafting freeform application answers — `tags` are matched
- * against the question text to pick the most relevant 1-3 stories per question.
+ * A reusable STAR-format behavioral or technical anecdote. `answerQuestions` matches `tags`
+ * against question text to pick the most relevant stories.
  */
 export const StorySchema: z.ZodObject<
   {
@@ -141,9 +137,8 @@ export const StorySchema: z.ZodObject<
 export type Story = z.infer<typeof StorySchema>;
 
 /**
- * One personal, open-source, or freelance project — content a resume routinely carries that has no
- * home on a `workExperience` entry. `bullets` mirrors `workExperience`'s shape rather than folding
- * into `description`, so a project reads the same as a role: one line of context, then detail bullets.
+ * A personal, open-source or freelance project. `bullets` mirrors `workExperience` so a project
+ * reads like a role: one line of context, then detail bullets.
  */
 export const ProjectSchema: z.ZodObject<
   {
@@ -166,7 +161,7 @@ export const ProjectSchema: z.ZodObject<
 /** Inferred type of {@link ProjectSchema}. */
 export type Project = z.infer<typeof ProjectSchema>;
 
-/** One professional certification. `date` is whatever date the resume names for it — issued or expiring. */
+/** A professional certification. `date` is whatever date the resume names — issued or expiring. */
 export const CertificationSchema: z.ZodObject<
   { name: z.ZodString; issuer: z.ZodString; date: z.ZodString },
   z.core.$strip
@@ -179,9 +174,8 @@ export const CertificationSchema: z.ZodObject<
 export type Certification = z.infer<typeof CertificationSchema>;
 
 /**
- * One award or honor — a separate shape from {@link CertificationSchema} rather than one combined
- * list, since resumes often bullet the two under one heading but they carry different fields: an
- * award routinely explains itself with a `description`, a certification has no honest use for one.
+ * An award or honor. Separate from {@link CertificationSchema}: awards carry a `description`,
+ * certifications don't.
  */
 export const AwardSchema: z.ZodObject<
   {
@@ -201,9 +195,8 @@ export const AwardSchema: z.ZodObject<
 export type Award = z.infer<typeof AwardSchema>;
 
 /**
- * The whole base profile: contact info, links, work/education history, skills, and reusable
- * stories. Stored whole as the `profiles.data` jsonb column; each operation receives only the
- * projection it uses, and tailoring/answering treat those projected facts as ground truth.
+ * The whole base Profile, stored as the `profiles.data` jsonb column. Each LLM operation receives
+ * only the projection it uses and treats those facts as ground truth.
  */
 export const ProfileSchema: z.ZodObject<
   {
@@ -244,11 +237,7 @@ export const ProfileSchema: z.ZodObject<
     portfolio: z.string().nullable(),
     github: z.string().nullable(),
   }),
-  /**
-   * Freeform intro paragraph. Optional with a `null` default for the same reason
-   * `screeningAnswers`/`customAnswers` below are: a profile saved before this field existed is still
-   * valid, and `profiles.data` is jsonb read back as-is.
-   */
+  /** Freeform intro paragraph. Defaults to `null` so Profiles saved before it still parse. */
   summary: z.string().nullable().default(null),
   workExperience: z.array(WorkExperienceSchema),
   maxBulletsPerRole: z
@@ -266,11 +255,7 @@ export const ProfileSchema: z.ZodObject<
     .default(true)
     .describe('Whether resume role titles are prefixed with "Role:"'),
   education: z.array(EducationSchema),
-  /**
-   * Personal/open-source/freelance projects, certifications and awards — all three optional with an
-   * empty-array default, same reasoning as `summary` above. Placed after `education`, matching where
-   * they read on the resume itself.
-   */
+  /** Projects, certifications and awards; default `[]` so older Profiles still parse. */
   projects: z.array(ProjectSchema).default([]),
   certifications: z.array(CertificationSchema).default([]),
   awards: z.array(AwardSchema).default([]),
@@ -281,11 +266,8 @@ export const ProfileSchema: z.ZodObject<
       'Reusable STAR-format behavioral/technical anecdotes, drawn on when drafting freeform question answers',
     ),
   /**
-   * Answers to the screening questions every application asks. Matters of fact with one correct
-   * answer, so they're taken from here rather than drafted — see `screeningAnswers.ts`.
-   *
-   * Optional with an empty default: a profile saved before this field existed is still valid, and
-   * `profiles.data` is jsonb read back as-is, so there is no migration to make old rows conform.
+   * Screening answers, filled verbatim rather than drafted — see `screeningAnswers.ts`. Defaults
+   * to `{}` so older Profiles still parse (jsonb has no migration).
    */
   screeningAnswers: ScreeningAnswersSchema.default({}),
   customAnswers: z
@@ -297,17 +279,9 @@ export const ProfileSchema: z.ZodObject<
 export type Profile = z.infer<typeof ProfileSchema>;
 
 /**
- * A Profile with nothing in it — the starting point for a candidate who hasn't filled the form in
- * yet, and the base every partial Profile is completed against by {@link parseProfile}.
- *
- * Lives here, beside the schema it mirrors, because it was previously hand-maintained in the
- * options page: a fourth copy of the Profile's shape, which a field added to the schema had to be
- * remembered into separately.
- *
- * Note the schema deliberately does *not* default these fields. `POST /profile` validates against
- * it, and a route that quietly accepts a body with no `fullName` and stores an empty one is worse
- * than a route that rejects it. Completing a partial Profile is a read-side concern, so it lives in
- * a read-side function rather than in the schema both sides share.
+ * An empty Profile: the starting form for a new candidate and the base {@link parseProfile}
+ * completes against. The schema itself deliberately has no defaults for these, so
+ * `POST /profile` still rejects a body missing e.g. `fullName`.
  */
 export const EMPTY_PROFILE: Profile = {
   fullName: '',
@@ -331,19 +305,9 @@ export const EMPTY_PROFILE: Profile = {
 };
 
 /**
- * Completes a stored Profile against {@link EMPTY_PROFILE} and validates the result.
- *
- * A Profile is read back from jsonb exactly as it was written, so one saved before a field existed
- * comes back without it — and the options form binds straight to those keys
- * (`profile.screeningAnswers[topic]`), so a missing one used to crash the page on render.
- *
- * `links` is merged too, not just replaced. A top-level spread over an empty profile — which is
- * what this replaces — takes a stored `links` object wholesale, so a Profile saved before `github`
- * was added to it kept a `links` with no `github` key and the default never applied. That is the
- * nested case a single spread cannot reach, and the reason this is a function rather than a literal.
- *
- * Falls back to the empty Profile if the merged value still doesn't parse: an unusable stored
- * Profile should leave the candidate with a blank form they can fill in, not a page that won't load.
+ * Completes a stored Profile against {@link EMPTY_PROFILE} and validates it, so rows saved before a
+ * field existed don't crash forms that bind to it. `links` is merged key by key (a plain spread
+ * would drop newer keys like `github`). Falls back to the empty Profile if it still doesn't parse.
  */
 export function parseProfile(value: unknown): Profile {
   const stored = (value ?? {}) as Partial<Profile>;
@@ -357,19 +321,13 @@ export function parseProfile(value: unknown): Profile {
 }
 
 /**
- * The Profile fields a resume can honestly supply, as `POST /profile/extract-resume` returns them —
- * see `apps/backend/src/llm/extractResume.ts`. `stories` (STAR-format), `screeningAnswers` and
- * `customAnswers` have no home here: no resume contains that content, so leaving them out is the
- * boundary of what extraction can honestly claim, not a gap. Tailoring-selection controls
- * (`maxBullets`, `starredIndices`, `suppressIfEmpty`) are Profile-only preferences a resume can't
- * state either, so `workExperience` here is {@link ResumeWorkExperienceSchema}-shaped — the same
- * subset {@link TailoredResumeSchema} already uses — rather than the full {@link WorkExperienceSchema}.
+ * What `POST /profile/extract-resume` returns: the Profile fields a resume can honestly supply.
+ * No `stories`, `screeningAnswers`, `customAnswers` or bullet-selection controls — a resume
+ * doesn't state them — so `workExperience` uses {@link ResumeWorkExperienceSchema}.
  *
- * Every field is nullable or empty-array-friendly, never required: extraction may be partial (a
- * PDF's layout defeats parsing for some section), and "left blank" must mean a null/empty value the
- * candidate can see and fill in themselves, never an invented one. This is deliberately looser than
- * {@link ProfileSchema} itself, which requires `fullName`/`email` — this schema produces a draft the
- * candidate reviews before it can reach the schema that actually enforces those.
+ * Everything is nullable or may be empty: a partial extraction must leave blanks for the candidate
+ * to fill, never invented values. Looser than {@link ProfileSchema} because it is a draft reviewed
+ * before saving.
  */
 export const ExtractedProfileSchema: z.ZodObject<
   {
@@ -416,11 +374,9 @@ export const ExtractedProfileSchema: z.ZodObject<
 export type ExtractedProfile = z.infer<typeof ExtractedProfileSchema>;
 
 /**
- * Whether a posting stated a requirement plainly, under its own heading ("Requirements" versus
- * "Nice to have") — or drew no distinction at all. `'unspecified'` is the common case and must not
- * be treated as a fourth kind of `false`: a requirement stored before this field existed lifts to
- * `'unspecified'` rather than `'required'`, since stamping every old row `'required'` would fabricate
- * a fact the posting never stated (see {@link JobInfoSchema}).
+ * How the posting phrased a requirement: under a "Requirements" or "Nice to have" heading, or
+ * neither (`'unspecified'`, the common case). Legacy rows lift to `'unspecified'`, not
+ * `'required'`.
  */
 export const RequirementKindSchema: z.ZodEnum<{
   preferred: 'preferred';
@@ -431,18 +387,10 @@ export const RequirementKindSchema: z.ZodEnum<{
 export type RequirementKind = z.infer<typeof RequirementKindSchema>;
 
 /**
- * How much a requirement matters *in this posting* — never how proficient the candidate is, and
- * never a number. Five bands rather than a 0-100 integer because 101 distinguishable levels is a
- * precision the evidence cannot support: "87" versus "84" will not reproduce across two extractions
- * of the same posting, and a number invites the arithmetic nobody has licensed here — summing
- * importance, averaging it, "% of importance matched". Every other machine-read judgement in this
- * repo is a bounded enum ({@link RequirementKindSchema}, {@link RequirementEvidenceVerdictSchema},
- * {@link KeywordCategorySchema}); this is not the exception.
- *
- * Distinct from `kind`, which records how the *posting phrased* the requirement (under a
- * "Requirements" heading versus a "Nice to have" one). Both are stored: a posting can list a
- * boilerplate line and a screen-deciding must-have under the same heading, which is exactly the
- * distinction `kind` cannot make.
+ * How much a requirement matters *in this posting* — never a claim about the candidate, and never a
+ * number: five bands, because the evidence can't support finer grain and a score invites arithmetic
+ * nobody has licensed. Distinct from `kind` (how the posting phrased it): one heading can hold both
+ * boilerplate and a must-have.
  */
 export const RequirementImportanceSchema: z.ZodEnum<{
   critical: 'critical';
@@ -455,34 +403,23 @@ export const RequirementImportanceSchema: z.ZodEnum<{
 export type RequirementImportance = z.infer<typeof RequirementImportanceSchema>;
 
 /**
- * The bands in decreasing order of how much they decide an application — the one place that order
- * is written down.
- *
- * Read off the enum rather than retyped, so the sort in `requirementEvidence.ts` and the group
- * order in the dashboard cannot drift from the set of bands or from each other. A band added to the
- * enum lands in this list automatically, at whatever position it was declared, which is why the
- * enum above is itself declared most-decisive-first.
+ * Bands, most decisive first — derived from the enum (declared in that order) so sorting and the
+ * dashboard's grouping can't drift.
  */
 export const IMPORTANCE_BANDS: ('critical' | 'high' | 'low-signal' | 'meaningful' | 'preferred')[] =
   RequirementImportanceSchema.options;
 
 /**
- * Where a requirement's {@link RequirementImportanceSchema} band came from. The band alone is not
- * auditable — this says whether it can be checked against the posting at all, and it is what the
- * cap in `requirementImportance.ts` reads.
+ * Where a {@link RequirementImportanceSchema} band came from; read by the cap in
+ * `requirementImportance.ts`.
  *
- * - `stated` — the posting itself marks it required ("must have", "required", a legal or language
- *   gate, or it appears in the job title). Carries a **verbatim** quote in `postingSignal`.
- * - `structural` — no must-have wording, but the posting's own structure carries the weight: the
- *   section it sits under, repetition across responsibilities, position in the list. Auditable from
- *   the posting text alone, with no market knowledge.
- * - `inferred` — neither; the band is knowledge of how such roles are actually screened. Allowed,
- *   because market weight is genuinely useful and pretending it is unavailable only pushes the guess
- *   underground into an unlabelled band. Labelling it is what makes the cap possible.
+ * - `stated` — the posting marks it required (or it's in the title); carries a verbatim
+ *   `postingSignal`.
+ * - `structural` — the posting's layout carries the weight (section, repetition, position).
+ * - `inferred` — market knowledge of how such roles are screened. Allowed, but labelled so it can
+ *   be capped.
  *
- * Deliberately *not* named `RequirementEvidence*`: `requirementEvidence.ts` already owns that word
- * for what the candidate's resume shows, which is a claim about the candidate rather than about the
- * posting. Two `evidence` vocabularies on one screen is a vocabulary nobody can hold.
+ * Not named `RequirementEvidence*`: that word belongs to what the candidate's resume shows.
  */
 export const ImportanceTierSchema: z.ZodEnum<{
   inferred: 'inferred';
@@ -493,19 +430,13 @@ export const ImportanceTierSchema: z.ZodEnum<{
 export type ImportanceTier = z.infer<typeof ImportanceTierSchema>;
 
 /**
- * One qualification a posting states, with the structure Phase 12's analytics aggregates over.
- * `yearsOfExperience` is null unless the posting states a number — never a guess.
+ * One qualification a posting states. `yearsOfExperience` is null unless the posting gives a
+ * number.
  *
- * `importance`/`importanceTier`/`postingSignal` are all nullable and all default to `null`, so a
- * requirement stored before they existed parses unchanged — `jobInfo` is jsonb read back exactly as
- * written, the same tolerant read {@link JobRequirementInputSchema} performs for a bare string.
- * A `null` band means "not assessed", and it is **not** a sixth band: it must never be counted as a
- * low one, the same way `kind: 'unspecified'` is not a fourth kind of `false`.
- *
- * The schema stays permissive on purpose. The one rule these fields have — that an `inferred` band
- * can never be `critical` or `high` — is enforced by `normalizeRequirementImportance` in
- * `requirementImportance.ts` at extraction time, not by a refinement here. A refinement would make
- * an already-stored row fail to parse, turning a bad extraction into an unreadable application.
+ * `importance`/`importanceTier`/`postingSignal` default to `null` ("not assessed" — never a low
+ * band) so older rows parse. The schema stays permissive: the "`inferred` can't be decisive" rule
+ * is enforced at extraction by `normalizeRequirementImportance`, since a refinement here would make
+ * stored rows unreadable.
  */
 export const JobRequirementSchema: z.ZodObject<
   {
@@ -542,12 +473,8 @@ export const JobRequirementSchema: z.ZodObject<
 export type JobRequirement = z.infer<typeof JobRequirementSchema>;
 
 /**
- * A {@link JobRequirement}, or the bare string every `requirements` row stored before this shape
- * existed — `jobInfo` is jsonb read back exactly as written, so an old row parses through this
- * branch and lifts to `kind: 'unspecified'` with every later-added field null. This is a tolerant *read*,
- * not a migration: nothing rewrites the stored row, and every consumer downstream of
- * {@link JobInfoSchema} sees only the canonical object shape, the same way {@link parseProfile}
- * completes a Profile saved before a field existed.
+ * A {@link JobRequirement}, or the legacy bare string, which lifts to `kind: 'unspecified'` with
+ * later fields null. A tolerant read, not a migration — consumers only ever see the object shape.
  */
 export const JobRequirementInputSchema: z.ZodUnion<
   readonly [
@@ -580,13 +507,8 @@ export const JobRequirementInputSchema: z.ZodUnion<
 ]);
 
 /**
- * What the Profile/Tailored Resume pair evidences for one requirement — see
- * `requirementEvidence.ts`, the deterministic matcher this shape mirrors. Defined here, not there,
- * because `Application.requirementEvidence` (below) needs it for wire validation and `schemas.ts` is
- * the one module every consumer of a persisted shape already imports; `requirementEvidence.ts` keeps
- * declaring its own `RequirementEvidence`/`RequirementEvidenceVerdict` types as the source of truth
- * for the *function's* return shape, which this schema is written to match structurally rather than
- * be derived from, to avoid a runtime import cycle (that module imports `JobRequirement` from here).
+ * Validator for `requirementEvidence.ts`'s verdicts, needed by `Application.requirementEvidence`.
+ * Written out rather than derived to avoid a runtime import cycle; checked for drift below.
  */
 export const RequirementEvidenceVerdictSchema: z.ZodEnum<{
   'direct-evidence': 'direct-evidence';
@@ -601,12 +523,8 @@ export const RequirementEvidenceVerdictSchema: z.ZodEnum<{
   'needs-confirmation',
   'unsupported',
 ]);
-// No `export type` here: it would collide with `requirementEvidence.ts`'s own
-// `RequirementEvidenceVerdict`, which this schema is written to match rather than be inferred
-// from — see the doc comment above. Import that one for the type; this file exports only the
-// runtime validator.
-// If the enum above and `requirementEvidence.ts`'s own union ever drift, this line fails to
-// typecheck instead of the schema silently accepting or rejecting values the function can return.
+// No exported type: import `RequirementEvidenceVerdict` from `requirementEvidence.ts`.
+// Fails to typecheck if the two lists drift.
 type _RequirementEvidenceVerdictsMatch = AssertSameLiterals<
   z.infer<typeof RequirementEvidenceVerdictSchema>,
   RequirementEvidenceVerdict
@@ -630,9 +548,8 @@ export const RequirementEvidenceSchema: z.ZodObject<
 export type RequirementEvidenceEntry = z.infer<typeof RequirementEvidenceSchema>;
 
 /**
- * The closed set a keyword is categorized into. `'soft-skill'` gets no coverage badge downstream —
- * `keywordCoverage`'s literal match cannot conclude a Profile lacks "leadership" because it says
- * "mentored" instead, and a wrong `missing` verdict is worse than an unscored row.
+ * A keyword's category. `'soft-skill'` gets no coverage badge: literal matching can't tell that
+ * "mentored" evidences "leadership", and a wrong `missing` is worse than no verdict.
  */
 export const KeywordCategorySchema: z.ZodEnum<{
   domain: 'domain';
@@ -646,16 +563,11 @@ export const KeywordCategorySchema: z.ZodEnum<{
 export type KeywordCategory = z.infer<typeof KeywordCategorySchema>;
 
 /**
- * One skill/technology/domain term a posting is worth echoing, grouped by {@link KeywordCategory}
- * so "my gaps are all in platform" is a thing analytics can show rather than something the reader
- * has to notice. `category` is null when a term predates categorization or the extractor found no
- * fit — never guessed.
+ * A term worth echoing from a posting, grouped by {@link KeywordCategory} for analytics.
+ * `category` is null when absent or unclear — never guessed.
  *
- * `postingSpelling` is the posting's own wording for the same term (`K8s` when `term` is
- * `Kubernetes`) — `null` when a row predates this field or the posting already used the canonical
- * form. It exists to be read, not just kept: `keywordCoverage.ts` matches against it as well as
- * `term`, so a Profile that itself says "K8s" is not reported missing merely because the posting's
- * canonical echo and the Profile's own wording differ.
+ * `postingSpelling` is the posting's own wording (`K8s` for `Kubernetes`), or null if it used the
+ * canonical form. `keywordCoverage.ts` matches both.
  */
 export const JobKeywordSchema: z.ZodObject<
   {
@@ -679,9 +591,8 @@ export const JobKeywordSchema: z.ZodObject<
 export type JobKeyword = z.infer<typeof JobKeywordSchema>;
 
 /**
- * A {@link JobKeyword}, or the bare string every `keywords` row stored before this shape existed —
- * lifts to `category: null, postingSpelling: null` on read, the same tolerant-read reasoning as
- * {@link JobRequirementInputSchema}.
+ * A {@link JobKeyword}, or the legacy bare string, lifted to `category: null, postingSpelling:
+ * null` on read.
  */
 export const JobKeywordInputSchema: z.ZodUnion<
   readonly [
@@ -703,10 +614,7 @@ export const JobKeywordInputSchema: z.ZodUnion<
   JobKeywordSchema,
 ]);
 
-/**
- * Structured job-posting information extracted by `extractJob` from the candidate-reviewed Job
- * Description (see `apps/backend/src/llm/extractJob.ts`).
- */
+/** Structured Job Info that `extractJob` pulls from the candidate-reviewed Job Description. */
 export const JobInfoSchema: z.ZodObject<
   {
     company: z.ZodString;
@@ -735,9 +643,8 @@ export const JobInfoSchema: z.ZodObject<
 export type JobInfo = z.infer<typeof JobInfoSchema>;
 
 /**
- * A resume tailored to one specific job by `tailorResume`
- * (see `apps/backend/src/llm/tailorResume.ts`). Deliberately a subset of {@link ProfileSchema} —
- * no `education`/`links`, since those don't need per-job tailoring.
+ * A resume tailored to one job by `tailorResume` — a subset of {@link ProfileSchema} (skills and
+ * work experience only).
  */
 export const TailoredResumeSchema: z.ZodObject<
   {
@@ -763,19 +670,12 @@ export const TailoredResumeSchema: z.ZodObject<
 export type TailoredResume = z.infer<typeof TailoredResumeSchema>;
 
 /**
- * The base profile as a {@link TailoredResumeSchema} — the resume with no tailoring applied.
+ * The Profile projected into {@link TailoredResumeSchema} with nothing reworded, reordered or
+ * dropped — the Base Resume.
  *
- * This is a projection, not a conversion: selection controls belong to the Profile rather than the
- * resume, while the authored resume content is copied without being reworded, reordered or dropped.
- *
- * Exists for manually logged applications (`source: 'manual'`), where the candidate applied with
- * their own resume and there is no tailored one to store — but the dashboard's detail view renders
- * `Application.tailoredResume` regardless. Storing the base profile keeps it working without a
- * nullable field, and `source` is what tells it which of the two it's looking at.
- *
- * Takes only the two fields it reads, not a whole `Profile` — `tailorResume.ts` calls this against
- * a `TailorResumeProfile` projection (no `fullName`/`email`/…) to build the full, uncapped bullet
- * bank `requirementEvidence.ts` checks Profile-side evidence against, before any model call.
+ * Stored for manual Applications (their resume is the candidate's own), and used by
+ * `tailorResume.ts` as the full bullet bank for Profile-side evidence. Takes only the two fields
+ * it reads.
  */
 export function baseResumeOf(profile: Pick<Profile, 'skills' | 'workExperience'>): TailoredResume {
   return {
@@ -792,10 +692,7 @@ export function baseResumeOf(profile: Pick<Profile, 'skills' | 'workExperience'>
   };
 }
 
-/**
- * One drafted answer to one detected `question` field, produced by `answerQuestions`
- * (see `apps/backend/src/llm/answerQuestions.ts`).
- */
+/** One drafted answer to one detected `question` field, produced by `answerQuestions`. */
 export const QuestionAnswerSchema: z.ZodObject<
   {
     fieldId: z.ZodString;
@@ -809,15 +706,8 @@ export const QuestionAnswerSchema: z.ZodObject<
   question: z.string(),
   answer: z.string(),
   /**
-   * Defaulted, not required. The model is asked for an empty array when an answer drew on no
-   * story, and it routinely omits the key instead — which is the same fact stated by absence.
-   * Requiring it made that ordinary omission fatal for the **whole batch**: `callStructured`
-   * validates the tool input as one object, so a single missing `sourceStoryIds` failed every
-   * answer alongside it and the Analysis Step died with
-   * `report_answers produced input that failed validation`.
-   *
-   * Defaulting also removes the field from the tool's `input_schema.required` and advertises
-   * `"default": []` to the model, so omission stops being a contract violation at the source.
+   * Defaulted, not required: the model often omits it when no story was used, and since the batch
+   * is validated as one object a single omission would fail every answer.
    */
   sourceStoryIds: z
     .array(z.string())
@@ -828,26 +718,15 @@ export const QuestionAnswerSchema: z.ZodObject<
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>;
 
 /**
- * Where an application sits in the interview pipeline. Defaults to `'applied'` rather than being
- * nullable, so nothing downstream has to null-check it. Listed in pipeline order, which is the
- * order a stage picker should offer them in.
+ * Where an Application sits in the interview pipeline, in pipeline order. Never null; defaults to
+ * `'applied'`.
  *
- * There used to be a separate `status` field (`draft` / `submitted`) alongside this, meant to
- * answer "was this actually sent to the employer" as distinct from "how far has it got". It was
- * removed because nothing ever set it to `submitted`, so the field carried no information. That
- * does not establish that every saved Application was submitted: there is no authoritative
- * submission event in the current flow. Don't reintroduce a status field without first having a
- * moment in the flow that can set it reliably.
+ * `rejected_ats` (screened out before any human) and `rejected` (after contact) are separate enum
+ * values rather than a flag, so they can't disagree with `stage`. Which stage a `rejected` row
+ * came from isn't recorded.
  *
- * The two rejection values are deliberately distinct rather than one `rejected` plus a separate
- * flag. `rejected_ats` means the application never reached a human — screened out before any
- * phone screen — and it sits between `applied` and `phone_screen` because that is where in the
- * pipeline it happens. `rejected` is a rejection after contact was made. Being enum values, the
- * two can't disagree with `stage` the way a parallel boolean could, and the picker offers them
- * without any extra control.
- *
- * What this shape can't record is *which* later stage a `rejected` row came from — the stage it
- * held is overwritten. If that matters, it needs a `rejectedFrom` column, not a third enum value.
+ * There is no draft/submitted status: nothing in the flow can reliably observe a submission, so
+ * don't add one without such an event.
  */
 export const ApplicationStageSchema: z.ZodEnum<{
   applied: 'applied';
@@ -861,9 +740,8 @@ export const ApplicationStageSchema: z.ZodEnum<{
 export type ApplicationStage = z.infer<typeof ApplicationStageSchema>;
 
 /**
- * How a {@link NoteSchema} entry is filed. Interview questions are split from general notes because
- * that's the split that makes them reusable later — "what did this company ask me technically" is a
- * question you want to answer without re-reading every note on the application.
+ * How a note is filed. Interview questions are split out so "what did they ask me technically" is
+ * answerable without rereading every note.
  */
 export const NoteCategorySchema: z.ZodEnum<{
   behavioral: 'behavioral';
@@ -874,11 +752,8 @@ export const NoteCategorySchema: z.ZodEnum<{
 export type NoteCategory = z.infer<typeof NoteCategorySchema>;
 
 /**
- * One timestamped entry in an application's notes log — appended, never overwritten, so past
- * interview questions stay around as reference material for future applications.
- *
- * `id` and `createdAt` are assigned by the server on append, never by the client: a note whose
- * timestamp the sender chose isn't trustworthy history.
+ * One timestamped entry in an Application's notes log — appended, never edited. `id` and
+ * `createdAt` are assigned by the server.
  */
 export const NoteSchema: z.ZodObject<
   {
@@ -897,10 +772,7 @@ export const NoteSchema: z.ZodObject<
 /** Inferred type of {@link NoteSchema}. */
 export type Note = z.infer<typeof NoteSchema>;
 
-/**
- * Body shape for `POST /applications/:id/notes` — a {@link NoteSchema} minus the fields the server
- * assigns. Derived rather than hand-written so it can't drift from `NoteSchema`.
- */
+/** `POST /applications/:id/notes` body: {@link NoteSchema} minus server-assigned fields. */
 export const NewNoteSchema: z.ZodObject<
   { category: typeof NoteCategorySchema; text: z.ZodString },
   z.core.$strip
@@ -909,18 +781,9 @@ export const NewNoteSchema: z.ZodObject<
 export type NewNote = z.infer<typeof NewNoteSchema>;
 
 /**
- * How an application record came to exist. `'autofill'` is a run the extension analyzed, tailored
- * and filled; `'manual'` is one the candidate applied to themselves — uploading a resume by hand or
- * going through LinkedIn Easy Apply — and logged afterwards so it still shows up in the history.
- *
- * A manual entry is a real application, not a lesser one: it carries the same extracted `jobInfo`,
- * and its `tailoredResume` is the base profile projected into that shape rather than an LLM's
- * output. This field exists because those two are otherwise indistinguishable once stored, and the
- * difference matters when reading the history back — "djobi wrote this resume" and "this is just my
- * profile" are not the same claim.
- *
- * Defaults to `'autofill'` at every write boundary, so the extension's existing save path (which
- * posts no `source`) keeps working unchanged.
+ * How an Application came to exist: `'autofill'` (the Application Pipeline) or `'manual'` (the
+ * candidate applied themselves and logged it). Distinguishes "djobi wrote this resume" from "this
+ * is my own Profile". Defaults to `'autofill'` at every write boundary.
  */
 export const ApplicationSourceSchema: z.ZodEnum<{ autofill: 'autofill'; manual: 'manual' }> =
   z.enum(['autofill', 'manual']);
@@ -928,16 +791,13 @@ export const ApplicationSourceSchema: z.ZodEnum<{ autofill: 'autofill'; manual: 
 export type ApplicationSource = z.infer<typeof ApplicationSourceSchema>;
 
 /**
- * The shape `extractJob`/`JobInfoSchema` and `tailorResume`/`TailoredResumeSchema` represent today —
- * stamped onto every `Application` written from this point on (see `NewApplicationSchema`'s default
- * below), so a later extraction or matching change can tell which rows it can safely re-derive
- * provenance for and which predate the fields it reads. Bump it only when the *shape* those two
- * schemas produce changes materially (a Phase 12/13-style widening), not on every prompt wording
- * tweak — this is a compatibility marker, not a build number.
+ * Compatibility marker for the shape `extractJob` and `tailorResume` produce, stamped on every
+ * saved Application so later changes know which rows they can re-derive. Bump only on a material
+ * shape change, not prompt tweaks.
  */
 export const EXTRACTION_VERSION = '2026-09-10';
 
-/** {@link BulletProvenanceEntry}'s verdict — mirrors `bulletProvenance.ts`'s own type, see the note on {@link RequirementEvidenceVerdictSchema}. */
+/** Mirrors `bulletProvenance.ts`'s verdict type (see {@link RequirementEvidenceVerdictSchema}). */
 export const BulletProvenanceVerdictSchema: z.ZodEnum<{
   reworded: 'reworded';
   unmatched: 'unmatched';
@@ -953,9 +813,8 @@ const _bulletProvenanceVerdictsMatch: _BulletProvenanceVerdictsMatch = true;
 void _bulletProvenanceVerdictsMatch;
 
 /**
- * One Tailored Resume bullet's likely Profile source, with role context — the persisted form of
- * `bulletProvenance.ts`'s per-bullet result, computed once at save time so the audit trail reflects
- * exactly what was saved rather than being re-derivable only while the Profile still matches.
+ * One Tailored Resume bullet's likely Profile source, computed once at save time so the audit trail
+ * reflects what was saved even after the Profile changes.
  */
 export const BulletProvenanceEntrySchema: z.ZodObject<
   {
@@ -977,12 +836,8 @@ export const BulletProvenanceEntrySchema: z.ZodObject<
 // `BulletProvenanceEntry`, and this schema is written to match it rather than be its source.
 
 /**
- * One persisted `applications` row, keyed to the job posting, so its exact generated snapshot
- * remains available in the Dashboard.
- *
- * Either a completed (or in-progress) autofill run, or an application the candidate made by hand
- * and logged afterwards — see {@link ApplicationSourceSchema}. The two are the same record; only
- * `source` and the provenance of `tailoredResume` differ.
+ * One persisted `applications` row: the generated snapshot plus Stage and Notes. Autofill and
+ * manual Applications share this shape; see {@link ApplicationSourceSchema}.
  */
 export const ApplicationSchema: z.ZodObject<
   {
@@ -1015,23 +870,20 @@ export const ApplicationSchema: z.ZodObject<
   stage: ApplicationStageSchema,
   notes: z.array(NoteSchema),
   /**
-   * The posting text as reviewed and analyzed — `extractJob`'s input. `applications` never stored
-   * this before; every extraction/matching improvement therefore only ever helped rows saved after
-   * it shipped, since there was nothing to re-run it against (see PROGRESS.md's "Known loose ends").
-   * `null` for every row saved before this field existed, and for a Log-tab entry whose candidate
-   * chose not to keep the posting text.
+   * The posting text as analyzed (`extractJob`'s input), kept so extraction can be re-run later.
+   * `null` for older rows and for manual entries without posting text.
    */
   rawDescription: z.string().nullable(),
-  /** {@link EXTRACTION_VERSION} at the moment this row was written; `null` for rows that predate it. */
+  /** {@link EXTRACTION_VERSION} when this row was written; `null` for older rows. */
   extractionVersion: z.string().nullable(),
   /**
-   * `requirementEvidence(tailoredResume, jobInfo, profile)`, computed once at save time against the
-   * Profile as it stood then — a later Profile edit does not change what a past application says it
-   * evidenced. `null` for a row saved before this field existed, or if the Profile could not be read
-   * at save time; never recomputed automatically.
+   * `requirementEvidence(tailoredResume, jobInfo, profile)` computed once at save time and never
+   * recomputed. `null` for older rows or if the Profile couldn't be read then.
    */
   requirementEvidence: z.array(RequirementEvidenceSchema).nullable(),
-  /** `bulletProvenance(tailoredResume, profile)`, computed once at save time — see the field above. */
+  /**
+   * `bulletProvenance(tailoredResume, profile)`, computed once at save time like the field above.
+   */
   bulletProvenance: z.array(BulletProvenanceEntrySchema).nullable(),
   createdAt: z.string(),
 });
@@ -1039,11 +891,8 @@ export const ApplicationSchema: z.ZodObject<
 export type Application = z.infer<typeof ApplicationSchema>;
 
 /**
- * Body shape for `POST /applications` — an {@link ApplicationSchema} minus the fields the database
- * assigns (`id`, `createdAt`).
- *
- * `stage` and `notes` default, and must keep doing so: the extension posts a body with neither
- * (`background/applicationPipeline.ts`), so making either required 400s every fill.
+ * `POST /applications` body: {@link ApplicationSchema} minus `id`/`createdAt`. `stage` and
+ * `notes` must stay defaulted — the extension's save posts neither.
  */
 export const NewApplicationSchema: z.ZodObject<
   {
@@ -1063,12 +912,8 @@ export const NewApplicationSchema: z.ZodObject<
   },
   z.core.$strip
 > = ApplicationSchema.omit({ id: true, createdAt: true }).extend({
-  // Existing rows may predate URL capture; only reject an invalid URL at the write boundary.
-  //
-  // `HttpUrlSchema`, not `z.string().url()`: zod's `.url()` is `new URL(value)` in a try/catch, so
-  // it accepts `javascript:alert(1)` as readily as `https://…`. A stored `jobUrl` is rendered as an
-  // `<a href>` by the dashboard's `PostingLink`, which made a non-http scheme reaching this column a
-  // script URL one click away from running on the dashboard's own origin. See `httpUrl.ts`.
+  // Older rows may lack a URL; only new writes are validated. `HttpUrlSchema`, not `.url()`, so a
+  // `javascript:` URL can't be stored and rendered as a link (see `httpUrl.ts`).
   jobUrl: HttpUrlSchema,
   source: ApplicationSourceSchema.default('autofill'),
   stage: ApplicationStageSchema.default('applied'),
@@ -1084,23 +929,14 @@ export const NewApplicationSchema: z.ZodObject<
 export type NewApplication = z.infer<typeof NewApplicationSchema>;
 
 /**
- * What a client actually *sends* to `POST /applications` — {@link NewApplicationSchema}'s input
- * side, so the three defaulted fields are optional.
- *
- * `NewApplication` is the parsed output, where a default has already been applied and the field is
- * therefore required. Typing a caller against it demands the very fields the defaults exist to let
- * it omit, which is why the extension's save payload didn't typecheck against it.
+ * What a client sends to `POST /applications`: the input side, where defaulted fields are
+ * optional (`NewApplication` is the parsed output, where they're required).
  */
 export type NewApplicationRequest = z.input<typeof NewApplicationSchema>;
 
 /**
- * The editable snapshot of a saved application. Interview tracking belongs to the persisted record,
- * not to the run or the log entry that wrote it, so a re-save must never overwrite its stage or
- * notes.
- *
- * `source` is omitted for the same reason: how a record was created is a fact about the record, not
- * about the snapshot being written over it. Leaving it in would let a re-save relabel a manual entry
- * as an autofill.
+ * The editable snapshot of a saved Application. Omits `stage`/`notes` (owned by the record, so
+ * a re-save never overwrites them) and `source` (a re-save can't relabel provenance).
  */
 export const ApplicationSnapshotSchema: z.ZodObject<
   {

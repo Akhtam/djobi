@@ -1,20 +1,8 @@
 /**
- * The account-profile editor — `#/profile`, reachable from the header's account menu.
- *
- * The same Profile the extension's options page edits (`apps/extension/src/options/App.tsx`), and
- * deliberately built the same way: everything that is not markup comes from `@djobi/profile-editor`
- * rather than being re-implemented here — the load/upload/save workflow (`useProfileWorkflow`),
- * every list section's editor (`profileListEditors`), the per-field operations
- * (`spliceWorkBullets`, `commaList`, …), and the section inventory (`PROFILE_SECTIONS`).
- * "Star a bullet" and "drop a blank story id" therefore behave identically in both places by
- * construction rather than by both being written the same way twice.
- *
- * What stays here is the chrome: the `FieldChrome`/`ListSectionChrome` this page renders through
- * (`ListSection` itself is `@djobi/profile-editor`'s now — see its own doc comment), the tab bar,
- * the quick-nav's rendering (the *order* is the package's), the save affordance, and how a 401 is
- * reported — the `onUnauthorized` convention `Analytics.tsx` uses, rather than the options page's
- * own `unauthorized`-state-and-`<Login>` one, since the dashboard already redirects to `#/login`
- * centrally in `App.tsx`.
+ * The Profile editor (`#/profile`) — the same Profile the extension's options page edits, built
+ * from `@djobi/profile-editor` (workflow, list editors, field operations, section inventory) so
+ * both behave identically. This page supplies the chrome (`FieldChrome`, `ListSectionChrome`, tab
+ * bar, quick-nav rendering, save button) and reports 401s through `onUnauthorized`.
  */
 import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { userMessage } from '@djobi/http-client';
@@ -40,10 +28,8 @@ import {
 } from '@djobi/profile-editor';
 
 /**
- * This page's `FieldChrome`: a plain wrapping `<label>` with no `id` (implicit label association),
- * and every control carries the `search` class. The extension's own renderer instead uses an
- * explicit `<label htmlFor>` beside its control and no input class — see
- * `apps/extension/src/options/App.tsx`.
+ * This page's `FieldChrome`: a wrapping `<label>` (implicit association) with the `search` class on
+ * controls (the extension uses `<label htmlFor>` instead).
  */
 const Field: FieldRenderer = ({ label, span2, children }) => (
   <label className={`profile-field${span2 ? ' profile-field--span-2' : ''}`}>
@@ -95,10 +81,8 @@ function PanelHead({
 }
 
 /**
- * This page's `ListSectionChrome`: a plain `<section>` with `PanelHead` and no item count, and an
- * entry whose `summary` renders as an always-visible paragraph, never collapsing. The extension's
- * own renderer instead shows a count and collapses behind a native `<details>` — see
- * `apps/extension/src/options/App.tsx`.
+ * This page's `ListSectionChrome`: a plain `<section>` with no item count, and each entry's
+ * `summary` as an always-visible paragraph (the extension collapses entries in `<details>`).
  */
 const listSectionChrome: ListSectionChrome = {
   emptyClassName: 'profile-empty',

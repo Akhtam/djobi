@@ -1,20 +1,9 @@
 /**
- * Detection and enrichment against a **real, unmodified Greenhouse posting**, captured live.
- *
- * `__fixtures__/brex-greenhouse.html` is the server-rendered `<main>` element of
- * `boards.greenhouse.io/embed/job_app?for=brex&token=8459783002`, verbatim — only the page chrome
- * around it (`<head>` and the Remix hydration scripts, which `innerHTML` never runs) was dropped.
- * `__fixtures__/brex-greenhouse-api.json` is what the Greenhouse Job Board API answers for that same
- * posting. Both were fetched, not written — which is the point of this file. Every case below is a
- * defect the hand-written fixtures in `detectFields.test.ts` could not have caught, because each one
- * comes from markup nobody would think to invent: two file inputs sharing one visually-hidden
- * "Attach" label, screening questions that mention "location" in prose, free-response questions
- * rendered as `<input type="text">`, and required labels carrying an asterisk the API's wording
- * doesn't have.
- *
- * The posting is reachable at three URLs — the Greenhouse-hosted path, the embed iframe, and Brex's
- * own white-labeled `www.brex.com/careers/…?gh_jid=…` — and the last two are covered here because
- * the oracle recognized neither.
+ * Detection and enrichment against a **real, captured Greenhouse posting**:
+ * `__fixtures__/brex-greenhouse.html` (the embed form's `<main>`, verbatim) and
+ * `__fixtures__/brex-greenhouse-api.json` (the Job Board API's answer for it). Covers markup nobody
+ * would invent — shared "Attach" labels, "location" in screening prose, text-input questions,
+ * asterisked labels — and the embed and white-labeled URLs.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,36 +13,32 @@ import { fillForm } from './fillForm';
 import { enrichWithApiOracle } from '../background/apiDetectors';
 import type { DetectedField } from '@djobi/shared';
 
-/** Brex's own careers domain — the shape that carries the posting id as `gh_jid` and no board token. */
+/**
+ * Brex's own careers domain — the shape that carries the posting id as `gh_jid` and no board token.
+ */
 const WHITE_LABEL_URL =
   'https://www.brex.com/careers/8459783002?gh_jid=8459783002&gh_src=m751li9j2us';
 
 /**
- * Resolved against this file, not the working directory, so the suite runs from anywhere.
- *
- * `import.meta.dirname` rather than `new URL('./…', import.meta.url)`: under the jsdom environment
- * the global `URL` is jsdom's, and it resolves a relative reference against the *document's* base
- * (`http://localhost:3000/`) instead of the `file://` base handed to it — so the second form yields
- * an http URL and `readFileSync` rejects it.
+ * Resolved via `import.meta.dirname`: under jsdom, `new URL('./…', import.meta.url)` resolves
+ * against the document's http base.
  */
 function fixture(name: string): string {
   return readFileSync(join(import.meta.dirname, '__fixtures__', name), 'utf8');
 }
 
 /**
- * The fixture loaded into this test's own document, rather than into a fresh `JSDOM`.
- *
- * Not incidental: `detectFields` resolves every DOM-class test through `ownerDocument.defaultView`,
- * and a document with no browsing context (a `DOMParser` one, say) has none — so it would report no
- * required flags, no select options and every choice group as a radiogroup, and this file would be
- * testing the wrong thing while looking like it passed.
+ * Loads the fixture into this test's own document — a `DOMParser` document has no `defaultView`, so
+ * realm-safe checks would silently fail.
  */
 function detect(): DetectedField[] {
   document.body.innerHTML = fixture('brex-greenhouse.html');
   return detectFields(document);
 }
 
-/** The one field whose label contains `needle`; throws rather than silently asserting on nothing. */
+/**
+ * The one field whose label contains `needle`; throws rather than silently asserting on nothing.
+ */
 function find(fields: DetectedField[], needle: string): DetectedField {
   const matches = fields.filter((field) =>
     field.label.toLowerCase().includes(needle.toLowerCase()),
@@ -168,9 +153,9 @@ describe("a live Greenhouse posting's application form", () => {
 
   it('fills the form end to end, from detection through to the page holding the values', async () => {
     // The symptom this whole file exists for is "doesn't autofill", and every case above asserts a
-    // *cause*. This one asserts the symptom: run the real pipeline over the real markup and read the
-    // values back off the page, so a detection change that classifies beautifully but fills nothing
-    // still fails here.
+    // *cause*. This one asserts the symptom: run the real pipeline over the real markup and read
+    // the values back off the page, so a detection change that classifies beautifully but fills
+    // nothing still fails here.
     const fields = await enrichWithApiOracle(WHITE_LABEL_URL, detect(), stubbedFetch());
 
     const answers: Record<string, string> = {

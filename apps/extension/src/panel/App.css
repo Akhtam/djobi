@@ -678,12 +678,8 @@ button:disabled {
 }
 
 /*
- * The Ask tab: a transcript with one composer pinned under it.
- *
- * Not message bubbles. The side panel is ~360px wide, so an alternating-bubble layout spends its
- * scarcest resource — horizontal space — on saying who is talking, something a label says for free.
- * Turns run full width and are separated by whose they are: the candidate's are tinted and
- * indented slightly, djobi's sit flush with a rule down the left.
+ * The Ask tab: a transcript over a pinned composer. No chat bubbles — the ~360px panel can't spare
+ * the width; the candidate's turns are tinted and indented, djobi's have a left rule.
  */
 .ask {
   display: flex;
@@ -892,12 +888,7 @@ button:disabled {
   }
 }
 
-/*
- * Pinned under the transcript, so there is one place to type on every turn.
- *
- * The bottom padding is deliberately larger than the top: this sits against the very bottom edge
- * of the side panel, where a symmetric gap reads as no gap at all.
- */
+/* Pinned under the transcript; extra bottom padding since it sits on the panel's bottom edge. */
 .ask-composer {
   display: flex;
   align-items: flex-end;

@@ -1,13 +1,6 @@
 /**
- * The Autofill Tab — the Application Pipeline as the candidate drives it.
- *
- * These cases moved here wholesale when the flow moved out of `panel/App.tsx`; they were always
- * about this flow rather than about the shell that used to host it.
- *
- * `AutofillHarness` supplies the two things the shell supplies in production — a Profile and an
- * `ActiveRun` — and nothing else. It calls the real `useActiveRun`, so each case still covers the
- * whole round trip the tab depends on: message -> `background/applicationPipeline.ts` ->
- * `lib/tabStore/pipelineRun.ts` -> `chrome.storage.onChanged` -> hook -> render.
+ * The Autofill Tab as the candidate drives it. `AutofillHarness` supplies a Profile and the real
+ * `useActiveRun`, so each case covers message → pipeline → store → `onChanged` → hook → render.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -245,6 +238,22 @@ describe('AutofillTab', () => {
 
     expect(await screen.findByRole('button', { name: 'Analyze' })).toBeDisabled();
     expect(screen.getByPlaceholderText(/paste the job description/i)).toHaveValue('');
+    expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
+  });
+
+  it('keeps Analyze disabled on a tab whose URL no Application could be saved under', async () => {
+    const { sendMessage } = await stubChrome({
+      tabUrl: 'chrome://newtab/',
+      profile,
+      jobPageData: null,
+    });
+
+    render(<AutofillHarness />);
+    const textarea = await screen.findByPlaceholderText(/paste the job description/i);
+    fireEvent.change(textarea, { target: { value: JOB_DESCRIPTION } });
+
+    expect(screen.getByRole('button', { name: 'Analyze' })).toBeDisabled();
+    expect(screen.getByText(/opened from a web page/i)).toBeInTheDocument();
     expect(callsOfType(sendMessage, 'START_ANALYSIS')).toHaveLength(0);
   });
 
@@ -1007,7 +1016,7 @@ describe('AutofillTab', () => {
     await clickAnalyze();
     await screen.findByText('Senior Engineer at Acme');
 
-    // The fake backend's `tailorResume` always answers with the neutral, bulletless fixture — real
+    // The fake backend's analysis always answers with the neutral, bulletless fixture — real
     // bullet content is injected the same way `background/applicationPipeline.ts` itself would
     // checkpoint it, so this exercises the actual review -> store round trip rather than a
     // hand-rolled substitute for it.

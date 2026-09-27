@@ -1,10 +1,6 @@
 /**
- * The HTTP client against a stubbed `fetch`.
- *
- * The fixture client makes every view testable without a network, which means nothing else in this
- * suite would notice if the real adapter called the wrong path, the wrong method, or dropped the
- * body. These tests cover exactly that seam — the paths and bodies are checked against what
- * `apps/backend/src/routes/applications.ts` actually registers.
+ * The real HTTP client against a stubbed `fetch` — paths, methods and bodies checked against what
+ * the backend registers, which the fixture client can't catch.
  */
 import type { Application } from '@djobi/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';

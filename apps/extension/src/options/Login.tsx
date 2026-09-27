@@ -1,9 +1,6 @@
 /**
- * The sign-in view for the options page — `docs/multi-tenant-auth.md` Phase D.
- *
- * Email/password only, the same reasoning `apps/dashboard`'s `Login` gives: Better Auth is
- * configured for it. No sign-up form here — an account is created via the dashboard's public
- * sign-up flow (`docs/multi-tenant-auth.md`), not from the extension.
+ * The options page's sign-in view: email/password only. Accounts are created on the dashboard, not
+ * in the extension.
  */
 import { userMessage } from '@djobi/http-client';
 import { useState, type FormEvent } from 'react';
@@ -25,9 +22,7 @@ export function Login({
     setError(null);
     try {
       await onSignIn(email, password);
-      // No `finally`-set `submitting(false)` on success: `onSignIn` replaces this view with the
-      // profile editor once it resolves, so this component unmounts. The `catch` below is the only
-      // path that leaves it mounted.
+      // No `setSubmitting(false)` on success: `onSignIn` unmounts this view.
     } catch (err) {
       setError(userMessage(err));
       setSubmitting(false);

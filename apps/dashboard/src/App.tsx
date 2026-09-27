@@ -1,10 +1,7 @@
 /**
- * The dashboard entry: the public landing-page path, or the authenticated dashboard shell and its
- * hash-routed views.
- *
- * `client` is a prop rather than something this component constructs, so component tests can drive
- * the whole app through `createFixtureDashboardClient` with no network. `main.tsx` is the only
- * place the real app's client is named, and it always names the HTTP one.
+ * The dashboard entry: the public landing page, or the authenticated shell and its hash-routed
+ * views. `client` is a prop so tests use `createFixtureDashboardClient`; `main.tsx` names the real
+ * one.
  */
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/icons/djobi-icon.svg';
@@ -30,9 +27,8 @@ const Profile = lazy(() => import('./views/Profile').then((m) => ({ default: m.P
 const SignUp = lazy(() => import('./views/SignUp').then((m) => ({ default: m.SignUp })));
 
 /**
- * Catches a view chunk that failed to load (typically a redeploy removed the old hashed files) so
- * the shell stays up with a reload prompt instead of React unmounting the whole app. `lazy` caches
- * the rejected import, so reloading the page is the only real retry.
+ * Catches a view chunk that failed to load (usually a redeploy removed old hashed files) and shows
+ * a reload prompt. `lazy` caches the rejection, so reloading is the only retry.
  */
 class ViewLoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };
@@ -59,32 +55,18 @@ class ViewLoadBoundary extends Component<{ children: ReactNode }, { failed: bool
 }
 
 /**
- * Whether the current URL asks for the dashboard rather than the landing page — a dashboard hash
- * route (`#/`, `#/login`, `#/applications/...`, `#/analytics`), as opposed to no hash at all or an
- * in-page landing-page anchor (`#product`, `#workflow`, ...). `startsWith('#/')` is what tells the
- * two apart: every route `useHashRoute.ts` parses starts with a slash, and no landing-page anchor
- * does.
+ * Whether the hash is a dashboard route (`#/…`) rather than none or a landing-page anchor
+ * (`#product`).
  */
 function isDashboardRoute(hash: string): boolean {
   return hash.startsWith('#/');
 }
 
 /**
- * The homepage is always the public landing page — `docs/multi-tenant-auth.md`'s login flow links
- * into the dashboard from there (`LandingPage.tsx`'s `DASHBOARD_PATH`, `/#/login`), never the
- * reverse. Both apps are served from the same static `index.html` under one path (no server rewrite
- * rule — see `useHashRoute.ts`), so which one renders is decided entirely by the hash, not by a real
- * path `main.tsx` would need a route for.
- *
- * Reactive to `hashchange` rather than read once: clicking a landing-page CTA does not reload the
- * document (it's a hash-only navigation on the same page), so the initial read alone would leave a
- * candidate who clicked "Open dashboard" stuck looking at the landing page's markup under a changed
- * URL.
- *
- * The landing page's own IO story is what makes this a real answer to "the route shouldn't be
- * authenticated," not just an accident of the split: `LandingPage` owns no `DashboardClient` and
- * starts no request, so nothing here ever attempts a session check before a candidate has asked for
- * the dashboard at all.
+ * The landing page at the bare path, the dashboard for `#/…` hashes — both served from one
+ * `index.html`. Reacts to `hashchange`, since landing-page CTAs are hash-only navigations. The
+ * landing page owns no client and makes no request, so no session check happens until the dashboard
+ * is asked for.
  */
 export function App({ client }: { client: DashboardClient }) {
   const [dashboardRoute, setDashboardRoute] = useState(() =>
@@ -128,9 +110,8 @@ function DashboardApp({ client }: { client: DashboardClient }) {
     `replaceRoute` to itself.
   */
   useEffect(() => {
-    // `signup` is excluded the same way `login` is: a fresh visitor on either page has no session
-    // yet, so the store's own load attempt 401s immediately — without this, that 401 would bounce
-    // them straight off `#/signup` to `#/login` before they could see the form.
+    // Not from `login`/`signup`: a visitor there has no session yet, and the store's 401 would
+    // otherwise bounce them off the form.
     if (unauthorized && route.name !== 'login' && route.name !== 'signup') {
       replaceRoute(loginPath(window.location.hash));
     }
@@ -304,9 +285,7 @@ function DashboardApp({ client }: { client: DashboardClient }) {
                     // result set, and `listPath`'s default is that first batch.
                     replaceRoute(listPath(filters))
                   }
-                  // Reordering, not filtering — the revealed rows are still the right rows, just in
-                  // the other direction, so `shown` carries over rather than resetting to the default
-                  // batch the way `onFiltersChange` does. See `ApplicationsList`'s own doc comment.
+                  // Reordering, not filtering: `shown` carries over (see `ApplicationsList`).
                   onSortChange={(sort) =>
                     replaceRoute(listPath({ ...route.filters, sort }, route.shown))
                   }

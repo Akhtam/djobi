@@ -1,34 +1,23 @@
-# `docker compose up` runs the whole server side of djobi — db, backend and the built dashboard,
-# one origin (nginx, reverse-proxying the backend — see docker/dashboard.nginx.conf) — with no
-# Node/pnpm toolchain on the host at all (migrations included — see the `migrate` service). That's the same same-origin topology
-# `docs/adr/0001-cloudflare-single-worker.md` already commits this project to for a real deploy,
-# just reached with nginx + Compose here instead of a Cloudflare Worker.
+# `docker compose up` runs db, migrations, backend and the built dashboard on one origin (nginx
+# proxies the backend — see docker/dashboard.nginx.conf), with no Node toolchain on the host. The
+# same same-origin shape ADR-0001 plans for a real deploy.
 #
-# This is NOT the path for actively editing backend or dashboard code: neither service here has
-# hot reload (the backend restarts only if the whole container restarts; the dashboard is a static
-# `vite build`, not `vite dev`). For that, run `pnpm db:up` for just Postgres and `pnpm dev:backend`
-# / `pnpm dev:dashboard` natively — see the root README.md.
-#
-# The extension is never part of this file. It cannot run in a container at all — Chrome has to
-# load it unpacked from disk on the host — so build it with `pnpm build:extension` regardless of
-# whether the rest of the stack is containerized.
+# A preview, not a dev loop: no hot reload. For development run `pnpm db:up`, `pnpm dev:backend`
+# and `pnpm dev:dashboard` (see README.md). The extension is always built on the host
+# (`pnpm build:extension`).
 
 services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      # Matches apps/backend/.env.example's Docker Postgres example DATABASE_URL exactly — change
-      # one, change the other.
+      # Must match apps/backend/.env.example's Docker DATABASE_URL.
       POSTGRES_USER: djobi
       POSTGRES_PASSWORD: djobi
       POSTGRES_DB: djobi
     ports:
-      # Published on 127.0.0.1 only — a bare `5432:5432` binds every host interface, putting this
-      # Postgres (with its well-known djobi/djobi credentials) on the LAN. Same for every port below.
-      # Host 5432 so `psql`/a GUI client on the host can reach it directly. If you already run a
-      # local Postgres on 5432, change the host side only (e.g. "5433:5432") and update
-      # DATABASE_URL's port to match.
+      # Every port is published on 127.0.0.1 only; a bare `5432:5432` would expose these well-known
+      # credentials on the LAN. If 5432 is taken, change the host side and DATABASE_URL's port.
       - '127.0.0.1:5432:5432'
     volumes:
       - djobi-postgres-data:/var/lib/postgresql/data
@@ -38,11 +27,8 @@ services:
       timeout: 5s
       retries: 15
 
-  # One-shot: applies pending migrations, then exits. `backend` waits for it to finish
-  # successfully, so a fresh `docker compose up` never starts serving against an empty schema.
-  # Uses drizzle-orm's runtime migrator (apps/backend/src/db/migrate.ts), not `drizzle-kit`, which
-  # is a devDependency and pruned from the image. Safe to run on every `up` — already-applied
-  # migrations are skipped.
+  # One-shot: applies pending migrations (runtime migrator, `dist/db/migrate.js`), then exits;
+  # `backend` waits for it. Safe on every `up`.
   migrate:
     build:
       context: .
@@ -65,31 +51,22 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    # Reuses apps/backend/.env for secrets (OPENROUTER_API_KEY, BETTER_AUTH_SECRET, …) so there is
-    # one file to fill in either way you run this — see the root README.md. `environment:` below
-    # still wins over anything the same keys set in that file, which is what points this container
-    # at the `db` service instead of at `.env`'s own default `127.0.0.1`: from inside this
-    # container, `127.0.0.1` is this container, not the `db` one.
+    # Secrets come from apps/backend/.env; `environment:` below overrides DATABASE_URL to reach the
+    # `db` service (127.0.0.1 inside this container is the container itself).
     env_file:
       - apps/backend/.env
     environment:
       DATABASE_URL: postgres://djobi:djobi@db:5432/djobi
       PORT: '5391'
-      # `apps/backend/src/index.ts` binds here to 127.0.0.1 by default, deliberately — this is the
-      # one override, and the one place in this file it's safe: "every interface" inside a
-      # container means every *other container on this Docker network* (the dashboard's nginx,
-      # proxying to this one), not the LAN, since nothing not explicitly published in `ports:`
-      # leaves Docker's own network namespace.
+      # The one place the backend binds 0.0.0.0: inside a container that means the Docker network
+      # (nginx), not the LAN.
       HOST: '0.0.0.0'
     ports:
-      # Host 5391 too, and not just for curling it directly — the Chrome extension always calls
-      # `http://127.0.0.1:5391` (apps/extension/src/extensionConfig.ts), container or not, so this
-      # is what lets a normally-built, normally-loaded extension work against this backend.
+      # The extension always calls http://127.0.0.1:5391 (extensionConfig.ts), container or not.
       - '127.0.0.1:5391:5391'
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:5391/healthz || exit 1']
-      # Poll fast only while starting (so `dashboard` isn't kept waiting), then once a minute —
-      # a 2s steady-state interval floods the logs with /healthz requests.
+      # Poll fast while starting, then once a minute to keep /healthz out of the logs.
       interval: 60s
       start_interval: 2s
       start_period: 30s
@@ -105,11 +82,9 @@ services:
       backend:
         condition: service_healthy
     ports:
-      # Host 5174, matching `pnpm dev:dashboard`'s own port — the rest of the README's "open
-      # http://localhost:5174" instructions hold regardless of which path started it.
+      # Same port as `pnpm dev:dashboard`.
       - '127.0.0.1:5174:80'
 
 volumes:
-  # Named (not bind-mounted), so data survives `docker compose down` and only goes away on
-  # `docker compose down -v` — a deliberate, separate action from stopping the container.
+  # Named volume: survives `docker compose down`; removed only by `down -v`.
   djobi-postgres-data:

@@ -1,15 +1,6 @@
 /**
- * Every `/applications` route, driven against in-memory persistence.
- *
- * These used to run against a `vi.mock` of the store module, so each case both arranged a return
- * value and asserted which function had been called with what. That proves the route made a call;
- * it does not prove the call did anything, and it goes on passing when the route starts reaching
- * persistence some other way. Here a write is asserted by reading it back — which is also what
- * makes the "leaves tracking alone" cases mean something, since a mock cannot leave anything alone.
- *
- * The store's own behaviour is not re-asserted here: `db/applicationStore.contract.test.ts` holds
- * the in-memory and Postgres adapters to one interface, so what these cases lean on is behaviour
- * both adapters are known to share.
+ * Every `/applications` route against in-memory persistence. Writes are asserted by reading back
+ * what was stored. Store behavior itself is covered by `db/applicationStore.contract.test.ts`.
  */
 import { EXTRACTION_VERSION, type Application, type ApplicationSnapshot } from '@djobi/shared';
 import { describe, expect, it, vi } from 'vitest';
@@ -269,15 +260,8 @@ describe('POST /applications', () => {
   });
 
   /**
-   * The one case the write cannot answer from its own `RETURNING`: the row landed, but it does not
-   * parse as an `Application` — so the store hands back `application: null` and the route falls back
-   * to reading it. If that read finds nothing either, the answer is a 404. It used to `throw`, and
-   * `app.onError` turns a throw into a 500: a row that isn't there was reported down the channel
-   * that means "the backend is broken", beside the model failing and Postgres being unreachable.
-   *
-   * A store that writes an unreadable row and then forgets it is the cheapest way to reach that
-   * path — and it is a stand-in *at the seam* rather than a replaced module, so the route under test
-   * is the one that ships.
+   * A write whose returned row doesn't parse falls back to a read; if that finds nothing, the
+   * answer is 404, not 500. Reached with a store that writes an unreadable row and forgets it.
    */
   it('answers 404, not 500, when the fallback read-back finds nothing', async () => {
     const vanishing = inMemoryApplicationStore();

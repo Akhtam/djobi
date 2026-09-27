@@ -1,12 +1,8 @@
 /**
- * Dashboard counterpart to the extension's Log tab: extract a pasted posting, review its identity,
- * then save a manual Application with the candidate's base profile resume.
- *
- * The extract → review → save state machine is `@djobi/manual-log`'s `useManualLogFlow`, shared
- * with the extension's own Log tab (`apps/extension/src/panel/LogApplication.tsx`) — see that
- * package's own doc for what moved there versus what stays here: this file supplies the client
- * adapter, the modal chrome, and how a 401 on extraction routes to sign-in (the dashboard's own
- * policy; the extension's Log tab has none).
+ * The dashboard's counterpart to the extension's Log tab: extract a pasted posting, review it, save
+ * a manual Application with the Base Resume. The state machine is `@djobi/manual-log`'s
+ * `useManualLogFlow`; this file supplies the client adapter, the modal, and routing a 401 to
+ * sign-in.
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { isUnauthorized } from '@djobi/http-client';
@@ -35,10 +31,8 @@ export function NewApplication({
   const [roleTitle, setRoleTitle] = useState('');
   const modalRef = useRef<HTMLElement>(null);
 
-  // `client`'s own methods, adapted to `ManualLogPorts`'s shape. `onCreate` (`useApplicationStore`'s
-  // `createApplication`) already redirects to sign-in on its own 401 — see the store — so `save`
-  // only needs to report whether the row landed. `extractJob`/`findApplicationDuplicates` go
-  // straight to the client instead, so a 401 there is this flow's own to catch.
+  // `onCreate` (the store) already redirects on 401, so `save` only reports whether the row landed;
+  // extraction and the duplicate lookup call the client directly, so their 401s are caught here.
   const ports: ManualLogPorts = {
     extractJob: (jobDescription) => client.extractJob(jobDescription),
     findApplicationDuplicates: (jobUrl) => client.findApplicationDuplicates(jobUrl),
@@ -83,9 +77,7 @@ export function NewApplication({
     };
   }, [onClose, saving]);
 
-  // `flow.save` resolving doesn't itself tell this closure the state changed — `state` here is
-  // whatever it was when this render's `handleSave` closure was made. Watching `state.kind` is
-  // what reacts to the transition `save` actually made, on the render it happens.
+  // React to the state transition `save` made; this render's `state` closure can't see it.
   useEffect(() => {
     if (state.kind === 'saved') onSaved();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -342,8 +342,7 @@ describe('createHttpTransport', () => {
   });
 
   it('carries a signal on the binary route too, so no route is the one that cannot be cancelled', async () => {
-    // `/render-resume-pdf` is real generation cost inside the Fill Step, and the old
-    // `callBackendBinary` took no signal at all.
+    // `/render-resume-pdf` is real generation cost inside the Fill Step, so it must be cancellable.
     const { fetchImpl, calls } = respondWith(() => new Response(new Uint8Array([37, 80, 68, 70])));
     const client = createHttpTransport({ baseUrl: '', fetch: fetchImpl });
     const controller = new AbortController();

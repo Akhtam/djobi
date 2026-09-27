@@ -1,20 +1,8 @@
 /**
- * One suite, both `ApplicationStore` adapters.
- *
- * An in-memory adapter is only worth having if it agrees with Postgres about the things routes rely
- * on — newest-first ordering, what the Duplicate Guard counts as the same posting, which fields a
- * write leaves alone, and (since Phase A, `docs/multi-tenant-auth.md`) that one user's rows are
- * invisible to another's reads and untouchable by another's writes. A fake that disagrees is worse
- * than no fake: every route test then passes against behaviour production does not have, and the
- * disagreement surfaces as a bug in the dashboard rather than as a red test here.
- *
- * The Postgres side runs against PGlite, the same in-process Postgres `database.integration.test.ts`
- * uses, so the contract is checked against real SQL — real `count(*) over ()`, real jsonb, the real
- * `||` note append — rather than against a second hand-written imitation of it.
- *
- * What is deliberately *not* here: anything only one adapter can do. Dropping an unreadable row from
- * a list is Postgres-only (the in-memory store holds parsed Applications, so there is nothing to
- * drop), and it stays asserted in `database.integration.test.ts`.
+ * One suite run against both `ApplicationStore` adapters — in-memory and Postgres (PGlite) — so
+ * they agree on ordering, duplicate matching, which fields a write leaves alone, and per-user
+ * isolation. Adapter-specific behavior (dropping an unreadable row from a list) stays in
+ * `database.integration.test.ts`.
  */
 import { PGlite } from '@electric-sql/pglite';
 import type { Application, NewApplication } from '@djobi/shared';
@@ -104,12 +92,8 @@ function newApplication(overrides: Partial<NewApplication> = {}): NewApplication
 }
 
 /**
- * Two writes far enough apart that both adapters order them the same way.
- *
- * Postgres breaks a `created_at` tie arbitrarily and the in-memory store breaks it by insertion
- * order, so a contract asserting an order across identical timestamps would be asserting the fake's
- * behaviour rather than the shared one. Two milliseconds is the cheapest way to stay inside what
- * both actually promise.
+ * Waits 2ms so both adapters order the next write the same way (they break `created_at` ties
+ * differently).
  */
 function afterAMoment(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 2));
@@ -462,7 +446,8 @@ describe.each(ADAPTERS)('ApplicationStore contract — %s', (_name, freshStore) 
    * The property Phase A (`docs/multi-tenant-auth.md`) exists to guarantee: nothing here is
    * reachable, readable or writable by a `userId` other than the one that created it. Every one of
    * `ApplicationStore`'s ten methods gets one case, `duplicateSummary` most deliberately of all —
-   * an unscoped guard would tell USER_B "you already applied" to a posting only USER_A has ever seen.
+   * an unscoped guard would tell USER_B "you already applied" to a posting only USER_A has ever
+   * seen.
    */
   describe('user scoping', () => {
     it("list only ever returns the calling user's own rows", async () => {

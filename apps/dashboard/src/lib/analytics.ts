@@ -1,13 +1,7 @@
 /**
- * Pure aggregation over the applications the candidate has already saved — the retrospective gap
- * analysis Phase 12's Analytics view reads from. See `PROGRESS.md`'s Phase 12 section for the full
- * set of decisions this follows; the ones this module embodies are repeated below as they come up.
- *
- * Everything here is a plain function over an `Application[]` a caller already has and already
- * filtered — no fetch, no clock read, no React. `rangeStart` takes `today` as a parameter rather
- * than reading the system clock itself, which is what keeps every test in this module clock-free:
- * only the view that mounts `rangeStart` against the real clock needs to freeze time, and it pays
- * that cost once rather than every function here paying it for its own sake.
+ * Pure aggregation over the candidate's saved Applications for the Analytics view — a retrospective
+ * gap analysis. Plain functions over an already-filtered `Application[]`: no fetch, no React, and
+ * no clock (`rangeStart` takes `today`).
  */
 import {
   baseResumeOf,
@@ -26,16 +20,9 @@ import {
 import { stageFilterOf, type StageFilter } from './stages.js';
 
 /**
- * The Analytics view's date ranges. `'14d'` is the default: long enough to usually hold more than
- * one or two saved postings — a personal-scale search can easily go a week between applications —
- * while still reading as "recent" rather than a full retrospective.
- *
- * `'all'` is the one member that names no window, and it earns its place from what the other four
- * cannot answer. Every reading here is drawn from `Application.createdAt` — when the row was
- * *saved* — so a short range holds the applications least likely to have been answered yet, and
- * `responseRate` over seven days is mostly a measure of how recently someone applied. The longest
- * preset is 60 days, which puts a search older than two months permanently out of view of the two
- * reports that most need volume: which keywords keep recurring, and how often a reply comes back.
+ * The Analytics date ranges; `'14d'` is the default. `'all'` exists because ranges filter by save
+ * date, so short ranges mostly hold unanswered applications — keyword recurrence and response rate
+ * need volume.
  */
 export const RANGES = ['7d', '14d', '30d', '60d', 'all'] as const;
 /** One of {@link RANGES} — a URL value (`?range=`), not free-form. */
@@ -48,18 +35,9 @@ type BoundedRange = Exclude<Range, 'all'>;
 const RANGE_DAYS: Record<BoundedRange, number> = { '7d': 7, '14d': 14, '30d': 30, '60d': 60 };
 
 /**
- * Local midnight of `today − (n − 1)` days, so a 7-day range is seven calendar days with `today`
- * as the last — not eight. Local rather than UTC: a cutoff that jumps by hours with the reader's
- * timezone is a cutoff nobody can predict. Callers compare this against `Application.createdAt` —
- * when the candidate *saved* the row, not when the posting was published, since djobi never
- * captures the latter and the question this range answers is "what have I been applying to
- * lately."
- *
- * `null` for `'all'`, rather than a sentinel far enough in the past to include everything. A date
- * would compare correctly and then be *rendered*: the view prints this boundary as the left half of
- * its "from – to" heading, so an epoch would read as a real claim about a search that began in
- * 1970. `null` says there is no boundary, which is the fact, and it makes every caller decide what
- * to do about that rather than inherit a lie from this function.
+ * Local midnight of `today − (n − 1)` days, so a 7-day range is seven calendar days ending today.
+ * Local, not UTC, so the cutoff doesn't shift with timezone. Compared against `createdAt` (when the
+ * row was saved). `null` for `'all'` — no boundary, rather than a fake epoch the view would print.
  */
 export function rangeStart(range: Range, today: Date): Date | null {
   if (range === 'all') return null;
@@ -92,15 +70,8 @@ export interface KeywordFrequencyRow {
 }
 
 /**
- * Every keyword `applications` extracted, grouped by {@link normalizeKeyword}. The extraction
- * prompt remains responsible for collapsing synonyms such as `K8s` and `Kubernetes`; this prevents
- * case, whitespace and dash variants of the same canonical name from splitting. Sorted by count
- * descending, alphabetical tie-break so ordering is stable across renders.
- *
- * **A keyword's count is postings that asked, not mentions.** One `Set` per application before
- * counting, so a posting listing a term twice — or under two spellings that normalize the same —
- * still counts once toward this term. Counting mentions instead would measure how repetitive a
- * posting was, not how often the term came up.
+ * Every extracted keyword grouped by {@link normalizeKeyword}, sorted by count then alphabetically.
+ * **Counts postings, not mentions**: each application contributes a term at most once.
  */
 export function keywordFrequency(applications: Application[]): KeywordFrequencyRow[] {
   const termCounts = new Map<string, Map<string, number>>();
@@ -140,14 +111,8 @@ export function keywordFrequency(applications: Application[]): KeywordFrequencyR
 }
 
 /**
- * How many `requirements` across `applications` fell into each {@link RequirementKind} — the
- * structured field the requirement's own *text* cannot give, since sentences do not repeat across
- * postings (see `PROGRESS.md`).
- *
- * All three kinds are counted explicitly, `unspecified` included, rather than derived as
- * `total - required - preferred`: `unspecified` means the posting drew no distinction, which is not
- * the same fact as "not required," and collapsing it into a denominator would report a false rate
- * for whichever kind absorbed it.
+ * Requirement counts per {@link RequirementKind}, `unspecified` counted explicitly (it means "no
+ * distinction drawn", not "not required").
  */
 export interface RequirementKindCounts extends Record<RequirementKind, number> {
   /** `required + preferred + unspecified` — every requirement these counts are drawn from. */
@@ -166,22 +131,9 @@ export function requirementKindCounts(applications: Application[]): RequirementK
 }
 
 /**
- * How many `requirements` across `applications` fell into each {@link RequirementImportance} band.
- *
- * Strictly more informative than {@link requirementKindCounts} beside it, for the same reason
- * `requirementEvidence` is more informative than `keywordCoverage`: `kind` records how a posting
- * *phrased* a requirement, while the band records how much it *matters* in that posting, which is
- * the thing a reader can act on.
- *
- * **`unbanded` is reported, never folded away.** Most of the stored history predates importance
- * entirely. Those requirements are not `low-signal` ones — nothing assessed them — so they are
- * counted on their own line rather than absorbed into the lowest band or quietly dropped from a
- * denominator, the same discipline {@link requirementEvidenceRollup} follows with its unscored
- * postings.
- *
- * These are counts, and only counts. Nothing here may be summed into a weight, averaged, or shown
- * as a percentage: a band is a label, and an importance figure on screen is a figure someone will
- * try to raise.
+ * Requirement counts per {@link RequirementImportance} band. **`unbanded` is its own line** — older
+ * requirements were never assessed, which isn't `low-signal`. Counts only: never summed into a
+ * weight, averaged, or shown as a percentage.
  */
 export interface RequirementImportanceCounts extends Record<RequirementImportance, number> {
   /** Requirements carrying no band — extracted before importance existed, or left unassessed. */
@@ -213,11 +165,8 @@ export function requirementImportanceCounts(
 }
 
 /**
- * What `profile`'s Base Resume evidences of every term in `frequency`, keyed by {@link
- * KeywordFrequencyRow.term}. Scored against a synthesized `{ keywords: distinct }`, not a real
- * posting's `JobInfo` — the same reasoning that already leaves `keywordCoverage`'s second argument
- * without the rest of `JobInfo`'s fields: `postingSpelling` is per-posting, and a term aggregated
- * across many postings has no single one to give it.
+ * What `profile`'s Base Resume evidences of every term in `frequency`, keyed by term. Scored
+ * against a synthesized `{ keywords }`, since an aggregated term has no single `postingSpelling`.
  */
 export function coverageForKeywords(
   frequency: KeywordFrequencyRow[],
@@ -245,10 +194,8 @@ export interface YearsOfExperienceCount {
 }
 
 /**
- * The year threshold stated in one requirement, if any. The structured field is authoritative;
- * persisted requirements saved before that field existed fall back to scanning their original text
- * for a number like "3+ years". Returns at most one value, so a requirement contributes to a single
- * bucket rather than every number its text happens to mention.
+ * The years threshold one requirement states: the structured field, else (for older rows) a number
+ * like "3+ years" in its text. At most one value per requirement.
  */
 function statedYears(requirement: Application['jobInfo']['requirements'][number]): number[] {
   if (requirement.yearsOfExperience !== null) return [requirement.yearsOfExperience];
@@ -260,10 +207,8 @@ function statedYears(requirement: Application['jobInfo']['requirements'][number]
 }
 
 /**
- * How many requirements state each years-of-experience threshold across `applications`, ascending
- * by years. Requirements with no stated figure — the common case — are excluded rather than counted
- * under a `null` bucket: this reports the distribution of what postings *did* state, not a census
- * of what they left silent.
+ * How many requirements state each years threshold, ascending. Requirements stating none are
+ * excluded, not bucketed.
  */
 export function yearsOfExperienceDistribution(
   applications: Application[],
@@ -282,23 +227,14 @@ export function yearsOfExperienceDistribution(
 }
 
 /**
- * What an application's {@link ApplicationStage} says about whether the posting ever came back.
+ * Whether a posting ever came back, from its {@link ApplicationStage}:
  *
- * - `responded` — a human engaged: a screen, an onsite, an offer, or a `rejected` that is not
- *   `rejected_ats`.
- * - `no-response` — `rejected_ats`, the rejection that never reached a person.
- * - `pending` — `applied`, which is not a "no" yet and must never be counted as one.
+ * - `responded` — a screen, onsite, offer, or `rejected` (after contact).
+ * - `no-response` — `rejected_ats`.
+ * - `pending` — `applied`; never counted as a "no".
  *
- * **This leans on `rejected` and `rejected_ats` being kept distinct**, which is the whole reason
- * `ApplicationStageSchema` carries both. A candidate who marks every rejection `rejected` reads as
- * a 100% response rate here — the mapping cannot detect that, and inventing a heuristic to guess
- * around it would be fabricating an outcome the record never stated, the same guess this app's
- * extraction prompts already forbid on the way in.
- *
- * **And `stage` is a scalar with no history**, so a `rejected` row cannot say how far it got before
- * it ended. This reports *whether* a posting responded, never *how far* or *how fast*; the funnel
- * and time-to-response questions need stage-transition timestamps the `applications` table does not
- * record today.
+ * Relies on the candidate distinguishing `rejected` from `rejected_ats`. `stage` has no history, so
+ * this says *whether* a posting responded, not how far or how fast.
  */
 export type Outcome = 'responded' | 'no-response' | 'pending';
 
@@ -309,10 +245,8 @@ export function outcomeOf(stage: ApplicationStage): Outcome {
 }
 
 /**
- * Applications that must have *resolved* before a rate is reported at all. Below this, `rate` is
- * `null` and callers show the counts alone: three applications cannot distinguish a 33% response
- * rate from a 67% one, and a page that prints a percentage over that sample manufactures
- * confidence the data does not hold.
+ * Resolved applications needed before a rate is shown; below this `rate` is `null` and only counts
+ * are shown.
  */
 export const MIN_DECIDED_FOR_RATE = 5;
 
@@ -323,21 +257,13 @@ export interface ResponseRate {
   decided: number;
   /** Still `applied`. Excluded from `decided` entirely, never counted as a rejection. */
   pending: number;
-  /**
-   * `responded / decided`, or `null` when fewer than {@link MIN_DECIDED_FOR_RATE} have resolved.
-   * `null` means "not enough data to say", never "zero".
-   */
+  /** `responded / decided`, or `null` ("not enough data", never zero) below the minimum. */
   rate: number | null;
 }
 
 /**
- * How often `applications` came back at all.
- *
- * **Pending applications are excluded from the denominator, not counted against it.** A week's
- * worth of applications is mostly `applied`, and dividing by them would report a collapsing
- * response rate that measures nothing but recency — the censoring problem, and the one way this
- * number could actively mislead. `pending` is carried alongside so a caller can say what the rate
- * is still waiting on.
+ * How often applications came back. **Pending ones are excluded from the denominator** — otherwise
+ * recent applications would drag the rate down; `pending` is reported alongside.
  */
 export function responseRate(applications: Application[]): ResponseRate {
   let responded = 0;
@@ -359,20 +285,12 @@ export function responseRate(applications: Application[]): ResponseRate {
 }
 
 /**
- * What `Application.requirementEvidence` says across a set of postings — the per-requirement
- * verdicts already computed and persisted at save time, read back in aggregate for the first time.
+ * The stored per-requirement verdicts (`Application.requirementEvidence`) summed across postings —
+ * "did the resume I sent evidence what was asked", including the fixable
+ * `omitted-profile-evidence`.
  *
- * Strictly better than the keyword coverage beside it for the same reason `requirementEvidence.ts`
- * exists at all: coverage answers "does this term appear in my profile", this answers "does the
- * resume I actually sent evidence what the posting actually asked for" — and it distinguishes
- * `omitted-profile-evidence`, the one verdict that names a fixable mistake rather than a missing
- * skill. That bullet was in the Profile and this resume dropped it.
- *
- * **Counted over scored postings only.** `requirementEvidence` is `null` for every row saved before
- * the field existed and for any row whose Profile could not be read at save time, and nothing
- * backfills one. `unscoredPostings` carries that count so a caller states the denominator rather
- * than quietly reporting a rate over whichever rows happened to have the field — the same rule
- * `requirementKindCounts` follows for `unspecified`.
+ * **Scored postings only**: rows without verdicts (older, or Profile unreadable at save) are
+ * counted in `unscoredPostings` so callers state the denominator.
  */
 export interface RequirementEvidenceRollup extends Record<RequirementEvidenceVerdict, number> {
   /** Every requirement these verdicts are drawn from. */
@@ -409,16 +327,8 @@ export function requirementEvidenceRollup(applications: Application[]): Requirem
 }
 
 /**
- * One application's stored verdicts, keyed by the requirement's own text so the requirements list
- * can badge a row it is already rendering.
- *
- * Text is the only key available: `requirementEvidence` stores a copy of the `JobRequirement` it
- * scored rather than an index into `jobInfo.requirements`, and the two arrays are written in the
- * same transaction from the same source, so a row whose text matches is that row. A posting that
- * genuinely repeats a requirement verbatim collapses to one entry — harmless, since both would
- * carry the same verdict.
- *
- * Returns an empty map for an unscored row, so callers badge nothing rather than branching.
+ * One application's stored verdicts keyed by requirement text (the only key stored, and written
+ * from the same source in the same save). Empty for an unscored row.
  */
 export function evidenceByRequirement(
   application: Application,
@@ -432,16 +342,18 @@ export function evidenceByRequirement(
 export interface AnalyticsReportFilters {
   range: Range;
   stage: StageFilter | null;
-  /** "Now," as the view pinned it — see {@link rangeStart}'s own note on why the clock isn't read here. */
+  /**
+   * "Now," as the view pinned it — see {@link rangeStart}'s own note on why the clock isn't read
+   * here.
+   */
   asOf: Date;
   /** `null` while no Profile is available yet; coverage is skipped entirely. */
   profile: Profile | null;
 }
 
 /**
- * Everything the Analytics view derives from one filtered look at `applications`. Table-only
- * controls are deliberately handled by {@link keywordRows}, so changing one does not rescan every
- * application or recompute profile coverage.
+ * Everything the Analytics view derives from one filtered set. Table-only controls go through
+ * {@link keywordRows} so they don't rescan every application.
  */
 export interface AnalyticsReport {
   /** The window's first day, or `null` for `'all'` — see {@link rangeStart}. */
@@ -456,7 +368,9 @@ export interface AnalyticsReport {
   coverageByTerm: Map<string, CoverageVerdict> | null;
   /** How many of `frequency` are gaps — the summary strip's count regardless of table filters. */
   gapCount: number;
-  /** `null` when `filters.stage` narrows the population — see {@link responseRate}'s own caution. */
+  /**
+   * `null` when `filters.stage` narrows the population — see {@link responseRate}'s own caution.
+   */
   baseline: ResponseRate | null;
 }
 
@@ -506,7 +420,10 @@ export function keywordRows(
     .filter((row) => row.count >= filters.minAppearances);
 }
 
-/** How many of a set of keyword rows the Profile does and doesn't back up — see {@link keywordCoverageSummary}. */
+/**
+ * How many of a set of keyword rows the Profile does and doesn't back up — see {@link
+ * keywordCoverageSummary}.
+ */
 export interface KeywordCoverageSummary {
   evidenced: number;
   gaps: number;
@@ -515,12 +432,8 @@ export interface KeywordCoverageSummary {
 }
 
 /**
- * Rolls `rows` up into a gap count the summary strip can print — over whichever rows the caller
- * passes, not necessarily every row `keywordRows` returned. The summary strip and the on-screen
- * category groups (see {@link groupByKeywordCategory}) read from different slices of the same table
- * — the strip describes everything the current filters matched, the groups describe only what has
- * scrolled into view — so this takes `rows` as a parameter rather than assuming which one a caller
- * means.
+ * The gap count for the summary strip, over whichever `rows` the caller passes (all matched rows
+ * vs. those scrolled into view).
  */
 export function keywordCoverageSummary(
   rows: readonly KeywordFrequencyRow[],
@@ -538,17 +451,15 @@ export function keywordCoverageSummary(
 
 /** One category's rows — see {@link groupByKeywordCategory}. */
 export interface KeywordCategoryGroup {
-  /** `null` groups every row whose own category is unset; the display label is the caller's copy. */
+  /**
+   * `null` groups every row whose own category is unset; the display label is the caller's copy.
+   */
   category: KeywordCategory | null;
   items: KeywordFrequencyRow[];
 }
 
 /**
- * Groups `rows` by category, each group keeping its rows in the order they arrived — which is
- * usually count-descending, since that's how `keywordFrequency`/`keywordRows` sort. Categories
- * themselves come out in first-appearance order rather than a fixed sequence: nothing today reads
- * that order as meaningful the way `groupByImportance`'s `BAND_ORDER` does for bands, and imposing
- * one here would be a UI change riding along with a refactor that isn't asking for one.
+ * Groups `rows` by category, preserving row order; categories come out in first-appearance order.
  */
 export function groupByKeywordCategory(
   rows: readonly KeywordFrequencyRow[],
@@ -562,11 +473,7 @@ export function groupByKeywordCategory(
   return [...byCategory.entries()].map(([category, items]) => ({ category, items }));
 }
 
-/**
- * Everything `RequirementsPanel` renders for one keyword selection — the same filter/roll-up chain
- * that used to live inline in the component, called on every render with nothing behind an
- * interface a test could reach without mounting it.
- */
+/** Everything `RequirementsPanel` renders for one keyword selection. */
 export interface RequirementsReport {
   /** `applications`, narrowed to postings that asked for the selected keyword — or all, if none. */
   matching: Application[];
@@ -574,19 +481,22 @@ export interface RequirementsReport {
   sorted: Application[];
   requirementCounts: RequirementKindCounts;
   bandCounts: RequirementImportanceCounts;
-  /** Whether anything in `matching` carries an importance band at all — see `RequirementImportanceCounts`. */
+  /**
+   * Whether anything in `matching` carries an importance band at all — see
+   * `RequirementImportanceCounts`.
+   */
   anyBanded: boolean;
   yearsDistribution: YearsOfExperienceCount[];
   evidence: RequirementEvidenceRollup;
   /**
-   * `evidence`'s three verdicts that say the Profile backs the requirement up somehow —
-   * `direct-evidence`, `skill-only`, `omitted-profile-evidence` — summed. Computed here rather than
-   * left to the one caller that wants it: there is nothing else to inject and nothing that varies
-   * across a second caller, so a standalone function over `evidence` would be indirection with no
-   * seam behind it.
+   * Requirements the Profile backs somehow: `direct-evidence` + `skill-only` +
+   * `omitted-profile-evidence`.
    */
   supportedCount: number;
-  /** `evidence`'s two verdicts that mean the candidate still has something to do — `needs-confirmation`, `unsupported` — summed. */
+  /**
+   * `evidence`'s two verdicts that mean the candidate still has something to do —
+   * `needs-confirmation`, `unsupported` — summed.
+   */
   attentionCount: number;
 }
 

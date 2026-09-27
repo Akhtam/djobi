@@ -10,18 +10,10 @@ import type { AuthEnv } from '../authMiddleware.js';
 import type { ApplicationStore, Written } from '../db/applicationStore.js';
 import { jsonBody, pathParams, queryParams } from '../requestBody.js';
 
-/**
- * `GET /applications`'s query. No `.min(1)` on `jobUrl`: an absent key and an empty `?jobUrl=` both
- * already mean "list everything" below (`if (jobUrl)` is false for `''` too), and this schema exists
- * to state the route's shape, not to reject a value the handler already treats as absent.
- */
+/** `GET /applications` query. An empty `?jobUrl=` means "list everything", same as absent. */
 const ListApplicationsQuerySchema = z.object({ jobUrl: z.string().optional() });
 
-/**
- * `:id` on every route below it. `.min(1)` documents what a route needs without changing what
- * reaches it — see {@link pathParams}'s own doc comment for why this can never actually reject a
- * routed request.
- */
+/** `:id` on every route below; can't actually reject a routed request (see {@link pathParams}). */
 const ApplicationIdParamSchema = z.object({ id: z.string().min(1) });
 
 /** `:id`/`:noteId` together, for the one route addressing both. */
@@ -31,48 +23,20 @@ const ApplicationNoteIdParamSchema = z.object({
 });
 
 /**
- * Everything addressed at `/applications`: reading saved snapshots, creating one after an explicit
- * save, updating it on re-save, and the two interview-tracking writes (`PATCH …/:id/stage` and
- * `POST …/:id/notes`) that the dashboard uses.
+ * `/applications`: read, create (explicit save), re-save the snapshot, and the dashboard's tracking
+ * writes. Stage and notes have their own paths because `PATCH /applications/:id` takes an
+ * `ApplicationSnapshot`, which excludes them so a re-save can't overwrite tracking.
  *
- * Tracking gets its own paths rather than riding on `PATCH /applications/:id`. That route's body is
- * an `ApplicationSnapshot`, which excludes stage and notes precisely so re-saving an autofill can't
- * overwrite them — folding them back in would undo the separation.
- *
- * `store` is a parameter for the same reason `client` is a prop in the extension's pages: these
- * routes are exercised end to end against an in-memory adapter, and `index.ts` is the only place the
- * Postgres one is named. See `db/applicationStore.ts`.
- *
- * `userId` comes from context on every handler below, set by `app.ts`'s `requireAuth` middleware
- * (real in production, a test double in `testApp.ts`) before any of these run — Phase B's
- * `docs/multi-tenant-auth.md` replaced the `BOOTSTRAP_USER_ID` constant this file used to read
- * directly with that.
+ * `store` is injected so routes run against the in-memory adapter in tests; `userId` comes from
+ * `requireAuth` in context.
  */
 export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
   const route = new Hono<AuthEnv>();
 
   /**
-   * Answers a write: the compact acknowledgement the store produced, or the full row the write left
-   * behind, or a 404 when there was nothing to write to.
-   *
-   * The four writes below each spelled this out — the `if (!result) 404`, the `response=compact`
-   * check, and the read-back — which is one protocol restated four times and got the last part wrong
-   * in all four. The read-back used to `throw` when the row was gone, and `app.onError` turns a
-   * throw into a 500: a row deleted between a write and its read-back was reported as "the backend
-   * is broken", down the same channel as the model failing and Postgres being unreachable. It is the
-   * same condition the line above it already answers with a 404, arriving a few milliseconds later.
-   *
-   * The read-back is now the exception rather than the rule. The row comes back from the write's own
-   * `RETURNING` (see `Written`), so the default full-row response costs one database round trip
-   * instead of two — and the deleted-between-write-and-read race that the paragraph above is about
-   * cannot arise at all, because there is no window between the two.
-   *
-   * `store.byId` stays as the fallback for the one case the write cannot answer: a stored row that
-   * no longer parses as an `Application`. Reaching for it there is deliberate — it throws a Zod
-   * error naming the offending field, which is the report that condition deserves and exactly what
-   * this route did before. A compact caller never reaches it, because it never wanted the row.
-   *
-   * `result` is what the store returned — `null` when no row has that id.
+   * Answers a write: 404 when `result` is `null`, the compact acknowledgement for
+   * `response=compact`, else the full row from the write's own `RETURNING`. Falls back to
+   * `store.byId` only when that row doesn't parse, so the Zod error names the bad field.
    */
   async function writeResponse<Result extends { id: string }>(
     c: Context<AuthEnv>,
@@ -81,9 +45,7 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     if (!result) return c.json({ error: 'Application not found' }, 404);
 
     const { application, ...compact } = result;
-    // Stripped rather than passed through: `application` is this seam's business, not the wire's,
-    // and a compact response is compact because a caller said it wanted nothing more than the
-    // acknowledgement.
+    // `application` is internal to this seam; compact callers get only the acknowledgement.
     if (c.req.query('response') === 'compact') return c.json(compact);
 
     if (application) return c.json(application);
@@ -94,9 +56,8 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
   }
 
   /**
-   * `?jobUrl=` keeps the legacy full-row lookup. Current clients add `response=compact` to get the
-   * Duplicate Guard's summary without loading snapshots. This remains a query rather than its own
-   * path because `/applications/…` is already claimed by the `:id` route below.
+   * `?jobUrl=` returns full matching rows; with `response=compact` it returns the Duplicate Guard's
+   * summary instead. A query, since `/applications/…` is taken by `:id`.
    */
   route.get('/applications', queryParams(ListApplicationsQuerySchema), async (c) => {
     const { jobUrl } = c.req.valid('query');
@@ -118,10 +79,7 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     return c.json(application);
   });
 
-  /**
-   * `idempotency-key` is optional and honoured when given — see `applicationStore.ts`'s `create`.
-   * A caller with nothing to retry (nothing today reads it back) never has to send one.
-   */
+  /** An optional `idempotency-key` header makes retries safe (see `ApplicationStore.create`). */
   route.post('/applications', jsonBody(NewApplicationSchema), async (c) =>
     writeResponse(
       c,
@@ -140,12 +98,7 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
       ),
   );
 
-  /**
-   * Registered before `PATCH /applications/:id`? No — order doesn't matter between these two,
-   * because `/applications/:id/stage` has a path segment the `:id` pattern can't match. It is
-   * written after the plain `:id` routes only to keep the file's read order (reads, create, update,
-   * then tracking).
-   */
+  /** Stage changes (dashboard). */
   route.patch(
     '/applications/:id/stage',
     pathParams(ApplicationIdParamSchema),
@@ -170,11 +123,7 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
       ),
   );
 
-  /**
-   * The only note operation that isn't an append. `:noteId` is a path parameter rather than a body,
-   * because deleting one note is addressing it — and it keeps the route shaped like the resource
-   * the append created.
-   */
+  /** Deletes one note, addressed by path. */
   route.delete(
     '/applications/:id/notes/:noteId',
     pathParams(ApplicationNoteIdParamSchema),
@@ -184,11 +133,7 @@ export function applicationsRoute(store: ApplicationStore): Hono<AuthEnv> {
     },
   );
 
-  /**
-   * Deletes the Application itself, not just a note on it. Answers the same shape `writeResponse`
-   * would for a compact caller (`{ id }`) or a 404 for a row this user doesn't own — there's no
-   * full-row case to fall back to, since a delete leaves nothing to read back.
-   */
+  /** Deletes the Application: `{ id }`, or 404 if this user has no such row. */
   route.delete('/applications/:id', pathParams(ApplicationIdParamSchema), async (c) => {
     const result = await store.deleteApplication(c.get('userId'), c.req.valid('param').id);
     if (!result) return c.json({ error: 'Application not found' }, 404);

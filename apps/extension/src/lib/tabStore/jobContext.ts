@@ -1,11 +1,6 @@
 /**
- * The Job Description a candidate collected for this tab before any Analysis Step ran.
- *
- * Retained across the ATS routes that belong to one posting — an overview page and the `/apply`
- * screen behind it — which is why it is scoped by Job Key rather than by URL. The pure URL rules it
- * is scoped by are `lib/jobContext.ts`; keeping the draft is this module's, and keeping the two
- * apart is what stops a persistence concern from being added to a module `tabStore/record.ts`
- * itself imports.
+ * Persists the Job Description collected for a tab before any analysis, scoped by Job Key so it
+ * survives same-posting routes (overview → `/apply`). The URL rules are `lib/jobContext.ts`'s.
  */
 import { jobKeyForUrl, type JobContext, type JobDescriptionSource } from '../jobContext';
 import { read, withTabLock, write } from './record';
@@ -16,8 +11,8 @@ export async function getJobContext(tabId: number): Promise<JobContext | null> {
 }
 
 /**
- * Persists the editable pre-analysis draft through the service worker's per-tab write queue.
- * Clearing the editor removes the context instead of leaving an empty draft that can be restored.
+ * Persists the pre-analysis draft through the per-tab write queue. Clearing the editor removes the
+ * context rather than storing an empty draft.
  */
 export async function setJobContext(
   tabId: number,

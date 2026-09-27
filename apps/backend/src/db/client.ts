@@ -17,9 +17,7 @@ function resolveDb(): Db {
   }
 
   const pool = new Pool({ connectionString: databaseUrl });
-  // pg-pool emits 'error' on the pool (not just a rejected query) when an idle client errors —
-  // e.g. a Postgres restart. An EventEmitter with no 'error' listener throws and crashes the
-  // process, so this keeps a transient DB hiccup from taking down every in-flight request.
+  // An idle client's error is emitted on the pool; without a listener it would crash the process.
   pool.on('error', (err) => {
     console.error('Unexpected error on idle Postgres client', err);
   });
@@ -28,24 +26,12 @@ function resolveDb(): Db {
 }
 
 /**
- * The Drizzle client used by every route to read/write `profiles` and `applications`. Uses `pg`
- * (`drizzle-orm/node-postgres`) — a plain wire-protocol connection pool, not an HTTP driver — so
- * the same `DATABASE_URL` works unchanged against a local or Docker Postgres, a self-hosted one,
- * or a serverless cloud database (e.g. Neon): those providers' connection strings speak standard
- * Postgres wire protocol too, and only need their own HTTP drivers (e.g.
- * `@neondatabase/serverless`) when the caller can't open a raw TCP socket at all (a Cloudflare
- * Worker, mainly). This backend runs as a Node process both in dev and in `dist/`, so that
- * constraint doesn't apply here; see `docs/adr/0001-cloudflare-single-worker.md`, whose driver
- * choice this supersedes now that running locally without any cloud account is a goal in its own
- * right — a Worker port, if it happens, can special-case an HTTP driver in its own entrypoint
- * rather than in this shared client.
+ * The Drizzle client over a `pg` connection pool — standard Postgres wire protocol, so one
+ * `DATABASE_URL` works for local, Docker or cloud Postgres (ADR-0002). A Worker port would need an
+ * HTTP driver in its own entrypoint.
  *
- * Lazily initialized on first use, not at import time — so importing this module (or anything
- * that transitively imports it, like a route file) doesn't require `DATABASE_URL` to be set.
- * `DATABASE_URL` is only actually needed when a query runs. This matters for tests: a route test
- * that mocks out the repository layer (e.g. `extract-job.test.ts`, which never touches the
- * database) can still import `app.ts` without a `.env` file, because the repository it doesn't
- * exercise never reaches into `db`.
+ * Lazily initialized on first query, so importing it (e.g. via `app.ts` in tests) doesn't require
+ * `DATABASE_URL`.
  */
 export const db: Db = new Proxy({} as Db, {
   get(_target, prop, receiver) {

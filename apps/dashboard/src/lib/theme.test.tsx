@@ -1,10 +1,6 @@
 /**
- * The dashboard's theme preference — a port of the extension's, differing in the two places that
- * matter: it persists to `localStorage`, and new visitors default to dark mode.
- *
- * Both of those are guarded rather than assumed, and the guards are the point: a browser with site
- * data blocked *throws* on `localStorage` access. The theme is read before anything else is drawn,
- * so that would otherwise take the whole app down at its first render.
+ * The dashboard theme: persisted in `localStorage`, default dark, and never throwing when storage
+ * is blocked (it's read before anything renders).
  */
 import { act, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

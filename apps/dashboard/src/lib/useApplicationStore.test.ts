@@ -1,10 +1,6 @@
 /**
- * The store at its own interface.
- *
- * Its hardest rules — write ordering, staleness, and a rollback that touches only what one mutation
- * owns — are about what happens *between* two writes to one Application. Reaching them through the
- * app's DOM means racing two clicks and asserting on rendered text; here they are stated directly,
- * which is where they belong now that the store owns them rather than one of its callers.
+ * The store at its own interface: write ordering, staleness, and field-specific rollback between
+ * concurrent writes to one Application.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -135,7 +131,9 @@ describe('useApplicationStore', () => {
     await waitFor(() => expect(order).toEqual(['phone_screen', 'onsite']));
   });
 
-  /** A superseded write's authoritative Stage is a stale Stage — applying it undoes a later click. */
+  /**
+   * A superseded write's authoritative Stage is a stale Stage — applying it undoes a later click.
+   */
   it('ignores a superseded Stage write when it answers', async () => {
     const first = deferred<{ id: string; stage: ApplicationStage }>();
     const store = await loadedStore(

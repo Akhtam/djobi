@@ -1,17 +1,7 @@
 /**
- * A real `<select>` painted to look like whatever the caller needs: a visible value and a caret,
- * with the actual `<select>` laid over both of them invisibly so the browser's own picker,
- * keyboard support and focus handling all still work. A select's rendered value can't be styled
- * consistently across browsers, which is why the visible half is a sibling rather than the
- * select's own text.
- *
- * Extracted from `StageSelect` once `Analytics.tsx`'s date-range control needed the identical
- * three-layer trick under a different skin — a bordered pill instead of a stage badge. One
- * implementation now, so a fix to the overlay sizing, the caret's stroke, or the focus ring has to
- * land once rather than in both places and risk drifting the way two copies of the same markup do.
- *
- * Purely structural: every class name is the caller's own, so `StageSelect`'s fixed-width colored
- * badge and Analytics' compact bordered pill can look nothing alike while sharing this underneath.
+ * A real `<select>` laid invisibly over a styled value and caret, so the browser's picker, keyboard
+ * and focus handling still work while the look is custom. Purely structural — class names are the
+ * caller's (`StageSelect`'s badge, Analytics' range pill).
  */
 export function FakeSelect<T extends string>({
   value,

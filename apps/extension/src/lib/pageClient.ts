@@ -1,18 +1,7 @@
 /**
- * Talking to a tab's content script: the three request/response messages the extension waits on,
- * and the transport rules they have to obey. {@link notifyPage} is the one exception — a
- * fire-and-forget broadcast with no response to wait on, the page-facing counterpart of
- * `lib/messages.ts`'s `notify()` — kept here rather than there because every other message to a
- * content script already is.
- *
- * The request/response three live behind an interface because they're the half of the Application
- * Pipeline's outside world that has real behaviour to hide — the `chrome.runtime.lastError`
- * handshake and the `ArrayBuffer` encoding below are both easy to get wrong and invisible when you
- * do. They used to sit inline in a default-parameter object in `background/applicationPipeline.ts`,
- * which meant the only way to exercise them was to run the whole pipeline.
- *
- * Deliberately separate from the coordination protocol in `lib/messages.ts`: that module is
- * panel/content-script -> background; everything here is background -> content script.
+ * Background -> content script messaging: the three request/response commands behind
+ * {@link PageClient} (hiding the `lastError` handshake and byte encoding), plus the fire-and-forget
+ * {@link notifyPage}. The opposite direction is `lib/messages.ts`.
  */
 import type { DetectedField, ZodType, ZodTypeOf } from '@djobi/shared';
 import {
@@ -32,13 +21,9 @@ import type {
 } from './messages';
 
 /**
- * What the Fill Step asks the page to do, in the pipeline's own terms: the fields, the values to
- * write, and the resume to attach as raw bytes.
- *
- * Deliberately not the `FILL_FORM` wire message. That message carries its bytes as `number[]`,
- * because `chrome.runtime` messaging can't carry an `ArrayBuffer` — a transport detail that has no
- * business in the step deciding *what* to fill. Naming which upload input receives the file is
- * likewise absent: `content/index.ts` owns that choice, being the only side that can see the page.
+ * What the Fill Step asks the page to do: fields, values, and the resume as raw bytes. Not the wire
+ * message (which carries `number[]`, since messaging can't send an `ArrayBuffer`); which upload
+ * input gets the file is `content/index.ts`'s choice.
  */
 export interface FillPageCommand {
   /** The run being filled, kept by the page so it can name it if the candidate then submits. */
@@ -51,15 +36,14 @@ export interface FillPageCommand {
 /** The tab-facing half of the Application Pipeline's outside world. */
 export interface PageClient {
   /**
-   * Fills the tab's form, resolving with the page's own account of what landed — or `null` when no
-   * frame answers (no content script, or a content script orphaned by an extension reload), which
-   * the caller must not read as "nothing was filled".
-   *
-   * `frameId` addresses the frame known to hold the form. Omitting it broadcasts to every frame and
-   * takes whichever answers first — see {@link ask}.
+   * Fills the form, resolving with the page's account of what landed — or `null` when no frame
+   * answered, which doesn't mean nothing was filled. Pass `frameId` when known (see {@link ask}).
    */
   fill(tabId: number, command: FillPageCommand, frameId?: number): Promise<FillFormResult | null>;
-  /** Re-scans the tab's live form, or resolves `null` when no frame answers (no content script, no form). */
+  /**
+   * Re-scans the tab's live form, or resolves `null` when no frame answers (no content script, no
+   * form).
+   */
   scan(tabId: number, frameId?: number): Promise<JobPageData | null>;
   /** Reads every addressable frame and returns the strongest posting found across them. */
   readPosting(tabId: number): Promise<PostingReadOutcome>;
@@ -124,19 +108,11 @@ function sendToPage<Schema extends ZodType>(
 }
 
 /**
- * Sends one command to a tab and resolves with its reply, or `null` if no frame answered.
+ * Sends one command to a tab and resolves with its reply, or `null` if no frame answered. Reading
+ * `chrome.runtime.lastError` marks it handled.
  *
- * Reading `chrome.runtime.lastError` is what marks it handled. An unanswered message — no content
- * script in the tab, or no frame holding a form — would otherwise log as an unchecked runtime
- * error, so this is not optional even though nothing reads the value.
- *
- * **Pass `frameId` whenever it is known.** Without it `chrome.tabs.sendMessage` delivers to every
- * frame in the tab and resolves with whichever calls `sendResponse` first, dropping the rest — and
- * the content script is injected into all frames (`manifest.ts`, `all_frames: true`), third-party
- * ones included. An invisible hCaptcha iframe answers instantly with an empty result while the
- * frame that actually owns the form is still waiting out its verification settle, so the fast,
- * wrong answer wins deterministically. The two-argument form remains for the case where no frame
- * has reported yet and there is genuinely nobody to address.
+ * **Pass `frameId` when known.** Without it every frame receives the message and the first reply
+ * wins — often an invisible third-party iframe answering empty before the form's frame finishes.
  */
 function ask<Schema extends ZodType>(
   tabId: number,
@@ -151,13 +127,8 @@ function ask<Schema extends ZodType>(
 }
 
 /**
- * Broadcasts a fire-and-forget command to a tab's content script — the page-facing equivalent of
- * `lib/messages.ts`'s `notify()`. Not addressed to a frame: `SHOW_SAVED_TOAST`, its only caller, is
- * sent after a submission that has usually already navigated the tab, so the frame that was filled
- * may no longer exist and the top frame is as good a place as any to show it.
- *
- * Reading `chrome.runtime.lastError` is what marks the callback handled; nothing here reads the
- * value or retries; there is no response to validate.
+ * Broadcasts a fire-and-forget command (only `SHOW_SAVED_TOAST`). Unaddressed: the filled frame may
+ * be gone after the submit navigated.
  */
 export function notifyPage(tabId: number, message: ShowSavedToastCommandMessage): void {
   chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
@@ -177,12 +148,9 @@ function frameIdsForTab(tabId: number): Promise<number[]> {
 }
 
 /**
- * One sweep's result. `invalidError` rides alongside an `unavailable` outcome rather than being
- * thrown from here, because a frame answering with an unexpected shape is most often a *stale*
- * content script — an orphan left by an extension reload — which is exactly the case
- * {@link reconnectContentScripts} exists to repair. Throwing at the sweep pre-empted that repair
- * and told the candidate to reload the tab instead. {@link PageClient.readPosting} raises it only
- * once reinjection has been tried and the frames still answer with nothing usable.
+ * One sweep's result. An invalid reply rides along instead of throwing, since it's usually an
+ * orphaned content script that {@link reconnectContentScripts} can fix; it's raised only if frames
+ * still answer badly after reinjection.
  */
 type ScrapeSweep = { outcome: PostingReadOutcome; invalidError?: PageResponseError };
 
@@ -215,7 +183,9 @@ async function scrapeFrames(tabId: number, frameIds: number[]): Promise<ScrapeSw
   };
 }
 
-/** Reinjects content scripts only for the read-only scrape operation. Fill must never be replayed. */
+/**
+ * Reinjects content scripts only for the read-only scrape operation. Fill must never be replayed.
+ */
 function reconnectContentScripts(tabId: number): Promise<boolean> {
   if (!chrome.runtime.getManifest || !chrome.scripting?.executeScript)
     return Promise.resolve(false);

@@ -5,12 +5,12 @@ import {
   AnalyzeApplicationResponseSchema,
   AnswerChatRequestSchema,
   AnswerChatResponseSchema,
-  AnswerQuestionsRequestSchema,
+  AnswerQuestionsProfileSchema,
   BackendErrorBodySchema,
   DuplicateApplicationSummarySchema,
   ExtractResumeResponseSchema,
   SaveProfileRequestSchema,
-  TailorResumeRequestSchema,
+  TailorResumeProfileSchema,
 } from './wire.js';
 
 const latestApplication = {
@@ -110,8 +110,8 @@ describe('ExtractResumeResponseSchema', () => {
   });
 });
 
-describe('TailorResumeRequestSchema', () => {
-  it('carries the profile cap and role selection controls across the wire', () => {
+describe('TailorResumeProfileSchema', () => {
+  it('keeps the profile cap and role selection controls', () => {
     const profile = ProfileSchema.parse({
       fullName: 'Ada Lovelace',
       email: 'ada@example.com',
@@ -134,20 +134,9 @@ describe('TailorResumeRequestSchema', () => {
       stories: [],
     });
 
-    const parsed = TailorResumeRequestSchema.parse({
-      profile,
-      jobInfo: {
-        company: 'Babbage',
-        team: null,
-        roleTitle: 'Programmer',
-        seniority: null,
-        location: null,
-        requirements: [],
-        keywords: [],
-      },
-    });
+    const parsed = TailorResumeProfileSchema.parse(profile);
 
-    expect(parsed.profile).toEqual({
+    expect(parsed).toEqual({
       maxBulletsPerRole: 6,
       skills: ['Mathematics'],
       workExperience: [expect.objectContaining({ maxBullets: 1, starredIndices: [0] })],
@@ -155,7 +144,7 @@ describe('TailorResumeRequestSchema', () => {
   });
 });
 
-describe('AnswerQuestionsRequestSchema', () => {
+describe('AnswerQuestionsProfileSchema', () => {
   it('keeps bullet-selection controls out of answer-drafting grounding', () => {
     const profile = ProfileSchema.parse({
       fullName: 'Ada Lovelace',
@@ -179,21 +168,9 @@ describe('AnswerQuestionsRequestSchema', () => {
       stories: [],
     });
 
-    const parsed = AnswerQuestionsRequestSchema.parse({
-      profile,
-      jobInfo: {
-        company: 'Babbage',
-        team: null,
-        roleTitle: 'Programmer',
-        seniority: null,
-        location: null,
-        requirements: [],
-        keywords: [],
-      },
-      questions: [],
-    });
+    const parsed = AnswerQuestionsProfileSchema.parse(profile);
 
-    expect(parsed.profile.workExperience).toEqual([
+    expect(parsed.workExperience).toEqual([
       {
         company: 'Analytical Engines Ltd',
         title: 'Programmer',

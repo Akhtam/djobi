@@ -18,11 +18,8 @@ export interface ListEditor<T> {
 }
 
 /**
- * The list operations for one Profile key.
- *
- * Only the fields inside an entry actually differ between sections, so only those cross as
- * `patch`. `blank` is a thunk rather than a value, so a fresh entry can carry something generated
- * (a story id) without every caller paying for one whether it adds a row or not.
+ * Add/update/remove for one Profile list key. `blank` is a thunk so a new entry can carry a
+ * generated value (a story id).
  */
 export function listEditor<K extends ProfileListKey>(
   profile: Profile,
@@ -43,12 +40,8 @@ export function listEditor<K extends ProfileListKey>(
 }
 
 /**
- * One row of the combined Certifications & Awards section.
- *
- * Flat rather than a discriminated union of `Certification`/`Award`: `ListEditor`'s `update` takes
- * a `Partial<CredentialItem>` patch, and `Partial` of a union only keeps the keys every member
- * shares — `description` (award-only) would silently disappear from what a patch is allowed to
- * contain. `description` stays meaningless, not absent, on a certification row.
+ * One row of the combined Certifications & Awards section. Flat, not a union, because `Partial` of
+ * a union drops award-only `description`; on a certification it's simply unused.
  */
 export interface CredentialItem {
   kind: 'certification' | 'award';
