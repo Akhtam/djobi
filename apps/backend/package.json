@@ -22,26 +22,26 @@
   "dependencies": {
     "@djobi/shared": "workspace:*",
     "@hono/node-server": "^2.1.1",
-    "@libpdf/core": "^0.4.2",
-    "@openrouter/ai-sdk-provider": "^3.0.0",
-    "ai": "^7.0.99",
-    "better-auth": "^1.7.4",
-    "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.7",
+    "@libpdf/core": "^0.5.1",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.118",
+    "better-auth": "^1.7.6",
+    "dotenv": "^18.0.4",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.9",
     "pg": "^8.23.0",
     "unpdf": "^1.8.1",
-    "zod": "^4.6.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@expo-google-fonts/noto-sans": "^0.4.2",
-    "@types/node": "^22.20.2",
+    "@types/node": "^26.6.3",
     "@types/pg": "^8.23.1",
-    "drizzle-kit": "^0.31.10",
-    "subset-font": "^2.7.0",
-    "tsx": "^4.23.13",
+    "drizzle-kit": "^0.31.11",
+    "subset-font": "^2.9.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.2"
   }
 }
