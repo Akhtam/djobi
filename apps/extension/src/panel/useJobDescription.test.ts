@@ -86,12 +86,20 @@ describe('useJobDescription', () => {
   it('writes onto the run rather than the draft while a run exists', () => {
     fakeChrome({ tab: { id: 1, url: OVERVIEW } });
     const edit = vi.fn();
-    const run = { jobDescription: 'As analyzed.', answers: [], tabUrl: OVERVIEW } as never;
+    const run = {
+      runId: 'run-1',
+      jobDescription: 'As analyzed.',
+      answers: [],
+      tabUrl: OVERVIEW,
+    } as never;
 
     const { result } = renderHook(() => useJobDescription(activeRun({ run, edit })));
     act(() => result.current.edit('Corrected posting.'));
 
-    expect(edit).toHaveBeenCalledWith({ answers: [], jobDescription: 'Corrected posting.' });
+    expect(edit).toHaveBeenCalledWith('run-1', {
+      answers: [],
+      jobDescription: 'Corrected posting.',
+    });
   });
 
   it('refuses an edit while the run is being saved', () => {

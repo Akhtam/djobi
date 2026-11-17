@@ -60,10 +60,11 @@ export interface RunView {
    */
   beginCommand: (step: RunStep) => () => void;
   /**
-   * Applies edits locally at once and sends them. If the store refuses (e.g. mid-save), the edit is
-   * dropped and the run re-read; if nothing answered, it's kept and the next keystroke resends.
+   * Applies edits to run `runId` locally at once and sends them; ignored unless that is the run
+   * this view holds. If the store refuses (e.g. mid-save), the edit is dropped and the run re-read;
+   * if nothing answered, it's kept and the next keystroke resends.
    */
-  edit: (edits: RunEdits) => void;
+  edit: (runId: string, edits: RunEdits) => void;
 }
 
 const EMPTY: RunViewSnapshot = { run: null, pending: null, dispatch: null };
@@ -192,9 +193,9 @@ export function createRunView(tabId: number, ports: RunViewPorts = chromeRunView
       };
     },
 
-    edit(edits) {
+    edit(runId, edits) {
       const run = state.run;
-      if (!run) return;
+      if (!run || run.runId !== runId) return;
 
       const merged = { ...run, ...edits };
       set({ run: merged });

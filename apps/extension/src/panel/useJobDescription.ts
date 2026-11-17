@@ -108,7 +108,7 @@ export function useJobDescription(
       if (!canEditRun(status)) return;
 
       if (run) {
-        editRun({ answers: run.answers, jobDescription: value });
+        editRun(run.runId, { answers: run.answers, jobDescription: value });
         return;
       }
       if (tabId === null || !tabUrl) return;

@@ -42,20 +42,19 @@ export interface ActiveRun {
    */
   beginCommand: (step: RunStep) => () => void;
   /**
-   * Persists the candidate's edits, updating `run` at once. `tailoredResume` is omitted unless
-   * edited, so keystrokes don't resend it. If the store refuses (a save in flight), the edit is
-   * dropped and the run re-read.
+   * Persists the candidate's edits to run `runId`, updating `run` at once. Refused unless this
+   * panel is showing that run and its status allows edits (the store enforces both too, in
+   * `applyPanelEdit`). `runId` is explicit because an edit belongs to the run it was made on — an
+   * Ask thread's answer to the run it was seeded from, which a tab switch or Re-analyze can replace.
+   * `tailoredResume` is omitted unless edited, so keystrokes don't resend it. If the store refuses
+   * (a save in flight), the edit is dropped and the run re-read.
    */
-  edit: (edits: RunEdits) => void;
-  /**
-   * Rewrites one drafted answer on run `runId` — refused if this panel no longer shows that run
-   * (the store enforces it too, in `applyPanelEdit`). `runId` is explicit because an Ask thread's
-   * answer belongs to the run it was seeded from.
-   */
+  edit: (runId: string, edits: RunEdits) => void;
+  /** Rewrites one drafted answer on run `runId`; refused like {@link edit}. */
   updateAnswer: (runId: string, fieldId: string, answer: string) => void;
   /**
    * Replaces the run's Tailored Resume with the reviewed version (`panel/ResumeReview.tsx`).
-   * Refused like {@link updateAnswer}.
+   * Refused like {@link edit}.
    */
   updateTailoredResume: (runId: string, tailoredResume: TailoredResume) => void;
 }
@@ -108,23 +107,26 @@ export function useActiveRun(enabled: boolean): ActiveRun {
   // A delivery failure is never on the stored run, so it goes with `status`.
   const failure = dispatch?.failure ?? run?.failure ?? null;
   const review = reviewOf(run, status, failure);
-  const { beginCommand, edit } = view;
+  const { beginCommand } = view;
+
+  function edit(runId: string, edits: RunEdits) {
+    // Not shown here (another job's run) or not editable now (a save in flight). Whether `runId`
+    // is still the run is the view's check: it owns which run that is.
+    if (!run || !canEditRun(status)) return;
+    view.edit(runId, edits);
+  }
 
   function updateAnswer(runId: string, fieldId: string, answer: string) {
-    // Not this panel's run any more: the candidate moved to another tab or re-analyzed between the
-    // answer being drafted and it being applied.
-    if (!run || run.runId !== runId || !canEditRun(status)) return;
-
+    if (!run) return;
     const answers: QuestionAnswer[] = run.answers.map((existing) =>
       existing.fieldId === fieldId ? { ...existing, answer } : existing,
     );
-    edit({ answers, jobDescription: run.jobDescription });
+    edit(runId, { answers, jobDescription: run.jobDescription });
   }
 
   function updateTailoredResume(runId: string, tailoredResume: TailoredResume) {
-    if (!run || run.runId !== runId || !canEditRun(status)) return;
-
-    edit({ answers: run.answers, jobDescription: run.jobDescription, tailoredResume });
+    if (!run) return;
+    edit(runId, { answers: run.answers, jobDescription: run.jobDescription, tailoredResume });
   }
 
   return {

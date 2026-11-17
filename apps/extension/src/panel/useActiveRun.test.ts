@@ -316,7 +316,10 @@ describe('useActiveRun: optimistic status', () => {
 
     act(() => result.current.beginCommand('fill'));
     act(() =>
-      result.current.edit({ answers: run.answers, jobDescription: 'edited while filling' }),
+      result.current.edit(run.runId, {
+        answers: run.answers,
+        jobDescription: 'edited while filling',
+      }),
     );
     await waitFor(() => expect(result.current.run?.jobDescription).toBe('edited while filling'));
 
@@ -373,8 +376,8 @@ describe('useActiveRun: optimistic status', () => {
     const result = await mount();
 
     act(() => result.current.beginCommand('fill'));
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'A' }));
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'A' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'AB' }));
 
     await act(() => held.echo(0));
 
@@ -455,7 +458,7 @@ describe('useActiveRun: edits', () => {
     const result = await mount();
 
     act(() =>
-      result.current.edit({
+      result.current.edit(run.runId, {
         answers: [{ ...run.answers[0]!, answer: 'Edited.' }],
         jobDescription: 'Senior Engineer at Acme...',
       }),
@@ -478,7 +481,7 @@ describe('useActiveRun: edits', () => {
     const result = await mount();
 
     act(() =>
-      result.current.edit({
+      result.current.edit(run.runId, {
         answers: [{ ...run.answers[0]!, answer: 'Edited.' }],
         jobDescription: 'edited',
       }),
@@ -515,8 +518,8 @@ describe('useActiveRun: edits', () => {
     });
     const result = await mount();
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'A' }));
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'AB' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'A' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'AB' }));
 
     // Let the refusal's store re-read settle — the point at which the old code clobbered 'AB'.
     await settle();
@@ -538,14 +541,18 @@ describe('useActiveRun: edits', () => {
       callback(),
     );
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'typed while dead' }));
+    act(() =>
+      result.current.edit(run.runId, { answers: run.answers, jobDescription: 'typed while dead' }),
+    );
     await settle();
 
     expect(result.current.run?.jobDescription).toBe('typed while dead');
 
     // And the queue entry is gone, so the next keystroke is sent rather than swallowed as a
     // duplicate of a send that will never be echoed.
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'typed while dead!' }));
+    act(() =>
+      result.current.edit(run.runId, { answers: run.answers, jobDescription: 'typed while dead!' }),
+    );
     await settle();
 
     expect(callsOfType(sendMessage, 'UPDATE_RUN')).toHaveLength(2);
@@ -558,7 +565,10 @@ describe('useActiveRun: edits', () => {
 
     act(() => result.current.updateAnswer(run.runId, 'f-why', 'Edited.'));
     act(() =>
-      result.current.edit({ answers: result.current.run!.answers, jobDescription: 'pasted' }),
+      result.current.edit(run.runId, {
+        answers: result.current.run!.answers,
+        jobDescription: 'pasted',
+      }),
     );
 
     // The write is async; wait for it to land before reopening, or the reopen races it.
@@ -576,7 +586,7 @@ describe('useActiveRun: edits', () => {
     const { sendMessage } = stubChrome();
     const result = await mount();
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'edited' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'edited' }));
 
     expect(sendMessage).toHaveBeenCalledWith(
       typedMessageEnvelope({
@@ -594,8 +604,10 @@ describe('useActiveRun: edits', () => {
     stubChrome({ sendMessage: held.sendMessage });
     const result = await mount();
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'B' }));
-    act(() => result.current.edit({ answers: run.answers, jobDescription: run.jobDescription }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'B' }));
+    act(() =>
+      result.current.edit(run.runId, { answers: run.answers, jobDescription: run.jobDescription }),
+    );
 
     expect(held.queued.map((message) => message.updates.jobDescription)).toEqual([
       'B',
@@ -608,6 +620,33 @@ describe('useActiveRun: edits', () => {
     expect((await getPipelineRun(1))?.jobDescription).toBe(run.jobDescription);
   });
 
+  it('refuses an edit for a run the panel is no longer showing', async () => {
+    const { sendMessage } = stubChrome();
+    const result = await mount();
+
+    act(() =>
+      result.current.edit('a-run-from-another-posting', {
+        answers: run.answers,
+        jobDescription: 'Wrong.',
+      }),
+    );
+
+    expect(result.current.run?.jobDescription).toBe(run.jobDescription);
+    expect(callsOfType(sendMessage, 'UPDATE_RUN')).toHaveLength(0);
+  });
+
+  it('refuses an edit while a save is in flight, since that snapshot is already being written', async () => {
+    const { sendMessage } = stubChrome();
+    const result = await mount(runAt('saving'));
+
+    act(() =>
+      result.current.edit(run.runId, { answers: run.answers, jobDescription: 'Too late.' }),
+    );
+
+    expect(result.current.run?.jobDescription).toBe(run.jobDescription);
+    expect(callsOfType(sendMessage, 'UPDATE_RUN')).toHaveLength(0);
+  });
+
   it("forgets an unechoed edit once the run is replaced, so the new run's progress isn't overwritten", async () => {
     // An edit's echo can be lost — the background replaced the run (Re-analyze) before writing it.
     // Left pending, the dead entry made every later write to the *new* run look like a stale echo,
@@ -616,7 +655,9 @@ describe('useActiveRun: edits', () => {
     const { writeFromBackground } = stubChrome({ sendMessage: held.sendMessage });
     const result = await mount();
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'never echoed' }));
+    act(() =>
+      result.current.edit(run.runId, { answers: run.answers, jobDescription: 'never echoed' }),
+    );
     await settle();
 
     const reanalyzed = { ...run, runId: 'run-2', status: 'analyzing' as const, answers: [] };
@@ -635,7 +676,7 @@ describe('useActiveRun: edits', () => {
     // A run mid-Analysis Step, with results the background is the authority on.
     const result = await mount({ ...run, status: 'analyzing', filledFieldCount: 7 });
 
-    act(() => result.current.edit({ answers: run.answers, jobDescription: 'pasted' }));
+    act(() => result.current.edit(run.runId, { answers: run.answers, jobDescription: 'pasted' }));
 
     await vi.waitFor(async () => expect((await getPipelineRun(1))?.jobDescription).toBe('pasted'));
     // The edit landed, and everything the background owns came through untouched.

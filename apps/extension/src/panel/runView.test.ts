@@ -83,7 +83,7 @@ describe('createRunView', () => {
     const { view, write } = await started();
     view.beginCommand('fill');
 
-    view.edit(withAnswer('Edited.'));
+    view.edit(run.runId, withAnswer('Edited.'));
     write({ ...run, ...withAnswer('Edited.') }, 'edit');
 
     expect(view.snapshot().pending).toBe('filling');
@@ -92,11 +92,22 @@ describe('createRunView', () => {
   it('keeps a newer keystroke when an older one echoes back', async () => {
     const { view, write } = await started();
 
-    view.edit(withAnswer('A'));
-    view.edit(withAnswer('AB'));
+    view.edit(run.runId, withAnswer('A'));
+    view.edit(run.runId, withAnswer('AB'));
     write({ ...run, ...withAnswer('A') }, 'edit');
 
     expect(view.snapshot().run?.answers[0]?.answer).toBe('AB');
+  });
+
+  it('ignores an edit aimed at a run it no longer holds', async () => {
+    // An Ask thread's answer belongs to the run it was seeded from, which a Re-analyze can replace
+    // while the thread is open: that answer must not land on the new run.
+    const { view, updates } = await started();
+
+    view.edit('a-replaced-run', withAnswer('Meant for another run.'));
+
+    expect(view.snapshot().run).toEqual(run);
+    expect(updates).toHaveLength(0);
   });
 
   it("ignores a superseded attempt's delivery failure", async () => {
@@ -117,7 +128,7 @@ describe('createRunView', () => {
   it('re-reads the stored run when the store refuses an edit', async () => {
     const { view, updates } = await started();
 
-    view.edit(withAnswer('Refused.'));
+    view.edit(run.runId, withAnswer('Refused.'));
     updates[0]!.answer({ applied: false, delivered: true });
     await settle();
 
@@ -127,7 +138,7 @@ describe('createRunView', () => {
   it('keeps an edit nothing answered', async () => {
     const { view, updates } = await started();
 
-    view.edit(withAnswer('Typed.'));
+    view.edit(run.runId, withAnswer('Typed.'));
     updates[0]!.answer({ applied: false, delivered: false });
     await settle();
 
