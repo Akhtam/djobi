@@ -110,6 +110,24 @@ describe('createRunView', () => {
     expect(updates).toHaveLength(0);
   });
 
+  it('forgets an unechoed edit when a re-read finds the run replaced', async () => {
+    // The re-read after a refusal can be the first the view hears of a new run. The old run's
+    // unechoed edit must go then, or the new run's later progress is overlaid with local fields.
+    const { view, write, updates, setStored } = await started();
+    view.edit(run.runId, withAnswer('A'));
+
+    const replaced = { ...run, runId: 'run-2', ...withAnswer('First draft.') };
+    setStored(replaced);
+    view.edit(run.runId, withAnswer('AB'));
+    updates[1]!.answer({ applied: false, delivered: true });
+    await settle();
+    expect(view.snapshot().run?.runId).toBe('run-2');
+
+    write({ ...replaced, ...withAnswer('Second draft.') }, 'progress');
+
+    expect(view.snapshot().run?.answers[0]?.answer).toBe('Second draft.');
+  });
+
   it("ignores a superseded attempt's delivery failure", async () => {
     const { view } = await started();
 

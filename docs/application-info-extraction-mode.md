@@ -793,7 +793,7 @@ Repo (all paths relative to the repo root, line numbers as of `36e3d90`):
 `apps/extension/src/background/{service-worker,router,applicationPipeline,apiDetectors}.ts`,
 `apps/extension/src/content/{index,detect,detectFields,fillForm}.ts`,
 `apps/extension/src/lib/{messages,pageClient,tabStore,runReview,callBackend,backendClient}.ts`,
-`apps/extension/src/panel/{App.tsx,useActiveTab.ts,useActiveRun.ts}`,
+`apps/extension/src/panel/{App.tsx,useActiveTab.ts,usePipelineRun.ts}`,
 `apps/backend/src/{app.ts,routes/*,llm/*}`, `packages/shared/src/{wire,schemas,detectedField,preparedAnswers,screeningAnswers}.ts`,
 and commit `acc42da` ("Fix five silent failures behind Greenhouse autofill").
 
