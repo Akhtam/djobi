@@ -608,6 +608,28 @@ describe('useActiveRun: edits', () => {
     expect((await getPipelineRun(1))?.jobDescription).toBe(run.jobDescription);
   });
 
+  it("forgets an unechoed edit once the run is replaced, so the new run's progress isn't overwritten", async () => {
+    // An edit's echo can be lost — the background replaced the run (Re-analyze) before writing it.
+    // Left pending, the dead entry made every later write to the *new* run look like a stale echo,
+    // and this panel's old fields were laid over the background's fresh ones.
+    const held = holdEdits();
+    const { writeFromBackground } = stubChrome({ sendMessage: held.sendMessage });
+    const result = await mount();
+
+    act(() => result.current.edit({ answers: run.answers, jobDescription: 'never echoed' }));
+    await settle();
+
+    const reanalyzed = { ...run, runId: 'run-2', status: 'analyzing' as const, answers: [] };
+    await act(() => writeFromBackground(reanalyzed));
+    const drafted = [
+      { fieldId: 'f-why', question: 'Why us?', answer: 'Fresh draft.', sourceStoryIds: [] },
+    ];
+    await act(() => writeFromBackground({ ...reanalyzed, status: 'review', answers: drafted }));
+
+    expect(result.current.run?.runId).toBe('run-2');
+    expect(result.current.run?.answers).toEqual(drafted);
+  });
+
   it("never writes the background's fields back, so an in-flight run can't be overwritten by this panel", async () => {
     stubChrome();
     // A run mid-Analysis Step, with results the background is the authority on.

@@ -109,8 +109,18 @@ export function createRunView(tabId: number, ports: RunViewPorts = chromeRunView
     return incoming;
   }
 
+  /**
+   * Drops pending edits when `incoming` is not the run they were made on: an edit's echo carries
+   * its own run, so none can ever arrive, and a dead entry would lay stale fields over every later
+   * write to the new run.
+   */
+  function forgetEditsForOtherRun(incoming: PipelineRunState | null) {
+    if (incoming?.runId !== state.run?.runId) pendingEdits = [];
+  }
+
   function onStoreChange({ current: incoming, progressMoved, pageStateMoved }: PipelineRunChange) {
     ++revision;
+    forgetEditsForOtherRun(incoming);
     const incomingEdits = incoming ? JSON.stringify(panelEditsOf(incoming)) : null;
     // The oldest send this echo could be answering. Oldest rather than any, because an undo can
     // repeat an earlier value verbatim and the queue drains in the order it was filled.
@@ -139,6 +149,7 @@ export function createRunView(tabId: number, ports: RunViewPorts = chromeRunView
     void ports.read(tabId).then((stored) => {
       // A newer store event, or a stop, must not let this older snapshot replace live state.
       if (readRevision !== revision) return;
+      forgetEditsForOtherRun(stored);
       lastSyncedEdits = stored ? JSON.stringify(panelEditsOf(stored)) : null;
       set({ run: reconcile(stored, pendingEdits.length > 0) });
     });
