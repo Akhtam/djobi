@@ -43,7 +43,7 @@ flowchart LR
     end
     sw("background service worker<br/>messageListener → router → applicationPipeline<br/>runClaim · keepAlive (20s beat)<br/>apiDetectors (ATS oracles)<br/>recovery sweep on wake")
     store[("chrome.storage.session<br/>tabStore/record per tab:<br/>pipeline run state · detected frames<br/>job context · authToken")]
-    panel("side panel (React)<br/>Autofill · Log · Ask tabs<br/>usePipelineRun ← onChanged<br/>backendClient (bearer)")
+    panel("side panel (React)<br/>Autofill · Log · Ask tabs<br/>useActiveRun ← onChanged<br/>backendClient (bearer)")
     options("options page<br/>Profile editor + login<br/>@djobi/profile-editor<br/>resume PDF upload")
     dash("dashboard SPA · localhost:5174<br/>(Vite, proxy → backend)")
   end

@@ -70,7 +70,7 @@ flowchart LR
     autofill("AutofillTab")
     logTab("LogApplication")
     ask("AskTab")
-    hooks("hooks<br/>usePipelineRun (runView.ts) · useActiveRun · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands")
+    hooks("hooks<br/>useActiveRun (runView.ts) · useActiveTab<br/>useJobDescription · useAskThread · useResumePreview<br/>pipelineCommands")
     options("options/App<br/>Profile editor · Login · resume upload")
   end
 

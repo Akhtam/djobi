@@ -131,7 +131,7 @@ Two protocols, deliberately separate:
   `REPORT_JOB_PAGE`, `START_ANALYSIS`, `START_FILL`, `START_SAVE_APPLICATION`, and `UPDATE_RUN`. The doc comment at
   `messages.ts:104-121` explains why: holding a message channel open until an Analysis Step finishes
   is exactly the failure the design avoids, since the channel dies with the panel. Progress is read
-  from `tabStore` via `chrome.storage.onChanged` (`panel/usePipelineRun.ts`).
+  from `tabStore` via `chrome.storage.onChanged` (`panel/runView.ts`).
 - **`ContentCommandMessage`** (`messages.ts:102`) — the two request/response messages,
   `SCAN_PAGE` and `FILL_FORM`, sent through `apps/extension/src/lib/pageClient.ts:84`.
 
@@ -259,7 +259,7 @@ surface should extend that existing tab shell rather than introduce a separate m
 | On-demand re-scan                   | `SCAN_PAGE` / `pageClient.scan` (`pageClient.ts:101`) | The Easy Apply input source _is_ a `SCAN_PAGE`                            |
 | Frame-addressed messaging           | `pageClient.ts:67`, `tabStore.ts:284`                 | LinkedIn's modal is same-frame, but the rule still applies                |
 | Backend transport + wire discipline | `callBackend.ts:93`, `backendClient.ts:56`, `wire.ts` | New route slots straight in                                               |
-| Background-run + checkpoint pattern | `applicationPipeline.ts`, `usePipelineRun.ts`         | Same reason: survives the panel closing                                   |
+| Background-run + checkpoint pattern | `applicationPipeline.ts`, `runView.ts`                | Same reason: survives the panel closing                                   |
 | Resume PDF render                   | `POST /render-resume-pdf`                             | Only if extraction mode still emits a resume (open question)              |
 
 ### Genuinely new
@@ -793,7 +793,7 @@ Repo (all paths relative to the repo root, line numbers as of `36e3d90`):
 `apps/extension/src/background/{service-worker,router,applicationPipeline,apiDetectors}.ts`,
 `apps/extension/src/content/{index,detect,detectFields,fillForm}.ts`,
 `apps/extension/src/lib/{messages,pageClient,tabStore,runReview,callBackend,backendClient}.ts`,
-`apps/extension/src/panel/{App.tsx,useActiveTab.ts,usePipelineRun.ts}`,
+`apps/extension/src/panel/{App.tsx,useActiveTab.ts,useActiveRun.ts}`,
 `apps/backend/src/{app.ts,routes/*,llm/*}`, `packages/shared/src/{wire,schemas,detectedField,preparedAnswers,screeningAnswers}.ts`,
 and commit `acc42da` ("Fix five silent failures behind Greenhouse autofill").
 

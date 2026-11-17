@@ -121,7 +121,7 @@ describe('updateRun', () => {
    * The refusal the whole request/response shape exists for: a save in flight locks the run
    * (`lib/run/status.ts`'s `editable`), nothing is written, and no storage echo is ever coming.
    * `delivered` is true because the store did answer — this is a decision about the edit, not a
-   * lost message, and `panel/usePipelineRun.ts` reverts the local value only in this case.
+   * lost message, and `panel/runView.ts` reverts the local value only in this case.
    */
   it('reports a store refusal as delivered, so the caller knows the edit was decided and declined', async () => {
     stubSendMessage({ applied: false });

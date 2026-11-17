@@ -100,12 +100,12 @@ export function asAnalyzedRun(run: PipelineRunState | null): AnalyzedRun | null 
 
 /**
  * The run fields a candidate edits directly; everything else is the background's. Shared by
- * `tabStore/record.ts` and `usePipelineRun.ts` to tell a candidate edit from background progress.
+ * `tabStore/record.ts` and `panel/runView.ts` to tell a candidate edit from background progress.
  */
 export const PANEL_EDITABLE_FIELDS = ['answers', 'jobDescription', 'tailoredResume'] as const;
 type PanelEditableField = (typeof PANEL_EDITABLE_FIELDS)[number];
 
-/** The panel's own edits — the subset of a run `panel/usePipelineRun.ts` may write directly. */
+/** The panel's own edits — the subset of a run `panel/runView.ts` may write directly. */
 export function panelEditsOf(run: PipelineRunState): Pick<PipelineRunState, PanelEditableField> {
   const entries = PANEL_EDITABLE_FIELDS.map((field) => [field, run[field]]);
   // Safe: entries is exactly PANEL_EDITABLE_FIELDS paired with that field's own value off `run`.

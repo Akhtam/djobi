@@ -67,7 +67,7 @@ export async function patchPipelineRun(
  * run was replaced or isn't `editable` (e.g. a save is in flight). `saved` reverts to `filled` only
  * if the edited fields actually differ from what's stored.
  *
- * Returns whether it wrote — a refusal fires no `onChanged`, so `usePipelineRun` needs this.
+ * Returns whether it wrote — a refusal fires no `onChanged`, so `panel/runView.ts` needs this.
  */
 export async function applyPanelEdit(
   tabId: number,

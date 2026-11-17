@@ -1,6 +1,6 @@
 /**
  * The Autofill Tab's three pipeline commands, each bound to the optimistic status it raises and the
- * failure that stands it down. A plain factory: attempt state lives in `panel/usePipelineRun.ts`.
+ * failure that stands it down. A plain factory: attempt state lives in `panel/runView.ts`.
  *
  * Checks here are only whether a command can be addressed (a tab, a run, an analysis URL); whether
  * a button is *eligible*, the preview lifecycle, and Run Notice copy stay in the tab.

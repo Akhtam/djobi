@@ -74,7 +74,7 @@ const EMPTY: RunViewSnapshot = { run: null, pending: null, dispatch: null };
  *
  * The background owns every persisted mutation and all progress; this view owns only optimistic
  * edits and status, and never writes storage. Plain TypeScript so it's testable without React;
- * `usePipelineRun.ts` makes one per tab and scope.
+ * `useActiveRun.ts` makes one per job scope.
  */
 export function createRunView(tabId: number, ports: RunViewPorts = chromeRunViewPorts): RunView {
   let state = EMPTY;

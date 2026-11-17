@@ -318,7 +318,7 @@ describe('tabStore', () => {
     it('does not classify a tailoredResume-only patch as background progress', async () => {
       // tailoredResume is panel-writable (see lib/run/state.ts's PANEL_EDITABLE_FIELDS) — a
       // candidate editing the resume mid-fill must not read as the background's own progress and
-      // stand `panel/usePipelineRun.ts`'s optimistic status down.
+      // stand `panel/runView.ts`'s optimistic status down.
       stubChrome();
       await setPipelineRun(1, run);
       const changes: PipelineRunChange[] = [];

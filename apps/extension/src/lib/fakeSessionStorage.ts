@@ -2,7 +2,7 @@
  * In-memory stand-in for `chrome.storage.session`, for tests.
  *
  * Like Chrome, every `set`/`remove` fires `onChanged` — including in the writing context, which
- * exercises `usePipelineRun`'s own-write echo guard — and changes carry both `oldValue` and
+ * exercises `panel/runView.ts`'s own-write echo guard — and changes carry both `oldValue` and
  * `newValue`, which `tabStore/record.ts` compares to tell which owner moved.
  */
 export interface FakeStorageChange {

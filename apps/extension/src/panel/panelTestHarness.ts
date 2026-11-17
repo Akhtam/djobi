@@ -149,7 +149,7 @@ export function panelRawClient(): BackendClient {
  *
  * Messages go to the **real** listener, router and pipeline against the real `lib/tabStore/`, with
  * only `PipelineDeps` faked — so tests cover message → router → pipeline → store → `onChanged` →
- * `usePipelineRun` → render.
+ * `useActiveRun` → render.
  */
 export async function stubChrome(options: StubOptions) {
   let profileCallIndex = 0;

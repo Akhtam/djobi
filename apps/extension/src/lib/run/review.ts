@@ -120,7 +120,7 @@ const OUTCOME_PILL: Record<FillOutcome, StatusPill> = {
 
 /**
  * The reading for `run` under the *reconciled* status (optimistic or delivery-failure status first;
- * see `panel/usePipelineRun.ts`), so pill, body and footer agree. The idle guard is on `status`,
+ * see `panel/useActiveRun.ts`), so pill, body and footer agree. The idle guard is on `status`,
  * since the first Analyze is optimistic before any run exists. `run` supplies only `fillOutcome`.
  */
 function readingOf(
